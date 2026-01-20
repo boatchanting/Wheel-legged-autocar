@@ -9,9 +9,9 @@
 #include "zf_common_headfile.h"
 
 // ========================================== WiFi 基础配置 ==========================================
-#define WIFI_SSID_TEST          "TONGJIAUTO"          // WiFi 名称
-#define WIFI_PASSWORD_TEST      "12345678"          // WiFi 密码 (如果没有密码，请设置为 NULL)
-#define TCP_TARGET_IP           "192.168.137.1"     // 目标服务器（电脑）IP 地址
+#define WIFI_SSID_TEST          "11111111"          // WiFi 名称
+#define WIFI_PASSWORD_TEST      "00000000"          // WiFi 密码 (如果没有密码，请设置为 NULL)
+#define TCP_TARGET_IP           "192.168.161.192"     // 【提醒】目标服务器（电脑）IP 地址，更改此处需要同步更改zf_device_wifi_spi.h中对应行 WIFI_SPI_TARGET_IP 的定义
 #define TCP_TARGET_PORT         "8086"              // 目标服务器端口
 #define WIFI_LOCAL_PORT         "6666"              // 本机端口 (2048-65535，0表示随机)
 
