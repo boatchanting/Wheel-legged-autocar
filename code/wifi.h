@@ -26,6 +26,16 @@
 // 边界点数量定义 (用于回弯等复杂情况)
 #define BOUNDARY_NUM            (MT9V03X_H * 3 / 2)
 
+// ==================全局变量声明 (供 ISR 使用) ==================
+extern int jump_tf;            // 弹跳调试标志位
+extern float target_v;         // 目标速度
+extern float err_degree;       // 角度误差
+extern float rolling_target_degree; 
+extern int run_flag;           // 运行标志
+extern int high_flag;
+extern float data[8];          // 参数数组
+extern seekfree_assistant_oscilloscope_struct oscilloscope_data; // 示波器结构体
+
 // ========================================== 函数接口 ==========================================
 
 /**
@@ -39,5 +49,11 @@ void wifi_init_all(void);
  * @note   在主循环中检测到摄像头采集完成时调用
  */
 void wifi_send_process(void);
+
+/**
+ * @brief  WiFi 数据接收处理函数
+ * @note   在主循环中持续调用，处理接收到的数据
+ */
+void wifi_data_exchange(void);
 
 #endif /* _WIFI_H_ */
