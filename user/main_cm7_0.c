@@ -34,65 +34,116 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
-#include "wifi.h"  //wifi模块
+
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
 // 第二步 project->clean  等待下方进度条走完
 
-// 本例程是开源库空工程 可用作移植或者测试各类内外设
-// 本例程是开源库空工程 可用作移植或者测试各类内外设
-// 本例程是开源库空工程 可用作移植或者测试各类内外设
 
-// **************************** 代码区域 ****************************
+// *************************** 例程硬件连接说明 ***************************
+// 使用逐飞科技 CMSIS-DAP 调试下载器连接
+//      直接将下载器正确连接在核心板的调试下载接口即可
+// 使用 USB-TTL 模块连接
+//      模块管脚            单片机管脚
+//      USB-TTL-RX          查看 zf_common_debug.h 文件中 DEBUG_UART_TX_PIN 宏定义的引脚 默认 P14_0
+//      USB-TTL-TX          查看 zf_common_debug.h 文件中 DEBUG_UART_RX_PIN 宏定义的引脚 默认 P14_1
+//      USB-TTL-GND         核心板电源地 GND
+//      USB-TTL-3V3         核心板 3V3 电源
 
+//================================特别注意================================
+// 串口接线时一定要接GND 否则无法正常通讯
+//================================特别注意================================
+//================================特别注意================================
+// 串口接线时一定要接GND 否则无法正常通讯
+//================================特别注意================================
+//================================特别注意================================
+// 串口接线时一定要接GND 否则无法正常通讯
+//================================特别注意================================
+
+// ***************************** 例程测试说明 *****************************
+// 1.核心板烧录完成本例程，单独使用核心板与调试下载器或者 USB-TTL 模块，在断电情况下完成连接
+// 2.将调试下载器或者 USB-TTL 模块连接电脑，完成上电
+// 3.电脑上使用串口助手打开对应的串口，串口波特率为 DEBUG_UART_BAUDRATE 宏定义 默认 115200，核心板按下复位按键
+// 4.可以在串口助手上看到如下串口信息：
+//      UART Text.
+// 5.通过串口助手发送数据，会收到相同的反馈数据
+//      UART get data:.......
+// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
+
+// ******************************* 代码区域 *******************************
+#define UART_INDEX              (DEBUG_UART_INDEX   )                           // 默认 UART_0
+#define UART_BAUDRATE           (DEBUG_UART_BAUDRATE)                           // 默认 115200
+#define UART_TX_PIN             (DEBUG_UART_TX_PIN  )                           // 默认 UART0_TX_P00_1
+#define UART_RX_PIN             (DEBUG_UART_RX_PIN  )                           // 默认 UART0_RX_P00_0
+
+uint8 uart_get_data[64];                                                        // 串口接收数据缓冲区
+uint8 fifo_get_data[64];                                                        // fifo 输出读出缓冲区
+
+uint8  get_data = 0;                                                            // 接收数据变量
+uint32 fifo_data_count = 0;                                                     // fifo 数据个数
+
+fifo_struct uart_data_fifo;
 
 int main(void)
 {
     clock_init(SYSTEM_CLOCK_250M); 	// 时钟配置及系统初始化<务必保留>
-    debug_init();                       // 调试串口信息初始化
+    debug_init();                   // 调试串口信息初始化
     // 此处编写用户代码 例如外设初始化代码等
-    // ----------------------------------------------------
-    // ----------------------用户初始化---------------------
-    // ----------------------------------------------------
-    mt9v03x_init();                     // 【wifi模块】1. 初始化摄像头 (WiFi 发送需要用到图像数据)
-    printf("\r\n[Camera] Init Done.");
-    wifi_init_all();                    // 【wifi模块】2. 初始化 WiFi 模块并建立 TCP 连接
-    printf("\r\n[WiFi] Init Done.");  
-    imu660ra_init();     // 【IMU模块】初始化陀螺仪
-    EKF_Init();          // 【IMU模块】初始化卡尔曼滤波
-    //ips200_set_dir(IPS200_PORTAIT_180);//【屏幕模块】暂时未完成
-    // ips200_init(IPS200_TYPE_SPI);【屏幕模块】【暂时未完成】
-    small_driver_uart_init();//【无刷电机驱动】初始化
 
-    // 【GPIO初始化 - 开关/按键】【暂时未完成】
-    // ！！警告！！：P21_7, P20_3 是旧板子引脚，请换成 CYT4BB 的引脚 (如 P02_0 等)
-    // gpio_init(P02_0, GPI, 0, GPI_PULL_DOWN); // 示例【暂时未完成】
-    // gpio_init(P02_1, GPI, 0, GPI_PULL_DOWN); 
+    fifo_init(&uart_data_fifo, FIFO_DATA_8BIT, uart_get_data, 64);              // 初始化 fifo 挂载缓冲区
 
-    // ---------------------- 中断初始化 ----------------------
-    // 【重要】开启 1ms 定时器中断，对应 isr.c 中的 pit0_ch0_isr
-    // 旧代码: pit_ms_init(CCU60_CH0, 1);
-    // 新代码 (CYT4BB):
-    pit_interrupt_ms(PIT_CH0, 1); 
+    uart_init(UART_INDEX, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN);             // 初始化串口
+    uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
 
-    // 开启全局中断 (CYT4BB 必须显式开启)
-    interrupt_global_enable(0);
-
+    uart_write_string(UART_INDEX, "UART Text.");                                // 输出测试信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
+    
 
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
     {
         // 此处编写需要循环执行的代码
 
-        wifi_send_process();            // 循环检测摄像头是否完成采集，并自动备份图像和发送
-        // 可以在这里继续添加其他逻辑，例如：
-        // image_processing();          // 图像处理算法
-        // motor_control();             // 电机控制逻辑
-        wifi_data_exchange(); // 处理波形发送和参数接收，如果觉得太快，可以加个简单的计数分频，例如每10ms执行一次
-        
+        fifo_data_count = fifo_used(&uart_data_fifo);                           // 查看 fifo 是否有数据
+        if(fifo_data_count != 0)                                                // 读取到数据了
+        {
+            fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // 将 fifo 中数据读出并清空 fifo 挂载的缓冲
+            uart_write_string(UART_INDEX, "\r\nUART get data:");                // 输出测试信息
+            uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
+        }
+        system_delay_ms(10);
+
 
         // 此处编写需要循环执行的代码
     }
 }
 
+//-------------------------------------------------------------------------------------------------------------------
+// 函数简介       UART_INDEX 的接收中断处理函数 这个函数将在 UART_INDEX 对应的中断调用
+// 参数说明       void
+// 返回参数       void
+// 使用示例       uart_rx_interrupt_handler();
+//-------------------------------------------------------------------------------------------------------------------
+void uart_rx_interrupt_handler (void)
+{
+//    get_data = uart_read_byte(UART_INDEX);                                      // 接收数据 while 等待式 不建议在中断使用
+    if(uart_query_byte(UART_INDEX, &get_data))                                  // 接收数据 查询式 有数据会返回 TRUE 没有数据会返回 FALSE
+    {
+        fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // 将数据写入 fifo 中
+    }
+}
+
 // **************************** 代码区域 ****************************
+// **************************** 例程常见问题说明 ****************************
+// 遇到问题时请按照以下问题检查列表检查
+// 问题1：串口没有数据
+//      查看串口助手打开的是否是正确的串口，检查打开的 COM 口是否对应的是调试下载器或者 USB-TTL 模块的 COM 口
+//      如果是使用逐飞科技 CMSIS-DAP 调试下载器连接，那么检查下载器线是否松动，检查核心板串口跳线是否已经焊接，串口跳线查看核心板原理图即可找到
+//      如果是使用 USB-TTL 模块连接，那么检查连线是否正常是否松动，模块 TX 是否连接的核心板的 RX，模块 RX 是否连接的核心板的 TX
+// 问题2：串口数据乱码
+//      查看串口助手设置的波特率是否与程序设置一致，程序中 zf_common_debug.h 文件中 DEBUG_UART_BAUDRATE 宏定义为 debug uart 使用的串口波特率
+
+
+
+

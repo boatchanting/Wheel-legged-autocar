@@ -126,7 +126,7 @@ void pit0_ch20_isr()                    // 定时器通道 20 周期中断服务函数
 void pit0_ch21_isr()                    // 定时器通道 21 周期中断服务函数      
 {
     pit_isr_flag_clear(PIT_CH21);
-    tsl1401_collect_pit_handler();
+	tsl1401_collect_pit_handler();
 }
 // **************************** PIT中断函数 ****************************
 
@@ -192,10 +192,9 @@ void gpio_5_exti_isr()                  // 外部 GPIO_5 中断服务函数
 
 }
 
-
 void gpio_6_exti_isr()                  // 外部 GPIO_6 中断服务函数     
 {
-
+	
 
 
 }
