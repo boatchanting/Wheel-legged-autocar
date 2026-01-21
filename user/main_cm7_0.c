@@ -55,8 +55,29 @@ int main(void)
     // ----------------------用户初始化---------------------
     // ----------------------------------------------------
     mt9v03x_init();                     // 【wifi模块】1. 初始化摄像头 (WiFi 发送需要用到图像数据)
+    printf("\r\n[Camera] Init Done.");
     wifi_init_all();                    // 【wifi模块】2. 初始化 WiFi 模块并建立 TCP 连接
-    printf("wifi init ok!\r\n");       // 【wifi模块】3. 打印 WiFi 初始化信息
+    printf("\r\n[WiFi] Init Done.");  
+    imu660ra_init();     // 【IMU模块】初始化陀螺仪
+    EKF_Init();          // 【IMU模块】初始化卡尔曼滤波
+    //ips200_set_dir(IPS200_PORTAIT_180);//【屏幕模块】暂时未完成
+    // ips200_init(IPS200_TYPE_SPI);【屏幕模块】【暂时未完成】
+    small_driver_uart_init();//【无刷电机驱动】初始化
+
+    // 【GPIO初始化 - 开关/按键】【暂时未完成】
+    // ！！警告！！：P21_7, P20_3 是旧板子引脚，请换成 CYT4BB 的引脚 (如 P02_0 等)
+    // gpio_init(P02_0, GPI, 0, GPI_PULL_DOWN); // 示例【暂时未完成】
+    // gpio_init(P02_1, GPI, 0, GPI_PULL_DOWN); 
+
+    // ---------------------- 中断初始化 ----------------------
+    // 【重要】开启 1ms 定时器中断，对应 isr.c 中的 pit0_ch0_isr
+    // 旧代码: pit_ms_init(CCU60_CH0, 1);
+    // 新代码 (CYT4BB):
+    pit_interrupt_ms(PIT_CH0, 1); 
+
+    // 开启全局中断 (CYT4BB 必须显式开启)
+    interrupt_global_enable(0);
+
 
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
