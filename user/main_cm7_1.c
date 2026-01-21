@@ -50,7 +50,8 @@ int main(void)
     debug_info_init();                  // 调试串口信息初始化
      
     // 此处编写用户代码 例如外设初始化代码等
-
+    //【注意】一定不能使用printf函数 否则会导致程序异常
+    // printf("hello world!\r\n");
     
     
     

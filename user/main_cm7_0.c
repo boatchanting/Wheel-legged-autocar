@@ -35,6 +35,7 @@
 
 #include "zf_common_headfile.h"
 #include "wifi.h"  // 添加 wifi模块
+#define WIFI_USE 0 // 选择是否使用WIFI模块，0表示不使用，1表示使用
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
 // 第二步 project->clean  等待下方进度条走完
@@ -83,6 +84,29 @@ uint32 fifo_data_count = 0;                                                     
 fifo_struct uart_data_fifo;
 // uart配置结束
 
+#include "small_driver_uart_control.h"//无刷电机
+// *************************** 4bb7无刷电机例程硬件连接说明 ***************************
+// 使用逐飞科技 tc264 V2.6主板 按照下述方式进行接线
+//      模块引脚    单片机引脚
+//      RX          查看 small_driver_uart_control.h 中 SMALL_DRIVER_TX  宏定义 默认 P10_1
+//      TX          查看 small_driver_uart_control.h 中 SMALL_DRIVER_RX  宏定义 默认 P10_0
+//      GND         GND
+
+// *************************** 例程测试说明 ***************************
+// 1.核心板烧录完成本例程 主板电池供电 连接 CYT2BL3 FOC 双驱
+// 2.如果初次使用 请先点击双驱上的MODE按键 以矫正零点位置 矫正时 电机会发出音乐
+// 3.可以在逐飞助手上位机上看到如下串口信息：
+//      left speed:xxxx, right speed:xxxx
+// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
+
+// **************************** 代码区域 ****************************
+// 无刷电机配置
+#define MAX_DUTY            (30 )                                               // 最大 MAX_DUTY% 占空比
+int8 duty = 0;
+bool dir = true;
+//无刷电机配置结束
+
+
 int main(void)
 {
     clock_init(SYSTEM_CLOCK_250M); 	// 时钟配置及系统初始化<务必保留>
@@ -97,7 +121,8 @@ int main(void)
     uart_write_string(UART_INDEX, "UART Text.");                                // 输出测试信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
-    
+
+#if WIFI_USE    
     // 初始化 WiFi 模块
     wifi_init();                                                                // 初始化WIFI模块
     uart_write_string(UART_INDEX, "WiFi Module Initialized.");                  // 输出WIFI初始化完成信息
@@ -125,6 +150,14 @@ int main(void)
     uart_write_string(UART_INDEX, "Camera Initialized.");                       // 输出摄像头初始化完成信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');
+    //初始化摄像头和通信模块结束
+#endif
+
+    // 初始化无刷电机
+    small_driver_uart_init();		// 初始化驱动通讯功能
+    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');
 
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
@@ -143,7 +176,7 @@ int main(void)
         if(mt9v03x_finish_flag)
         {
             mt9v03x_finish_flag = 0;
-
+        #if WIFI_USE
             // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
@@ -153,9 +186,35 @@ int main(void)
             // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
             // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节
             // wifi_spi_udp_send_now();
+        #endif
         }
 
-        system_delay_ms(10);
+        small_driver_set_duty(duty * (PWM_DUTY_MAX / 100), -duty * (PWM_DUTY_MAX / 100));   // 计算占空比输出
+
+        if(dir)                                                                 // 根据方向判断计数方向 本例程仅作参考
+        {
+            duty ++;                                                            // 正向计数
+            if(duty >= MAX_DUTY)                                                // 达到最大值
+            {
+                dir = false;                                                    // 变更计数方向
+            }
+        }
+        else
+        {
+            duty --;                                                            // 反向计数
+            if(duty <= -MAX_DUTY)                                               // 达到最小值
+            {
+                dir = true;                                                     // 变更计数方向
+            }
+        }
+        //【注意！！！printf一定不行写】
+        // printf("motor\r\n");
+        // printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
+
+
+
+
+        system_delay_ms(50);
 
 
         // 此处编写需要循环执行的代码
