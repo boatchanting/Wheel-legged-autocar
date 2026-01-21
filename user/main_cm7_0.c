@@ -34,13 +34,13 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
-
+#include "wifi.h"  // 添加 wifi模块
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
 // 第二步 project->clean  等待下方进度条走完
 
 
-// *************************** 例程硬件连接说明 ***************************
+// *************************** UART例程硬件连接说明 ***************************
 // 使用逐飞科技 CMSIS-DAP 调试下载器连接
 //      直接将下载器正确连接在核心板的调试下载接口即可
 // 使用 USB-TTL 模块连接
@@ -71,18 +71,17 @@
 // 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
 
 // ******************************* 代码区域 *******************************
-#define UART_INDEX              (DEBUG_UART_INDEX   )                           // 默认 UART_0
+// uart配置
+#define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0
 #define UART_BAUDRATE           (DEBUG_UART_BAUDRATE)                           // 默认 115200
 #define UART_TX_PIN             (DEBUG_UART_TX_PIN  )                           // 默认 UART0_TX_P00_1
 #define UART_RX_PIN             (DEBUG_UART_RX_PIN  )                           // 默认 UART0_RX_P00_0
-
 uint8 uart_get_data[64];                                                        // 串口接收数据缓冲区
 uint8 fifo_get_data[64];                                                        // fifo 输出读出缓冲区
-
 uint8  get_data = 0;                                                            // 接收数据变量
 uint32 fifo_data_count = 0;                                                     // fifo 数据个数
-
 fifo_struct uart_data_fifo;
+// uart配置结束
 
 int main(void)
 {
@@ -99,6 +98,33 @@ int main(void)
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
     
+    // 初始化 WiFi 模块
+    wifi_init();                                                                // 初始化WIFI模块
+    uart_write_string(UART_INDEX, "WiFi Module Initialized.");                  // 输出WIFI初始化完成信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');                                              // 输出换行
+    
+    // 【调试用】查看WiFi模块的连接状态
+    uart_write_string(UART_INDEX, "WiFi SSID: ");
+    uart_write_string(UART_INDEX, WIFI_SSID_TEST);
+    uart_write_byte(UART_INDEX, '\r');
+    uart_write_byte(UART_INDEX, '\n');
+    uart_write_string(UART_INDEX, "WiFi IP: ");
+    uart_write_string(UART_INDEX, wifi_spi_ip_addr_port);
+    uart_write_byte(UART_INDEX, '\r');
+    uart_write_byte(UART_INDEX, '\n');
+
+    // 连接TCP服务器
+    wifi_connect_tcp_server();                                                  // 连接TCP服务器
+    uart_write_string(UART_INDEX, "TCP Server Connected.");                     // 输出TCP连接成功信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
+    
+    // 初始化摄像头和逐飞助手
+    wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
+    uart_write_string(UART_INDEX, "Camera Initialized.");                       // 输出摄像头初始化完成信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');
 
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
@@ -112,6 +138,23 @@ int main(void)
             uart_write_string(UART_INDEX, "\r\nUART get data:");                // 输出测试信息
             uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
         }
+
+        // 处理摄像头图像数据
+        if(mt9v03x_finish_flag)
+        {
+            mt9v03x_finish_flag = 0;
+
+            // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
+            memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
+
+            // 发送图像
+            seekfree_assistant_camera_send();
+            // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
+            // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
+            // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节
+            // wifi_spi_udp_send_now();
+        }
+
         system_delay_ms(10);
 
 
