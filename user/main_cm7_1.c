@@ -50,8 +50,8 @@ int main(void)
     // ===== 1. 系统初始化 =====
     clock_init(SYSTEM_CLOCK_250M);      // 时钟配置及系统初始化
     debug_init();                        // 调试串口初始化
-    gnss_init(TAU1201);                 // GNSS接收模块初始化
-    gps_init();                         // GPS模块初始化(滑动窗口等)
+    //gnss_init(TAU1201);                 // GNSS接收模块初始化【未完成】
+    //gps_init();                         // GPS模块初始化(滑动窗口等)【未完成】
     
     printf("=====================================\r\n");
     printf("HDOP-Adaptive GPS Mapping System\r\n");
@@ -64,7 +64,7 @@ int main(void)
     while(true)
     {
         // GPS数据处理
-        gps_process();
+        //gps_process();【未完成】
         
         // 主循环延时，避免CPU占用过高
         system_delay_ms(2);
