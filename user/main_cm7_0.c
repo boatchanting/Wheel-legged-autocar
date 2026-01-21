@@ -67,6 +67,8 @@ int main(void)
         // 可以在这里继续添加其他逻辑，例如：
         // image_processing();          // 图像处理算法
         // motor_control();             // 电机控制逻辑
+        wifi_data_exchange(); // 处理波形发送和参数接收，如果觉得太快，可以加个简单的计数分频，例如每10ms执行一次
+        
 
         // 此处编写需要循环执行的代码
     }
