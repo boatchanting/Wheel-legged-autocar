@@ -34,7 +34,8 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
 
@@ -274,7 +275,7 @@ int main(void)
         if(mt9v03x_finish_flag)
         {
             mt9v03x_finish_flag = 0;
-        #if WIFI_USE
+        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
             // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
@@ -313,11 +314,28 @@ int main(void)
         // printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
         imu660ra_get_acc();                                                     // 获取 imu660ra 的加速度测量数值
         imu660ra_get_gyro();                                                    // 获取 imu660ra 的角速度测量数值
-        printf("\r\nimu660ra acc data:  x=%5d, y=%5d, z=%5d\r\n", imu660ra_acc_x,  imu660ra_acc_y,  imu660ra_acc_z);
-        printf("\r\nimu660ra gyro data: x=%5d, y=%5d, z=%5d\r\n", imu660ra_gyro_x, imu660ra_gyro_y, imu660ra_gyro_z);
+        // printf("\r\nimu660ra acc data:  x=%5d, y=%5d, z=%5d\r\n", imu660ra_acc_x,  imu660ra_acc_y,  imu660ra_acc_z);
+        // printf("\r\nimu660ra gyro data: x=%5d, y=%5d, z=%5d\r\n", imu660ra_gyro_x, imu660ra_gyro_y, imu660ra_gyro_z);
         gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭
-
-
+        #if WIFI_USE
+        // 逐飞助手示波器发送代码        
+        // 1. 填充速度数据 (通道 0-1)
+        // 建议强制转换为 float 或 int (取决于库定义，通常 float 通用性更好)
+        seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+        seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+        // 2. 填充加速度计数据 (通道 2-4)
+        seekfree_assistant_oscilloscope_data.data[2] = (float)imu660ra_acc_x;
+        seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_acc_y;
+        seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_acc_z;
+        // 3. 填充陀螺仪数据 (通道 5-7)
+        seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
+        seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
+        seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
+        // 4. 设置本次发送的通道数量 (一共8个数据)
+        seekfree_assistant_oscilloscope_data.channel_num = 8;
+        // 5. 调用发送函数
+        seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+        #endif
 
         system_delay_ms(50);
 
