@@ -35,6 +35,7 @@
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
 
@@ -274,7 +275,7 @@ int main(void)
         if(mt9v03x_finish_flag)
         {
             mt9v03x_finish_flag = 0;
-        #if WIFI_USE
+        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
             // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
