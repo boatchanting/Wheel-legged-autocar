@@ -104,5 +104,6 @@
 #include "seekfree_assistant_interface.h"
 #include "small_driver_uart_control.h"//无刷电机
 #include "wifi.h"  // 添加 wifi模块
+#include "ekf.h"//扩展卡尔曼滤波器
 //=====================================================组件应用层=====================================================
 #endif
