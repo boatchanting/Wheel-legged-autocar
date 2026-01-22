@@ -130,6 +130,18 @@ bool dir = true;
 // **************************** ips200屏幕配置区域 ****************************                                    
 #define IPS200_TYPE     (IPS200_TYPE_SPI)   // 八位并口两寸屏 这里宏定义填写 IPS200_TYPE_PARALLEL8  定义屏幕接口类型
 //#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭        放在前面了，它属于这里                                                                        // SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
+// *************************** imu660ra例程测试说明 ***************************
+// 1.核心板烧录完成本例程，单独使用核心板与调试下载器或者 USB-TTL 模块，并连接好编码器，在断电情况下完成连接
+// 2.将调试下载器或者 USB-TTL 模块连接电脑 完成上电 正常 H2 LED 会闪烁
+// 3.电脑上使用 逐飞助手 打开对应的串口，串口波特率为 zf_common_debug.h 文件中 DEBUG_UART_BAUDRATE 宏定义 默认 115200，核心板按下复位按键
+// 4.可以在 逐飞助手 上看到如下串口信息：
+//      imu660ra acc data: x-..., y-..., z-...
+//      imu660ra gyro data: x-..., y-..., z-...
+// 5.移动旋转 imu660ra 就会看到数值变化
+// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
+
+// **************************** 代码区域 ****************************
+#define LED1                    (P19_0)                                         // SPI 串口 SPI 两寸屏 这里宏定义填写 IPS200_TYPE_SPI
 
 int main(void)
 {
@@ -140,7 +152,7 @@ int main(void)
     // *************************** 屏幕初始化开始 ***************************
     // 定义一个变量用于记录屏幕打印的Y坐标（行号）
     uint16 disp_y = 0; 
-
+    gpio_init(LED1, GPO, GPIO_HIGH, GPO_PUSH_PULL);                             // 初始化 LED1 输出 默认高电平 推挽输出模式（用于检测imu660ra是否初始化成功）
 #if DEBUG_DISPLAY
     // 1. 设置屏幕方向（竖屏）
     ips200_set_dir(IPS200_PORTAIT);
@@ -233,6 +245,19 @@ int main(void)
     //-------------------------------------------------------------------
 
     // 此处编写用户代码 例如外设初始化代码等
+     while(1)//检测imu660ra是否初始化成功
+    {
+        if(imu660ra_init())
+        {
+           printf("\r\n imu660ra init error.");                                 // imu660ra 初始化失败
+        }
+        else
+        {
+           break;
+        }
+        gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭 初始化出错这个灯会闪的很慢
+    }
+
     while(true)
     {
         // 此处编写需要循环执行的代码
@@ -286,7 +311,11 @@ int main(void)
         }
         // printf("motor\r\n");
         // printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
-
+        imu660ra_get_acc();                                                     // 获取 imu660ra 的加速度测量数值
+        imu660ra_get_gyro();                                                    // 获取 imu660ra 的角速度测量数值
+        printf("\r\nimu660ra acc data:  x=%5d, y=%5d, z=%5d\r\n", imu660ra_acc_x,  imu660ra_acc_y,  imu660ra_acc_z);
+        printf("\r\nimu660ra gyro data: x=%5d, y=%5d, z=%5d\r\n", imu660ra_gyro_x, imu660ra_gyro_y, imu660ra_gyro_z);
+        gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭
 
 
 
