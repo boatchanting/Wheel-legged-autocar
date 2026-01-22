@@ -106,6 +106,28 @@ int8 duty = 0;
 bool dir = true;
 //无刷电机配置结束
 
+// *************************** ips200屏幕例程硬件连接说明 ***************************
+//      模块管脚            单片机管脚
+//      BL                  查看 zf_device_ips200_parallel8.h 中 IPS200_BL_PIN 宏定义 
+//      CS                  查看 zf_device_ips200_parallel8.h 中 IPS200_CS_PIN 宏定义 
+//      RST                 查看 zf_device_ips200_parallel8.h 中 IPS200_RST_PIN 宏定义
+//      RS                  查看 zf_device_ips200_parallel8.h 中 IPS200_RS_PIN 宏定义 
+//      WR                  查看 zf_device_ips200_parallel8.h 中 IPS200_WR_PIN 宏定义 
+//      RD                  查看 zf_device_ips200_parallel8.h 中 IPS200_RD_PIN 宏定义 
+//      D0-D7               查看 zf_device_ips200_parallel8.h 中 IPS200_Dx_PIN 宏定义 
+//      GND                 核心板电源地 GND
+//      3V3                 核心板 3V3 电源
+
+
+
+// *************************** 例程测试说明 ***************************
+// 1.核心板烧录本例程 插在主板上 2寸IPS 显示模块插在主板的屏幕接口排座上 请注意引脚对应 不要插错
+// 2.电池供电 上电后 2寸IPS 屏幕亮起 显示字符数字浮点数和波形图
+// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
+
+// **************************** ips200屏幕配置区域 ****************************                                    
+#define IPS200_TYPE     (IPS200_TYPE_SPI)   // 八位并口两寸屏 这里宏定义填写 IPS200_TYPE_PARALLEL8  定义屏幕接口类型
+#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭                                                                                // SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
 
 int main(void)
 {
@@ -113,14 +135,40 @@ int main(void)
     debug_init();                   // 调试串口信息初始化
     // 此处编写用户代码 例如外设初始化代码等
 
+    // *************************** 屏幕初始化开始 ***************************
+    // 定义一个变量用于记录屏幕打印的Y坐标（行号）
+    uint16 disp_y = 0; 
+
+#if DEBUG_DISPLAY
+    // 1. 设置屏幕方向（竖屏）
+    ips200_set_dir(IPS200_PORTAIT);
+    // 2. 设置颜色：绿色文字，黑色背景 (像黑客终端一样)
+    ips200_set_color(RGB565_GREEN, RGB565_BLACK);
+    // 3. 初始化屏幕硬件
+    ips200_init(IPS200_TYPE);
+    // 4. 清屏
+    ips200_clear();
+    
+    // 打印系统启动信息
+    ips200_show_string(0, disp_y, "System Booting...");
+    disp_y += 16; // 换行（假设字体高度16）
+#endif
+// *************************** 屏幕初始化结束 ***************************
+
     fifo_init(&uart_data_fifo, FIFO_DATA_8BIT, uart_get_data, 64);              // 初始化 fifo 挂载缓冲区
 
     uart_init(UART_INDEX, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN);             // 初始化串口
-    uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
+    //uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
 
     uart_write_string(UART_INDEX, "UART Text.");                                // 输出测试信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
+
+// --- 屏幕打印 UART 初始化完成 ---
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "UART Init OK");
+    disp_y += 16;
+#endif
 
 #if WIFI_USE    
     // 初始化 WiFi 模块
@@ -153,11 +201,34 @@ int main(void)
     //初始化摄像头和通信模块结束
 #endif
 
+// --- 屏幕打印 WiFi 初始化完成 ---
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "WiFi Init OK");
+    disp_y += 16;
+#endif
+
     // 初始化无刷电机
     small_driver_uart_init();		// 初始化驱动通讯功能
     uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');
+
+    // --- 屏幕打印无刷电机初始化完成 ---
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Brushless Motor Init OK");
+    disp_y += 16;
+#endif
+
+    uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
+    // --- 屏幕打印无刷电机初始化完成 ---
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Brushless Motor Init OK");
+    disp_y += 16;
+#endif
+
+    //-------------------------------------------------------------------
+    //******************************系统初始化结束************************
+    //-------------------------------------------------------------------
 
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
@@ -237,7 +308,7 @@ void uart_rx_interrupt_handler (void)
 }
 
 // **************************** 代码区域 ****************************
-// **************************** 例程常见问题说明 ****************************
+// **************************** 串口例程常见问题说明 ****************************
 // 遇到问题时请按照以下问题检查列表检查
 // 问题1：串口没有数据
 //      查看串口助手打开的是否是正确的串口，检查打开的 COM 口是否对应的是调试下载器或者 USB-TTL 模块的 COM 口
