@@ -144,6 +144,15 @@ bool dir = true;
 // **************************** 代码区域 ****************************
 #define LED1                    (P19_0)                                         // SPI 串口 SPI 两寸屏 这里宏定义填写 IPS200_TYPE_SPI
 
+// *************************** EKF中断声明 ***************************
+extern void EKF_Init(void);
+extern void EKF_UpData(void);
+extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
+volatile uint8 pit_state = 0;
+// --- EKF宏定义 ---
+#define PIT_NUM         (PIT_CH0) // 使用定时器通道0
+
+
 int main(void)
 {
     clock_init(SYSTEM_CLOCK_250M); 	// 时钟配置及系统初始化<务必保留>
@@ -234,34 +243,128 @@ int main(void)
     disp_y += 16;
 #endif
 
+// 此处编写用户代码 例如外设初始化代码等
+while(1)//检测imu660ra是否初始化成功
+{
+    if(imu660ra_init())
+    {
+        printf("\r\n imu660ra init error.");                                 // imu660ra 初始化失败
+    }
+    else
+    {
+        break;
+    }
+    gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭 初始化出错这个灯会闪的很慢
+}
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "IMU Init OK");
+    disp_y += 16;
+#endif
+
+EKF_Init(); // 初始化扩展卡尔曼滤波
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "EKF Init OK");
+    disp_y += 16;
+#endif
+
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
-    // --- 屏幕打印无刷电机初始化完成 ---
+    // --- 屏幕打印uart中断完成 ---
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "UART INTERRUPT Init OK");
     disp_y += 16;
 #endif
 
+// *****************关键新增步骤*****************
+    
+    // 1. 初始化定时器中断，周期 5ms (必须与ekf.c中的dt=0.005对应)
+    pit_ms_init(PIT_NUM, 5);
+    
+    // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
+    interrupt_global_enable(0); 
+
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "PIT & INT OK");
+    disp_y += 16;
+    
+    // 延时一会儿让人看清启动信息，然后清屏准备显示数据
+    system_delay_ms(1000); 
+    ips200_clear();
+    
+    // 绘制静态UI标签 (避免循环里重复绘制浪费时间)
+    ips200_show_string(0, 0,  "EKF Monitor");
+    ips200_show_string(0, 30, "Pitch:");
+    ips200_show_string(0, 50, "Roll :");
+    ips200_show_string(0, 70, "Yaw  :");
+    ips200_show_string(0, 100,"Freq : 200Hz");
+#endif
+ uint8 display_count = 0; // 用于屏幕刷新分频
+
     //-------------------------------------------------------------------
     //******************************系统初始化结束************************
     //-------------------------------------------------------------------
 
-    // 此处编写用户代码 例如外设初始化代码等
-     while(1)//检测imu660ra是否初始化成功
-    {
-        if(imu660ra_init())
-        {
-           printf("\r\n imu660ra init error.");                                 // imu660ra 初始化失败
-        }
-        else
-        {
-           break;
-        }
-        gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭 初始化出错这个灯会闪的很慢
-    }
+    
 
     while(true)
     {
         // 此处编写需要循环执行的代码
+
+        // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
+        if(pit_state == 1)
+        {
+            pit_state = 0; // 清除标志
+            
+            // 这里是 5ms 一次的时间片
+            // 可以在这里写电机控制代码
+            
+            // --- 屏幕刷新逻辑 (降频处理) ---
+            display_count++;
+            if(display_count >= 10) // 10 * 5ms = 50ms 刷新一次屏幕
+            {
+                display_count = 0;
+                
+                // gpio_toggle_level(LED1); // LED闪烁指示系统正在运行
+                
+                #if DEBUG_DISPLAY
+                    // 显示 Pitch (俯仰角)
+                    // 参数：X坐标, Y坐标, 浮点数值, 整数位宽, 小数位数
+                    ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
+                    
+                    // 显示 Roll (横滚角)
+                    ips200_show_float(60, 50, euler_angle.roll, 3, 2);
+                    
+                    // 显示 Yaw (偏航角)
+                    ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
+                #endif
+                
+                // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
+                #if WIFI_USE
+                // 逐飞助手示波器发送代码        
+                // 1. 填充速度数据 (通道 0-1)
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                
+                // 通道 2: Pitch (俯仰角)
+                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // 通道 3: Roll (横滚角)
+                seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
+                // 通道 4: Yaw (偏航角)
+                seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
+                
+                // 3. 填充陀螺仪数据 (通道 5-7)
+                seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
+                
+                // 4. 设置本次发送的通道数量 (一共8个数据)
+                seekfree_assistant_oscilloscope_data.channel_num = 8;
+                
+                // 5. 调用发送函数
+                seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                #endif
+            }
+        }
+
 
         fifo_data_count = fifo_used(&uart_data_fifo);                           // 查看 fifo 是否有数据
         if(fifo_data_count != 0)                                                // 读取到数据了
@@ -290,54 +393,61 @@ int main(void)
 
 
         
-        ips200_show_int(0, 0, duty,2);
+        // ips200_show_int(0, 0, duty,2);
 
-        small_driver_set_duty(duty * (PWM_DUTY_MAX / 100), -duty * (PWM_DUTY_MAX / 100));   // 计算占空比输出
+        // small_driver_set_duty(duty * (PWM_DUTY_MAX / 100), -duty * (PWM_DUTY_MAX / 100));   // 计算占空比输出
 
-        if(dir)                                                                 // 根据方向判断计数方向 本例程仅作参考
-        {
-            duty ++;                                                            // 正向计数
-            if(duty >= MAX_DUTY)                                                // 达到最大值
-            {
-                dir = false;                                                    // 变更计数方向
-            }
-        }
-        else
-        {
-            duty --;                                                            // 反向计数
-            if(duty <= -MAX_DUTY)                                               // 达到最小值
-            {
-                dir = true;                                                     // 变更计数方向
-            }
-        }
+        // if(dir)                                                                 // 根据方向判断计数方向 本例程仅作参考
+        // {
+        //     duty ++;                                                            // 正向计数
+        //     if(duty >= MAX_DUTY)                                                // 达到最大值
+        //     {
+        //         dir = false;                                                    // 变更计数方向
+        //     }
+        // }
+        // else
+        // {
+        //     duty --;                                                            // 反向计数
+        //     if(duty <= -MAX_DUTY)                                               // 达到最小值
+        //     {
+        //         dir = true;                                                     // 变更计数方向
+        //     }
+        // }
         // printf("motor\r\n");
         // printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
-        imu660ra_get_acc();                                                     // 获取 imu660ra 的加速度测量数值
-        imu660ra_get_gyro();                                                    // 获取 imu660ra 的角速度测量数值
+        // imu660ra_get_acc();                                                     // 获取 imu660ra 的加速度测量数值，已经集成到EKF_UpData();
+        // imu660ra_get_gyro();                                                    // 获取 imu660ra 的角速度测量数值，已经集成到EKF_UpData();
+        
         // printf("\r\nimu660ra acc data:  x=%5d, y=%5d, z=%5d\r\n", imu660ra_acc_x,  imu660ra_acc_y,  imu660ra_acc_z);
         // printf("\r\nimu660ra gyro data: x=%5d, y=%5d, z=%5d\r\n", imu660ra_gyro_x, imu660ra_gyro_y, imu660ra_gyro_z);
-        gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭
-        #if WIFI_USE
-        // 逐飞助手示波器发送代码        
-        // 1. 填充速度数据 (通道 0-1)
-        // 建议强制转换为 float 或 int (取决于库定义，通常 float 通用性更好)
-        seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-        seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-        // 2. 填充加速度计数据 (通道 2-4)
-        seekfree_assistant_oscilloscope_data.data[2] = (float)imu660ra_acc_x;
-        seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_acc_y;
-        seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_acc_z;
-        // 3. 填充陀螺仪数据 (通道 5-7)
-        seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
-        seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
-        seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
-        // 4. 设置本次发送的通道数量 (一共8个数据)
-        seekfree_assistant_oscilloscope_data.channel_num = 8;
-        // 5. 调用发送函数
-        seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
-        #endif
+        //gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭
+        // #if WIFI_USE
+        //     // 逐飞助手示波器发送代码        
+        //     // 1. 填充速度数据 (通道 0-1)
+        //     // 建议强制转换为 float 或 int (取决于库定义，通常 float 通用性更好)
+        //     seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+        //     seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+        //      // 通道 2: Pitch (俯仰角)
+        //     seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+        //     // 通道 3: Roll (横滚角)
+        //     seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
+        //     // 通道 4: Yaw (偏航角)
+        //     seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
+        //     // 2. 填充加速度计数据 (通道 2-4)
+        //     // seekfree_assistant_oscilloscope_data.data[2] = (float)imu660ra_acc_x;
+        //     // seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_acc_y;
+        //     // seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_acc_z;
+        //     // 3. 填充陀螺仪数据 (通道 5-7)
+        //     seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
+        //     seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
+        //     seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
+        //     // 4. 设置本次发送的通道数量 (一共8个数据)
+        //     seekfree_assistant_oscilloscope_data.channel_num = 8;
+        //     // 5. 调用发送函数
+        //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+        // #endif
 
-        system_delay_ms(50);
+        // system_delay_ms(50);
 
 
         // 此处编写需要循环执行的代码
