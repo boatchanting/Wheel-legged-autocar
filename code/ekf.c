@@ -67,34 +67,75 @@ static int16 imu660ra_acc_x_l = 0;
 static int16 imu660ra_acc_y_l = 0;
 static int16 imu660ra_acc_z_l = 0;
 
+// --- 静态偏移量变量 ---
+static float gyro_offset_x = 0.0f;
+static float gyro_offset_y = 0.0f;
+static float gyro_offset_z = 0.0f;
+
+// --- 死区阈值 (根据传感器噪声调整) ---
+#define GYRO_DEAD_ZONE 8.0f 
+
+/**
+ * @brief 全方位陀螺仪校准
+ * @note 必须在静止状态下调用
+ */
+void IMU_Calibrate_All_Gyro(void)
+{
+    float sum_x = 0, sum_y = 0, sum_z = 0;
+    const int sample_count = 1000;
+
+    for(int i = 0; i < sample_count; i++)
+    {
+        imu660ra_get_gyro();
+        sum_x += imu660ra_gyro_x;
+        sum_y += imu660ra_gyro_y;
+        sum_z += imu660ra_gyro_z;
+        // 简单延时
+        // system_delay_us(100); 
+    }
+
+    // 计算三轴的平均零偏
+    gyro_offset_x = sum_x / sample_count;
+    gyro_offset_y = sum_y / sample_count;
+    gyro_offset_z = sum_z / sample_count;
+}
+
+
 /**
  * @brief 获取IMU数据并进行预处理
  * @note 包括加速度计低通滤波和陀螺仪单位转换
  */
 void imu_get_values(void)
 {
-    // 获取陀螺仪数据
+    // 1. 获取原始数据
     imu660ra_get_gyro();
-    // 获取加速度计数据
     imu660ra_get_acc();
 
-    // 一阶低通滤波，计算结果是浮点数，先存入 imu_data (假设 imu_t 成员是 float)
+    // 2. 减去零偏 (这里是报错的地方，已修正为新变量名)
+    // 之前报错是因为写成了 gyro_z_offset
+    float gx_temp = (float)imu660ra_gyro_x - gyro_offset_x; 
+    float gy_temp = (float)imu660ra_gyro_y - gyro_offset_y;
+    float gz_temp = (float)imu660ra_gyro_z - gyro_offset_z; 
+
+    // 3. 死区处理
+    if (fabs(gx_temp) < GYRO_DEAD_ZONE) gx_temp = 0.0f;
+    if (fabs(gy_temp) < GYRO_DEAD_ZONE) gy_temp = 0.0f;
+    if (fabs(gz_temp) < GYRO_DEAD_ZONE) gz_temp = 0.0f;
+
+    // 4. 单位转换 (使用修正后的 temp 变量)
+    imu_data.gyro_x = gx_temp * PI / 180 / 16.384f;
+    imu_data.gyro_y = gy_temp * PI / 180 / 16.384f;
+    imu_data.gyro_z = gz_temp * PI / 180 / 16.384f;
+
+    // --- 加速度计部分保持不变 ---
     imu_data.acc_x = K * imu660ra_acc_x + (1 - K) * imu660ra_acc_x_l;
     imu_data.acc_y = K * imu660ra_acc_y + (1 - K) * imu660ra_acc_y_l;
     imu_data.acc_z = K * imu660ra_acc_z + (1 - K) * imu660ra_acc_z_l;
 
-    // 更新滤波器状态 (将浮点数转回 int16 以便下次计算使用)
-    imu660ra_acc_x_l = (int16)imu_data.acc_x;  // 强制转换为int16，避免编译警告
-    imu660ra_acc_y_l = (int16)imu_data.acc_y;  // 
-    imu660ra_acc_z_l = (int16)imu_data.acc_z;  // 
-    // --- 修改结束 ---
-
-    // 陀螺仪角度转弧度
-    imu_data.gyro_x = imu660ra_gyro_x * PI / 180 / 16.384f;
-    imu_data.gyro_y = imu660ra_gyro_y * PI / 180 / 16.384f;
-    imu_data.gyro_z = imu660ra_gyro_z * PI / 180 / 16.384f;
+    imu660ra_acc_x_l = (int16)imu_data.acc_x;
+    imu660ra_acc_y_l = (int16)imu_data.acc_y;
+    imu660ra_acc_z_l = (int16)imu_data.acc_z;
 }
-
 /**
  * @brief 扩展卡尔曼滤波更新函数
  * @note 执行完整的EKF预测和更新步骤
@@ -214,4 +255,5 @@ void EKF_UpData(void)
     
     // 调试输出 (已注释)
     //printf("%f,%f,%f\n",dt,euler_angle.pitch,euler_angle.roll);
+    //printf("GX:%.5f, GY:%.5f, GZ:%.5f\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);//用于检测零漂的调试代码
 }

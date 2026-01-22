@@ -261,6 +261,14 @@ while(1)//检测imu660ra是否初始化成功
     disp_y += 16;
 #endif
 
+//★★★ 执行Z轴校准 ★★★
+// 此时车模/设备必须保持静止！
+IMU_Calibrate_All_Gyro();
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "IMU All Gyro Calibrated");
+    disp_y += 16;
+#endif
+
 EKF_Init(); // 初始化扩展卡尔曼滤波
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "EKF Init OK");
