@@ -340,9 +340,9 @@ void uart0_isr (void)
     {
         Cy_SCB_ClearRxInterrupt(get_scb_module(UART_0), CY_SCB_UART_RX_NOT_EMPTY);              // 清除接收中断标志位
         uart_rx_interrupt_handler();
-//#if DEBUG_UART_USE_INTERRUPT                        				                // 如果开启 debug 串口中断
-//        debug_interrupr_handler();                  				                // 调用 debug 串口接收处理函数 数据会被 debug 环形缓冲区读取
-//#endif                                              				                // 如果修改了 DEBUG_UART_INDEX 那这段代码需要放到对应的串口中断去
+#if DEBUG_UART_USE_INTERRUPT                        				                // 如果开启 debug 串口中断
+        debug_interrupr_handler();                  				                // 调用 debug 串口接收处理函数 数据会被 debug 环形缓冲区读取
+#endif                                              				                // 如果修改了 DEBUG_UART_INDEX 那这段代码需要放到对应的串口中断去
       
         
         
@@ -424,6 +424,7 @@ void uart4_isr (void)
         
         uart_receiver_handler();                                                                // 串口接收机回调函数
         
+        uart_control_callback();                                                                
         
     }
     else if(Cy_SCB_GetTxInterruptMask(get_scb_module(UART_4)) & CY_SCB_UART_TX_DONE)            // 串口4发送中断
