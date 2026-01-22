@@ -33,8 +33,12 @@
 * 2024-1-4       pudding            first version
 ********************************************************************************************************************/
 
-#include "zf_common_headfile.h"
-#define WIFI_USE 0 // 选择是否使用WIFI模块，0表示不使用，1表示使用
+#include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
+#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
+
+
+
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
 // 第二步 project->clean  等待下方进度条走完
@@ -125,7 +129,7 @@ bool dir = true;
 
 // **************************** ips200屏幕配置区域 ****************************                                    
 #define IPS200_TYPE     (IPS200_TYPE_SPI)   // 八位并口两寸屏 这里宏定义填写 IPS200_TYPE_PARALLEL8  定义屏幕接口类型
-#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭                                                                                // SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
+//#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭        放在前面了，它属于这里                                                                        // SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
 
 int main(void)
 {
@@ -153,14 +157,14 @@ int main(void)
 #endif
 // *************************** 屏幕初始化结束 ***************************
 
-    // fifo_init(&uart_data_fifo, FIFO_DATA_8BIT, uart_get_data, 64);              // 初始化 fifo 挂载缓冲区
+    fifo_init(&uart_data_fifo, FIFO_DATA_8BIT, uart_get_data, 64);              // 初始化 fifo 挂载缓冲区
 
-    // uart_init(UART_INDEX, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN);             // 初始化串口
-    //uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
+    uart_init(UART_INDEX, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN);             // 初始化串口
+    uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
 
-    // uart_write_string(UART_INDEX, "UART Text.");                                // 输出测试信息
-    // uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
-    // uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
+    uart_write_string(UART_INDEX, "UART Text.");                                // 输出测试信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
 
 // --- 屏幕打印 UART 初始化完成 ---
 #if DEBUG_DISPLAY
@@ -207,9 +211,9 @@ int main(void)
 
     // 初始化无刷电机
     small_driver_uart_init();		// 初始化驱动通讯功能
-    // uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
-    // uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
-    // uart_write_byte(UART_INDEX, '\n');
+    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');
 
     // --- 屏幕打印无刷电机初始化完成 ---
 #if DEBUG_DISPLAY
@@ -217,10 +221,10 @@ int main(void)
     disp_y += 16;
 #endif
 
-    // uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
+    uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印无刷电机初始化完成 ---
 #if DEBUG_DISPLAY
-    ips200_show_string(0, disp_y, "Brushless Motor Init OK");
+    ips200_show_string(0, disp_y, "UART INTERRUPT Init OK");
     disp_y += 16;
 #endif
 
@@ -233,13 +237,13 @@ int main(void)
     {
         // 此处编写需要循环执行的代码
 
-        // fifo_data_count = fifo_used(&uart_data_fifo);                           // 查看 fifo 是否有数据
-        // if(fifo_data_count != 0)                                                // 读取到数据了
-        // {
-        //     fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // 将 fifo 中数据读出并清空 fifo 挂载的缓冲
-        //     uart_write_string(UART_INDEX, "\r\nUART get data:");                // 输出测试信息
-        //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
-        // }
+        fifo_data_count = fifo_used(&uart_data_fifo);                           // 查看 fifo 是否有数据
+        if(fifo_data_count != 0)                                                // 读取到数据了
+        {
+            fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // 将 fifo 中数据读出并清空 fifo 挂载的缓冲
+            uart_write_string(UART_INDEX, "\r\nUART get data:");                // 输出测试信息
+            uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
+        }
 
         // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
@@ -280,9 +284,8 @@ int main(void)
                 dir = true;                                                     // 变更计数方向
             }
         }
-        //【注意！！！printf一定不行写】
         // printf("motor\r\n");
-        printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
+        // printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
 
 
 
