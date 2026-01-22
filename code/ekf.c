@@ -56,7 +56,8 @@ static inline void quaternion_to_euler(void)
     // 计算俯仰角(pitch)
     euler_angle.pitch = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;                                  // pitch
     // 计算横滚角(roll)
-    euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;   // roll
+    // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;   // roll原来的
+    euler_angle.roll = atan2( -2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1 ) * DEG_TO_RAD; //改为0度为平衡状态的pitch
     // 计算偏航角(yaw)
     euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD;    // yaw
 }
@@ -77,14 +78,16 @@ void imu_get_values(void)
     // 获取加速度计数据
     imu660ra_get_acc();
 
-    // 一阶低通滤波，单位g/s
+    // 一阶低通滤波，计算结果是浮点数，先存入 imu_data (假设 imu_t 成员是 float)
     imu_data.acc_x = K * imu660ra_acc_x + (1 - K) * imu660ra_acc_x_l;
     imu_data.acc_y = K * imu660ra_acc_y + (1 - K) * imu660ra_acc_y_l;
     imu_data.acc_z = K * imu660ra_acc_z + (1 - K) * imu660ra_acc_z_l;
-    // 更新滤波器状态
-    imu660ra_acc_x_l = imu_data.acc_x;
-    imu660ra_acc_y_l = imu_data.acc_y;
-    imu660ra_acc_z_l = imu_data.acc_z;
+
+    // 更新滤波器状态 (将浮点数转回 int16 以便下次计算使用)
+    imu660ra_acc_x_l = (int16)imu_data.acc_x;  // 强制转换为int16，避免编译警告
+    imu660ra_acc_y_l = (int16)imu_data.acc_y;  // 
+    imu660ra_acc_z_l = (int16)imu_data.acc_z;  // 
+    // --- 修改结束 ---
 
     // 陀螺仪角度转弧度
     imu_data.gyro_x = imu660ra_gyro_x * PI / 180 / 16.384f;

@@ -36,13 +36,27 @@
 
 #include "zf_common_headfile.h"
 
+// 声明外部函数
+
+// 加上 volatile，告诉编译器这个变量会在中断中突变
+extern volatile uint8 pit_state; 
+
+// 声明外部函数，确保编译器能找到 ekf.c 中的函数
+extern void EKF_UpData(void);
+
 
 // **************************** PIT中断函数 ****************************
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
+    // 1. 清除中断标志位 (必须第一步做)
     pit_isr_flag_clear(PIT_CH0);
   
-    
+    // 2. 执行卡尔曼滤波解算 (确保每5ms执行一次)
+    // 注意：不要在这里做耗时的 printf 或 wifi 发送，只做数学计算
+    EKF_UpData();
+
+    // 3. 置位标志位，通知主循环“计算完成，可以发送数据了”
+    pit_state = 1;
     
 }
 
