@@ -357,7 +357,11 @@ servo_init_all();
     ips200_show_string(0, 135, "RF:");  // 右前
     ips200_show_string(0, 150, "RR:");  // 右后
     ips200_show_string(0, 165, "LF:");  // 左前
-    ips200_show_string(0, 180, "LR:");
+    ips200_show_string(0, 180, "LR:");  // 左后
+    // 添加电机转速显示标签
+    ips200_show_string(0, 200, "Motor Speed:");
+    ips200_show_string(0, 215, "L:");  // 左电机
+    ips200_show_string(80, 215, "R:");  // 右电机
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
 
@@ -422,8 +426,13 @@ static uint8_t loop_counter = 0;
             // 这里是 5ms 一次的时间片
             // 可以在这里写电机控制代码
             // 在这里获取舵机角度，而不是在显示时获取
-        float current_angles[4];
-        servo_get_current_angles(current_angles);
+            float current_angles[4];
+            servo_get_current_angles(current_angles);
+            // 获取电机速度数据
+            float motor_speeds[2];
+            small_driver_get_speed();
+            motor_speeds[0] = motor_value.receive_left_speed_data;
+            motor_speeds[1] = motor_value.receive_right_speed_data;
 
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;
@@ -449,6 +458,10 @@ static uint8_t loop_counter = 0;
                     ips200_show_float(25, 150, current_angles[1], 3, 1);
                     ips200_show_float(25, 165, current_angles[2], 3, 1);
                     ips200_show_float(25, 180, current_angles[3], 3, 1);
+
+                    // 显示电机速度
+                    ips200_show_float(25, 215, motor_speeds[0], 5, 1); 
+                    ips200_show_float(105, 215, motor_speeds[1], 5, 1);  
                 #endif
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
