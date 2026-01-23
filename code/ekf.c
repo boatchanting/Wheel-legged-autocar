@@ -53,11 +53,11 @@ static inline void quaternion_to_euler(void)
     float q2 = (exf_x.data[2][0]);
     float q3 = (exf_x.data[3][0]);
 
+    // 计算翻滚角(roll)
+    euler_angle.roll = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;                                  // pitch
     // 计算俯仰角(pitch)
-    euler_angle.pitch = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;                                  // pitch
-    // 计算横滚角(roll)
     // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;   // roll原来的
-    euler_angle.roll = atan2( -2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1 ) * DEG_TO_RAD; //改为0度为平衡状态的pitch
+    euler_angle.pitch = atan2( -2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1 ) * DEG_TO_RAD; //改为0度为平衡状态的pitch
     // 计算偏航角(yaw)
     euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD;    // yaw
 }
