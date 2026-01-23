@@ -40,7 +40,7 @@
 
 // 加上 volatile，告诉编译器这个变量会在中断中突变
 extern volatile uint8 pit_state; 
-
+extern volatile uint8 pit_state1; 
 // 声明外部函数，确保编译器能找到 ekf.c 中的函数
 extern void EKF_UpData(void);
 
@@ -63,7 +63,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数      
 {
     pit_isr_flag_clear(PIT_CH1);
-    
+
 }
 
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      
