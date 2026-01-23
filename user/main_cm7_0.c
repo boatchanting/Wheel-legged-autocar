@@ -338,8 +338,9 @@ servo_init_all();
             // 这里是 5ms 一次的时间片
             // 可以在这里写电机控制代码
             // 在这里获取舵机角度，而不是在显示时获取
-            static float current_angles[4];
-            
+        float current_angles[4];
+        servo_get_current_angles(current_angles);
+
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;
             if(display_count >= 10) // 10 * 5ms = 50ms 刷新一次屏幕
