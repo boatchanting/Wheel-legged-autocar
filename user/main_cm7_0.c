@@ -34,7 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
@@ -165,6 +165,7 @@ float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
 uint8_t speed_loop_count = 0; // 速度环分频计数器
+int g_motor_enable = 1; // 电机使能安全开关,暂时未调用
 
 int main(void)
 {
@@ -174,6 +175,7 @@ int main(void)
 
     // 初始化 PID 参数 (必须最先调用)
     // -------------------------------------------------------------------------
+    target_speed_set = 0.0f;//目标速度，暂时未调用
     PID_Param_Init();
     if(TUNING_STAGE == 1) {
         // 阶段1：只调角速度环
@@ -488,6 +490,9 @@ static uint8_t loop_counter = 0;
                 
                 // 5. 调用发送函数
                 seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+
+                // 用于上位机向小车发送pid信息
+                wifi_update_pid_params(); 
                 #endif
             }
         }

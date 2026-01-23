@@ -187,3 +187,60 @@ void wifi_camera_init(void)
 
 #endif
 }
+
+
+// =================================================================================
+// ★★★ 上位机参数调节映射 (PC -> MCU) ★★★
+// =================================================================================
+// 参数 0: 角速度环 Kp (pid_gyro.kp)
+// 参数 1: 角速度环 Kd (pid_gyro.kd)
+// 参数 2: 角度环   Kp (pid_angle.kp)
+// 参数 3: 角度环   Kd (pid_angle.kd)
+// 参数 4: 速度环   Kp (pid_speed.kp)
+// 参数 5: 速度环   Ki (pid_speed.ki)
+// 参数 6: 期望速度 (target_speed_set)
+// 参数 7: 电机使能 (g_motor_enable) -> 1.0f为使能, 0.0f为失能
+/**
+ * @brief  检查并更新从上位机接收到的PID等参数
+ * @param  void
+ * @return void
+ * @note   此函数应在主循环中被周期性调用
+ */
+void wifi_update_pid_params(void)
+{
+    // 调用库函数，解析WiFi数据流
+    seekfree_assistant_data_analysis();
+
+    // 遍历所有参数，检查是否有更新标志
+    for(uint8_t i = 0; i < SEEKFREE_ASSISTANT_SET_PARAMETR_COUNT; i++)
+    {
+        if(seekfree_assistant_parameter_update_flag[i])
+        {
+            // 清除更新标志，防止重复执行
+            seekfree_assistant_parameter_update_flag[i] = 0;
+
+            // 根据参数索引(i)更新对应的全局变量
+            // 这个映射关系需要在逐飞助手软件上对应设置
+            switch(i)
+            {
+                // 参数 0: 角速度环 Kp (pid_gyro.kp)
+                case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
+                // 参数 1: 角速度环 Kd (pid_gyro.kd)
+                case 1: pid_gyro.kd  = seekfree_assistant_parameter[i]; break;
+                // 参数 2: 角度环   Kp (pid_angle.kp)
+                case 2: pid_angle.kp = seekfree_assistant_parameter[i]; break;
+                // 参数 3: 角度环   Kd (pid_angle.kd)
+                case 3: pid_angle.kd = seekfree_assistant_parameter[i]; break;
+                // 参数 4: 速度环   Kp (pid_speed.kp)
+                case 4: pid_speed.kp = seekfree_assistant_parameter[i]; break;
+                // 参数 5: 速度环   Ki (pid_speed.ki)
+                case 5: pid_speed.ki = seekfree_assistant_parameter[i]; break;
+                // 参数 6: 期望速度 (target_speed_set)
+                case 6: target_speed_set = seekfree_assistant_parameter[i]; break;
+                // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
+                case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                default: break;
+            }
+        }
+    }
+}
