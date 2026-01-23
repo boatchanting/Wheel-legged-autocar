@@ -42,21 +42,119 @@
 extern volatile uint8 pit_state; 
 extern volatile uint8 pit_state1; 
 // 声明外部函数，确保编译器能找到 ekf.c 中的函数
-extern void EKF_UpData(void);
+extern void EKF_UpData(void);//卡尔曼滤波
 
+volatile uint32_t control_tick = 0;        // 1ms计数器
+extern volatile float pid_out_speed;  // 速度环输出（目标角度）
+extern volatile float pid_out_angle;// 角度环输出（目标角速度）
+extern volatile float pid_out_pwm;// 角速度环输出（PWM值）      
+extern volatile float mechanical_zero_angle; // 机械零点（需校准）暂时未调用
 
+volatile struct {
+    float angle;
+    float gyro;
+    float speed;
+} sensor_data = {0};
+
+uint32_t loop_counter = 0;
 // **************************** PIT中断函数 ****************************
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
     // 1. 清除中断标志位 (必须第一步做)
     pit_isr_flag_clear(PIT_CH0);
-  
-    // 2. 执行卡尔曼滤波解算 (确保每5ms执行一次)
-    // 注意：不要在这里做耗时的 printf 或 wifi 发送，只做数学计算
-    EKF_UpData();
+    loop_counter++;
 
-    // 3. 置位标志位，通知主循环“计算完成，可以发送数据了”
-    pit_state = 1;
+    // ==========================================================
+    // 步骤 2: 速度环 (20ms 跑一次)
+    // ==========================================================
+    if (loop_counter % 20 == 0)
+    {
+        // 获取编码器速度 (假设这个函数读取的是寄存器或变量，速度够快)
+        small_driver_get_speed(); 
+        float left_speed  = (float)motor_value.receive_left_speed_data;
+        float right_speed = (float)motor_value.receive_right_speed_data;
+        
+        // 计算当前平均速度
+        now_speed = 0.5f * (right_speed - left_speed); // 注意你的方向定义，可能需要 (left+right)/2 或者减法
+        
+        // 计算速度环 PID -> 输出目标角度
+        // 目标速度通常设为0(静止)或者遥控器的值
+        pid_out_speed = Speed_Loop_Control(0, now_speed);
+    }
+
+    // ==========================================================
+    // 步骤 3: 角度环 (5ms 跑一次)
+    // ==========================================================
+    if (loop_counter % 5 == 0)
+    {
+        // 运行姿态解算 (EKF / 互补滤波)
+        EKF_UpData(); 
+        now_angle = euler_angle.pitch; // 获取解算后的角度
+
+        // 计算角度环 PID -> 输出目标角速度
+        // 输入：期望角度(由速度环产生)，当前角度，前馈(可选)
+        pid_out_angle = Angle_Loop_Control(pid_out_speed, now_angle, 0);
+    }
+
+    // ==========================================================
+    // 步骤 4: 角速度环 (1ms 跑一次，最内环)
+    // ==========================================================
+    // 计算角速度环 PID -> 输出 PWM
+    // 输入：期望角速度(由角度环产生)，当前角速度
+    imu660ra_get_gyro(); 
+
+    // 4 2. 获取原始值并处理
+    int16 raw_gyro_y = -imu660ra_gyro_x; 
+
+    // 4 3. 减零偏
+    float gyro_y_no_bias = (float)(raw_gyro_y - 0);
+
+    // 4 4. 死区处理 (消除静止时的微小抖动)
+    if (fabs(gyro_y_no_bias) < 5.0f) gyro_y_no_bias = 0;
+
+    // 4 5. 单位转换 (转为 弧度/秒 或 度/秒)
+    // 这里假设转为 弧度/秒，与你的 EKF 代码保持一致
+    // 16.384f 是常见的 MPU6050/6500/9250 灵敏度 (±2000dps档位)
+    float now_gyro_raw = gyro_y_no_bias * PI / 180.0f / 16.384f;
+
+    // 4 6. (可选) 一阶低通滤波，平滑噪声
+    // now_gyro = 0.8f * now_gyro + 0.2f * now_gyro_raw;
+    // 或者直接使用
+    now_gyro = now_gyro_raw;
+
+    // 7. 进入 PID 计算
+    pid_out_pwm = Gyro_Loop_Control(pid_out_angle, now_gyro);
+    //
+    // ==========================================================
+    // 步骤 4 结束
+    // ==========================================================
+
+    // 步骤 5: 安全保护 (倒地停止)
+    // ==========================================================
+    // 如果角度过大（例如超过45度），强制关闭电机
+    if (now_angle > 30.0f || now_angle < -30.0f) 
+    {
+        pid_out_pwm = 0;
+        // 可以重置 PID 的积分项，防止扶起来瞬间暴走
+        //pid_reset_integral(); 可以写个类似的功能，这个函数现在没有
+    }
+
+    // ==========================================================
+    // 步骤 6: 电机输出
+    // ==========================================================
+    int pwm_val = (int)pid_out_pwm;// 限幅保护已经在pid-new.c里面写了，这里不用再写
+
+    // // 根据你的测试：左轮取反，右轮取正
+    small_driver_set_duty(-pwm_val, pwm_val); 
+
+    // ==========================================================
+    // 步骤 7: 系统心跳与其他
+    // ==========================================================
+    // 通知主循环数据已更新（用于OLED显示或数据发送，不要在中断里发串口/WiFi）
+    if(loop_counter % 50 == 0) // 每50 ms通知一次主循环
+    {
+        pit_state = 1; 
+    }
     
 }
 

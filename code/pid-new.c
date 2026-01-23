@@ -11,15 +11,13 @@ PID_Param_t pid_angle = {45.0, 0, 1.5, 0, 0, 0, 0, 0};      // 角度环 (需调
 PID_Param_t pid_gyro  = {2.5,  0, 0.8, 0, 0, 0, 0, 0};      // 角速度环 (需调试)
 
 // 全局变量
-float mechanical_zero_angle = 0.0; // 机械零点（平衡时的理想角度，通常为0或微调值）
+volatile float mechanical_zero_angle = 0.0f;; // 机械零点（平衡时的理想角度，通常为0或微调值）
 float target_speed_set = 0.0;      // 目标速度（由其他逻辑设置，如图像处理）
 float final_motor_pwm = 0.0;       // 最终输出给电机的PWM
 
 // 限幅宏定义
 #define SPEED_OUT_LIMIT  8.0f     // 速度环输出限幅（最大倾斜角度，例如8度）
 #define ANGLE_OUT_LIMIT  3000.0f  // 角度环输出限幅（最大期望角速度）
-#define PWM_MAX_LIMIT    9000     // 电机PWM最大值
-
 // 辅助函数：限幅
 float Float_Constrain(float val, float min, float max) {
     if (val > max) return max;
@@ -89,7 +87,7 @@ float Angle_Loop_Control(float speed_loop_output, float actual_angle, float mech
     // 更新历史误差
     pid_angle.last_error = pid_angle.error;
 
-    return pid_angle.output; // 返回的是“角速度干扰量/期望角速度”
+    return -pid_angle.output; // 返回的是“角速度干扰量/期望角速度”
 }
 
 // ==========================================

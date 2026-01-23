@@ -167,6 +167,16 @@ float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
 uint8_t speed_loop_count = 0; // 速度环分频计数器
 int g_motor_enable = 1; // 电机使能安全开关,暂时未调用
 
+// =================pid控制全局变量定义 =================
+volatile float now_speed = 0;
+volatile float now_angle = 0;
+volatile float now_gyro  = 0;
+
+
+
+
+// ===============================================
+
 int main(void)
 {
     clock_init(SYSTEM_CLOCK_250M); 	// 时钟配置及系统初始化<务必保留>
@@ -335,7 +345,7 @@ servo_init_all();
 // *****************关键新增步骤*****************
     
     // 1. 初始化定时器中断，周期 5ms (必须与ekf.c中的dt=0.005对应)
-    pit_ms_init(PIT_NUM, 5);
+    pit_ms_init(PIT_NUM, 1);
     
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
@@ -370,7 +380,6 @@ servo_init_all();
     //-------------------------------------------------------------------
     //******************************系统初始化结束************************
     //-------------------------------------------------------------------
-static uint8_t loop_counter = 0;
     
 
     while(true)
@@ -380,68 +389,24 @@ static uint8_t loop_counter = 0;
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
         if(pit_state == 1)
         {
-            pit_state = 0; // 清除标志
-             loop_counter++;
-             float now_angle = euler_angle.pitch; 
-             float now_gyro  = (float)imu660ra_gyro_y;
-              small_driver_get_speed(); 
-             float left_speed  = (float)motor_value.receive_left_speed_data;
-            float right_speed = (float)motor_value.receive_right_speed_data;
-                float now_speed = 0.5f * (right_speed - left_speed); 
-            // ==========================================================
-            // 1. 速度环 (最慢，假设 50ms 跑一次)
-            // ==========================================================
-            // 5ms * 10 = 50ms
-             if(loop_counter % 10 == 0) 
-            {
-             // 计算速度环
-             // 输出：pid_out_speed (目标角度)
-             pid_out_speed = Speed_Loop_Control(0, now_speed);
-            }
-
-            // ==========================================================
-            // 2. 角度环 (中等，假设 5ms 跑一次，每次都跑)
-            // ==========================================================
-            // 直接使用刚刚算出来的 pid_out_speed
-             // 输出：pid_out_angle (目标角速度)
-            pid_out_angle = Angle_Loop_Control(pid_out_speed, now_angle, 0);
-
-            // ==========================================================
-            // 3. 角速度环 (最快，假设 5ms 跑一次，每次都跑)
-            // ==========================================================
-            // 直接使用刚刚算出来的 pid_out_angle
-            // 输出：pid_out_pwm (电机力度)
-            pid_out_pwm = Gyro_Loop_Control(pid_out_angle, now_gyro);
-            // ==========================================================
-            // 4. 安全保护 (倒地停止)
-            // ==========================================================
-
-
-            // ---------------------------------------------
-            // 5. 电机输出 (关键修改！！！)
-            // ---------------------------------------------
-            // pid_out_pwm > 0 代表PID想让车向前加速
-            // 根据你的测试：左轮需要负值才向前，右轮需要正值才向前
-            int pwm_val = (int)pid_out_pwm;
-            // 左轮取反，右轮取正
-            small_driver_set_duty(-pwm_val, pwm_val); 
-            // 这里是 5ms 一次的时间片
-            // 可以在这里写电机控制代码
-            // 在这里获取舵机角度，而不是在显示时获取
-            float current_angles[4];
-            servo_get_current_angles(current_angles);
-            // 获取电机速度数据
-            float motor_speeds[2];
-            small_driver_get_speed();
-            motor_speeds[0] = motor_value.receive_left_speed_data;
-            motor_speeds[1] = motor_value.receive_right_speed_data;
+            pit_state = 0; // 清除标志   
+            
+            //下面撰写的是50ms执行一次的代码
 
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;
-            if(display_count >= 10) // 10 * 5ms = 50ms 刷新一次屏幕
+            if(display_count >= 2) // 2* 50 ms = 100ms 刷新一次屏幕
             {
                 display_count = 0;
-                
+                // 在这里获取舵机角度，而不是在显示时获取
+                float current_angles[4];
+                servo_get_current_angles(current_angles);
+                // 获取电机速度数据
+                float motor_speeds[2];
+                small_driver_get_speed();
+                motor_speeds[0] = motor_value.receive_left_speed_data;
+                motor_speeds[1] = motor_value.receive_right_speed_data;
+
                 // gpio_toggle_level(LED1); // LED闪烁指示系统正在运行
                 
                 #if DEBUG_DISPLAY

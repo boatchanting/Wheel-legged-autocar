@@ -46,9 +46,12 @@ extern PID_Param_t pid_speed;   // 速度环参数对象
 extern PID_Param_t pid_angle;   // 角度环参数对象
 extern PID_Param_t pid_gyro;    // 角速度环参数对象
 
-extern float mechanical_zero_angle; // 机械零点 (平衡角度)
+extern volatile float mechanical_zero_angle;; // 机械零点 (平衡角度)暂时未用到
 extern float target_speed_set;      // 期望速度
 extern float final_motor_pwm;       // 最终计算出的PWM值
+extern volatile float now_speed;
+extern volatile float now_angle;
+extern volatile float now_gyro;
 
 // ==========================================
 // 4. 函数声明
