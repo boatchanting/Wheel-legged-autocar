@@ -34,7 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
@@ -145,6 +145,7 @@ bool dir = true;
 #define LED1                    (P19_0)                                         // SPI 串口 SPI 两寸屏 这里宏定义填写 IPS200_TYPE_SPI
 
 // *************************** EKF中断声明 ***************************
+extern void IMU_Calibrate_All_Gyro(void); // 校准陀螺仪声明
 extern void EKF_Init(void);
 extern void EKF_UpData(void);
 extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
@@ -275,6 +276,12 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
     disp_y += 16;
 #endif
 
+servo_init_all();
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Servo Init OK");
+    disp_y += 16;
+#endif
+
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印uart中断完成 ---
 #if DEBUG_DISPLAY
@@ -303,7 +310,13 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
     ips200_show_string(0, 30, "Pitch:");
     ips200_show_string(0, 50, "Roll :");
     ips200_show_string(0, 70, "Yaw  :");
-    ips200_show_string(0, 100,"Freq : 200Hz");
+    ips200_show_string(0, 100,"Freq : 20Hz");
+    // 添加舵机角度显示标签
+    ips200_show_string(0, 120, "Servo Angles:");
+    ips200_show_string(0, 135, "RF:");  // 右前
+    ips200_show_string(0, 150, "RR:");  // 右后
+    ips200_show_string(0, 165, "LF:");  // 左前
+    ips200_show_string(0, 180, "LR:");
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
 
@@ -324,6 +337,8 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
             
             // 这里是 5ms 一次的时间片
             // 可以在这里写电机控制代码
+            // 在这里获取舵机角度，而不是在显示时获取
+            static float current_angles[4];
             
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;
@@ -343,6 +358,12 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
                     
                     // 显示 Yaw (偏航角)
                     ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
+
+                    // 显示已获取的舵机角度
+                    ips200_show_float(25, 135, current_angles[0], 3, 1);
+                    ips200_show_float(25, 150, current_angles[1], 3, 1);
+                    ips200_show_float(25, 165, current_angles[2], 3, 1);
+                    ips200_show_float(25, 180, current_angles[3], 3, 1);
                 #endif
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里

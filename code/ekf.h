@@ -9,7 +9,7 @@
 // 低通滤波系数 (0-1之间，值越大滤波效果越弱)
 #define K               (0.9f)
 
-
+extern void IMU_Calibrate_All_Gyro(void); // 校准陀螺仪
 /**
  * @brief IMU数据结构体
  * @note 包含陀螺仪和加速度计的三轴数据
