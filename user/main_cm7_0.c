@@ -345,8 +345,8 @@ servo_init_all();
 
     while(true)
     {
-        // 此处编写需要循环执行的代码
 
+        // 此处编写需要循环执行的代码
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
         if(pit_state == 1)
         {
@@ -398,15 +398,21 @@ servo_init_all();
                 // 1. 填充速度数据 (通道 0-1)
                 seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+
                 
                 // 通道 2: Pitch (俯仰角)
                 seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                // 通道 3: Roll (横滚角)
-                seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
-                // 通道 4: Yaw (偏航角)
-                seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
+                // 通道 3: 角速度环误差
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.error;
+                // 通道 4: 角速度环积分累加
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_gyro.error_integral;
+
+                // // 通道 3: Roll (横滚角)
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
+                // // 通道 4: Yaw (偏航角)
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
                 
-                // 3. 填充陀螺仪数据 (通道 5-7)
+                //3. 填充陀螺仪数据 (通道 5-7)
                 seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
                 seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
                 seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
