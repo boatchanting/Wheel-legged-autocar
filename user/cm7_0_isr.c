@@ -69,17 +69,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     if (loop_counter % 20 == 0)
     {
-        // 获取编码器速度 (假设这个函数读取的是寄存器或变量，速度够快)
+        // 获取编码器速度
         small_driver_get_speed(); 
         float left_speed  = (float)motor_value.receive_left_speed_data;
         float right_speed = (float)motor_value.receive_right_speed_data;
         
         // 计算当前平均速度
-        now_speed = 0.5f * (right_speed - left_speed); // 注意你的方向定义，可能需要 (left+right)/2 或者减法
+        // 注意：这里赋值给全局变量 now_speed，方便调试查看
+        now_speed = 0.5f * (right_speed - left_speed); 
         
-        // 计算速度环 PID -> 输出目标角度
-        // 目标速度通常设为0(静止)或者遥控器的值
-        pid_out_speed = Speed_Loop_Control(0, now_speed);
+        // --- [调用优化] ---
+        // 参数1: target_speed_set (全局变量，由遥控改变，而不是写死 0)
+        // 参数2: now_speed (当前速度)
+        // 返回: speed_loop_out (期望的倾斜角度)
+        speed_loop_out = Speed_Loop_Control(target_speed_set, now_speed);
     }
 
     // ==========================================================
@@ -89,69 +92,71 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     {
         // 运行姿态解算 (EKF / 互补滤波)
         EKF_UpData(); 
-        now_angle = euler_angle.pitch; // 获取解算后的角度
+        now_angle = euler_angle.pitch; // 获取解算后的角度 (单位：度)
 
-        // 计算角度环 PID -> 输出目标角速度
-        // 输入：期望角度(由速度环产生)，当前角度，前馈(可选)
-        pid_out_angle = Angle_Loop_Control(pid_out_speed, now_angle, 0);
+        // --- [调用优化] ---
+        // 变化点：删除了第3个参数 "mechanical_zero"，因为它已经包含在 pid_angle.compensation 中了
+        // 参数1: speed_loop_out (速度环算出来的目标角度)
+        // 参数2: now_angle (当前角度)
+        // 返回: angle_loop_out (期望的角速度)
+        angle_loop_out = Angle_Loop_Control(speed_loop_out, now_angle);
     }
 
     // ==========================================================
     // 步骤 4: 角速度环 (1ms 跑一次，最内环)
     // ==========================================================
-    // 计算角速度环 PID -> 输出 PWM
-    // 输入：期望角速度(由角度环产生)，当前角速度
+    
+    // 4.1 获取原始陀螺仪数据
     imu660ra_get_gyro(); 
+    int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号
 
-    // 4 2. 获取原始值并处理
-    int16 raw_gyro_y = -imu660ra_gyro_x; 
+    // 4.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
+    float gyro_val = (float)raw_gyro_y;
+    if (fabs(gyro_val) < 5.0f) gyro_val = 0;
 
-    // 4 3. 减零偏
-    float gyro_y_no_bias = (float)(raw_gyro_y - 0);
+    // 4.3 单位转换 [重要]
+    // 既然 pid.c 里限幅是 3000 (这显然是度/秒或者LSB，不可能是弧度)，
+    // 建议统一转换为 【度/秒 (deg/s)】。
+    // 假设灵敏度是 16.384 LSB/(dps) (即±2000dps量程)
+    float now_gyro_deg = gyro_val / 16.384f; 
 
-    // 4 4. 死区处理 (消除静止时的微小抖动)
-    if (fabs(gyro_y_no_bias) < 5.0f) gyro_y_no_bias = 0;
+    // 4.4 简单的低通滤波 (平滑噪声)
+    now_gyro = 0.8f * now_gyro + 0.2f * now_gyro_deg;
 
-    // 4 5. 单位转换 (转为 弧度/秒 或 度/秒)
-    // 这里假设转为 弧度/秒，与你的 EKF 代码保持一致
-    // 16.384f 是常见的 MPU6050/6500/9250 灵敏度 (±2000dps档位)
-    float now_gyro_raw = gyro_y_no_bias * PI / 180.0f / 16.384f;
+    // --- [调用优化] ---
+    // 变化点：移除了手动减零偏逻辑 (GYRO_SENSOR_OFFSET 宏在函数内处理)
+    // 变化点：移除了手动死区补偿 (GYR_DEAD_ZONE 宏在函数内处理)
+    // 参数1: angle_loop_out (角度环算出来的期望角速度)
+    // 参数2: now_gyro (当前实际角速度)
+    // 返回: gyro_loop_out (最终PWM)
+    gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
 
-    // 4 6. (可选) 一阶低通滤波，平滑噪声
-    // now_gyro = 0.8f * now_gyro + 0.2f * now_gyro_raw;
-    // 或者直接使用
-    now_gyro = now_gyro_raw;
 
-    // 7. 进入 PID 计算
-    pid_out_pwm = Gyro_Loop_Control(pid_out_angle, now_gyro);
-    //
     // ==========================================================
-    // 步骤 4 结束
-    // ==========================================================
-
     // 步骤 5: 安全保护 (倒地停止)
     // ==========================================================
-    // 如果角度过大（例如超过45度），强制关闭电机
+    // 如果角度过大（例如超过 30 度），强制关闭电机
     if (now_angle > 30.0f || now_angle < -30.0f) 
     {
-        pid_out_pwm = 0;
-        // 可以重置 PID 的积分项，防止扶起来瞬间暴走
-        //pid_reset_integral(); 可以写个类似的功能，这个函数现在没有
+        gyro_loop_out = 0; // PWM置0        
+        // 清除 PID 的所有参数，否则扶起来的瞬间电机还是全速旋转
+        PID_Data_Reset(); 
     }
 
     // ==========================================================
     // 步骤 6: 电机输出
     // ==========================================================
-    int pwm_val = (int)pid_out_pwm;// 限幅保护已经在pid-new.c里面写了，这里不用再写
+    final_motor_pwm = gyro_loop_out; // 更新全局变量，方便调试查看
+    int pwm_val = (int)final_motor_pwm;
 
-    // // 根据你的测试：左轮取反，右轮取正
+    // 这里的限幅已经在 Gyro_Loop_Control 内部做了 (依靠 PWM_MAX_LIMIT 宏)
+    // 直接输出即可
     small_driver_set_duty(-pwm_val, pwm_val); 
 
     // ==========================================================
-    // 步骤 7: 系统心跳与其他
+    // 步骤 7: 系统心跳
     // ==========================================================
-    // 通知主循环数据已更新（用于OLED显示或数据发送，不要在中断里发串口/WiFi）
-    if(loop_counter % 50 == 0) // 每50 ms通知一次主循环
+    if(loop_counter % 50 == 0) 
     {
         pit_state = 1; 
     }
