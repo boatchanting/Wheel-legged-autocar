@@ -225,16 +225,16 @@ void wifi_update_pid_params(void)
             {
                 // 参数 0: 角速度环 Kp (pid_gyro.kp)
                 case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
-                // 参数 1: 角速度环 Kd (pid_gyro.kd)
-                case 1: pid_gyro.kd  = seekfree_assistant_parameter[i]; break;
-                // 参数 2: 角度环   Kp (pid_angle.kp)
-                case 2: pid_angle.kp = seekfree_assistant_parameter[i]; break;
-                // 参数 3: 角度环   Kd (pid_angle.kd)
-                case 3: pid_angle.kd = seekfree_assistant_parameter[i]; break;
-                // 参数 4: 速度环   Kp (pid_speed.kp)
-                case 4: pid_speed.kp = seekfree_assistant_parameter[i]; break;
-                // 参数 5: 速度环   Ki (pid_speed.ki)
-                case 5: pid_speed.ki = seekfree_assistant_parameter[i]; break;
+                // 参数 1: 角速度环 Ki (pid_gyro.ki)
+                case 1: pid_gyro.ki  = seekfree_assistant_parameter[i]; break;
+                // 参数 2: 角速度环 Kd (pid_gyro.kd)
+                case 2: pid_gyro.kd  = seekfree_assistant_parameter[i]; break;
+                // 参数 3: 角速度环 max_output (pid_gyro.max_output)
+                case 3: pid_gyro.max_output = seekfree_assistant_parameter[i]; break;
+                // 参数 4: 角速度环 max_integral (pid_gyro.max_integral)
+                case 4: pid_gyro.max_integral = seekfree_assistant_parameter[i]; break;
+                // 参数 5: 角速度环 compensation (pid_gyro.compensation)
+                case 5: pid_gyro.compensation = seekfree_assistant_parameter[i]; break;
                 // 参数 6: 期望速度 (target_speed_set)
                 case 6: target_speed_set = seekfree_assistant_parameter[i]; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
