@@ -483,7 +483,7 @@ void uart1_isr (void)
     if(Cy_SCB_GetRxInterruptMask(get_scb_module(UART_1)) & CY_SCB_UART_RX_NOT_EMPTY)            // 串口1接收中断
     {
         Cy_SCB_ClearRxInterrupt(get_scb_module(UART_1), CY_SCB_UART_RX_NOT_EMPTY);              // 清除接收中断标志位
-
+        uart_control_callback();    
         wireless_module_uart_handler();
         
         
@@ -545,7 +545,7 @@ void uart4_isr (void)
         
         uart_receiver_handler();                                                                // 串口接收机回调函数
         
-        uart_control_callback();                                                                
+                                                            
         
     }
     else if(Cy_SCB_GetTxInterruptMask(get_scb_module(UART_4)) & CY_SCB_UART_TX_DONE)            // 串口4发送中断

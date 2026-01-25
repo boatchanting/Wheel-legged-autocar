@@ -4,13 +4,16 @@
 #include "zf_common_headfile.h"
 
 
-#define SMALL_DRIVER_UART                       (UART_4        )
+//#define SMALL_DRIVER_UART                       (UART_4        )        学习板电机串口
+#define SMALL_DRIVER_UART                       (UART_1        )
 
 #define SMALL_DRIVER_BAUDRATE                   (460800        )
 
-#define SMALL_DRIVER_RX                         (UART4_TX_P14_1)
+//#define SMALL_DRIVER_RX                         (UART4_TX_P14_1)        学习板电机串口
+#define SMALL_DRIVER_RX                         (UART1_TX_P04_1)
 
-#define SMALL_DRIVER_TX                         (UART4_RX_P14_0)
+//#define SMALL_DRIVER_TX                         (UART4_RX_P14_0)        学习板电机串口
+#define SMALL_DRIVER_TX                         (UART1_RX_P04_0)
 
 typedef struct
 {
@@ -25,7 +28,6 @@ typedef struct
     int16 receive_left_speed_data;              // 接收到的左侧电机速度数据
 
     int16 receive_right_speed_data;             // 接收到的右侧电机速度数据
-
 }small_device_value_struct;
 
 extern small_device_value_struct motor_value;
