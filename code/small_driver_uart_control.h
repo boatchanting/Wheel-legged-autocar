@@ -4,16 +4,16 @@
 #include "zf_common_headfile.h"
 
 
-//#define SMALL_DRIVER_UART                       (UART_4        )        学习板电机串口
-#define SMALL_DRIVER_UART                       (UART_1        )
+#define SMALL_DRIVER_UART                       (UART_4        )        //学习板电机串口
+//#define SMALL_DRIVER_UART                       (UART_1        )        // 我们的板子1电机接口
 
 #define SMALL_DRIVER_BAUDRATE                   (460800        )
 
-//#define SMALL_DRIVER_RX                         (UART4_TX_P14_1)        学习板电机串口
-#define SMALL_DRIVER_RX                         (UART1_TX_P04_1)
+#define SMALL_DRIVER_RX                         (UART4_TX_P14_1)        //学习板电机串口
+//#define SMALL_DRIVER_RX                         (UART1_TX_P04_1)      // 我们的板子1电机接口
 
-//#define SMALL_DRIVER_TX                         (UART4_RX_P14_0)        学习板电机串口
-#define SMALL_DRIVER_TX                         (UART1_RX_P04_0)
+#define SMALL_DRIVER_TX                         (UART4_RX_P14_0)        //学习板电机串口
+//#define SMALL_DRIVER_TX                         (UART1_RX_P04_0)          //我们的板子1电机接口
 
 typedef struct
 {

@@ -34,7 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
@@ -402,10 +402,10 @@ servo_init_all();
                 
                 // 通道 2: Pitch (俯仰角)
                 seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                // 通道 3: 角速度环误差
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.error;
-                // 通道 4: 角速度环积分累加
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_gyro.error_integral;
+                // 通道 3: 角速度环输出
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // 通道 4: 角度环输出
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
 
                 // // 通道 3: Roll (横滚角)
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
@@ -430,13 +430,13 @@ servo_init_all();
         }
 
 
-        fifo_data_count = fifo_used(&uart_data_fifo);                           // 查看 fifo 是否有数据
-        if(fifo_data_count != 0)                                                // 读取到数据了
-        {
-            fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // 将 fifo 中数据读出并清空 fifo 挂载的缓冲
-            uart_write_string(UART_INDEX, "\r\nUART get data:");                // 输出测试信息
-            uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
-        }
+        // fifo_data_count = fifo_used(&uart_data_fifo);                           // 查看 fifo 是否有数据
+        // if(fifo_data_count != 0)                                                // 读取到数据了
+        // {
+        //     fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // 将 fifo 中数据读出并清空 fifo 挂载的缓冲
+        //     uart_write_string(UART_INDEX, "\r\nUART get data:");                // 输出测试信息
+        //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
+        // }
 
         // 处理摄像头图像数据
         if(mt9v03x_finish_flag)

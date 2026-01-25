@@ -140,13 +140,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     {
         gyro_loop_out = 0; // PWM置0        
         // 清除 PID 的所有参数，否则扶起来的瞬间电机还是全速旋转
-        PID_Data_Reset(); 
+        //PID_Data_Reset(); 
     }
-     if(g_motor_enable==0)
-    {
-        gyro_loop_out = 0;
-        PID_Data_Reset();
-    }
+//     if(g_motor_enable==0)
+//    {
+//        gyro_loop_out = 0;
+//        PID_Data_Reset();
+//    }
     // ==========================================================
     // 步骤 6: 电机输出
     // ==========================================================
@@ -483,7 +483,7 @@ void uart1_isr (void)
     if(Cy_SCB_GetRxInterruptMask(get_scb_module(UART_1)) & CY_SCB_UART_RX_NOT_EMPTY)            // 串口1接收中断
     {
         Cy_SCB_ClearRxInterrupt(get_scb_module(UART_1), CY_SCB_UART_RX_NOT_EMPTY);              // 清除接收中断标志位
-        uart_control_callback();    
+      
         wireless_module_uart_handler();
         
         
@@ -542,7 +542,7 @@ void uart4_isr (void)
     {
         Cy_SCB_ClearRxInterrupt(get_scb_module(UART_4), CY_SCB_UART_RX_NOT_EMPTY);              // 清除接收中断标志位
 
-        
+        uart_control_callback();  
         uart_receiver_handler();                                                                // 串口接收机回调函数
         
                                                             

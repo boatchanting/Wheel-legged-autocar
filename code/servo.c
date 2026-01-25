@@ -34,17 +34,18 @@ static float _duty_to_angle(uint32 duty)
 void servo_init_all(void)
 {
     // 定义初始收腿状态的占空比
-    uint32 duty_contract_high = 5000; // 对应 105 度
-    uint32 duty_contract_low  = 4000; // 对应 75 度
+    uint32 duty_contract_high = 4500; // 对应 105 度
+    uint32 duty_contract_low  = 4500; // 对应 75 度
     
     // 1. 初始化外设并直接设置初始占空比 (逐飞科技开源库接口)
     // 右前 RF 和 左后 LR
-    pwm_init(SERVO_MOTOR_PWM1, SERVO_FREQ, duty_contract_high); 
-    pwm_init(SERVO_MOTOR_PWM4, SERVO_FREQ, duty_contract_high); 
+    pwm_init(SERVO_MOTOR_PWM1, SERVO_FREQ, SERVO_MOTOR_PWM1_MID); 
+    pwm_init(SERVO_MOTOR_PWM4, SERVO_FREQ, SERVO_MOTOR_PWM4_MID); 
     
     // 右后 RR 和 左前 LF
-    pwm_init(SERVO_MOTOR_PWM2, SERVO_FREQ, duty_contract_low); 
-    pwm_init(SERVO_MOTOR_PWM3, SERVO_FREQ, duty_contract_low); 
+    pwm_init(SERVO_MOTOR_PWM2, SERVO_FREQ, SERVO_MOTOR_PWM2_MID); 
+    pwm_init(SERVO_MOTOR_PWM3, SERVO_FREQ, SERVO_MOTOR_PWM3_MID); 
+    
     
     // 2. 更新内部记录数组 current_angles
     // 使用 _duty_to_angle 确保角度记录与实际输出的 Duty 严格同步
