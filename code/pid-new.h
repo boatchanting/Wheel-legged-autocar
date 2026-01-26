@@ -26,17 +26,16 @@ typedef struct {
     float error_integral;   // 积分累加
     float output;           // 最终输出
 
-    // --- 速度滤波专用变量 ---
-    float speed_filter_1; // 上一次的速度 (k-1)
-    float speed_filter_2; // 上上次的速度 (k-2)
 } PID_Param_t;
 
 // ============================================================================
 // 2. 全局声明
 // ============================================================================
-extern PID_Param_t pid_speed;
+extern PID_Param_t pid_servo_speed;//速度环(舵机)pid参数
 extern PID_Param_t pid_angle;
-extern PID_Param_t pid_gyro;
+extern PID_Param_t pid_speed;
+extern PID_Param_t pid_gyro;//加速度环pid参数
+
 extern volatile float now_speed;        // 当前速度 (来自编码器)
 extern volatile float now_angle;        // 当前角度 (来自IMU)
 extern volatile float now_gyro;         // 当前角速度 (来自IMU)
@@ -53,7 +52,8 @@ void PID_Param_Init(void);//pid参数初始化
 void PID_Data_Reset(void);//pid参数全清空，用于倒地保护
 float Float_Constrain(float val, float min, float max);
 
-float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)
+float Servo_Speed_Control(float target_speed, float actual_speed);//速度环(舵机)
+float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)(电机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 
