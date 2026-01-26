@@ -4,9 +4,9 @@
 #include "zf_common_headfile.h"
 
 // *************************** 【学习板小车】硬件引脚定义开始 ***************************
-#define SERVO_MOTOR_PWM1            (TCPWM_CH09_P05_0)      // 右前 RF
-#define SERVO_MOTOR_PWM2            (TCPWM_CH10_P05_1)      // 右后 RR
-#define SERVO_MOTOR_PWM3            (TCPWM_CH11_P05_2)      // 左前 LF
+#define SERVO_MOTOR_PWM1            (TCPWM_CH09_P05_0)     // 左前 LF
+#define SERVO_MOTOR_PWM2            (TCPWM_CH10_P05_1)      // 右前 RF
+#define SERVO_MOTOR_PWM3            (TCPWM_CH11_P05_2)       // 右后 RR
 #define SERVO_MOTOR_PWM4            (TCPWM_CH12_P05_3)      // 左后 LR
 // *************************** 【学习板小车】硬件引脚定义结束***************************
 
