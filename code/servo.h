@@ -26,11 +26,11 @@
 // #define SERVO_MOTOR_PWM3_MID            (4500+1500)      // 右后 RR --
 // #define SERVO_MOTOR_PWM4_MID            (4700-1500)      // 左后 LR ++
 
-// ===================== 舵机平腿极限占空比定义 (Duty级) =====================
-// #define SERVO_MOTOR_PWM1_MID            (4500)      // 左前 LF ++
-// #define SERVO_MOTOR_PWM2_MID            (4500)      // 右前 RF --
-// #define SERVO_MOTOR_PWM3_MID            (4500)      // 右后 RR --
-// #define SERVO_MOTOR_PWM4_MID            (4700)      // 左后 LR ++
+// ===================== 舵机平腿(90度)占空比定义 (Duty级) =====================
+#define SERVO_MOTOR_PWM1_90            (4500)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_90            (4500)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_90            (4500)      // 右后 RR --
+#define SERVO_MOTOR_PWM4_90            (4700)      // 左后 LR ++   
 // ===================== 舵机伸腿极限占空比定义 (Duty级) =====================
 // #define SERVO_MOTOR_PWM1_MID            (7000)      // 左前 LF ++
 // #define SERVO_MOTOR_PWM2_MID            (2000)      // 右前 RF --
@@ -63,8 +63,8 @@
 
 // ===================== 4. 函数声明 =====================
 
-// 初始化所有舵机到90度
-void servo_init_all(void);               
+void servo_init_all(void);    // 初始化所有舵机到收腿状态
+        
 void action_contract_legs(void);//收腿到收腿极限
 // 写入目标角度 (0.0 - 180.0)，内部自动执行8变量限幅
 void servo_write_angle(pwm_channel_enum ch, float angle); 
