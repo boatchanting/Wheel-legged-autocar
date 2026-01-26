@@ -13,8 +13,8 @@
 #define SERVO_SPEED_KP  0.0f   // [比例控制] 控制舵机速度响应的快慢
 #define SERVO_SPEED_KI  0.0f   // [积分控制] 
 #define SERVO_SPEED_KD  0.0f   // [微分控制] 
-#define SERVO_SPEED_MAX_I  100.0f  // [积分限幅] 限制积分项的最大值
-#define SERVO_SPEED_MAX_O  50.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
+#define SERVO_SPEED_MAX_I  0.0f  // [积分限幅] 限制积分项的最大值
+#define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
 
 

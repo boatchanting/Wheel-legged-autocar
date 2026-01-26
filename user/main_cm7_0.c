@@ -34,7 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
@@ -406,15 +406,17 @@ servo_init_all();
                 seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
                 // 通道 4: 角度环输出
                 seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-
+                //通道 5：舵机速度环输出
+                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
                 // // 通道 3: Roll (横滚角)
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
                 // // 通道 4: Yaw (偏航角)
                 // seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
                 
                 //3. 填充陀螺仪数据 (通道 5-7)
-                seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
+                
+                seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_x;
+                
                 seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
                 
                 // 4. 设置本次发送的通道数量 (一共8个数据)
