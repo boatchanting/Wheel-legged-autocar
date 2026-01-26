@@ -25,6 +25,10 @@ typedef struct {
     
     float error_integral;   // 积分累加
     float output;           // 最终输出
+
+    // --- 速度滤波专用变量 ---
+    float speed_filter_1; // 上一次的速度 (k-1)
+    float speed_filter_2; // 上上次的速度 (k-2)
 } PID_Param_t;
 
 // ============================================================================
@@ -52,5 +56,8 @@ float Float_Constrain(float val, float min, float max);
 float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
+
+// 辅助宏：取绝对值
+#define MY_ABS(x) ((x) > 0 ? (x) : -(x))
 
 #endif
