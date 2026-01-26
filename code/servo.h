@@ -96,6 +96,8 @@ void robot_posture_control(float base_angle);
 // 数组顺序: [0]=RF, [1]=RR, [2]=LF, [3]=LR
 void servo_get_current_angles(float *angles_array);
 
+void servo_write_duty(pwm_channel_enum ch, int32 duty);//单独控制指定舵机至目标占空比 (带独立限幅)
+
 void high_control_table(float p);//高度查表函数
 void servo_control_table(float p, float degree);//五连杆解算，舵机控制查表函数
 

@@ -65,24 +65,46 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     loop_counter++;
 
     // ==========================================================
-    // 步骤 2: 速度环 (20ms 跑一次)
+    // 步骤 2: 速度环(舵机控制) (20ms 跑一次)
     // ==========================================================
     if (loop_counter % 20 == 0)
     {
-        // 获取编码器速度
-        small_driver_get_speed(); 
-        float left_speed  = (float)motor_value.receive_left_speed_data;
+         // 2.1 获取编码器速度
+        //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
+        float left_speed = (float)motor_value.receive_left_speed_data;
         float right_speed = (float)motor_value.receive_right_speed_data;
+        float current_actual_speed = 0.5f * (right_speed - left_speed);
+
+        // 2.2 调用速度控制器，计算 Duty Cycle 调整量
+        float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
+        int32 duty_adjustment_val = (int32)duty_adjustment;
+
+        // 2.3 计算基础姿态的 Duty
+        high_control_table(INIT_HEIGHT);
+        if (pwm_high != 10000)
+        {
+        int32 base_duty_lf = SERVO_MOTOR_PWM1_90 + pwm_high;
+        int32 base_duty_rf = SERVO_MOTOR_PWM2_90 - pwm_high;
+        int32 base_duty_rr = SERVO_MOTOR_PWM3_90 - pwm_high;
+        int32 base_duty_lr = SERVO_MOTOR_PWM4_90 + pwm_high;
         
-        // 计算当前平均速度
-        // 注意：这里赋值给全局变量 now_speed，方便调试查看
-        now_speed = 0.5f * (right_speed - left_speed); 
-        
-        // --- [调用优化] ---
-        // 参数1: target_speed_set (全局变量，由遥控改变，而不是写死 0)
-        // 参数2: now_speed (当前速度)
-        // 返回: speed_loop_out (期望的倾斜角度)
-        speed_loop_out = Speed_Loop_Control(target_speed_set, now_speed);
+        // 2.4 计算最终 Duty
+        // 模型: 前倾加速 = 前腿伸展 + 后腿收缩
+
+        // 前腿伸展
+        int32 duty_lf = base_duty_lf + duty_adjustment_val; // ++舵机, 伸展是加
+        int32 duty_rf = base_duty_rf - duty_adjustment_val; // --舵机, 伸展是减
+
+        // 后腿收缩
+        int32 duty_rr = base_duty_rr + duty_adjustment_val; // --舵机, 收缩是加
+        int32 duty_lr = base_duty_lr - duty_adjustment_val; // ++舵机, 收缩是减
+
+        // 2.5 调用【新的】底层驱动函数，执行控制
+        servo_write_duty(SERVO_MOTOR_PWM1, duty_lf); // 左前
+        servo_write_duty(SERVO_MOTOR_PWM2, duty_rf); // 右前
+        servo_write_duty(SERVO_MOTOR_PWM3, duty_rr); // 右后
+        servo_write_duty(SERVO_MOTOR_PWM4, duty_lr); // 左后
+        }
     }
 
     // ==========================================================

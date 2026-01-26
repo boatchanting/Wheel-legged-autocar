@@ -70,6 +70,45 @@ void servo_init_all(void)
     current_angles[3] = _delta_duty_to_angle(pwm_high);  // LR
 }
 
+/**
+ * @brief  单独控制指定舵机至目标占空比 (带独立限幅)
+ * @param  ch    PWM通道宏 (SERVO_MOTOR_PWM1 ~ PWM4)
+ * @param  duty  目标占空比值
+ */
+void servo_write_duty(pwm_channel_enum ch, int32 duty)
+{
+    int32 final_duty = duty;
+    float slope = 33.3333f; // 占空比斜率 k = 3000 / 90
+
+    if (ch == SERVO_MOTOR_PWM1) // === 腿 1: 左前 (LF) ===
+    {
+        final_duty = (final_duty < LF_LIMIT_DUTY_MIN) ? LF_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > LF_LIMIT_DUTY_MAX) ? LF_LIMIT_DUTY_MAX : final_duty;
+        current_angles[0] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM1_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM1, (uint32)final_duty);
+    }
+    else if (ch == SERVO_MOTOR_PWM2) // === 腿 2: 右前 (RF) ===
+    {
+        final_duty = (final_duty < RF_LIMIT_DUTY_MIN) ? RF_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > RF_LIMIT_DUTY_MAX) ? RF_LIMIT_DUTY_MAX : final_duty;
+        current_angles[1] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM2_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM2, (uint32)final_duty);
+    }
+    else if (ch == SERVO_MOTOR_PWM3) // === 腿 3: 右后 (RR) ===
+    {
+        final_duty = (final_duty < RR_LIMIT_DUTY_MIN) ? RR_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > RR_LIMIT_DUTY_MAX) ? RR_LIMIT_DUTY_MAX : final_duty;
+        current_angles[2] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM3_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM3, (uint32)final_duty);
+    }
+    else if (ch == SERVO_MOTOR_PWM4) // === 腿 4: 左后 (LR) ===
+    {
+        final_duty = (final_duty < LR_LIMIT_DUTY_MIN) ? LR_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > LR_LIMIT_DUTY_MAX) ? LR_LIMIT_DUTY_MAX : final_duty;
+        current_angles[3] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM4_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM4, (uint32)final_duty);
+    }
+}
 
 /**
  * @brief  单独控制指定舵机至目标角度 (带安装误差修正与独立限幅)
