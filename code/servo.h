@@ -61,6 +61,26 @@
 #define LR_LIMIT_DUTY_MIN   (3200) 
 #define LR_LIMIT_DUTY_MAX   (7200) 
 
+// 舵机初始化高度
+#define INIT_HEIGHT   3.0f
+
+//五连杆参数
+#define L1  6.0f    //左小腿长
+#define L2  9.0f    //左大腿长
+#define L3  9.0f    //右大腿长
+#define L4  6.0f    //右小腿长
+#define L5  3.7f    //舵机间距
+
+#define P_max 14.50f
+#define P_min 2.70f
+#define A_max 20.00f
+#define A_min -20.00f
+#define P_step 0.03f
+#define A_step 0.10f
+
+extern int16 pwm_high;
+extern float pwm_angle;
+
 // ===================== 4. 函数声明 =====================
 
 void servo_init_all(void);    // 初始化所有舵机到收腿状态
@@ -75,5 +95,8 @@ void robot_posture_control(float base_angle);
 // 获取当前四个舵机的物理角度 (结果存入长度为4的数组)
 // 数组顺序: [0]=RF, [1]=RR, [2]=LF, [3]=LR
 void servo_get_current_angles(float *angles_array);
+
+void high_control_table(float p);//高度查表函数
+void servo_control_table(float p, float degree);//五连杆解算，舵机控制查表函数
 
 #endif
