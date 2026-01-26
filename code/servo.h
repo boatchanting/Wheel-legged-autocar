@@ -17,16 +17,30 @@
 // #define SERVO_MOTOR_PWM4            (TCPWM_CH27_P19_2)      // 左后 LR 
 // *************************** 【我们板小车1】硬件引脚定义结束***************************
 
+
+// ***************++的意思是向下伸腿要加duty*********
+// ===================== 舵机角度-占空比转换宏定义 =====================
+// ===================== 舵机收腿极限占空比定义 (Duty级) =====================
 // #define SERVO_MOTOR_PWM1_MID            (4500-1500)      // 左前 LF ++
 // #define SERVO_MOTOR_PWM2_MID            (4500+1500)      // 右前 RF --
 // #define SERVO_MOTOR_PWM3_MID            (4500+1500)      // 右后 RR --
 // #define SERVO_MOTOR_PWM4_MID            (4700-1500)      // 左后 LR ++
+
+// ===================== 舵机平腿极限占空比定义 (Duty级) =====================
+// #define SERVO_MOTOR_PWM1_MID            (4500)      // 左前 LF ++
+// #define SERVO_MOTOR_PWM2_MID            (4500)      // 右前 RF --
+// #define SERVO_MOTOR_PWM3_MID            (4500)      // 右后 RR --
+// #define SERVO_MOTOR_PWM4_MID            (4700)      // 左后 LR ++
+// ===================== 舵机伸腿极限占空比定义 (Duty级) =====================
+// #define SERVO_MOTOR_PWM1_MID            (7000)      // 左前 LF ++
+// #define SERVO_MOTOR_PWM2_MID            (2000)      // 右前 RF --
+// #define SERVO_MOTOR_PWM3_MID            (2000)      // 右后 RR --
+// #define SERVO_MOTOR_PWM4_MID            (7200)      // 左后 LR ++
+// ===================== 舵机正常占空比定义 (Duty级) =====================
 #define SERVO_MOTOR_PWM1_MID            (3500)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_MID            (5500)      // 右前 RF --
 #define SERVO_MOTOR_PWM3_MID            (5500)      // 右后 RR --
 #define SERVO_MOTOR_PWM4_MID            (3700)      // 左后 LR ++
-
-
 // ===================== 舵机全局配置 =====================
 #define SERVO_FREQ          (300)      // 频率300Hz
 
