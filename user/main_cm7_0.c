@@ -172,7 +172,12 @@ int main(void)
     // 初始化 PID 参数 (必须最先调用)
     // -------------------------------------------------------------------------
     target_speed_set = 0.0f;//目标速度，暂时未调用
-    PID_Param_Init();
+
+    flash_init();                                                               // 使用flash前先调用flash初始化 ，包含pid初始化
+    PID_Param_Init() ;                                                      //pid其余参数初始化
+    param_read_from_flash(); // 从 Flash 读取参数
+
+
 
     // *************************** 屏幕初始化开始 ***************************
     // 定义一个变量用于记录屏幕打印的Y坐标（行号）
@@ -390,6 +395,11 @@ servo_init_all();
                     // 显示电机速度
                     ips200_show_float(25, 215, motor_speeds[0], 5, 1); 
                     ips200_show_float(105, 215, motor_speeds[1], 5, 1);  
+                    //显示角速度环pid输出
+                     ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
+                     ips200_show_float(25, 245, pid_gyro.ki, 4, 2); 
+                     ips200_show_float(25, 260, pid_gyro.kd, 4, 2); 
+
                 #endif
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
