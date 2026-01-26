@@ -163,6 +163,7 @@ int g_motor_enable = 1; // 电机使能安全开关
 // PID控制中间变量结束
 // ===============================================
 
+
 int main(void)
 {
     clock_init(SYSTEM_CLOCK_250M); 	// 时钟配置及系统初始化<务必保留>
@@ -176,7 +177,8 @@ int main(void)
     flash_init();                                                               // 使用flash前先调用flash初始化 ，包含pid初始化
     PID_Param_Init() ;                                                      //pid其余参数初始化
     param_read_from_flash(); // 从 Flash 读取参数
-
+    // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
+    
 
 
     // *************************** 屏幕初始化开始 ***************************
@@ -340,6 +342,8 @@ servo_init_all();
     ips200_show_string(0, 200, "Motor Speed:");
     ips200_show_string(0, 215, "L:");  // 左电机
     ips200_show_string(80, 215, "R:");  // 右电机
+    ips200_show_string(0, 230, "gyro.kp");  // 右电机
+    ips200_show_string(0, 245, "gyro.kd");  // 右电机
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
 
@@ -397,8 +401,7 @@ servo_init_all();
                     ips200_show_float(105, 215, motor_speeds[1], 5, 1);  
                     //显示角速度环pid输出
                      ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
-                     ips200_show_float(25, 245, pid_gyro.ki, 4, 2); 
-                     ips200_show_float(25, 260, pid_gyro.kd, 4, 2); 
+                     ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
 
                 #endif
                 

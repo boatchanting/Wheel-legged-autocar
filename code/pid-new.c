@@ -99,9 +99,9 @@ float Float_Constrain(float val, float min, float max) {
  */
 void PID_Param_Init(void) {
     // 初始化速度环PID参数
-    // pid_speed.kp = SPD_KP;
-    // pid_speed.ki = SPD_KI;
-    // pid_speed.kd = SPD_KD;
+    pid_speed.kp = SPD_KP;
+    pid_speed.ki = SPD_KI;
+    pid_speed.kd = SPD_KD;
     pid_speed.max_output = SPD_MAX_O;
     pid_speed.max_integral = SPD_MAX_I;
     pid_speed.compensation = SPD_COMP;
@@ -114,9 +114,9 @@ void PID_Param_Init(void) {
     pid_speed.output = 0;
 
     // 初始化角度环PID参数
-    // pid_angle.kp = ANG_KP;
-    // pid_angle.ki = ANG_KI;
-    // pid_angle.kd = ANG_KD;
+    pid_angle.kp = ANG_KP;
+    pid_angle.ki = ANG_KI;
+    pid_angle.kd = ANG_KD;
     pid_angle.max_output = ANG_MAX_O;
     pid_angle.max_integral = ANG_MAX_I;
     pid_angle.compensation = ANG_MECH_ZERO;
@@ -129,9 +129,9 @@ void PID_Param_Init(void) {
     pid_angle.output = 0;
     
     // 初始化角速度环PID参数
-    // pid_gyro.kp = GYR_KP;
-    // pid_gyro.ki = GYR_KI;
-    // pid_gyro.kd = GYR_KD;
+    pid_gyro.kp = GYR_KP;
+    pid_gyro.ki = GYR_KI;
+    pid_gyro.kd = GYR_KD;
     pid_gyro.max_output = GYR_MAX_O;
     pid_gyro.max_integral = GYR_MAX_I;
     pid_gyro.compensation = GYR_DEAD_ZONE;
