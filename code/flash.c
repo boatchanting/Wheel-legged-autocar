@@ -27,6 +27,12 @@ void param_read_from_flash(void)
     pid_gyro.kp  = (flash_union_buffer[IDX_GYR_P].float_type != 0.0f) ? flash_union_buffer[IDX_GYR_P].float_type : GYR_KP;
     pid_gyro.ki  = (flash_union_buffer[IDX_GYR_I].float_type != 0.0f) ? flash_union_buffer[IDX_GYR_I].float_type : GYR_KI;
     pid_gyro.kd  = (flash_union_buffer[IDX_GYR_D].float_type != 0.0f) ? flash_union_buffer[IDX_GYR_D].float_type : GYR_KD;
+
+    // 舵机速度环 (Servo Speed Loop)
+    pid_servo_speed.kp = (flash_union_buffer[IDX_SERVO_P].float_type != 0.0f) ? flash_union_buffer[IDX_SERVO_P].float_type : SERVO_SPEED_KP;
+    pid_servo_speed.ki = (flash_union_buffer[IDX_SERVO_I].float_type != 0.0f) ? flash_union_buffer[IDX_SERVO_I].float_type : SERVO_SPEED_KI;
+    pid_servo_speed.kd = (flash_union_buffer[IDX_SERVO_D].float_type != 0.0f) ? flash_union_buffer[IDX_SERVO_D].float_type : SERVO_SPEED_KD;
+
 }
 
 // 将当前参数保存到 Flash (Save)
@@ -53,6 +59,10 @@ void param_save_to_flash(void)
     flash_union_buffer[IDX_GYR_P].float_type = pid_gyro.kp;
     flash_union_buffer[IDX_GYR_I].float_type = pid_gyro.ki;
     flash_union_buffer[IDX_GYR_D].float_type = pid_gyro.kd;
+
+    flash_union_buffer[IDX_SERVO_P].float_type = pid_servo_speed.kp;
+    flash_union_buffer[IDX_SERVO_I].float_type = pid_servo_speed.ki;
+    flash_union_buffer[IDX_SERVO_D].float_type = pid_servo_speed.kd;
 
     // 4. 写入 Flash
     flash_write_page_from_buffer(FLASH_SECTION_INDEX, FLASH_PAGE_INDEX, PARAM_NUM);

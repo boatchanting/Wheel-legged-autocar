@@ -24,8 +24,12 @@
 #define IDX_GYR_I   7
 #define IDX_GYR_D   8
 
+#define IDX_SERVO_P  9
+#define IDX_SERVO_I  10
+#define IDX_SERVO_D  11
+
 // 数据总个数 (9个 float)
-#define PARAM_NUM   9
+#define PARAM_NUM   12
 #define flash_enable   0
 // ==========================================
 // 函数声明
