@@ -37,10 +37,15 @@
 // #define SERVO_MOTOR_PWM3_MID            (2000)      // 右后 RR --
 // #define SERVO_MOTOR_PWM4_MID            (7200)      // 左后 LR ++
 // ===================== 舵机正常占空比定义 (Duty级) =====================
-#define SERVO_MOTOR_PWM1_MID            (3500)      // 左前 LF ++
-#define SERVO_MOTOR_PWM2_MID            (5500)      // 右前 RF --
-#define SERVO_MOTOR_PWM3_MID            (5500)      // 右后 RR --
-#define SERVO_MOTOR_PWM4_MID            (3700)      // 左后 LR ++
+// #define SERVO_MOTOR_PWM1_MID            (3500)      // 左前 LF ++
+// #define SERVO_MOTOR_PWM2_MID            (5500)      // 右前 RF --
+// #define SERVO_MOTOR_PWM3_MID            (5500)      // 右后 RR --
+// #define SERVO_MOTOR_PWM4_MID            (3700)      // 左后 LR ++
+// ===================== 舵机极性定义 (向下伸腿为正) =====================
+#define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_DIR            (-1)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_DIR            (-1)      // 右后 RR --
+#define SERVO_MOTOR_PWM4_DIR            (1)      // 左后 LR ++
 // ===================== 舵机全局配置 =====================
 #define SERVO_FREQ          (300)      // 频率300Hz
 

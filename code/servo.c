@@ -1,203 +1,4 @@
 #include "servo.h"
-
-// 内部静态变量：存储当前四个舵机的实际角度（经过限幅处理后的真实值）
-// 索引：[0]:RF, [1]:RR, [2]:LF, [3]:LR
-static float current_angles[4] = {90.0f, 90.0f, 90.0f, 90.0f};
-
-/**
- * @brief 内部工具函数：通用逻辑角度转占空比 (已经优化掉了，这个后面不再使用，改为使用duty调用舵机)
- */
-// static uint32 _angle_to_duty(float angle)
-// {
-//     return (uint32)(3000.0f * (0.5f + (angle / 90.0f)));
-// }
-
-/**
- * @brief 内部工具函数：通用占空比转逻辑角度 (仅供初始化函数使用，保持原样) 弃用了
- */ 
-// static float _duty_to_angle(uint32 duty)
-// {
-//     return ((float)duty / 3000.0f - 0.5f) * 90.0f;
-// }
-
-/**
- * @brief 内部辅助：将 PWM 增量值反向转换为逻辑角度 (仅用于初始化记录)
- * @note  公式推导：Delta = (Angle - 90) * Slope  => Angle = 90 + Delta / Slope
- */
-static float _delta_duty_to_angle(int16 delta)
-{
-    return 90.0f + ((float)delta / 33.3333f);
-}
-
-/**
- * @brief  初始化所有舵机到指定高度
- * @note   1. 调用 high_control_table 计算 INIT_HEIGHT 对应的 pwm_high
- *         2. 结合 SERVO_MOTOR_PWMx_90 中位值和方向符号 (++ / --)
- *         3. 输出 PWM 并初始化 current_angles 数组
- */
-void servo_init_all(void)
-{
-    int32 duty_lf, duty_rf, duty_rr, duty_lr;
-
-    // 1. 查表获取初始高度的 Duty 修正量
-    high_control_table(INIT_HEIGHT);
-    
-    // 错误处理：如果查表失败，默认修正量为0 (即保持90度中位)
-    if (pwm_high == 10000) pwm_high = 0;
-
-    // 2. 根据方向定义计算各舵机初始占空比
-    // LF (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
-    // RF (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
-    // RR (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
-    // LR (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
-    
-    duty_lf = SERVO_MOTOR_PWM1_90 + pwm_high;
-    duty_rf = SERVO_MOTOR_PWM2_90 - pwm_high;
-    duty_rr = SERVO_MOTOR_PWM3_90 - pwm_high;
-    duty_lr = SERVO_MOTOR_PWM4_90 + pwm_high;
-
-    // 3. 执行 PWM 硬件初始化
-    pwm_init(SERVO_MOTOR_PWM1, SERVO_FREQ, (uint32)duty_lf); 
-    pwm_init(SERVO_MOTOR_PWM2, SERVO_FREQ, (uint32)duty_rf); 
-    pwm_init(SERVO_MOTOR_PWM3, SERVO_FREQ, (uint32)duty_rr); 
-    pwm_init(SERVO_MOTOR_PWM4, SERVO_FREQ, (uint32)duty_lr); 
-
-    // 4. 更新当前角度记录 (用于后续 PID 或读取)
-    // 注意：RF/RR 的 delta 是 -pwm_high，代入反算函数
-    current_angles[0] = _delta_duty_to_angle(pwm_high);  // LF
-    current_angles[1] = _delta_duty_to_angle(-pwm_high); // RF
-    current_angles[2] = _delta_duty_to_angle(-pwm_high); // RR
-    current_angles[3] = _delta_duty_to_angle(pwm_high);  // LR
-}
-
-/**
- * @brief  单独控制指定舵机至目标占空比 (带独立限幅)
- * @param  ch    PWM通道宏 (SERVO_MOTOR_PWM1 ~ PWM4)
- * @param  duty  目标占空比值
- */
-void servo_write_duty(pwm_channel_enum ch, int32 duty)
-{
-    int32 final_duty = duty;
-    float slope = 33.3333f; // 占空比斜率 k = 3000 / 90
-
-    if (ch == SERVO_MOTOR_PWM1) // === 腿 1: 左前 (LF) ===
-    {
-        final_duty = (final_duty < LF_LIMIT_DUTY_MIN) ? LF_LIMIT_DUTY_MIN : final_duty;
-        final_duty = (final_duty > LF_LIMIT_DUTY_MAX) ? LF_LIMIT_DUTY_MAX : final_duty;
-        current_angles[0] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM1_90) / slope;
-        pwm_set_duty(SERVO_MOTOR_PWM1, (uint32)final_duty);
-    }
-    else if (ch == SERVO_MOTOR_PWM2) // === 腿 2: 右前 (RF) ===
-    {
-        final_duty = (final_duty < RF_LIMIT_DUTY_MIN) ? RF_LIMIT_DUTY_MIN : final_duty;
-        final_duty = (final_duty > RF_LIMIT_DUTY_MAX) ? RF_LIMIT_DUTY_MAX : final_duty;
-        current_angles[1] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM2_90) / slope;
-        pwm_set_duty(SERVO_MOTOR_PWM2, (uint32)final_duty);
-    }
-    else if (ch == SERVO_MOTOR_PWM3) // === 腿 3: 右后 (RR) ===
-    {
-        final_duty = (final_duty < RR_LIMIT_DUTY_MIN) ? RR_LIMIT_DUTY_MIN : final_duty;
-        final_duty = (final_duty > RR_LIMIT_DUTY_MAX) ? RR_LIMIT_DUTY_MAX : final_duty;
-        current_angles[2] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM3_90) / slope;
-        pwm_set_duty(SERVO_MOTOR_PWM3, (uint32)final_duty);
-    }
-    else if (ch == SERVO_MOTOR_PWM4) // === 腿 4: 左后 (LR) ===
-    {
-        final_duty = (final_duty < LR_LIMIT_DUTY_MIN) ? LR_LIMIT_DUTY_MIN : final_duty;
-        final_duty = (final_duty > LR_LIMIT_DUTY_MAX) ? LR_LIMIT_DUTY_MAX : final_duty;
-        current_angles[3] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM4_90) / slope;
-        pwm_set_duty(SERVO_MOTOR_PWM4, (uint32)final_duty);
-    }
-}
-
-/**
- * @brief  单独控制指定舵机至目标角度 (带安装误差修正与独立限幅)
- * @param  ch    PWM通道宏 (SERVO_MOTOR_PWM1 ~ PWM4)
- * @param  angle 目标逻辑角度 (0.0 ~ 180.0 度)
- */
-void servo_write_angle(pwm_channel_enum ch, float angle)
-{
-    int32 duty_calc = 0;
-    float slope = 33.3333f; // 占空比斜率 k = 3000 / 90
-
-    if (ch == SERVO_MOTOR_PWM1)
-    {
-        // === 腿 1: 左前 (LF) / PWM1 ===
-        // 计算公式: Duty = Mid_90 + (Angle - 90) * Slope
-        duty_calc = SERVO_MOTOR_PWM1_90 + (int32)((angle - 90.0f) * slope);
-        
-        // 独立限幅 (使用 LF 限幅宏)
-        if (duty_calc < LF_LIMIT_DUTY_MIN) duty_calc = LF_LIMIT_DUTY_MIN;
-        if (duty_calc > LF_LIMIT_DUTY_MAX) duty_calc = LF_LIMIT_DUTY_MAX;
-
-        // 反向记录实际角度
-        current_angles[0] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM1_90) / slope;
-        
-        // 输出 PWM
-        pwm_set_duty(SERVO_MOTOR_PWM1, (uint32)duty_calc);
-    }
-    else if (ch == SERVO_MOTOR_PWM2)
-    {
-        // === 腿 2: 右前 (RF) / PWM2 ===
-        duty_calc = SERVO_MOTOR_PWM2_90 + (int32)((angle - 90.0f) * slope);
-        
-        // 独立限幅 (使用 RF 限幅宏)
-        if (duty_calc < RF_LIMIT_DUTY_MIN) duty_calc = RF_LIMIT_DUTY_MIN;
-        if (duty_calc > RF_LIMIT_DUTY_MAX) duty_calc = RF_LIMIT_DUTY_MAX;
-        
-        current_angles[1] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM2_90) / slope;
-        
-        pwm_set_duty(SERVO_MOTOR_PWM2, (uint32)duty_calc);
-    }
-    else if (ch == SERVO_MOTOR_PWM3)
-    {
-        // === 腿 3: 右后 (RR) / PWM3 ===
-        duty_calc = SERVO_MOTOR_PWM3_90 + (int32)((angle - 90.0f) * slope);
-        
-        // 独立限幅 (使用 RR 限幅宏)
-        if (duty_calc < RR_LIMIT_DUTY_MIN) duty_calc = RR_LIMIT_DUTY_MIN;
-        if (duty_calc > RR_LIMIT_DUTY_MAX) duty_calc = RR_LIMIT_DUTY_MAX;
-        
-        current_angles[2] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM3_90) / slope;
-        
-        pwm_set_duty(SERVO_MOTOR_PWM3, (uint32)duty_calc);
-    }
-    else if (ch == SERVO_MOTOR_PWM4)
-    {
-        // === 腿 4: 左后 (LR) / PWM4 ===
-        duty_calc = SERVO_MOTOR_PWM4_90 + (int32)((angle - 90.0f) * slope);
-        
-        // 独立限幅 (使用 LR 限幅宏)
-        if (duty_calc < LR_LIMIT_DUTY_MIN) duty_calc = LR_LIMIT_DUTY_MIN;
-        if (duty_calc > LR_LIMIT_DUTY_MAX) duty_calc = LR_LIMIT_DUTY_MAX;
-        
-        current_angles[3] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM4_90) / slope;
-        
-        pwm_set_duty(SERVO_MOTOR_PWM4, (uint32)duty_calc);
-    }
-}
-
-/**
- * @brief  获取当前四个舵机的物理角度
- * @param  angles_array 结果数组指针，[0]=LF, [1]=RF, [2]=RR, [3]=LR
- * @note   返回的是经过限幅处理后的真实物理角度
- */
-void servo_get_current_angles(float *angles_array)
-{
-    if (angles_array == (void*)0) return;
-    
-    // 注意：此处索引需与头文件定义的顺序一致
-    // 你的头文件注释：[0]=RF, [1]=RR, [2]=LF, [3]=LR
-    // 但 current_angles 在本文件一直是按 PWM1, PWM2, PWM3, PWM4 存储
-    // 即 [0]=LF(PWM1), [1]=RF(PWM2), [2]=RR(PWM3), [3]=LR(PWM4)
-    // 若要严格对应头文件的说明，需要交换赋值顺序：
-    
-    angles_array[0] = current_angles[1]; // RF (PWM2)
-    angles_array[1] = current_angles[2]; // RR (PWM3)
-    angles_array[2] = current_angles[0]; // LF (PWM1)
-    angles_array[3] = current_angles[3]; // LR (PWM4)
-}
-
 const int16 pwm_high_table[394]={
 -873,-842,-812,-784,-758,-732,-708,-684,-661,-639,-618,-598,-578,-559,-540,-521,-504,-486,-469,-453,-437,-421,-405,-390,-375,-361,-347,-333,-319,-305,-292,-279,-266,-253,-241,-229,-216,-204,-193,-181,-170,-158,-147,-136,-125,-114,-104,-93,-82,-72,-62,-52,-42,-32,-22,-12,-3,7,16,26,35,44,53,63,72,81,89,98,107,116,124,133,141,150,158,167,175,183,191,200,208,216,224,232,240,248,255,263,271,279,286,294,302,309,317,324,332,339,347,354,362,369,376,383,391,398,405,412,420,427,434,441,448,455,462,469,476,483,490,497,504,511,518,524,531,538,545,552,559,565,572,579,586,592,599,606,612,619,626,632,639,645,652,659,665,672,678,685,692,698,705,711,718,724,731,737,744,750,757,763,769,776,782,789,795,802,808,815,821,827,834,840,847,853,859,866,872,879,885,891,898,904,911,917,923,930,936,942,949,955,962,968,974,981,987,994,1000,1006,1013,1019,1025,1032,1038,1045,1051,1057,1064,1070,1077,1083,1090,1096,1102,1109,1115,1122,1128,1135,1141,1148,1154,1160,1167,1173,1180,1186,1193,1199,1206,1212,1219,1226,1232,1239,1245,1252,1258,1265,1272,1278,1285,1291,1298,1305,1311,1318,1325,1331,1338,1345,1351,1358,1365,1372,1378,1385,1392,1399,1406,1412,1419,1426,1433,1440,1447,1454,1461,1468,1474,1481,1488,1495,1502,1510,1517,1524,1531,1538,1545,1552,1559,1567,1574,1581,1588,1595,1603,1610,1617,1625,1632,1640,1647,1654,1662,1669,1677,1684,1692,1700,1707,1715,1723,1730,1738,1746,1754,1761,1769,1777,1785,1793,1801,1809,1817,1825,1833,1842,1850,1858,1866,1875,1883,1891,1900,1908,1917,1926,1934,1943,1952,1960,1969,1978,1987,1996,2005,2014,2023,2033,2042,2051,2061,2070,2080,2089,2099,2109,2118,2128,2138,2148,2158,2169,2179,2189,2200,2211,2221,2232,2243,2254,2265,2276,2288,2299,2311,2323,2335,2347,2359,2371,2384,2397,2410,2423,2436,2450,2463,2477,2492,2506,2521,2536,2552,2567,2583,2600,2617,2635,2652,2671,2690,2710
 };
@@ -998,6 +799,38 @@ const int16 pwm_table_2[394][401] = {
 };
 
 
+// 内部静态变量：存储当前四个舵机的实际角度（经过限幅处理后的真实值）
+// 索引：[0]:RF, [1]:RR, [2]:LF, [3]:LR
+static float current_angles[4] = {90.0f, 90.0f, 90.0f, 90.0f};
+
+/**
+ * @brief 内部工具函数：通用逻辑角度转占空比 (已经优化掉了，这个后面不再使用，改为使用duty调用舵机)
+ */
+// static uint32 _angle_to_duty(float angle)
+// {
+//     return (uint32)(3000.0f * (0.5f + (angle / 90.0f)));
+// }
+
+/**
+ * @brief 内部工具函数：通用占空比转逻辑角度 (仅供初始化函数使用，保持原样) 弃用了
+ */ 
+// static float _duty_to_angle(uint32 duty)
+// {
+//     return ((float)duty / 3000.0f - 0.5f) * 90.0f;
+// }
+
+/**
+ * @brief 内部辅助：将 PWM 增量值反向转换为逻辑角度 (仅用于初始化记录)
+ * @note  公式推导：Delta = (Angle - 90) * Slope  => Angle = 90 + Delta / Slope
+ */
+static float _delta_duty_to_angle(int16 delta)
+{
+    return 90.0f + ((float)delta / 33.3333f);
+}
+
+
+
+
 
 
 
@@ -1063,8 +896,8 @@ const int16 pwm_table_2[394][401] = {
 //     return x;
 // }
 
-int16 pwm_high;
-float pwm_angle;
+int16 pwm_high=0;
+float pwm_angle=0;
 
 /**
  * @brief  高度控制查表函数
@@ -1559,4 +1392,171 @@ void servo_control_table(float p, float degree)
 // }
 
 
+/**
+ * @brief  初始化所有舵机到指定高度
+ * @note   1. 调用 high_control_table 计算 INIT_HEIGHT 对应的 pwm_high
+ *         2. 结合 SERVO_MOTOR_PWMx_90 中位值和方向符号 (++ / --)
+ *         3. 输出 PWM 并初始化 current_angles 数组
+ */
+void servo_init_all(void)
+{
+    static int16 duty_lf=0, duty_rf=0, duty_rr=0, duty_lr=0;
 
+    // 1. 查表获取初始高度的 Duty 修正量
+    high_control_table(INIT_HEIGHT);
+    
+    // 错误处理：如果查表失败，默认修正量为0 (即保持90度中位)
+    if (pwm_high == 10000) pwm_high = 0;
+
+    // 2. 根据方向定义计算各舵机初始占空比
+    // LF (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
+    // RF (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
+    // RR (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
+    // LR (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
+    
+    duty_lf = SERVO_MOTOR_PWM1_90 + SERVO_MOTOR_PWM1_DIR * pwm_high;
+    duty_rf = SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * pwm_high;
+    duty_rr = SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * pwm_high;
+    duty_lr = SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * pwm_high;
+
+    // 3. 执行 PWM 硬件初始化
+    pwm_init(SERVO_MOTOR_PWM1, SERVO_FREQ, (uint32)duty_lf); 
+    pwm_init(SERVO_MOTOR_PWM2, SERVO_FREQ, (uint32)duty_rf); 
+    pwm_init(SERVO_MOTOR_PWM3, SERVO_FREQ, (uint32)duty_rr); 
+    pwm_init(SERVO_MOTOR_PWM4, SERVO_FREQ, (uint32)duty_lr); 
+
+    // 4. 更新当前角度记录 (用于后续 PID 或读取)
+    // 注意：RF/RR 的 delta 是 -pwm_high，代入反算函数
+    current_angles[0] = _delta_duty_to_angle(SERVO_MOTOR_PWM1_DIR * pwm_high);  // LF
+    current_angles[1] = _delta_duty_to_angle(SERVO_MOTOR_PWM2_DIR * pwm_high); // RF
+    current_angles[2] = _delta_duty_to_angle(SERVO_MOTOR_PWM3_DIR * pwm_high); // RR
+    current_angles[3] = _delta_duty_to_angle(SERVO_MOTOR_PWM4_DIR * pwm_high);  // LR
+}
+
+/**
+ * @brief  单独控制指定舵机至目标占空比 (带独立限幅)
+ * @param  ch    PWM通道宏 (SERVO_MOTOR_PWM1 ~ PWM4)
+ * @param  duty  目标占空比值
+ */
+void servo_write_duty(pwm_channel_enum ch, int32 duty)
+{
+    int32 final_duty = duty;
+    float slope = 33.3333f; // 占空比斜率 k = 3000 / 90
+
+    if (ch == SERVO_MOTOR_PWM1) // === 腿 1: 左前 (LF) ===
+    {
+        final_duty = (final_duty < LF_LIMIT_DUTY_MIN) ? LF_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > LF_LIMIT_DUTY_MAX) ? LF_LIMIT_DUTY_MAX : final_duty;
+        current_angles[0] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM1_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM1, (uint32)final_duty);
+    }
+    else if (ch == SERVO_MOTOR_PWM2) // === 腿 2: 右前 (RF) ===
+    {
+        final_duty = (final_duty < RF_LIMIT_DUTY_MIN) ? RF_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > RF_LIMIT_DUTY_MAX) ? RF_LIMIT_DUTY_MAX : final_duty;
+        current_angles[1] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM2_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM2, (uint32)final_duty);
+    }
+    else if (ch == SERVO_MOTOR_PWM3) // === 腿 3: 右后 (RR) ===
+    {
+        final_duty = (final_duty < RR_LIMIT_DUTY_MIN) ? RR_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > RR_LIMIT_DUTY_MAX) ? RR_LIMIT_DUTY_MAX : final_duty;
+        current_angles[2] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM3_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM3, (uint32)final_duty);
+    }
+    else if (ch == SERVO_MOTOR_PWM4) // === 腿 4: 左后 (LR) ===
+    {
+        final_duty = (final_duty < LR_LIMIT_DUTY_MIN) ? LR_LIMIT_DUTY_MIN : final_duty;
+        final_duty = (final_duty > LR_LIMIT_DUTY_MAX) ? LR_LIMIT_DUTY_MAX : final_duty;
+        current_angles[3] = 90.0f + ((float)final_duty - SERVO_MOTOR_PWM4_90) / slope;
+        pwm_set_duty(SERVO_MOTOR_PWM4, (uint32)final_duty);
+    }
+}
+
+/**
+ * @brief  单独控制指定舵机至目标角度 (带安装误差修正与独立限幅)
+ * @param  ch    PWM通道宏 (SERVO_MOTOR_PWM1 ~ PWM4)
+ * @param  angle 目标逻辑角度 (0.0 ~ 180.0 度)
+ */
+void servo_write_angle(pwm_channel_enum ch, float angle)
+{
+    int32 duty_calc = 0;
+    float slope = 33.3333f; // 占空比斜率 k = 3000 / 90
+
+    if (ch == SERVO_MOTOR_PWM1)
+    {
+        // === 腿 1: 左前 (LF) / PWM1 ===
+        // 计算公式: Duty = Mid_90 + (Angle - 90) * Slope
+        duty_calc = SERVO_MOTOR_PWM1_90 + (int32)((angle - 90.0f) * slope);
+        
+        // 独立限幅 (使用 LF 限幅宏)
+        if (duty_calc < LF_LIMIT_DUTY_MIN) duty_calc = LF_LIMIT_DUTY_MIN;
+        if (duty_calc > LF_LIMIT_DUTY_MAX) duty_calc = LF_LIMIT_DUTY_MAX;
+
+        // 反向记录实际角度
+        current_angles[0] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM1_90) / slope;
+        
+        // 输出 PWM
+        pwm_set_duty(SERVO_MOTOR_PWM1, (uint32)duty_calc);
+    }
+    else if (ch == SERVO_MOTOR_PWM2)
+    {
+        // === 腿 2: 右前 (RF) / PWM2 ===
+        duty_calc = SERVO_MOTOR_PWM2_90 + (int32)((angle - 90.0f) * slope);
+        
+        // 独立限幅 (使用 RF 限幅宏)
+        if (duty_calc < RF_LIMIT_DUTY_MIN) duty_calc = RF_LIMIT_DUTY_MIN;
+        if (duty_calc > RF_LIMIT_DUTY_MAX) duty_calc = RF_LIMIT_DUTY_MAX;
+        
+        current_angles[1] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM2_90) / slope;
+        
+        pwm_set_duty(SERVO_MOTOR_PWM2, (uint32)duty_calc);
+    }
+    else if (ch == SERVO_MOTOR_PWM3)
+    {
+        // === 腿 3: 右后 (RR) / PWM3 ===
+        duty_calc = SERVO_MOTOR_PWM3_90 + (int32)((angle - 90.0f) * slope);
+        
+        // 独立限幅 (使用 RR 限幅宏)
+        if (duty_calc < RR_LIMIT_DUTY_MIN) duty_calc = RR_LIMIT_DUTY_MIN;
+        if (duty_calc > RR_LIMIT_DUTY_MAX) duty_calc = RR_LIMIT_DUTY_MAX;
+        
+        current_angles[2] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM3_90) / slope;
+        
+        pwm_set_duty(SERVO_MOTOR_PWM3, (uint32)duty_calc);
+    }
+    else if (ch == SERVO_MOTOR_PWM4)
+    {
+        // === 腿 4: 左后 (LR) / PWM4 ===
+        duty_calc = SERVO_MOTOR_PWM4_90 + (int32)((angle - 90.0f) * slope);
+        
+        // 独立限幅 (使用 LR 限幅宏)
+        if (duty_calc < LR_LIMIT_DUTY_MIN) duty_calc = LR_LIMIT_DUTY_MIN;
+        if (duty_calc > LR_LIMIT_DUTY_MAX) duty_calc = LR_LIMIT_DUTY_MAX;
+        
+        current_angles[3] = 90.0f + ((float)duty_calc - SERVO_MOTOR_PWM4_90) / slope;
+        
+        pwm_set_duty(SERVO_MOTOR_PWM4, (uint32)duty_calc);
+    }
+}
+
+/**
+ * @brief  获取当前四个舵机的物理角度
+ * @param  angles_array 结果数组指针，[0]=LF, [1]=RF, [2]=RR, [3]=LR
+ * @note   返回的是经过限幅处理后的真实物理角度
+ */
+void servo_get_current_angles(float *angles_array)
+{
+    if (angles_array == (void*)0) return;
+    
+    // 注意：此处索引需与头文件定义的顺序一致
+    // 你的头文件注释：[0]=RF, [1]=RR, [2]=LF, [3]=LR
+    // 但 current_angles 在本文件一直是按 PWM1, PWM2, PWM3, PWM4 存储
+    // 即 [0]=LF(PWM1), [1]=RF(PWM2), [2]=RR(PWM3), [3]=LR(PWM4)
+    // 若要严格对应头文件的说明，需要交换赋值顺序：
+    
+    angles_array[0] = current_angles[1]; // RF (PWM2)
+    angles_array[1] = current_angles[2]; // RR (PWM3)
+    angles_array[2] = current_angles[0]; // LF (PWM1)
+    angles_array[3] = current_angles[3]; // LR (PWM4)
+}

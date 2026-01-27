@@ -75,20 +75,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         float right_speed = (float)motor_value.receive_right_speed_data;
         float current_actual_speed = 0.5f * (right_speed - left_speed);
 
-        // 2.2 尝试计算目标高度分量
-        high_control_table(INIT_HEIGHT);
-        if (pwm_high != 10000)
-        {
-            // 只有查表成功时，才更新目标值
-            g_target_pwm_high = pwm_high;
 
-            // 2.3 计算目标速度调整分量
-            float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
-            g_target_pwm_speed_adj = (int16)duty_adjustment;
-            
-            // 2.4 (可选) 计算目标转向/姿态分量
-            // g_target_pwm_angle_adj = calculate_steering_pid();
-        }
+        // 2.3 计算目标速度调整分量
+        float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
+        g_target_pwm_speed_adj = (int16)duty_adjustment;
+
     }
 
     // ==========================================================

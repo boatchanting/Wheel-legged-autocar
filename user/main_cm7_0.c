@@ -209,6 +209,24 @@ int main(void)
     disp_y += 16;
 #endif
 
+    // 初始化无刷电机
+    small_driver_uart_init();		// 初始化驱动通讯功能
+    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');
+
+    // --- 屏幕打印无刷电机初始化完成 ---
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Brushless Motor Init OK");
+    disp_y += 16;
+#endif
+
+servo_executor_init();
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Servo Init OK");
+    disp_y += 16;
+#endif
+
 #if WIFI_USE    
     // 初始化 WiFi 模块
     wifi_init();                                                                // 初始化WIFI模块
@@ -246,17 +264,7 @@ int main(void)
     disp_y += 16;
 #endif
 
-    // 初始化无刷电机
-    small_driver_uart_init();		// 初始化驱动通讯功能
-    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
-    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
-    uart_write_byte(UART_INDEX, '\n');
 
-    // --- 屏幕打印无刷电机初始化完成 ---
-#if DEBUG_DISPLAY
-    ips200_show_string(0, disp_y, "Brushless Motor Init OK");
-    disp_y += 16;
-#endif
 
 // 此处编写用户代码 例如外设初始化代码等
 while(1)//检测imu660ra是否初始化成功
@@ -290,11 +298,7 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
     disp_y += 16;
 #endif
 
-servo_init_all();
-#if DEBUG_DISPLAY
-    ips200_show_string(0, disp_y, "Servo Init OK");
-    disp_y += 16;
-#endif
+
 
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印uart中断完成 ---
@@ -364,7 +368,7 @@ servo_init_all();
                 servo_get_current_angles(current_angles);
                 // 获取电机速度数据
                 float motor_speeds[2];
-                small_driver_get_speed();
+                //small_driver_get_speed();
                 motor_speeds[0] = motor_value.receive_left_speed_data;
                 motor_speeds[1] = motor_value.receive_right_speed_data;
 
@@ -416,7 +420,7 @@ servo_init_all();
                 //3. 填充陀螺仪数据 (通道 5-7)
                 
                 seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_x;
-                
+
                 seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
                 
                 // 4. 设置本次发送的通道数量 (一共8个数据)

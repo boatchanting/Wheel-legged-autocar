@@ -18,33 +18,50 @@ void servo_executor_init(void)
     high_control_table(INIT_HEIGHT);
     initial_pwm_high = (pwm_high == 10000) ? 0 : pwm_high;
 
-    PWM_CH1_LAST = SERVO_MOTOR_PWM1_90 + initial_pwm_high;
-    PWM_CH2_LAST = SERVO_MOTOR_PWM2_90 - initial_pwm_high;
-    PWM_CH3_LAST = SERVO_MOTOR_PWM3_90 - initial_pwm_high;
-    PWM_CH4_LAST = SERVO_MOTOR_PWM4_90 + initial_pwm_high;
+    // 执行 PWM 硬件初始化
+    pwm_init(SERVO_MOTOR_PWM1, SERVO_FREQ, SERVO_MOTOR_PWM1_90 + SERVO_MOTOR_PWM1_DIR * initial_pwm_high); 
+    pwm_init(SERVO_MOTOR_PWM2, SERVO_FREQ, SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * initial_pwm_high); 
+    pwm_init(SERVO_MOTOR_PWM3, SERVO_FREQ, SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * initial_pwm_high); 
+    pwm_init(SERVO_MOTOR_PWM4, SERVO_FREQ, SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * initial_pwm_high); 
+
+    PWM_CH1_LAST = SERVO_MOTOR_PWM1_90 + SERVO_MOTOR_PWM1_DIR * initial_pwm_high;
+    PWM_CH2_LAST = SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * initial_pwm_high;
+    PWM_CH3_LAST = SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * initial_pwm_high;
+    PWM_CH4_LAST = SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * initial_pwm_high;
 }
 
 /**
  * @brief 舵机执行器更新函数 (移植自您的 servo_control)
  */
+// 定义斜率限制 (加速和减速限制)
+int32 acc_limit = 10;  // <<-- 【需要您根据实际情况调整】
+int32 dec_limit = 10;  // <<-- 【需要您根据实际情况调整】
 void servo_executor_update(void)
 {
-    // 定义斜率限制 (加速和减速限制)
-    int32 acc_limit = 5;  // <<-- 【需要您根据实际情况调整】
-    int32 dec_limit = 5;  // <<-- 【需要您根据实际情况调整】
-    
+    // 2.2 尝试计算目标高度分量
+    high_control_table(INIT_HEIGHT);
+    if (pwm_high != 10000)
+    {
+        // 只有查表成功时，才更新目标值
+        g_target_pwm_high = pwm_high;
+
+        // 2.4 (可选) 计算目标转向/姿态分量
+        // g_target_pwm_angle_adj = calculate_steering_pid();
+    }
+
+
     // 1. 计算基础姿态的目标值 (只与高度有关)
-    int32 target_base_duty_lf = SERVO_MOTOR_PWM1_90 + g_target_pwm_high;
-    int32 target_base_duty_rf = SERVO_MOTOR_PWM2_90 - g_target_pwm_high;
-    int32 target_base_duty_rr = SERVO_MOTOR_PWM3_90 - g_target_pwm_high;
-    int32 target_base_duty_lr = SERVO_MOTOR_PWM4_90 + g_target_pwm_high;
+    int32 target_base_duty_lf = SERVO_MOTOR_PWM1_90 + SERVO_MOTOR_PWM1_DIR * g_target_pwm_high;
+    int32 target_base_duty_rf = SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * g_target_pwm_high;
+    int32 target_base_duty_rr = SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * g_target_pwm_high;
+    int32 target_base_duty_lr = SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * g_target_pwm_high;
 
     // 2. 叠加速度调整量，得到最终的目标值
     // 模型: 前倾加速 = 前腿伸展 + 后腿收缩
-    int32 target_final_duty_lf = target_base_duty_lf + g_target_pwm_speed_adj;
-    int32 target_final_duty_rf = target_base_duty_rf - g_target_pwm_speed_adj;
-    int32 target_final_duty_rr = target_base_duty_rr + g_target_pwm_speed_adj;
-    int32 target_final_duty_lr = target_base_duty_lr - g_target_pwm_speed_adj;
+    int32 target_final_duty_lf = target_base_duty_lf + SERVO_MOTOR_PWM1_DIR * g_target_pwm_speed_adj;
+    int32 target_final_duty_rf = target_base_duty_rf + SERVO_MOTOR_PWM2_DIR * g_target_pwm_speed_adj;
+    int32 target_final_duty_rr = target_base_duty_rr - SERVO_MOTOR_PWM3_DIR * g_target_pwm_speed_adj;
+    int32 target_final_duty_lr = target_base_duty_lr - SERVO_MOTOR_PWM4_DIR * g_target_pwm_speed_adj;
 
     // 3. 叠加转向/姿态调整量 (例如单边桥逻辑)
     // 这里我们简化，假设 g_target_pwm_angle_adj 用于转向
