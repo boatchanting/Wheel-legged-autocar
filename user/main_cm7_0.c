@@ -419,9 +419,9 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
                 
                 //3. 填充陀螺仪数据 (通道 5-7)
                 
-                seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_x;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
 
-                seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
                 
                 // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;

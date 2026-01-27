@@ -15,7 +15,7 @@ void servo_executor_init(void)
     // 从查表或宏定义中获取初始的90度中位占空比
     // 这里我们直接使用 servo_init_all 里的逻辑来保证一致性
     int16 initial_pwm_high;
-    high_control_table(INIT_HEIGHT);
+    high_control_table(servo_height);
     initial_pwm_high = (pwm_high == 10000) ? 0 : pwm_high;
 
     // 执行 PWM 硬件初始化
@@ -39,7 +39,7 @@ int32 dec_limit = 10;  // <<-- 【需要您根据实际情况调整】
 void servo_executor_update(void)
 {
     // 2.2 尝试计算目标高度分量
-    high_control_table(INIT_HEIGHT);
+    high_control_table(servo_height);
     if (pwm_high != 10000)
     {
         // 只有查表成功时，才更新目标值

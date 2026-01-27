@@ -67,7 +67,7 @@
 #define LR_LIMIT_DUTY_MAX   (7200) 
 
 // 舵机初始化高度
-#define INIT_HEIGHT   3.0f
+extern float servo_height;
 
 //五连杆参数
 #define L1  6.0f    //左小腿长

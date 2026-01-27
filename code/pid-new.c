@@ -13,7 +13,7 @@
 #define SERVO_SPEED_KP  0.0f   // [比例控制] 控制舵机速度响应的快慢
 #define SERVO_SPEED_KI  0.0f   // [积分控制] 
 #define SERVO_SPEED_KD  0.0f   // [微分控制] 
-#define SERVO_SPEED_MAX_I  0.0f  // [积分限幅] 限制积分项的最大值
+#define SERVO_SPEED_MAX_I  10000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
 
@@ -45,7 +45,7 @@
 // [关键补偿] 机械零点 (Mechanical Zero)
 // 理想情况下0度是平衡点。但因电池安装、传感器贴歪等原因，实际平衡点可能是 -1.5度。
 // 调试方法：如果车总是往“前”跑，说明它觉得自己后仰了，需要减小这个值；反之增大。
-#define ANG_MECH_ZERO  0.0f   
+#define ANG_MECH_ZERO  4.1f   
 
 // ----------------------------------------------------------------------------
 // 3. 角速度环参数 (最内环 - 周期约 1ms)
