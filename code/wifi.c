@@ -32,7 +32,8 @@
 * 日期              作者                备注
 * 2024-1-4       pudding            first version
 ********************************************************************************************************************/
-
+int flash_write = 0;      // flash写使能标志位
+int flash_write_flag = 0; // flash写标志位
 #include "wifi.h"
 
 // 只有X边界
@@ -233,9 +234,19 @@ void wifi_update_pid_params(void)
                 case 3: pid_gyro.max_output = seekfree_assistant_parameter[i]; break;
                 // 参数 4: 角速度环 max_integral (pid_gyro.max_integral)
                 case 4: pid_gyro.max_integral = seekfree_assistant_parameter[i]; break;
-                // 参数 5: 角速度环 compensation (pid_gyro.compensation)
-                case 5: pid_gyro.compensation = seekfree_assistant_parameter[i]; break;
-                // 参数 6: 期望速度 (target_speed_set)
+                // 参数 5: 是否存储数据到 Flash 
+                case 5: flash_write = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; 
+                        if (flash_write_flag == 0&& flash_write == 1)
+                        {
+                            param_save_to_flash();
+                            flash_write_flag = 1;
+                        }
+                        if (flash_write_flag == 1&& flash_write == 0)
+                        {
+                            flash_write_flag = 0;
+                        }
+                        break;
+                //参数 6: 期望速度 (target_speed_set)
                 case 6: target_speed_set = seekfree_assistant_parameter[i]; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
                 case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
