@@ -7,6 +7,18 @@
 // ============================================================================
 
 // ----------------------------------------------------------------------------
+// 4. 舵机速度环参数 (周期20ms)
+//    作用：控制舵机的转动速度，使其平滑地达到目标位置，避免突然动作
+// ----------------------------------------------------------------------------
+#define SERVO_SPEED_KP  0.0f   // [比例控制] 控制舵机速度响应的快慢
+#define SERVO_SPEED_KI  0.0f   // [积分控制] 
+#define SERVO_SPEED_KD  0.0f   // [微分控制] 
+#define SERVO_SPEED_MAX_I  10000.0f  // [积分限幅] 限制积分项的最大值
+#define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
+#define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
+
+
+// ----------------------------------------------------------------------------
 // 1. 速度环参数 (最外环 - 周期约 20ms~50ms)
 //    作用：通过改变车身倾角，让车“跑”起来去追重心，从而保持位置或达到目标速度。
 // ----------------------------------------------------------------------------
@@ -33,7 +45,7 @@
 // [关键补偿] 机械零点 (Mechanical Zero)
 // 理想情况下0度是平衡点。但因电池安装、传感器贴歪等原因，实际平衡点可能是 -1.5度。
 // 调试方法：如果车总是往“前”跑，说明它觉得自己后仰了，需要减小这个值；反之增大。
-#define ANG_MECH_ZERO  0.0f   
+#define ANG_MECH_ZERO  4.1f   
 
 // ----------------------------------------------------------------------------
 // 3. 角速度环参数 (最内环 - 周期约 1ms)
@@ -60,6 +72,7 @@
 //  全局变量初始化
 //  将宏定义的参数填入结构体
 // ============================================================================
+PID_Param_t pid_servo_speed = {SERVO_SPEED_KP, SERVO_SPEED_KI, SERVO_SPEED_KD, SERVO_SPEED_MAX_O, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP, 0,0,0,0,0};
 PID_Param_t pid_speed = {SPD_KP, SPD_KI, SPD_KD, SPD_MAX_O, SPD_MAX_I, SPD_COMP,      0,0,0,0,0};
 PID_Param_t pid_angle = {ANG_KP, ANG_KI, ANG_KD, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO, 0,0,0,0,0};
 PID_Param_t pid_gyro  = {GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE, 0,0,0,0,0};
@@ -98,6 +111,21 @@ float Float_Constrain(float val, float min, float max) {
  *        
  */
 void PID_Param_Init(void) {
+     // 初始化舵机速度环PID参数
+    pid_servo_speed.kp = SERVO_SPEED_KP;
+    pid_servo_speed.ki = SERVO_SPEED_KI;
+    pid_servo_speed.kd = SERVO_SPEED_KD;
+    pid_servo_speed.max_output = SERVO_SPEED_MAX_O;
+    pid_servo_speed.max_integral = SERVO_SPEED_MAX_I;
+    pid_servo_speed.compensation = SERVO_SPEED_COMP;
+    
+    // 重置舵机速度环状态变量
+    pid_servo_speed.error = 0;
+    pid_servo_speed.last_error = 0;
+    pid_servo_speed.prev_error = 0;
+    pid_servo_speed.error_integral = 0;
+    pid_servo_speed.output = 0;
+
     // 初始化速度环PID参数
     pid_speed.kp = SPD_KP;
     pid_speed.ki = SPD_KI;
@@ -151,6 +179,7 @@ void PID_Param_Init(void) {
  * @brief 将所有PID结构体成员变量设置为0
  */
 void PID_Data_Reset(void) {
+    memset(&pid_servo_speed, 0, sizeof(PID_Param_t));
     memset(&pid_speed, 0, sizeof(PID_Param_t));
     memset(&pid_angle, 0, sizeof(PID_Param_t));
     memset(&pid_gyro, 0, sizeof(PID_Param_t));
@@ -159,11 +188,68 @@ void PID_Data_Reset(void) {
 
 
 // ============================================================================
-//  控制函数实现 (核心算法)
+//  控制函数实现
 // ============================================================================
 
+//内部静态变量，用于舵机速度环的滤波
+static float servo_speed_last = 0.0f;
+static float servo_speed_prelast = 0.0f;
 /**
- * @brief 速度环控制 (外环)
+ * @brief 舵机速度闭环控制器 (移植并使用 PID_Param_t 结构)
+ * @param target_speed 目标速度
+ * @param actual_speed 实际速度 (来自编码器)
+ * @return 姿态调整量 (例如，需要前倾/后仰的角度)
+ */
+float Servo_Speed_Control(float target_speed, float actual_speed)
+{
+    // 1. 输入滤波
+    float speed_now = actual_speed * 0.6f + servo_speed_last * 0.3f + servo_speed_prelast * 0.1f;
+    servo_speed_prelast = servo_speed_last;
+    servo_speed_last = speed_now;
+
+    // 2. 动态速度规划 (移植思想)
+    float speed_qiwang_now = target_speed; // 默认使用传入的目标速度
+    // --- 【核心智能化决策区】 ---
+    // 在这里，您需要根据摄像头的赛道信息、陀螺仪姿态等来动态修改 speed_qiwang_now
+    // 例如：
+    // if (is_in_big_turn()) {
+    //     speed_qiwang_now = 100.0f; // 弯道减速
+    // } else if (is_in_long_straight()) {
+    //     speed_qiwang_now = 300.0f; // 直道加速
+    // }
+
+    // 3. 计算误差
+    pid_servo_speed.error = speed_qiwang_now - speed_now;
+
+    // 4. 自适应 Kp
+    float k, adaptive_kp;
+    float e = expf(-fabsf(pid_servo_speed.error / 10.0f)); // 调整分母灵敏度
+    k = ((1.0f - e) / (1.0f + e)) * 0.6f + 0.4f; // k 在 [0.4, 1.0] 之间
+    adaptive_kp = pid_servo_speed.kp * k;
+
+    // 5. 位置式 PID 计算
+    // 积分项 & 积分限幅
+    pid_servo_speed.error_integral += pid_servo_speed.error;
+    pid_servo_speed.error_integral = Float_Constrain(pid_servo_speed.error_integral, -pid_servo_speed.max_integral, pid_servo_speed.max_integral);
+
+    // PID输出计算
+    float output_raw = (adaptive_kp * pid_servo_speed.error) +
+                       (pid_servo_speed.ki * pid_servo_speed.error_integral) +
+                       (pid_servo_speed.kd * (pid_servo_speed.error - pid_servo_speed.last_error));
+
+    // 6. 输出限幅与更新
+    pid_servo_speed.output = Float_Constrain(output_raw, -pid_servo_speed.max_output, pid_servo_speed.max_output);
+    
+    // 更新历史误差 (prev_error 也更新，保持结构完整性)
+    pid_servo_speed.prev_error = pid_servo_speed.last_error;
+    pid_servo_speed.last_error = pid_servo_speed.error;
+
+    return pid_servo_speed.output;
+}
+
+
+/**
+ * @brief 速度环控制 (外环)无刷电机
  * @param target_speed 期望速度 (通常遥控给定)
  * @param actual_speed 实际速度 (编码器测得)
  * @return 期望的角度调整量 (单位：度)
@@ -236,7 +322,7 @@ float Angle_Loop_Control(float speed_loop_output, float actual_angle)
     pid_angle.output = Float_Constrain(pid_angle.output, -pid_angle.max_output, pid_angle.max_output);
     
     // 6. 更新历史误差链
-    pid_angle.prev_error = pid_angle.last_error;
+    //pid_angle.prev_error = pid_angle.last_error;//预留给增量式pid，现在注释掉,想用的时候可以加上
     pid_angle.last_error = pid_angle.error;
 
     // 返回负值通常是为了匹配电机控制方向，需根据实际情况调整
@@ -278,7 +364,7 @@ float Gyro_Loop_Control(float angle_loop_output, float actual_gyro)
     pid_gyro.output = Float_Constrain(pid_gyro.output, -pid_gyro.max_output, pid_gyro.max_output);
 
     // 5. 更新历史误差链
-    pid_gyro.prev_error = pid_gyro.last_error;
+    //pid_gyro.prev_error = pid_gyro.last_error;//预留给增量式pid，现在注释掉,想用的时候可以加上
     pid_gyro.last_error = pid_gyro.error;
 
     return pid_gyro.output;

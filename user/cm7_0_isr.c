@@ -65,24 +65,21 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     loop_counter++;
 
     // ==========================================================
-    // 步骤 2: 速度环 (20ms 跑一次)
+    // 步骤 2: 速度环(舵机控制) (20ms 跑一次)
     // ==========================================================
     if (loop_counter % 20 == 0)
     {
-        // 获取编码器速度
-        small_driver_get_speed(); 
-        float left_speed  = (float)motor_value.receive_left_speed_data;
+         // 2.1 获取编码器速度
+        //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
+        float left_speed = (float)motor_value.receive_left_speed_data;
         float right_speed = (float)motor_value.receive_right_speed_data;
-        
-        // 计算当前平均速度
-        // 注意：这里赋值给全局变量 now_speed，方便调试查看
-        now_speed = 0.5f * (right_speed - left_speed); 
-        
-        // --- [调用优化] ---
-        // 参数1: target_speed_set (全局变量，由遥控改变，而不是写死 0)
-        // 参数2: now_speed (当前速度)
-        // 返回: speed_loop_out (期望的倾斜角度)
-        speed_loop_out = Speed_Loop_Control(target_speed_set, now_speed);
+        float current_actual_speed = 0.5f * (right_speed - left_speed);
+
+
+        // 2.3 计算目标速度调整分量
+        float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
+        g_target_pwm_speed_adj = (int16)duty_adjustment;
+
     }
 
     // ==========================================================
@@ -133,25 +130,46 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 
     // ==========================================================
-    // 步骤 5: 安全保护 (倒地停止)
+    // 步骤 5: 安全保护 (倒地停止)(10ms)
     // ==========================================================
-    // 如果角度过大（例如超过 30 度），强制关闭电机
-    if (now_angle > 30.0f || now_angle < -30.0f) 
-    {
-        gyro_loop_out = 0; // PWM置0        
-        // 清除 PID 的所有参数，否则扶起来的瞬间电机还是全速旋转
-        //PID_Data_Reset(); 
+    if (loop_counter % 10 == 0){
+        // 如果角度过大（例如超过 30 度），逐渐关闭电机
+            if (now_angle > 30.0f || now_angle < -30.0f) 
+            {
+                // 逐渐减小电机输出，每次循环减小10%
+                // gyro_loop_out *= 0.9f;
+                
+                // 当输出足够小时，直接置0
+                // if (fabs(gyro_loop_out) < 100.0f) 
+                // {
+                    gyro_loop_out = 0;
+                // }
+                
+                // 清除 PID 的所有参数，否则扶起来的瞬间电机还是全速旋转
+                //PID_Data_Reset(); 
+            }
+            
+            if(g_motor_enable==0)
+        {
+            // 逐渐减小电机输出
+            // gyro_loop_out *= 0.9f;
+            
+            // // 当输出足够小时，直接置0
+            // if (fabs(gyro_loop_out) < 100.0f) 
+            // {
+                gyro_loop_out = 0;
+            // }
+            PID_Param_Init();
+        }
     }
-//     if(g_motor_enable==0)
-//    {
-//        gyro_loop_out = 0;
-//        PID_Data_Reset();
-//    }
+    
     // ==========================================================
-    // 步骤 6: 电机输出
+    // 步骤 6: 电机和舵机输出
     // ==========================================================
     final_motor_pwm = gyro_loop_out; // 更新全局变量，方便调试查看
     int pwm_val = (int)final_motor_pwm;
+
+    servo_executor_update();//舵机输出
 
     // 这里的限幅已经在 Gyro_Loop_Control 内部做了 (依靠 PWM_MAX_LIMIT 宏)
     // 直接输出即可
