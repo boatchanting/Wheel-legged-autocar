@@ -28,6 +28,14 @@ void servo_executor_init(void)
     PWM_CH2_LAST = SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * initial_pwm_high;
     PWM_CH3_LAST = SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * initial_pwm_high;
     PWM_CH4_LAST = SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * initial_pwm_high;
+
+    uint16_t initial_duties[4] = {
+        (uint16_t)PWM_CH1_LAST,
+        (uint16_t)PWM_CH2_LAST,
+        (uint16_t)PWM_CH3_LAST,
+        (uint16_t)PWM_CH4_LAST
+    };
+    update_all_servo_angles(initial_duties);//初始化完成后，更新舵机角度数组，舵机debug使用，优化时可以删除
 }
 
 /**
@@ -90,4 +98,12 @@ void servo_executor_update(void)
     pwm_set_duty(SERVO_MOTOR_PWM2, (uint32)Float_Constrain(current_duty_rf, RF_LIMIT_DUTY_MIN, RF_LIMIT_DUTY_MAX));
     pwm_set_duty(SERVO_MOTOR_PWM3, (uint32)Float_Constrain(current_duty_rr, RR_LIMIT_DUTY_MIN, RR_LIMIT_DUTY_MAX));
     pwm_set_duty(SERVO_MOTOR_PWM4, (uint32)Float_Constrain(current_duty_lr, LR_LIMIT_DUTY_MIN, LR_LIMIT_DUTY_MAX));
+
+    uint16_t current_duties[4] = {
+        (uint16_t)current_duty_lf,
+        (uint16_t)current_duty_rf,
+        (uint16_t)current_duty_rr,
+        (uint16_t)current_duty_lr
+    };
+    update_all_servo_angles(current_duties);//更新舵机角度数组，舵机debug使用，优化时可以删除
 }

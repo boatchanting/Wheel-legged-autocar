@@ -821,13 +821,13 @@ static float current_angles[4] = {90.0f, 90.0f, 90.0f, 90.0f};
 // }
 
 /**
- * @brief 内部辅助：将 PWM 增量值反向转换为逻辑角度 (仅用于初始化记录)
+ * @brief 内部辅助：将 PWM 增量值反向转换为逻辑角度 (仅用于初始化记录)弃用
  * @note  公式推导：Delta = (Angle - 90) * Slope  => Angle = 90 + Delta / Slope
  */
-static float _delta_duty_to_angle(int16 delta)
-{
-    return 90.0f + ((float)delta / 33.3333f);
-}
+// static float _delta_duty_to_angle(int16 delta)
+// {
+//     return 90.0f + ((float)delta / 33.3333f);
+// }
 
 
 
@@ -1392,6 +1392,85 @@ void servo_control_table(float p, float degree)
 //     }
 // }
 
+// 舵机90°基准duty值数组（按LF, RF, RR, LR顺序）
+static const uint16_t servo_90_duty[4] = {
+    SERVO_MOTOR_PWM1_90,  // 左前 LF
+    SERVO_MOTOR_PWM2_90,  // 右前 RF
+    SERVO_MOTOR_PWM3_90,  // 右后 RR
+    SERVO_MOTOR_PWM4_90   // 左后 LR
+};
+
+// 舵机方向极性数组（+1: duty↑→角度↑；-1: duty↑→角度↓）
+static const int8_t servo_direction[4] = {
+    SERVO_MOTOR_PWM1_DIR,  // 左前 LF: 向下伸腿为正
+    SERVO_MOTOR_PWM2_DIR,  // 右前 RF: 向下伸腿为负
+    SERVO_MOTOR_PWM3_DIR,  // 右后 RR: 向下伸腿为负
+    SERVO_MOTOR_PWM4_DIR   // 左后 LR: 向下伸腿为正
+};
+
+/**
+ * @brief 根据舵机当前duty值计算并更新对应角度
+ * 
+ * @param servo_index 舵机索引 (0:LF, 1:RF, 2:RR, 3:LR)
+ * @param current_duty 当前PWM duty值
+ * 
+ * @note 计算公式：
+ *       angle = 90.0 + (current_duty - 90°_基准duty) × (180°/6000) × DIR
+ *       其中6000 = 2.0ms × 300Hz × 10000 / 1000 (180°对应duty变化范围)
+ */
+void update_servo_angle(uint8_t servo_index, uint16_t current_duty)
+{
+    // 参数校验
+    if (servo_index >= 4) {
+        return;
+    }
+    
+    // 计算角度偏移量（考虑舵机安装方向）
+    float angle_offset = (current_duty - (float)servo_90_duty[servo_index]) 
+                         * DEGREE_PER_DUTY 
+                         * (float)servo_direction[servo_index];
+    
+    // 计算绝对角度并限幅至0~180°物理范围
+    float calculated_angle = 90.0f + angle_offset;
+    if (calculated_angle < 0.0f) {
+        calculated_angle = 0.0f;
+    } else if (calculated_angle > 180.0f) {
+        calculated_angle = 180.0f;
+    }
+    
+    // 更新全局角度数组
+    current_angles[servo_index] = calculated_angle;
+}
+
+/**
+ * @brief 批量更新所有舵机角度（可选辅助函数）
+ * 
+ * @param duty_values 指向4个舵机当前duty值的数组
+ */
+void update_all_servo_angles(const uint16_t* duty_values)
+{
+    if (duty_values == NULL) {
+        return;
+    }
+    
+    for (uint8_t i = 0; i < 4; i++) {
+        update_servo_angle(i, duty_values[i]);
+    }
+}
+
+/**
+ * @brief 获取指定舵机的当前角度（只读接口）
+ * 
+ * @param servo_index 舵机索引 (0~3)
+ * @return 当前角度值 (0.0~180.0)
+ */
+float get_servo_angle(uint8_t servo_index)
+{
+    if (servo_index >= 4) {
+        return 90.0f; // 默认返回中位
+    }
+    return current_angles[servo_index];
+}
 
 /**
  * @brief  初始化所有舵机到指定高度

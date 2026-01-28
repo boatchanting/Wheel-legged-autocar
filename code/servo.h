@@ -87,6 +87,11 @@ extern int16 pwm_high;
 extern float pwm_angle;
 
 // ===================== 4. 函数声明 =====================
+// 180°角度范围对应的duty变化量：2.0ms * 300Hz * 10000 / 1000 = 6000
+#define DUTY_RANGE_180      (2.0f * SERVO_FREQ * PWM_DUTY_MAX / 1000.0f)  // 6000.0f
+
+// 每单位duty变化对应的角度变化量（度/duty）
+#define DEGREE_PER_DUTY     (180.0f / DUTY_RANGE_180)  // 0.03f
 
 void servo_init_all(void);    // 初始化所有舵机到收腿状态
         
@@ -105,5 +110,65 @@ void servo_write_duty(pwm_channel_enum ch, int32 duty);//单独控制指定舵�
 
 void high_control_table(float p);//高度查表函数
 void servo_control_table(float p, float degree);//五连杆解算，舵机控制查表函数
+
+/**
+ * @brief 根据指定舵机当前的 PWM 占空比（duty）值，计算其对应的实际机械角度，
+ *        并更新全局静态数组 `current_angles` 中对应元素。
+ *
+ * 该函数依据舵机控制标准：0° ~ 180° 对应高电平脉宽 0.5 ms ~ 2.5 ms，
+ * 结合系统配置的 PWM 频率（SERVO_FREQ = 300 Hz）及各舵机独立的中位（90°）基准 duty 值
+ * 和安装方向极性（DIR），进行线性反向映射计算。
+ *
+ * 计算公式为：
+ *     angle = 90.0 + (current_duty - duty_90) × (180.0 / DUTY_RANGE_180) × direction
+ * 其中 DUTY_RANGE_180 = 2.0 ms × SERVO_FREQ × PWM_DUTY_MAX / 1000.0，
+ * 表示 180° 角度范围所对应的 duty 变化总量（理论值为 6000）。
+ *
+ * 计算结果将被限制在物理有效范围 [0.0, 180.0] 度内，防止因异常 duty 值导致角度越界。
+ *
+ * @param[in] servo_index 舵机索引号，取值范围为 0 ~ 3：
+ *                        - 0: 左前 (LF)
+ *                        - 1: 右前 (RF)
+ *                        - 2: 右后 (RR)
+ *                        - 3: 左后 (LR)
+ * @param[in] current_duty 当前施加于该舵机通道的 PWM 占空比数值（单位：duty count），
+ *                         应为非负整数，典型范围取决于具体限幅宏（如 2000~7200）。
+ *
+ * @note 此函数不执行硬件读取，需由调用者传入已知或刚设置的 duty 值。
+ * @note 函数内部包含参数有效性检查，若 servo_index 超出 [0,3] 范围，函数直接返回而不修改状态。
+ * @note 全局数组 `current_angles` 在函数内部被更新，供其他模块只读访问。
+ */
+void update_servo_angle(uint8_t servo_index, uint16_t current_duty);
+
+
+/**
+ * @brief 批量更新全部四个舵机的角度状态。
+ *
+ * 调用此函数可一次性根据传入的四个 duty 值数组，依次调用 `update_servo_angle`
+ * 更新 `current_angles[0..3]` 的全部元素。
+ *
+ * @param[in] duty_values 指向包含 4 个元素的 uint16_t 数组，
+ *                        顺序应为 {LF_duty, RF_duty, RR_duty, LR_duty}。
+ *
+ * @note 若传入指针为 NULL，函数将立即返回，不做任何操作。
+ * @note 数组元素顺序必须严格匹配舵机物理布局，否则角度映射将出错。
+ */
+void update_all_servo_angles(const uint16_t* duty_values);
+
+
+/**
+ * @brief 获取指定舵机当前存储的角度值（只读接口）。
+ *
+ * 返回由 `update_servo_angle` 或 `update_all_servo_angles` 最近一次计算并缓存的角度。
+ * 该值反映软件认为的舵机当前位置，可用于运动学解算、状态反馈等。
+ *
+ * @param[in] servo_index 舵机索引号（0 ~ 3，含义同上）。
+ *
+ * @return 当前角度值，单位为度（°），范围 [0.0, 180.0]。
+ *         若索引无效，则返回默认中位值 90.0f。
+ *
+ * @warning 此函数不触发实际角度测量，仅返回缓存值。确保在舵机动作后及时调用更新函数。
+ */
+float get_servo_angle(uint8_t servo_index);
 
 #endif
