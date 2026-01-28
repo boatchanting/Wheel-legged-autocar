@@ -420,14 +420,18 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
                 // 通道 2: Pitch (俯仰角)
                 seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
 
-                // 通道 3: imu660ra_gyro_x
-                seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_gyro_x;
-                // 通道 4: imu660ra_gyro_y
-                seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_gyro_y;
+                // 通道 3: imu660ra_gyro_z
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_gyro_z;
+                // // 通道 4: imu660ra_gyro_y
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_gyro_y;
                 // // 通道 3: 角速度环输出
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
                 // // 通道 4: 角度环输出
                 // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // 通道 3: 转向角速度环输出
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_turn_gyro.output;
+                // 通道 4: 转向角度环输出
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
                 //通道 5：舵机速度环输出
                 seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
                 // // 通道 3: Roll (横滚角)
