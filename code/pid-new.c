@@ -112,10 +112,11 @@ volatile float now_speed       = 0.0f;
 volatile float now_angle       = 0.0f;
 volatile float now_gyro        = 0.0f;
 
-float speed_loop_out    = 0.0f;
-float angle_loop_out    = 0.0f;
-float gyro_loop_out     = 0.0f; 
-
+float speed_loop_out    = 0.0f;// 速度环的输出 (目标角度)
+float angle_loop_out    = 0.0f;// 角度环的输出 (目标角速度)
+float gyro_loop_out     = 0.0f;// 角速度环的输出 (目标角加速度)
+volatile float turn_angle_loop_out = 0.0f;// 转向角度环输出（期望角速度）
+volatile float turn_gyro_loop_out = 0.0f;// 转向角速度环输出（PWM）
 volatile float final_motor_pwm = 0.0f;
 
 
@@ -241,7 +242,7 @@ void PID_Data_Reset(void) {
     memset(&pid_speed, 0, sizeof(PID_Param_t));
     memset(&pid_angle, 0, sizeof(PID_Param_t));
     memset(&pid_gyro, 0, sizeof(PID_Param_t));
-    memset(&pid_turn_ang, 0, sizeof(PID_Param_t));
+    memset(&pid_turn_angle, 0, sizeof(PID_Param_t));
     memset(&pid_turn_gyro, 0, sizeof(PID_Param_t));
     target_speed_set = 0;
 }
@@ -370,7 +371,7 @@ float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
 
     // 5. 动态输出限幅（根据赛道类型切换阈值）
     // float max_output = danbianqiao_flag ? TURN_GYR_MAX_O_BRIDGE : pid_turn_gyro.max_output;//单边桥情形下的示例
-    pid_turn_gyro.output = Float_Constrain(output_raw, -max_output, max_output);
+    pid_turn_gyro.output = Float_Constrain(output_raw, -pid_turn_gyro.max_output, pid_turn_gyro.max_output);
 
     // 6. 更新历史误差（为下一次微分计算准备）
     pid_turn_gyro.prev_error = pid_turn_gyro.last_error;

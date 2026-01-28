@@ -78,7 +78,7 @@ extern PID_Param_t pid_servo_speed;//速度环(舵机)pid参数
 extern PID_Param_t pid_angle;//角度环(pid参数)
 extern PID_Param_t pid_speed;//速度环(外环)pid参数，未调用
 extern PID_Param_t pid_gyro;//加速度环pid参数
-extern PID_Param_t pid_turn_ang;//转向角度环pid参数
+extern PID_Param_t pid_turn_angle;//转向角度环pid参数
 extern PID_Param_t pid_turn_gyro;//转向角速度环pid参数
 
 extern volatile float now_speed;        // 当前速度 (来自编码器)
@@ -89,8 +89,8 @@ extern float speed_loop_out;    // 速度环的输出 (目标角度)
 extern float angle_loop_out;    // 角度环的输出 (目标角速度)
 extern float gyro_loop_out;     // 角速度环的输出 (目标角加速度)
 // 转向环输出变量
-volatile float turn_angle_loop_out = 0.0f; // 转向角度环输出（期望角速度）
-volatile float turn_gyro_loop_out  = 0.0f; // 转向角速度环输出（PWM）
+extern volatile float turn_angle_loop_out; // 转向角度环输出（期望角速度）
+extern volatile float turn_gyro_loop_out; // 转向角速度环输出（PWM）
 
 extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 

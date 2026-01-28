@@ -48,14 +48,16 @@ volatile uint32_t control_tick = 0;        // 1ms计数器
 extern volatile float pid_out_speed;  // 速度环输出（目标角度）
 extern volatile float pid_out_angle;// 角度环输出（目标角速度）
 extern volatile float pid_out_pwm;// 角速度环输出（PWM值）      
-extern volatile float mechanical_zero_angle; // 机械零点（需校准）暂时未调用
 
 volatile struct {
     float angle;
     float gyro;
     float speed;
 } sensor_data = {0};
+# define OUR_PWM_MAX_LIMIT 5000.0f // 最大PWM值（根据实际情况调整）
 
+volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
+static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
 // **************************** PIT中断函数 ****************************
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
@@ -64,8 +66,10 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     pit_isr_flag_clear(PIT_CH0);
     loop_counter++;
 
+    imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用
+
     // ==========================================================
-    // 步骤 2: 速度环(舵机控制) (20ms 跑一次)
+    // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
     // ==========================================================
     if (loop_counter % 20 == 0)
     {
@@ -83,7 +87,17 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     }
 
     // ==========================================================
-    // 步骤 3: 角度环 (5ms 跑一次)
+    // 步骤 2: 转向角度环 (6ms) - 外环
+    // ==========================================================
+    if (loop_counter % 6 == 0)  // 6ms周期
+    {
+        // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度）
+        // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
+        turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
+    }
+
+    // ==========================================================
+    // 步骤 3: 平衡角度环 (5ms 跑一次)
     // ==========================================================
     if (loop_counter % 5 == 0)
     {
@@ -99,25 +113,41 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         angle_loop_out = Angle_Loop_Control(speed_loop_out, now_angle);
     }
 
+    
     // ==========================================================
-    // 步骤 4: 角速度环 (1ms 跑一次，最内环)
+    // 步骤 4: 转向角速度环 (2ms) - 内环
+    // ==========================================================
+    if (loop_counter % 2 == 0)  // 2ms周期
+    {
+        int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
+        // Z轴(yaw)处理：用于转向角速度环
+        float gyro_z_val = (float)raw_gyro_z;
+        if (fabsf(gyro_z_val) < 5.0f) gyro_z_val = 0.0f;
+        float gyro_z_deg = gyro_z_val / 16.384f;  // 转换为°/s
+        filtered_gyro_z = 0.8f * filtered_gyro_z + 0.2f * gyro_z_deg;//低通滤波
+        // 输入：转向角度环输出(期望角速度) + 实际角速度(filtered_gyro_z)
+        turn_gyro_loop_out = Turn_Gyro_Loop_Control(turn_angle_loop_out, filtered_gyro_z);
+    }
+
+    // ==========================================================
+    // 步骤 5: 平衡角速度环 (1ms 跑一次，最内环)
     // ==========================================================
     
-    // 4.1 获取原始陀螺仪数据
-    imu660ra_get_gyro(); 
-    int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号
+    // 5.1 获取原始陀螺仪数据
+    //陀螺仪数据获取已经在中断函数最前面的地方获取完成
+    int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
 
-    // 4.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
+    // 5.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
     float gyro_val = (float)raw_gyro_y;
     if (fabs(gyro_val) < 5.0f) gyro_val = 0;
 
-    // 4.3 单位转换 [重要]
+    // 5.3 单位转换 [重要]
     // 既然 pid.c 里限幅是 3000 (这显然是度/秒或者LSB，不可能是弧度)，
-    // 建议统一转换为 【度/秒 (deg/s)】。
+    // 建议统一转换为 【度/秒 (deg/s)】。这里可以改
     // 假设灵敏度是 16.384 LSB/(dps) (即±2000dps量程)
     float now_gyro_deg = gyro_val / 16.384f; 
 
-    // 4.4 简单的低通滤波 (平滑噪声)
+    // 5.4 简单的低通滤波 (平滑噪声)
     now_gyro = 0.8f * now_gyro + 0.2f * now_gyro_deg;
 
     // --- [调用优化] ---
@@ -130,7 +160,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 
     // ==========================================================
-    // 步骤 5: 安全保护 (倒地停止)(10ms)
+    // 步骤 6: 安全保护 (倒地停止)(10ms)
     // ==========================================================
     if (loop_counter % 10 == 0){
         // 如果角度过大（例如超过 30 度），逐渐关闭电机
@@ -142,7 +172,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 // 当输出足够小时，直接置0
                 // if (fabs(gyro_loop_out) < 100.0f) 
                 // {
-                    gyro_loop_out = 0;
+                    gyro_loop_out = 0;// 清零平衡PWM
+                    turn_gyro_loop_out = 0.0f; // 清零转向PWM
                 // }
                 
                 // 清除 PID 的所有参数，否则扶起来的瞬间电机还是全速旋转
@@ -157,26 +188,35 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             // // 当输出足够小时，直接置0
             // if (fabs(gyro_loop_out) < 100.0f) 
             // {
-                gyro_loop_out = 0;
+                gyro_loop_out = 0.0f;      // 清零平衡PWM
+                turn_gyro_loop_out = 0.0f; // 清零转向PWM
             // }
             PID_Param_Init();
         }
     }
     
     // ==========================================================
-    // 步骤 6: 电机和舵机输出
+    // 步骤 7: PWM矢量融合与电机输出
     // ==========================================================
-    final_motor_pwm = gyro_loop_out; // 更新全局变量，方便调试查看
-    int pwm_val = (int)final_motor_pwm;
 
+    // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
+    // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
+    int16_t pwm_left  = (int16_t)( gyro_loop_out + turn_gyro_loop_out);
+    int16_t pwm_right = (int16_t)(-gyro_loop_out + turn_gyro_loop_out);
+
+    // 统一限幅（防止叠加后超限）
+    pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
+    pwm_right = (int16_t)Float_Constrain(pwm_right, -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
+    // 直接输出即可
+    small_driver_set_duty(pwm_left, pwm_right);
+
+    // ==========================================================
+    // 步骤 8: 舵机执行器更新
+    // ==========================================================
     servo_executor_update();//舵机输出
 
-    // 这里的限幅已经在 Gyro_Loop_Control 内部做了 (依靠 PWM_MAX_LIMIT 宏)
-    // 直接输出即可
-    small_driver_set_duty(-pwm_val, pwm_val); 
-
     // ==========================================================
-    // 步骤 7: 系统心跳
+    // 步骤 9: 系统心跳
     // ==========================================================
     if(loop_counter % 50 == 0) 
     {
