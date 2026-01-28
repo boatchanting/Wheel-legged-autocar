@@ -1473,45 +1473,45 @@ float get_servo_angle(uint8_t servo_index)
 }
 
 /**
- * @brief  初始化所有舵机到指定高度
+ * @brief  初始化所有舵机到指定高度，弃用
  * @note   1. 调用 high_control_table 计算 servo_height 对应的 pwm_high
  *         2. 结合 SERVO_MOTOR_PWMx_90 中位值和方向符号 (++ / --)
  *         3. 输出 PWM 并初始化 current_angles 数组
  */
-void servo_init_all(void)
-{
-    static int16 duty_lf=0, duty_rf=0, duty_rr=0, duty_lr=0;
+// void servo_init_all(void)
+// {
+//     static int16 duty_lf=0, duty_rf=0, duty_rr=0, duty_lr=0;
 
-    // 1. 查表获取初始高度的 Duty 修正量
-    high_control_table(servo_height);
+//     // 1. 查表获取初始高度的 Duty 修正量
+//     high_control_table(servo_height);
     
-    // 错误处理：如果查表失败，默认修正量为0 (即保持90度中位)
-    if (pwm_high == 10000) pwm_high = 0;
+//     // 错误处理：如果查表失败，默认修正量为0 (即保持90度中位)
+//     if (pwm_high == 10000) pwm_high = 0;
 
-    // 2. 根据方向定义计算各舵机初始占空比
-    // LF (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
-    // RF (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
-    // RR (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
-    // LR (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
+//     // 2. 根据方向定义计算各舵机初始占空比
+//     // LF (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
+//     // RF (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
+//     // RR (--): 向下伸腿要减 Duty -> 90基准 - pwm_high
+//     // LR (++): 向下伸腿要加 Duty -> 90基准 + pwm_high
     
-    duty_lf = SERVO_MOTOR_PWM1_90 + SERVO_MOTOR_PWM1_DIR * pwm_high;
-    duty_rf = SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * pwm_high;
-    duty_rr = SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * pwm_high;
-    duty_lr = SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * pwm_high;
+//     duty_lf = SERVO_MOTOR_PWM1_90 + SERVO_MOTOR_PWM1_DIR * pwm_high;
+//     duty_rf = SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * pwm_high;
+//     duty_rr = SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * pwm_high;
+//     duty_lr = SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * pwm_high;
 
-    // 3. 执行 PWM 硬件初始化
-    pwm_init(SERVO_MOTOR_PWM1, SERVO_FREQ, (uint32)duty_lf); 
-    pwm_init(SERVO_MOTOR_PWM2, SERVO_FREQ, (uint32)duty_rf); 
-    pwm_init(SERVO_MOTOR_PWM3, SERVO_FREQ, (uint32)duty_rr); 
-    pwm_init(SERVO_MOTOR_PWM4, SERVO_FREQ, (uint32)duty_lr); 
+//     // 3. 执行 PWM 硬件初始化
+//     pwm_init(SERVO_MOTOR_PWM1, SERVO_FREQ, (uint32)duty_lf); 
+//     pwm_init(SERVO_MOTOR_PWM2, SERVO_FREQ, (uint32)duty_rf); 
+//     pwm_init(SERVO_MOTOR_PWM3, SERVO_FREQ, (uint32)duty_rr); 
+//     pwm_init(SERVO_MOTOR_PWM4, SERVO_FREQ, (uint32)duty_lr); 
 
-    // 4. 更新当前角度记录 (用于后续 PID 或读取)
-    // 注意：RF/RR 的 delta 是 -pwm_high，代入反算函数
-    current_angles[0] = _delta_duty_to_angle(SERVO_MOTOR_PWM1_DIR * pwm_high);  // LF
-    current_angles[1] = _delta_duty_to_angle(SERVO_MOTOR_PWM2_DIR * pwm_high); // RF
-    current_angles[2] = _delta_duty_to_angle(SERVO_MOTOR_PWM3_DIR * pwm_high); // RR
-    current_angles[3] = _delta_duty_to_angle(SERVO_MOTOR_PWM4_DIR * pwm_high);  // LR
-}
+//     // 4. 更新当前角度记录 (用于后续 PID 或读取)
+//     // 注意：RF/RR 的 delta 是 -pwm_high，代入反算函数
+//     current_angles[0] = _delta_duty_to_angle(SERVO_MOTOR_PWM1_DIR * pwm_high);  // LF
+//     current_angles[1] = _delta_duty_to_angle(SERVO_MOTOR_PWM2_DIR * pwm_high); // RF
+//     current_angles[2] = _delta_duty_to_angle(SERVO_MOTOR_PWM3_DIR * pwm_high); // RR
+//     current_angles[3] = _delta_duty_to_angle(SERVO_MOTOR_PWM4_DIR * pwm_high);  // LR
+// }
 
 /**
  * @brief  单独控制指定舵机至目标占空比 (带独立限幅)
