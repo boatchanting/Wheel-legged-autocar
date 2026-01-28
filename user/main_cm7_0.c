@@ -174,10 +174,6 @@ int main(void)
     // -------------------------------------------------------------------------
     target_speed_set = 0.0f;//目标速度，暂时未调用
 
-    flash_init();                                                               // 使用flash前先调用flash初始化 ，包含pid初始化
-    PID_Param_Init() ;                                                      //pid其余参数初始化
-    param_read_from_flash(); // 从 Flash 读取参数
-    // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
     
 
 
@@ -305,7 +301,14 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
     disp_y += 16;
 #endif
 
-
+flash_init();   // 使用flash前先调用flash初始化 ，包含pid初始化
+PID_Param_Init();//pid其余参数初始化
+param_read_from_flash(); // 从 Flash 读取参数
+// param_save_to_flash()   ;     // 将当前参数保存到 Flash 
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Flash Init OK");
+    disp_y += 16;
+#endif
 
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印uart中断完成 ---
