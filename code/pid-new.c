@@ -67,15 +67,43 @@
 // [传感器误差] 陀螺仪静态零偏 (需静止测量)
 #define GYRO_SENSOR_OFFSET  0.0f 
 
+// ----------------------------------------------------------------------------
+// 5. 转向角度环参数 (外环 - 周期6ms)
+//    作用：根据视觉/编码器计算的角度误差，生成期望转向角速度
+//    特性：无积分项（避免转向累积误差），支持赛道场景自适应增益
+// ----------------------------------------------------------------------------
+#define TURN_ANG_KP     0.0f   // [转向刚度] 值越大转向越灵敏，但易振荡
+#define TURN_ANG_KI     0.0f   // [一般不用] 无积分项，避免转向累积误差
+#define TURN_ANG_KD     0.0f   // [转向阻尼] 抑制转向超调，值过大会导致响应迟钝
+#define TURN_ANG_MAX_I  0.0f    // [一般不用] 无积分项，避免转向累积误差
+#define TURN_ANG_DEAD_ZONE 0.0f // [死区] 消除低速时的非线性迟滞
+#define TURN_ANG_MAX_O  8000.0f  // [角速度限幅] 限制最大期望转向角速度
+
+// ----------------------------------------------------------------------------
+// 6. 转向角速度环参数 (内环 - 周期2ms)
+//    作用：快速跟踪期望角速度，直接输出转向专用PWM
+// ----------------------------------------------------------------------------
+#define TURN_GYR_KP     0.0f    // [响应速度] 决定转向电机响应刚度
+#define TURN_GYR_KI     0.0f     // [一般不用] 无积分项，避免转向累积误差
+#define TURN_GYR_KD     0.0f     // [抖动抑制] 消除高频抖动
+#define TURN_GYR_MAX_I  0.0f     // [一般不用] 无积分项，避免转向累积误差
+#define TURN_GYR_DEAD_ZONE 0.0f  // [死区] 消除低速时的非线性迟滞
+#define TURN_GYR_MAX_O  5000.0f  // [PWM限幅] 普通赛道转向PWM上限
+#define TURN_GYR_MAX_O_BRIDGE 7000.0f // [单边桥限幅] 单边桥需更大转向力矩
+
 
 // ============================================================================
 //  全局变量初始化
 //  将宏定义的参数填入结构体
 // ============================================================================
-PID_Param_t pid_servo_speed = {SERVO_SPEED_KP, SERVO_SPEED_KI, SERVO_SPEED_KD, SERVO_SPEED_MAX_O, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP, 0,0,0,0,0};
-PID_Param_t pid_speed = {SPD_KP, SPD_KI, SPD_KD, SPD_MAX_O, SPD_MAX_I, SPD_COMP,      0,0,0,0,0};
-PID_Param_t pid_angle = {ANG_KP, ANG_KI, ANG_KD, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO, 0,0,0,0,0};
-PID_Param_t pid_gyro  = {GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE, 0,0,0,0,0};
+PID_Param_t pid_servo_speed = {SERVO_SPEED_KP, SERVO_SPEED_KI, SERVO_SPEED_KD, SERVO_SPEED_MAX_O, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP, 0,0,0,0,0};//舵机速度环初始化参数
+PID_Param_t pid_speed = {SPD_KP, SPD_KI, SPD_KD, SPD_MAX_O, SPD_MAX_I, SPD_COMP,      0,0,0,0,0};//速度环初始化参数
+PID_Param_t pid_angle = {ANG_KP, ANG_KI, ANG_KD, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO, 0,0,0,0,0};//角度环初始化参数
+PID_Param_t pid_gyro  = {GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE, 0,0,0,0,0};//角速度环初始化参数
+PID_Param_t pid_turn_ang = {TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE, 0,0,0,0,0};//转向角度环初始化参数
+PID_Param_t pid_turn_gyro = {TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, TURN_GYR_MAX_O, TURN_GYR_MAX_I, TURN_GYR_DEAD_ZONE, 0,0,0,0,0};//转向角速度环初始化参数
+
+
 
 float target_speed_set = 0.0f;
 
@@ -111,7 +139,7 @@ float Float_Constrain(float val, float min, float max) {
  *        
  */
 void PID_Param_Init(void) {
-     // 初始化舵机速度环PID参数
+    // 初始化舵机速度环PID参数
     pid_servo_speed.kp = SERVO_SPEED_KP;
     pid_servo_speed.ki = SERVO_SPEED_KI;
     pid_servo_speed.kd = SERVO_SPEED_KD;
@@ -170,7 +198,37 @@ void PID_Param_Init(void) {
     pid_gyro.prev_error = 0;
     pid_gyro.error_integral = 0;
     pid_gyro.output = 0;
+
+    //初始化转向角度环PID参数
+    pid_turn_ang.kp = TURN_ANG_KP;
+    pid_turn_ang.ki = TURN_ANG_KI;
+    pid_turn_ang.kd = TURN_ANG_KD;
+    pid_turn_ang.max_output = TURN_ANG_MAX_O;
+    pid_turn_ang.max_integral = TURN_ANG_MAX_I;
+    pid_turn_ang.compensation = TURN_ANG_DEAD_ZONE;
     
+    // 重置转向角度环状态变量
+    pid_turn_ang.error = 0;
+    pid_turn_ang.last_error = 0;
+    pid_turn_ang.prev_error = 0;
+    pid_turn_ang.error_integral = 0;
+    pid_turn_ang.output = 0;
+    
+    // 初始化转向角速度环PID参数
+    pid_turn_gyro.kp = TURN_GYR_KP;
+    pid_turn_gyro.ki = TURN_GYR_KI;
+    pid_turn_gyro.kd = TURN_GYR_KD;
+    pid_turn_gyro.max_output = TURN_GYR_MAX_O;
+    pid_turn_gyro.max_integral = TURN_GYR_MAX_I;
+    pid_turn_gyro.compensation = TURN_GYR_DEAD_ZONE;
+    
+    // 重置转向角速度环状态变量
+    pid_turn_gyro.error = 0;
+    pid_turn_gyro.last_error = 0;
+    pid_turn_gyro.prev_error = 0;
+    pid_turn_gyro.error_integral = 0;
+    pid_turn_gyro.output = 0;
+
     // 重置目标速度
     target_speed_set = 0.0f;
 }
@@ -183,6 +241,8 @@ void PID_Data_Reset(void) {
     memset(&pid_speed, 0, sizeof(PID_Param_t));
     memset(&pid_angle, 0, sizeof(PID_Param_t));
     memset(&pid_gyro, 0, sizeof(PID_Param_t));
+    memset(&pid_turn_ang, 0, sizeof(PID_Param_t));
+    memset(&pid_turn_gyro, 0, sizeof(PID_Param_t));
     target_speed_set = 0;
 }
 
@@ -190,6 +250,136 @@ void PID_Data_Reset(void) {
 // ============================================================================
 //  控制函数实现
 // ============================================================================
+
+/**
+ * @brief 转向角度环控制器（外环）- 完整PID参数实现
+ * @param angle_error 角度误差（期望转向角 - 实际转向角，单位：度）
+ *                    由视觉系统或编码器差分计算得出
+ * @return 期望角速度指令（单位：°/s），作为转向角速度环的输入
+ * 
+ * 【完整参数应用】
+ * - Kp：比例增益，将角度误差映射为角速度指令的基础刚度
+ * - Ki：积分增益（默认0），保留接口但禁用（避免转向累积误差）
+ * - Kd：微分增益，抑制转向过程中的超调和振荡
+ * - max_integral：积分限幅（因Ki=0，实际无效）
+ * - compensation：补偿值（角度环通常为0，保留结构统一性）
+ * - max_output：输出限幅，防止角度环输出过大导致内环饱和
+ * 
+ * 【场景自适应】
+ * 根据赛道元素动态调整控制增益（单边桥降低灵敏度防跌落）
+ */
+float Turn_Angle_Loop_Control(float angle_error)
+{
+    // 1. 误差赋值（注意：angle_error 已是 (期望-实际) 的差值）
+    pid_turn_angle.error = angle_error;
+
+    // 2. 积分项计算（保留完整结构，但因Ki=0实际无效）
+    if (pid_turn_angle.ki != 0.0f) {
+        pid_turn_angle.error_integral += pid_turn_angle.error;
+        // 积分限幅保护
+        pid_turn_angle.error_integral = Float_Constrain(
+            pid_turn_angle.error_integral, 
+            -pid_turn_angle.max_integral, 
+            pid_turn_angle.max_integral
+        );
+    } else {
+        pid_turn_angle.error_integral = 0.0f; // 显式清零确保无累积
+    }
+
+    // 3. 场景自适应增益调度（单边桥特殊处理）
+    float kp_adj = pid_turn_angle.kp;
+    float kd_adj = pid_turn_angle.kd;
+    
+    // if (danbianqiao_flag && danbianqiao_flag != 99) {
+    //     kp_adj *= 0.7f;  // 单边桥降低Kp 30% 防跌落
+    //     kd_adj *= 0.7f;  // 同比例缩放保持阻尼比
+    // }
+    // 可扩展：三级跳台阶，草地等场景的增益调整
+
+    // 4. 完整PID计算（实际为PD，因Ki=0）
+    float output_raw = (kp_adj * pid_turn_angle.error) + 
+                       (pid_turn_angle.ki * pid_turn_angle.error_integral) + 
+                       (kd_adj * (pid_turn_angle.error - pid_turn_angle.last_error));
+
+    // 5. 输出限幅（防止角度环输出过大导致内环饱和）
+    pid_turn_angle.output = Float_Constrain(
+        output_raw, 
+        -pid_turn_angle.max_output, 
+        pid_turn_angle.max_output
+    );
+
+    // 6. 更新历史误差（为下一次微分计算准备）
+    pid_turn_angle.prev_error = pid_turn_angle.last_error;
+    pid_turn_angle.last_error = pid_turn_angle.error;
+
+    return pid_turn_angle.output;  // 作为转向角速度环的目标值
+}
+
+// ============================================================================
+//  转向角速度环控制函数 (内环 - 2ms周期) - 完整PID+死区补偿
+// ============================================================================
+/**
+ * @brief 转向角速度环控制器（内环）- 完整PID+死区补偿实现
+ * @param target_gyro 期望角速度（来自转向角度环，单位：°/s）
+ * @param actual_gyro 实际角速度（来自IMU陀螺仪Z轴，单位：°/s）
+ * @return 转向专用PWM值（直接叠加到电机驱动）
+ * 
+ * 【完整参数应用】
+ * - Kp：比例增益，决定角速度跟踪的响应速度
+ * - Ki：积分增益（默认0），高频环路禁用积分
+ * - Kd：微分增益，抑制高频抖动和电机噪声
+ * - max_integral：积分限幅（因Ki=0，实际无效）
+ * - compensation：死区补偿电压（关键！克服转向电机静摩擦）
+ * - max_output：动态输出限幅（普通赛道/单边桥双阈值）
+ * 
+ * 【传感器说明】
+ * - 陀螺仪Z轴（gyro_z）对应偏航角速度（yaw rate），即车体旋转速度
+ * - 符号约定：需根据实际安装方向调整（示例中使用负号匹配物理方向）
+ */
+float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
+{
+    // 1. 计算角速度误差
+    pid_turn_gyro.error = target_gyro - actual_gyro;
+
+    // 2. 积分项计算（保留完整结构，但因Ki=0实际无效）
+    if (pid_turn_gyro.ki != 0.0f) {
+        pid_turn_gyro.error_integral += pid_turn_gyro.error;
+        // 积分限幅保护
+        pid_turn_gyro.error_integral = Float_Constrain(
+            pid_turn_gyro.error_integral, 
+            -pid_turn_gyro.max_integral, 
+            pid_turn_gyro.max_integral
+        );
+    } else {
+        pid_turn_gyro.error_integral = 0.0f; // 显式清零确保无累积
+    }
+
+    // 3. 完整PD计算（实际为PD，因Ki=0）
+    float output_raw = (pid_turn_gyro.kp * pid_turn_gyro.error) + 
+                       (pid_turn_gyro.ki * pid_turn_gyro.error_integral) + 
+                       (pid_turn_gyro.kd * (pid_turn_gyro.error - pid_turn_gyro.last_error));
+
+    // 4. 死区补偿（关键！克服转向电机静摩擦）
+    // 原理：当输出意图非零时，叠加最小启动电压使电机立即响应
+    if (output_raw > 0) {
+        output_raw += pid_turn_gyro.compensation; // 正转加死区
+    } else if (output_raw < 0) {
+        output_raw -= pid_turn_gyro.compensation; // 反转减死区
+    }
+    // 注意：output_raw=0时不做补偿，避免零点漂移
+
+    // 5. 动态输出限幅（根据赛道类型切换阈值）
+    // float max_output = danbianqiao_flag ? TURN_GYR_MAX_O_BRIDGE : pid_turn_gyro.max_output;//单边桥情形下的示例
+    pid_turn_gyro.output = Float_Constrain(output_raw, -max_output, max_output);
+
+    // 6. 更新历史误差（为下一次微分计算准备）
+    pid_turn_gyro.prev_error = pid_turn_gyro.last_error;
+    pid_turn_gyro.last_error = pid_turn_gyro.error;
+
+    return pid_turn_gyro.output;
+}
+
+
 
 //内部静态变量，用于舵机速度环的滤波
 static float servo_speed_last = 0.0f;

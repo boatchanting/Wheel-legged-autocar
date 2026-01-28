@@ -75,9 +75,11 @@ typedef struct {
 // 2. 全局声明
 // ============================================================================
 extern PID_Param_t pid_servo_speed;//速度环(舵机)pid参数
-extern PID_Param_t pid_angle;
-extern PID_Param_t pid_speed;
+extern PID_Param_t pid_angle;//角度环(pid参数)
+extern PID_Param_t pid_speed;//速度环(外环)pid参数，未调用
 extern PID_Param_t pid_gyro;//加速度环pid参数
+extern PID_Param_t pid_turn_ang;//转向角度环pid参数
+extern PID_Param_t pid_turn_gyro;//转向角速度环pid参数
 
 extern volatile float now_speed;        // 当前速度 (来自编码器)
 extern volatile float now_angle;        // 当前角度 (来自IMU)
@@ -86,15 +88,20 @@ extern volatile float now_gyro;         // 当前角速度 (来自IMU)
 extern float speed_loop_out;    // 速度环的输出 (目标角度)
 extern float angle_loop_out;    // 角度环的输出 (目标角速度)
 extern float gyro_loop_out;     // 角速度环的输出 (目标角加速度)
+// 转向环输出变量
+volatile float turn_angle_loop_out = 0.0f; // 转向角度环输出（期望角速度）
+volatile float turn_gyro_loop_out  = 0.0f; // 转向角速度环输出（PWM）
 
 extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern float target_speed_set;
 
-void PID_Param_Init(void);//pid参数初始化
-void PID_Data_Reset(void);//pid参数全清空，用于倒地保护
-float Float_Constrain(float val, float min, float max);
+void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
+void PID_Data_Reset(void);//pid参数全清空，暂时未使用
+float Float_Constrain(float val, float min, float max);//限幅函数
 
+float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
+float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
 float Servo_Speed_Control(float target_speed, float actual_speed);//速度环(舵机)
 float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)(电机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
