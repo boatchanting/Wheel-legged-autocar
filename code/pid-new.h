@@ -12,7 +12,7 @@
 //    作用：控制舵机的转动速度，使其平滑地达到目标位置，避免突然动作
 // ----------------------------------------------------------------------------
 #define SERVO_SPEED_KP  0.0f   // [比例控制] 控制舵机速度响应的快慢
-#define SERVO_SPEED_KI  -0.04f   // [积分控制] 
+#define SERVO_SPEED_KI  0.0f   // [积分控制] 
 #define SERVO_SPEED_KD  0.0f   // [微分控制] 
 #define SERVO_SPEED_MAX_I  30000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快

@@ -158,7 +158,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 1; // 电机使能安全开关
+int g_motor_enable = 0; // 电机使能安全开关
 // =============================================
 // PID控制中间变量结束
 // ===============================================

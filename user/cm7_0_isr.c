@@ -177,7 +177,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 // }
                 
                 // 清除 PID 的所有参数，否则扶起来的瞬间电机还是全速旋转
-                //PID_Data_Reset(); 
+                PID_Param_Init();
             }
             
             if(g_motor_enable==0)
@@ -213,7 +213,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 8: 舵机执行器更新
     // ==========================================================
-    if(g_motor_enable!=0 && (now_angle > 30.0f || now_angle < -30.0f)){
+    if(g_motor_enable!=0 && (now_angle < 30.0f && now_angle > -30.0f)){
         servo_executor_update();//舵机输出
     }
 
