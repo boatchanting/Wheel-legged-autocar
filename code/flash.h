@@ -1,5 +1,5 @@
-#ifndef _PARAM_SAVE_H_
-#define _PARAM_SAVE_H_
+#ifndef _FLASH_H_
+#define _FLASH_H_
 
 #include "zf_common_headfile.h" // 包含逐飞库头文件以使用 float 定义
 
