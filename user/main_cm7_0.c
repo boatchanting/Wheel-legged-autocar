@@ -316,7 +316,7 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
 
 // *****************关键新增步骤*****************
     
-    // 1. 初始化定时器中断，周期 5ms (必须与ekf.c中的dt=0.005对应)
+    // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
     pit_ms_init(PIT_NUM, 1);
     
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
@@ -419,10 +419,15 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
                 
                 // 通道 2: Pitch (俯仰角)
                 seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                // 通道 3: 角速度环输出
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                // 通道 4: 角度环输出
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+
+                // 通道 3: imu660ra_gyro_x
+                seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_gyro_x;
+                // 通道 4: imu660ra_gyro_y
+                seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_gyro_y;
+                // // 通道 3: 角速度环输出
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // // 通道 4: 角度环输出
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
                 //通道 5：舵机速度环输出
                 seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
                 // // 通道 3: Roll (横滚角)
