@@ -109,5 +109,7 @@
 #include "servo.h"//舵机控制
 #include "pid-new.h"//pid 控制器
 #include "flash.h"  // flash 参数存储
+#include "beep.h"   // 蜂鸣器
+#include "sbus.h"  // sbus 协议
 //=====================================================组件应用层=====================================================
 #endif

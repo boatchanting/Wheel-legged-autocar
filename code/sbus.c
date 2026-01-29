@@ -1,0 +1,172 @@
+#include "zf_common_headfile.h"
+
+// ==========================================
+// 1. 宏定义 (参数配置区)
+// ==========================================
+
+// --- 摇杆中值 ---
+#define RC_CH1_MID      1088    // 转向中值
+#define RC_CH2_MID      976     // 油门中值
+#define RC_DEADZONE     50      // 摇杆死区 (防止抖动漂移)
+
+// --- 开关阈值 ---
+#define RC_SW_THRESHOLD 1000    // 二态开关判定阈值
+
+// CH4 三态开关判定区间 (低=192, 中=992, 高=1792)
+#define RC_SW_MID_LOW   600     // <600 判为 LOW
+#define RC_SW_MID_HIGH  1400    // >1400 判为 HIGH
+
+// --- 增量系数 (灵敏度) ---
+// 说明: 每次调用 Process 函数增加的数值 = (摇杆偏差值) * 系数
+// 假设 Process 每 10ms 调用一次
+#define K_STEER_INC     0.00225f  // 转向灵敏度
+#define K_SPEED_INC     0.005f  // 速度灵敏度
+
+// ==========================================
+// 2. 全局变量定义
+// ==========================================
+robot_ctrl_t robot_ctrl;
+
+// ==========================================
+// 3. 函数实现
+// ==========================================
+uint8 Remote_control_connected =0;
+// 初始化
+void Remote_Control_Init(void)
+{
+    robot_ctrl.target_angle = 0.0f;
+    robot_ctrl.target_speed = 0.0f;
+    robot_ctrl.mark_trigger = 0;
+    robot_ctrl.motor_enable = 0;  //0=使能,1=急停     
+    robot_ctrl.mode = MODE_LOW;
+}
+
+// 核心处理逻辑
+void Remote_Control_Process(void)
+{
+    // --------------------------------------------------------
+    // Step 1: 读取 S.BUS 原始数据
+    // --------------------------------------------------------
+    // 依赖 zf_device_uart_receiver.h 中的 uart_receiver 全局变量
+            if(1 == uart_receiver.state&&0 == Remote_control_connected)                             // 遥控器失控状态判断 == uart_receiver.state
+            {
+                gpio_toggle_level(BUZZER_PIN); // 翻转电平
+                gpio_toggle_level(BUZZER_PIN); // 翻转电平
+                printf("Remote control is connected. ");
+                Remote_control_connected=1;
+                // for(int i = 0; i < 6; i++)
+                // {
+                //     printf("%d ", uart_receiver.channel[i]);         // 串口输出6个通道数据
+                // }
+                // printf("\r\n");
+            }
+            else
+            {
+                return; // 失控则不进行后续处理
+            }
+    int16 ch1_steer = uart_receiver.channel[0];
+    int16 ch2_thro  = uart_receiver.channel[1];
+    int16 ch3_mark  = uart_receiver.channel[2];
+    int16 ch4_mode  = uart_receiver.channel[3]; // 预留通道
+    int16 ch5_brake = uart_receiver.channel[4];
+    int16 ch6_off   = uart_receiver.channel[5];
+
+    // --------------------------------------------------------
+    // Step 2: 处理最高优先级逻辑 (CH6 总开关)
+    // --------------------------------------------------------
+    // 1792 (>1000) 为关电机状态
+    if (ch6_off > RC_SW_THRESHOLD) 
+    {
+        robot_ctrl.motor_enable = 1;
+        printf("Motor disabled by CH6 switch\n");
+        // 关机状态下，不进行增量计算，防止后台积分
+        return; 
+    }
+    else 
+    {
+        robot_ctrl.motor_enable = 0;
+    }
+
+    // --------------------------------------------------------
+    // Step 3: 处理模式选择 (CH4 三态开关)
+    // --------------------------------------------------------
+    if (ch4_mode < RC_SW_MID_LOW) 
+    {
+        robot_ctrl.mode = MODE_LOW;
+    }
+    else if (ch4_mode > RC_SW_MID_HIGH)
+    {
+        robot_ctrl.mode = MODE_HIGH;
+    }
+    else 
+    {
+        robot_ctrl.mode = MODE_MIDDLE;
+    }
+
+
+
+    // --------------------------------------------------------
+    // Step 4: 处理转向 (CH1)
+    // --------------------------------------------------------
+    int16 diff_steer = ch1_steer - RC_CH1_MID;
+    
+    if (abs(diff_steer) > RC_DEADZONE)
+    {
+        // 积分计算
+        robot_ctrl.target_angle += (float)diff_steer * K_STEER_INC;
+        // 限幅到 [0, 360) 度
+        while (robot_ctrl.target_angle >= 360.0f) 
+        {
+            robot_ctrl.target_angle -= 360.0f;
+        }
+        while (robot_ctrl.target_angle < 0.0f) 
+        {
+            robot_ctrl.target_angle += 360.0f;
+        }
+        printf("Target Angle: %.2f\n", robot_ctrl.target_angle);
+    }
+
+
+
+    // --------------------------------------------------------
+    // Step 5: 处理刹车/油门/急停 (CH5 & CH2)
+    // --------------------------------------------------------
+    if (ch5_brake > RC_SW_THRESHOLD)
+    {
+        // 刹车按下：速度期望归零，不再增量速度
+        robot_ctrl.target_speed = 0.0f; 
+        printf("Brake activated, target speed set to 0\n");
+    }
+    else
+    {
+        // 刹车松开：允许处理油门增量
+        int16 diff_speed = ch2_thro - RC_CH2_MID;
+        
+        if (abs(diff_speed) > RC_DEADZONE) 
+        {
+            // 根据 CH4 模式调整灵敏度 (示例逻辑)
+            float current_k_spd = K_SPEED_INC;
+            if(robot_ctrl.mode == MODE_HIGH) current_k_spd *= 1.5f; // 高速模式更灵敏
+            // 积分计算
+            if(robot_ctrl.mode == MODE_LOW) current_k_spd *= 0.5f; // 低速模式
+            robot_ctrl.target_speed += (float)diff_speed * current_k_spd;
+            printf("Target Speed: %.2f\n", robot_ctrl.target_speed);
+        }
+    }
+
+
+
+    // --------------------------------------------------------
+    // Step 6: 处理打点 (CH3 边沿检测)
+    // --------------------------------------------------------
+    static uint8 last_ch3_state = 0; 
+    uint8 curr_ch3_state = (ch3_mark > RC_SW_THRESHOLD) ? 1 : 0;
+
+    // 检测上升沿 (从松开变为按下)
+    if (curr_ch3_state == 1 && last_ch3_state == 0) 
+    {
+        robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
+        printf("Mark trigger activated\n");
+    }
+    last_ch3_state = curr_ch3_state; 
+}
