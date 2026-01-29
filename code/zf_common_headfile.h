@@ -106,8 +106,9 @@
 #include "wifi.h"  // 添加 wifi模块
 #include "ekf.h"//扩展卡尔曼滤波器
 #include "matrix.h"//矩阵运算相关库
-#include "servo.h"//舵机控制
-#include "servo_executor.h"  // 舵机速度环平滑执行器
+#include "servo/servo.h"//舵机控制
+#include "servo/servo_executor.h"  // 舵机速度环平滑执行器
+#include "servo/servo_jump.h"//舵机跳跃控制
 #include "pid-new.h"//pid 控制器
 #include "flash.h"  // flash 参数存储
 #include "beep.h"   // 蜂鸣器
