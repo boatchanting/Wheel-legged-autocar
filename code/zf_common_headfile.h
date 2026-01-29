@@ -110,5 +110,7 @@
 #include "servo_executor.h"  // 舵机速度环平滑执行器
 #include "pid-new.h"//pid 控制器
 #include "flash.h"  // flash 参数存储
+#include "beep.h"   // 蜂鸣器
+#include "sbus.h"  // sbus 协议
 //=====================================================组件应用层=====================================================
 #endif
