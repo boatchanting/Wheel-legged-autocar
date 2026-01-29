@@ -147,13 +147,98 @@ void PID_Param_Init(void) {
  * @brief 将所有PID结构体成员变量设置为0
  */
 void PID_Data_Reset(void) {
-    memset(&pid_servo_speed, 0, sizeof(PID_Param_t));
-    memset(&pid_speed, 0, sizeof(PID_Param_t));
-    memset(&pid_angle, 0, sizeof(PID_Param_t));
-    memset(&pid_gyro, 0, sizeof(PID_Param_t));
-    memset(&pid_turn_angle, 0, sizeof(PID_Param_t));
-    memset(&pid_turn_gyro, 0, sizeof(PID_Param_t));
-    target_speed_set = 0;
+    // 初始化舵机速度环PID参数
+    pid_servo_speed.kp = 0;
+    pid_servo_speed.ki = 0;
+    pid_servo_speed.kd = 0;
+    pid_servo_speed.max_output = SERVO_SPEED_MAX_O;
+    pid_servo_speed.max_integral = SERVO_SPEED_MAX_I;
+    pid_servo_speed.compensation = SERVO_SPEED_COMP;
+    
+    // 重置舵机速度环状态变量
+    pid_servo_speed.error = 0;
+    pid_servo_speed.last_error = 0;
+    pid_servo_speed.prev_error = 0;
+    pid_servo_speed.error_integral = 0;
+    pid_servo_speed.output = 0;
+
+    // 初始化速度环PID参数
+    pid_speed.kp = 0;
+    pid_speed.ki = 0;
+    pid_speed.kd = 0;
+    pid_speed.max_output = SPD_MAX_O;
+    pid_speed.max_integral = SPD_MAX_I;
+    pid_speed.compensation = SPD_COMP;
+    
+    // 重置速度环状态变量
+    pid_speed.error = 0;
+    pid_speed.last_error = 0;
+    pid_speed.prev_error = 0;
+    pid_speed.error_integral = 0;
+    pid_speed.output = 0;
+
+    // 初始化角度环PID参数
+    pid_angle.kp = 0;
+    pid_angle.ki = 0;
+    pid_angle.kd = 0;
+    pid_angle.max_output = ANG_MAX_O;
+    pid_angle.max_integral = ANG_MAX_I;
+    pid_angle.compensation = ANG_MECH_ZERO;
+    
+    // 重置角度环状态变量
+    pid_angle.error = 0;
+    pid_angle.last_error = 0;
+    pid_angle.prev_error = 0;
+    pid_angle.error_integral = 0;
+    pid_angle.output = 0;
+    
+    // 初始化角速度环PID参数
+    pid_gyro.kp = 0;
+    pid_gyro.ki = 0;
+    pid_gyro.kd = 0;
+    pid_gyro.max_output = GYR_MAX_O;
+    pid_gyro.max_integral = GYR_MAX_I;
+    pid_gyro.compensation = GYR_DEAD_ZONE;
+    
+    // 重置角速度环状态变量
+    pid_gyro.error = 0;
+    pid_gyro.last_error = 0;
+    pid_gyro.prev_error = 0;
+    pid_gyro.error_integral = 0;
+    pid_gyro.output = 0;
+
+    //初始化转向角度环PID参数
+    pid_turn_angle.kp = 0;
+    pid_turn_angle.ki = 0;
+    pid_turn_angle.kd = 0;
+    pid_turn_angle.max_output = TURN_ANG_MAX_O;
+    pid_turn_angle.max_integral = TURN_ANG_MAX_I;
+    pid_turn_angle.compensation = TURN_ANG_DEAD_ZONE;
+    
+    // 重置转向角度环状态变量
+    pid_turn_angle.error = 0;
+    pid_turn_angle.last_error = 0;
+    pid_turn_angle.prev_error = 0;
+    pid_turn_angle.error_integral = 0;
+    pid_turn_angle.output = 0;
+
+    // 初始化转向角速度环PID参数
+    pid_turn_gyro.kp = 0;
+    pid_turn_gyro.ki = 0;
+    pid_turn_gyro.kd = 0;
+    pid_turn_gyro.max_output = TURN_GYR_MAX_O;
+    pid_turn_gyro.max_integral = TURN_GYR_MAX_I;
+    pid_turn_gyro.compensation = TURN_GYR_DEAD_ZONE;
+    
+    // 重置转向角速度环状态变量
+    pid_turn_gyro.error = 0;
+    pid_turn_gyro.last_error = 0;
+    pid_turn_gyro.prev_error = 0;
+    pid_turn_gyro.error_integral = 0;
+    pid_turn_gyro.output = 0;
+
+    // 重置目标速度
+    target_speed_set = 0.0f;
 }
 
 

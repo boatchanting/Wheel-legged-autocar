@@ -206,8 +206,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                     turn_gyro_loop_out = 0.0f; // 清零转向PWM
                 // }
                 
-                // 清除 PID 的所有参数，否则扶起来的瞬间电机还是全速旋转
-                PID_Param_Init();
+                // 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
+                PID_Data_Reset();
             }
             
             if(g_motor_enable==0)
@@ -221,7 +221,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 gyro_loop_out = 0.0f;      // 清零平衡PWM
                 turn_gyro_loop_out = 0.0f; // 清零转向PWM
             // }
-            PID_Param_Init();
+            PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
         }
     }
     
