@@ -431,16 +431,16 @@ param_read_from_flash(); // 从 Flash 读取参数
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
                 // // 通道 4: 角度环输出
                 // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                // 通道 3: 转向角速度环输出
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_turn_gyro.output;
-                // 通道 4: 转向角度环输出
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
+                // // 通道 3: 转向角速度环输出
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_turn_gyro.output;
+                // // 通道 4: 转向角度环输出
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
                 //通道 5：舵机速度环输出
                 seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
-                // // 通道 3: Roll (横滚角)
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
-                // // 通道 4: Yaw (偏航角)
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
+                // 通道 3: Roll (横滚角)
+                seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
+                // 通道 4: Yaw (偏航角)
+                seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
                 
                 //3. 填充陀螺仪数据 (通道 5-7)
                 
