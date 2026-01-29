@@ -137,7 +137,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
         // --- [调用优化] ---
         // 变化点：删除了第3个参数 "mechanical_zero"，因为它已经包含在 pid_angle.compensation 中了
-        // 参数1: speed_loop_out (速度环算出来的目标角度)
+        // 参数1: speed_loop_out (速度环算出来的目标角度)。这个就给0即可，舵机速度环的输出不要给到这里
         // 参数2: now_angle (当前角度)
         // 返回: angle_loop_out (期望的角速度)
         angle_loop_out = Angle_Loop_Control(speed_loop_out, now_angle);
