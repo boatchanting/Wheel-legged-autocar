@@ -368,6 +368,7 @@ PID_Param_Init();//pid其余参数初始化
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
 
+vision_detected_marker = 0;//雷区调用,测试用
     //-------------------------------------------------------------------
     //******************************系统初始化结束************************
     //-------------------------------------------------------------------
@@ -501,61 +502,17 @@ PID_Param_Init();//pid其余参数初始化
         #endif
         }
 
+        if (vision_detected_marker == 1) {
+            minefield_flag = 1; // 触发旋转
+            vision_detected_marker = 0;
+        }//雷区旋转调用，测试用
 
-        
-        // ips200_show_int(0, 0, duty,2);
-
-        // small_driver_set_duty(duty * (PWM_DUTY_MAX / 100), -duty * (PWM_DUTY_MAX / 100));   // 计算占空比输出
-
-        // if(dir)                                                                 // 根据方向判断计数方向 本例程仅作参考
-        // {
-        //     duty ++;                                                            // 正向计数
-        //     if(duty >= MAX_DUTY)                                                // 达到最大值
-        //     {
-        //         dir = false;                                                    // 变更计数方向
-        //     }
-        // }
-        // else
-        // {
-        //     duty --;                                                            // 反向计数
-        //     if(duty <= -MAX_DUTY)                                               // 达到最小值
-        //     {
-        //         dir = true;                                                     // 变更计数方向
-        //     }
-        // }
-        // printf("motor\r\n");
-        // printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
-        // imu660ra_get_acc();                                                     // 获取 imu660ra 的加速度测量数值，已经集成到EKF_UpData();
-        // imu660ra_get_gyro();                                                    // 获取 imu660ra 的角速度测量数值，已经集成到EKF_UpData();
-        
-        // printf("\r\nimu660ra acc data:  x=%5d, y=%5d, z=%5d\r\n", imu660ra_acc_x,  imu660ra_acc_y,  imu660ra_acc_z);
-        // printf("\r\nimu660ra gyro data: x=%5d, y=%5d, z=%5d\r\n", imu660ra_gyro_x, imu660ra_gyro_y, imu660ra_gyro_z);
-        //gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭
-        // #if WIFI_USE
-        //     // 逐飞助手示波器发送代码        
-        //     // 1. 填充速度数据 (通道 0-1)
-        //     // 建议强制转换为 float 或 int (取决于库定义，通常 float 通用性更好)
-        //     seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-        //     seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-        //      // 通道 2: Pitch (俯仰角)
-        //     seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-        //     // 通道 3: Roll (横滚角)
-        //     seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
-        //     // 通道 4: Yaw (偏航角)
-        //     seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
-        //     // 2. 填充加速度计数据 (通道 2-4)
-        //     // seekfree_assistant_oscilloscope_data.data[2] = (float)imu660ra_acc_x;
-        //     // seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_acc_y;
-        //     // seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_acc_z;
-        //     // 3. 填充陀螺仪数据 (通道 5-7)
-        //     seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
-        //     seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
-        //     seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
-        //     // 4. 设置本次发送的通道数量 (一共8个数据)
-        //     seekfree_assistant_oscilloscope_data.channel_num = 8;
-        //     // 5. 调用发送函数
-        //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
-        // #endif
+        // 模拟视觉触发跳跃测试
+        if (vision_detected_jump_point == 1) 
+        {
+            jump_trigger(); // <--- 只需要调用这一句
+            vision_detected_jump_point = 0; // 清除标志位，防止连续触发
+        }
 
         // system_delay_ms(50);
 

@@ -5,7 +5,7 @@ volatile int16 g_target_pwm_speed_adj = 0;
 volatile int16 g_target_pwm_angle_adj = 0;
 
 // --- 执行器的内部状态变量 (static封装) ---
-static int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
+volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
 
 /**
  * @brief 初始化舵机执行器的内部状态

@@ -265,14 +265,42 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         pwm_right = (int16_t)Float_Constrain(pwm_right, -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
         // 直接输出即可
         
-        small_driver_set_duty(pwm_left, pwm_right);
+         // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
+        if (jump_flag != 0) 
+        {
+            // 在跳跃过程中（特别是空中），轮子失去摩擦力。
+            // 如果此时平衡环继续工作，轮子会疯狂加速。
+            // 建议：直接给0，或者给一个极小的保持速度。
+            small_driver_set_duty(0, 0); 
+            
+            // 进阶玩法：利用动量轮效应调整空中姿态，可以在这里写逻辑
+            // 但为了安全，先置0。
+        }
+        else
+        {
+            // 正常平衡模式
+            small_driver_set_duty(pwm_left, pwm_right);
+        }
+        // --- 【科目三：跳跃时的电机保护逻辑结束】 --- 
     }
 
     // ==========================================================
     // 步骤 8: 舵机执行器更新
     // ==========================================================
-    if(g_yaw_initialized){
-        servo_executor_update();//舵机输出
+    if(g_yaw_initialized){//当姿态角可信时舵机执行器才工作
+        // --- 【科目三：跳跃时舵机控制权切换开始】 ---
+        if (jump_flag != 0)
+        {
+            // 如果处于跳跃状态，调用跳跃专用执行器
+            // 它会根据 loop_counter - start_time 精确控制动作
+            servo_jump_executor();
+        }
+        else
+        {
+            // 正常行驶状态，调用常规平滑执行器
+            servo_executor_update();
+        }
+        // --- 【科目三：跳跃时舵机控制权切换结束】 ---
     }
 
     // ==========================================================
