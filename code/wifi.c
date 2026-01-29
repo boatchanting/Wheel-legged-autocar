@@ -250,8 +250,8 @@ void wifi_update_pid_params(void)
                 // case 6: target_speed_set = seekfree_assistant_parameter[i]; break;
                 // 参数5: 转向角速度环kp
                 case 5: pid_turn_gyro.kp = seekfree_assistant_parameter[i]; break;
-                // 参数6: 转向角度环kp
-                case 6: pid_turn_angle.kp = seekfree_assistant_parameter[i]; break;
+                // 参数6: 转向角速度环kd
+                case 6: pid_turn_gyro.kd = seekfree_assistant_parameter[i]; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
                 case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;

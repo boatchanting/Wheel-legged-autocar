@@ -34,10 +34,10 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
-#define DEBUG_DISPLAY 0                  // 【全局开关】1:开启屏幕调试显示  0:关闭
-
+#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
+#define REMOTE_CONTROL 0 //【全局开关】1:开启遥控器使能开关，0:关闭
 
 
 // 打开新的工程或者工程移动了位置务必执行以下操作
@@ -159,7 +159,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关
+int g_motor_enable = 1; // 电机使能安全开关
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -173,17 +173,9 @@ int main(void)
     debug_init();                   // 调试串口信息初始化
     // 此处编写用户代码 例如外设初始化代码等
 
-    // 初始化 PID 参数 (必须最先调用)
-    // -------------------------------------------------------------------------
+    
     target_speed_set = 0.0f;//目标速度，暂时未调用
 
-    flash_init();                                                               // 使用flash前先调用flash初始化 ，包含pid初始化
-    PID_Param_Init() ;                                                      //pid其余参数初始化
-    param_read_from_flash(); // 从 Flash 读取参数
-    // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
-    uart_receiver_init();//sbus接收机初始化
-    Remote_Control_Init(); // 遥控器初始化函数声明
-    pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
     
 
 
@@ -311,9 +303,19 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
     disp_y += 16;
 #endif
 
+#if REMOTE_CONTROL
+    uart_receiver_init();//sbus接收机初始化
+    Remote_Control_Init(); // 遥控器初始化函数声明
+    #if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Remote Control Init OK");
+    disp_y += 16;
+    #endif
+#endif
+
+// 初始化 PID 参数 (必须最先调用)
 flash_init();   // 使用flash前先调用flash初始化 ，包含pid初始化
 PID_Param_Init();//pid其余参数初始化
-param_read_from_flash(); // 从 Flash 读取参数
+//param_read_from_flash(); // 从 Flash 读取参数
 // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Flash Init OK");
@@ -327,10 +329,10 @@ param_read_from_flash(); // 从 Flash 读取参数
     disp_y += 16;
 #endif
 
-// *****************关键新增步骤*****************
+// *****************中断在这后面开*****************
     
-    // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
-    pit_ms_init(PIT_NUM, 1);
+    pit_ms_init(PIT_NUM, 1);// 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)，用于平衡三环和转向两环
+    pit_ms_init(PIT_NUM_1, 10);  // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
     
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
@@ -361,6 +363,8 @@ param_read_from_flash(); // 从 Flash 读取参数
     ips200_show_string(80, 215, "R:");  // 右电机
     ips200_show_string(0, 230, "gyro.kp");  // 右电机
     ips200_show_string(0, 245, "gyro.kd");  // 右电机
+    //添加g_yaw_initialized状态
+    ips200_show_string(0, 260, "g_motor_enable");
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
 
@@ -419,7 +423,8 @@ param_read_from_flash(); // 从 Flash 读取参数
                     //显示角速度环pid输出
                      ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
                      ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
-
+                    //显示g_yaw_initialized状态
+                     ips200_show_string(95, 260, g_motor_enable ? "Yes" : "No");
                 #endif
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里

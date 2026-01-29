@@ -71,7 +71,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
     // ==========================================================
-    if (loop_counter % 20 == 0)
+    if (loop_counter % 20 == 0 && g_yaw_initialized)
     {
          // 2.1 获取编码器速度
         //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
@@ -83,7 +83,6 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         // 2.3 计算目标速度调整分量
         float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
         g_target_pwm_speed_adj = (int16)duty_adjustment;
-
     }
 
     // ==========================================================
@@ -147,7 +146,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 4: 转向角速度环 (2ms) - 内环
     // ==========================================================
-    if (loop_counter % 2 == 0)  // 2ms周期
+    if (loop_counter % 2 == 0 && g_yaw_initialized)  // 2ms周期
     {
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
         // Z轴(yaw)处理：用于转向角速度环
@@ -190,11 +189,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 
     // ==========================================================
-    // 步骤 6: 安全保护 (倒地停止)(10ms)
+    // 步骤 6: 安全保护 (倒地停止)(9ms)
     // ==========================================================
-    if (loop_counter % 10 == 0){
+    if (loop_counter % 9 == 0){
         // 如果角度过大（例如超过 30 度），逐渐关闭电机
-            if (now_angle > 30.0f || now_angle < -30.0f) 
+            if (g_yaw_initialized && (now_angle > 30.0f || now_angle < -30.0f))
             {
                 // 逐渐减小电机输出，每次循环减小10%
                 // gyro_loop_out *= 0.9f;
@@ -211,7 +210,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             }
             
             if(g_motor_enable==0)
-        {
+            {
             // 逐渐减小电机输出
             // gyro_loop_out *= 0.9f;
             
@@ -228,22 +227,25 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 7: PWM矢量融合与电机输出
     // ==========================================================
+    if (g_yaw_initialized)
+    {
+        // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
+        // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
+        int16_t pwm_left  = (int16_t)( gyro_loop_out + turn_gyro_loop_out);
+        int16_t pwm_right = (int16_t)(-gyro_loop_out + turn_gyro_loop_out);
 
-    // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
-    // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
-    int16_t pwm_left  = (int16_t)( gyro_loop_out + turn_gyro_loop_out);
-    int16_t pwm_right = (int16_t)(-gyro_loop_out + turn_gyro_loop_out);
-
-    // 统一限幅（防止叠加后超限）
-    pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
-    pwm_right = (int16_t)Float_Constrain(pwm_right, -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
-    // 直接输出即可
-    small_driver_set_duty(pwm_left, pwm_right);
+        // 统一限幅（防止叠加后超限）
+        pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
+        pwm_right = (int16_t)Float_Constrain(pwm_right, -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
+        // 直接输出即可
+        
+        small_driver_set_duty(pwm_left, pwm_right);
+    }
 
     // ==========================================================
     // 步骤 8: 舵机执行器更新
     // ==========================================================
-    if(g_motor_enable!=0 && (now_angle < 30.0f && now_angle > -30.0f)){
+    if(g_yaw_initialized){
         servo_executor_update();//舵机输出
     }
 
