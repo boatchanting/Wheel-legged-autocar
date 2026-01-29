@@ -94,7 +94,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
         // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
          // 只有在偏航角成功初始化后，才执行航向保持控制
-        if (g_yaw_initialized)
+         // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
+        if (g_yaw_initialized && Minefield_Is_Active() == 0)
         {
             // 1. 获取当前实时的偏航角
             float current_yaw = euler_angle.yaw;
@@ -121,6 +122,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             // 4. 将计算出的精确航向误差送入PID控制器
             //    控制器的目标就是将这个 yaw_error 减小到0
             turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
+        }
+        else
+        {
+            //1.角度未初始化状态下，外环不输出
+            //2.在雷区旋转模式下，切断外环对内环的控制
+            turn_angle_loop_out = 0.0f; 
         }
     }
 
@@ -155,7 +162,26 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         float gyro_z_deg = gyro_z_val / 16.384f;  // 转换为°/s
         filtered_gyro_z = 0.8f * filtered_gyro_z + 0.2f * gyro_z_deg;//低通滤波
         // 输入：转向角度环输出(期望角速度) + 实际角速度(filtered_gyro_z)
-        turn_gyro_loop_out = Turn_Gyro_Loop_Control(turn_angle_loop_out, filtered_gyro_z);
+
+        //==================== [雷区旋转调用开始] =================
+        // lq.1. 获取旋转控制器的输出
+        //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s), 当前Yaw角, 全局Yaw目标指针
+        float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.002f, euler_angle.yaw, &g_initial_yaw);
+
+        // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
+        float final_turn_cmd;
+        
+        if (Minefield_Is_Active()) 
+        {
+            final_turn_cmd = spin_cmd; // 使用平滑的旋转指令
+        }
+        else
+        {
+            final_turn_cmd = turn_angle_loop_out; // 使用正常的PID外环指令
+        }
+        //==================== [雷区旋转调用结束] =================
+        // 将雷区旋转指令或者正常转向角速度指令送入内环PID
+        turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
     }
 
     // ==========================================================
