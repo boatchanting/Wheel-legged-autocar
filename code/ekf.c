@@ -28,6 +28,7 @@ const matrix_type p[4][4] = {{1000000, 0, 0, 0}, {0, 1000000, 0, 0}, {0, 0, 1000
 // 初始四元数 [1, 0, 0, 0]
 //const matrix_type ekf[4] = {1, 0, 0, 0};//原先代码中的值
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};//学习板小车使用的
+static volatile bool  start_yaw_stability_check = false;//偏航角稳定性检测
 // 静态矩阵变量
 static matrix_t Q;  // 过程噪声协方差矩阵
 static matrix_t R;  // 测量噪声协方差矩阵
@@ -47,6 +48,7 @@ void EKF_Init(void)
     Matrix_From_Array(&R, (const matrix_type*)r, 3, 3);
     // 初始化协方差矩阵P
     Matrix_From_Array(&P, (const matrix_type*)p, 4, 4);
+    start_yaw_stability_check = true;//初始化偏航角稳定性检测
 }
 
 /**
@@ -77,9 +79,13 @@ static int16 imu660ra_acc_y_l = 0;
 static int16 imu660ra_acc_z_l = 0;
 
 // --- 静态偏移量变量 ---
-static float gyro_offset_x = 0.0f;
-static float gyro_offset_y = 0.0f;
-static float gyro_offset_z = 0.0f;
+volatile float gyro_offset_x = 0.0f;
+volatile float gyro_offset_y = 0.0f;
+volatile float gyro_offset_z = 0.0f;
+// 加速度静态偏移量变量
+volatile float acc_offset_x = 0.0f;
+volatile float acc_offset_y = 0.0f;
+volatile float acc_offset_z = 0.0f;
 
 // --- 死区阈值 (根据传感器噪声调整) ---
 #define GYRO_DEAD_ZONE 8.0f 
@@ -91,14 +97,24 @@ static float gyro_offset_z = 0.0f;
 void IMU_Calibrate_All_Gyro(void)
 {
     float sum_x = 0, sum_y = 0, sum_z = 0;
+    float sum_x_a = 0, sum_y_a = 0, sum_z_a = 0;
     const int sample_count = 1000;
 
     for(int i = 0; i < sample_count; i++)
-    {
+    {   
         imu660ra_get_gyro();
+        imu660ra_get_acc();
+        if(imu660ra_gyro_x==0||imu660ra_gyro_y==0||imu660ra_gyro_z==0||imu660ra_acc_x==0||imu660ra_acc_y==0||imu660ra_acc_z==0)
+        {
+            i--;
+            continue;
+        }
         sum_x += imu660ra_gyro_x;
         sum_y += imu660ra_gyro_y;
         sum_z += imu660ra_gyro_z;
+        sum_x_a += imu660ra_acc_x;
+        sum_y_a += imu660ra_acc_y;
+        sum_z_a += imu660ra_acc_z;
         // 简单延时
         // system_delay_us(100); 
     }
@@ -107,9 +123,12 @@ void IMU_Calibrate_All_Gyro(void)
     gyro_offset_x = sum_x / sample_count;
     gyro_offset_y = sum_y / sample_count;
     gyro_offset_z = sum_z / sample_count;
+    // 计算加速度计的平均零偏
+    acc_offset_x = sum_x_a / sample_count;
+    acc_offset_y = sum_y_a / sample_count;
+    acc_offset_z = sum_z_a / sample_count;
+
 }
-
-
 /**
  * @brief 获取IMU数据并进行预处理
  * @note 包括加速度计低通滤波和陀螺仪单位转换
@@ -266,3 +285,53 @@ void EKF_UpData(void)
     //printf("%f,%f,%f\n",dt,euler_angle.pitch,euler_angle.roll);
     //printf("GX:%.5f, GY:%.5f, GZ:%.5f\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);//用于检测零漂的调试代码
 }
+// ================== 偏航角零点初始化模块实现开始 ==================
+
+// --- 全局变量定义 ---
+// 这是变量的实体，内存会在这里分配
+volatile float g_initial_yaw = 0.0f;
+volatile bool  g_yaw_initialized = false;
+static volatile bool  start_yaw_stability_check;
+
+// --- 内部静态变量 ---
+// static 关键字使这些变量仅在 ekf.c 文件内部可见，实现了信息隐藏
+static uint32_t yaw_init_start_time = 0;
+static float    yaw_at_init_start = 0.0f;
+
+/**
+ * @brief  检查车模是否稳定，如果稳定则记录初始偏航角作为零点 (实现)
+ * @param  current_tick 当前的中断计数值 (来自 loop_counter)
+ */
+void record_initial_yaw_task(uint32_t current_tick)
+{
+    // 如果已经初始化完成，或者主函数还没允许开始，则直接返回
+    if (g_yaw_initialized || !start_yaw_stability_check)
+    {
+        return;
+    }
+
+    if (yaw_init_start_time == 0)
+    {
+        // 第一次进入或重置后，开始新的100ms计时窗口
+        yaw_init_start_time = current_tick;
+        yaw_at_init_start = euler_angle.yaw; // 假设 euler_angle 在此文件可见
+    }
+    else if (current_tick - yaw_init_start_time >= 220) // 检查是否已过去至少100ms
+    {
+        float current_yaw = euler_angle.yaw;
+        float yaw_change = fabsf(current_yaw - yaw_at_init_start);
+
+        if (yaw_change < 0.01f)
+        {
+            // 条件满足，记录当前角度为初始零度角
+            g_initial_yaw = current_yaw;
+            g_yaw_initialized = true; // 设置成功标志
+        }
+        else
+        {
+            // 不稳定，重置计时器，下一周期重新开始检测
+            yaw_init_start_time = 0;
+        }
+    }
+}
+// ======================== 偏航角零点初始化模块实现结束 ==================

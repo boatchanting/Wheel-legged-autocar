@@ -77,7 +77,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
         float left_speed = (float)motor_value.receive_left_speed_data;
         float right_speed = (float)motor_value.receive_right_speed_data;
-        float current_actual_speed = 0.5f * (right_speed - left_speed);
+        current_actual_speed = 0.5f * (right_speed - left_speed);
 
 
         // 2.3 计算目标速度调整分量
@@ -93,7 +93,35 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     {
         // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度）
         // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
+        // 只有在偏航角成功初始化后，才执行航向保持控制
+        if (g_yaw_initialized)
+        {
+            // 1. 获取当前实时的偏航角
+            float current_yaw = euler_angle.yaw;
+
+            // 2. 计算航向误差
+            //    目标角度: g_initial_yaw (我们记录的“零度”角)
+            //    当前角度: current_yaw
+            //    误差 = 目标 - 当前
+            float yaw_error = g_initial_yaw - current_yaw;
+
+            // 3. [关键] 处理角度“卷绕”问题 (Wraparound)
+            //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
+            //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
+            //    我们需要将误差归一化到 -180 ~ +180 度之间。
+            if (yaw_error > 180.0f)
+            {
+                yaw_error -= 360.0f; // 例如: 358 -> -2
+            }
+            else if (yaw_error < -180.0f)
+            {
+                yaw_error += 360.0f; // 例如: -358 -> 2
+            }
+            
+            // 4. 将计算出的精确航向误差送入PID控制器
+            //    控制器的目标就是将这个 yaw_error 减小到0
         turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
+        }
     }
 
     // ==========================================================
@@ -103,6 +131,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     {
         // 运行姿态解算 (EKF / 互补滤波)
         EKF_UpData(); 
+        record_initial_yaw_task(loop_counter);//初始化偏航角，里面的代码只会在初始化的时候被调用一次，记录初始的偏航角
         now_angle = euler_angle.pitch; // 获取解算后的角度 (单位：度)
 
         // --- [调用优化] ---
@@ -237,7 +266,8 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      
 {
     pit_isr_flag_clear(PIT_CH2);
-    
+
+    Navigation_EKF_Update(imu660ra_acc_x, imu660ra_acc_y, euler_angle.yaw, -current_actual_speed/60.0f*WHEEL_CIRCUMFERENCE);//惯导卡尔曼滤波更新函数调用，传入imu加速度，偏航角，编码器速度
 }
 
 void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数      
@@ -475,9 +505,12 @@ void gpio_19_exti_isr()                  // 外部 GPIO_19 中断服务函数
 
 void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数     
 {
-
-
-
+    Navigation_Reset();//外部中断调用导航重置函数
+      if(exti_flag_get(P20_0))	// 示例P1_0端口外部中断判断
+    {
+        printf("EXTI P19_0 Triggered!\n");
+        gpio_toggle_level(P19_0); // 翻转电平      
+    }
 }
 
 void gpio_21_exti_isr()                  // 外部 GPIO_21 中断服务函数     

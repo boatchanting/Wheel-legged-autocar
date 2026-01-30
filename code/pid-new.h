@@ -17,7 +17,7 @@
 #define SERVO_SPEED_MAX_I  30000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
-
+extern float current_actual_speed;
 
 // ----------------------------------------------------------------------------
 // 1. 速度环参数 (最外环 - 周期约 20ms~50ms)
