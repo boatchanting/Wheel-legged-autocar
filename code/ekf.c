@@ -28,12 +28,10 @@ const matrix_type p[4][4] = {{1000000, 0, 0, 0}, {0, 1000000, 0, 0}, {0, 0, 1000
 // 初始四元数 [1, 0, 0, 0]
 //const matrix_type ekf[4] = {1, 0, 0, 0};//原先代码中的值
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};//学习板小车使用的
-static volatile bool  start_yaw_stability_check = false;//偏航角稳定性检测
 // 静态矩阵变量
 static matrix_t Q;  // 过程噪声协方差矩阵
 static matrix_t R;  // 测量噪声协方差矩阵
 static matrix_t P;  // 协方差矩阵
-static volatile bool  start_yaw_stability_check = false;//偏航角稳定性检测
 static volatile bool  start_yaw_stability_check = false;//偏航角稳定性检测
 /**
  * @brief 初始化扩展卡尔曼滤波器
@@ -293,56 +291,6 @@ void EKF_UpData(void)
     //printf("GX:%.5f, GY:%.5f, GZ:%.5f\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);//用于检测零漂的调试代码
 }
 
-// ================== 偏航角零点初始化模块实现开始 ==================
-
-// --- 全局变量定义 ---
-// 这是变量的实体，内存会在这里分配
-volatile float g_initial_yaw = 0.0f;
-volatile bool  g_yaw_initialized = false;
-static volatile bool  start_yaw_stability_check;
-
-// --- 内部静态变量 ---
-// static 关键字使这些变量仅在 ekf.c 文件内部可见，实现了信息隐藏
-static uint32_t yaw_init_start_time = 0;
-static float    yaw_at_init_start = 0.0f;
-
-/**
- * @brief  检查车模是否稳定，如果稳定则记录初始偏航角作为零点 (实现)
- * @param  current_tick 当前的中断计数值 (来自 loop_counter)
- */
-void record_initial_yaw_task(uint32_t current_tick)
-{
-    // 如果已经初始化完成，或者主函数还没允许开始，则直接返回
-    if (g_yaw_initialized || !start_yaw_stability_check)
-    {
-        return;
-    }
-
-    if (yaw_init_start_time == 0)
-    {
-        // 第一次进入或重置后，开始新的100ms计时窗口
-        yaw_init_start_time = current_tick;
-        yaw_at_init_start = euler_angle.yaw; // 假设 euler_angle 在此文件可见
-    }
-    else if (current_tick - yaw_init_start_time >= 100) // 检查是否已过去至少100ms
-    {
-        float current_yaw = euler_angle.yaw;
-        float yaw_change = fabsf(current_yaw - yaw_at_init_start);
-
-        if (yaw_change < 5.0f)
-        {
-            // 条件满足，记录当前角度为初始零度角
-            g_initial_yaw = current_yaw;
-            g_yaw_initialized = true; // 设置成功标志
-        }
-        else
-        {
-            // 不稳定，重置计时器，下一周期重新开始检测
-            yaw_init_start_time = 0;
-        }
-    }
-}
-// ======================== 偏航角零点初始化模块实现结束 ==================
 
 // ================== 偏航角零点初始化模块实现开始 ==================
 
