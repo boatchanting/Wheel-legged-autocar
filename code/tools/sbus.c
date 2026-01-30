@@ -67,8 +67,9 @@ void Remote_Control_Process(void)
             else
             {
                 // printf("Remote control is disconnected. ");
-                return; // 失控则不进行后续处理
                 robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机
+                return; // 失控则不进行后续处理
+
             }
     int16 ch1_steer = uart_receiver.channel[0];
     int16 ch2_thro  = uart_receiver.channel[1];
