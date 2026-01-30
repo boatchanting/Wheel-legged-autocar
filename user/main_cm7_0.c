@@ -34,9 +34,9 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
-#define DEBUG_DISPLAY 0                  // 【全局开关】1:开启屏幕调试显示  0:关闭
+#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
 
 
@@ -166,6 +166,9 @@ int g_motor_enable = 0; // 电机使能安全开关
 
 #define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1
 uint8 pit_state_1 = 0;
+#define PIT_NUM_2         (PIT_CH2) // 使用定时器通道2
+uint8 pit_state_2 = 0;
+#define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于重置惯导
 
 int main(void)
 {
@@ -183,9 +186,9 @@ int main(void)
     // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
     uart_receiver_init();//sbus接收机初始化
     Remote_Control_Init(); // 遥控器初始化函数声明
-    pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
-    
 
+    Navigation_EKF_Init(); //导航卡尔曼滤波初始化
+    exti_init(EXTI_PORT20_0, EXTI_TRIGGER_RISING);             // 使用的外部中断输入引脚
 
     // *************************** 屏幕初始化开始 ***************************
     // 定义一个变量用于记录屏幕打印的Y坐标（行号）
@@ -270,7 +273,7 @@ servo_executor_init();
     uart_write_byte(UART_INDEX, '\n');
     //初始化摄像头和通信模块结束
 #endif
-
+ gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // 初始化 蜂鸣器 引脚 低电平 默认 推挽输出模式
 // --- 屏幕打印 WiFi 初始化完成 ---
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "WiFi Init OK");
@@ -331,6 +334,8 @@ param_read_from_flash(); // 从 Flash 读取参数
     
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
     pit_ms_init(PIT_NUM, 1);
+    pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
+    pit_ms_init(PIT_NUM_2, 5);                                                // 定时器通道2 初始化为5ms 中断 用于 惯导kf 卡尔曼滤波处理
     
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
@@ -454,13 +459,16 @@ param_read_from_flash(); // 从 Flash 读取参数
                 
                 //3. 填充陀螺仪数据 (通道 5-7)
                 
-                seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
 
-                seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
-                
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
+                //通道6 x方向加速度
+                seekfree_assistant_oscilloscope_data.data[6] = ax_world;
+                //通道7 y方向加速度
+                seekfree_assistant_oscilloscope_data.data[7] = ay_world;
                 // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;
-                
+                    
                 // 5. 调用发送函数
                 seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 

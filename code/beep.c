@@ -1,10 +1,10 @@
 #include "zf_common_headfile.h"
 
 // 内部变量
-static uint16 beep_counter = 0;       // 计时器
-static uint16 beep_interval = 100;    // 默认间隔 100ms
-static uint8  beep_times_left = 0;    // 剩余响声次数
-static uint8  beep_state = 0;         // 0:静音, 1:正在响, 2:响声间的间隔
+ //uint16 beep_counter = 0;       // 计时器
+//uint16 beep_interval = 100;    // 默认间隔 100ms
+//uint8  beep_times_left = 0;    // 剩余响声次数
+//uint8  beep_state = 0;         // 0:静音, 1:正在响, 2:响声间的间隔
 
 // 初始化
 void beep_init(void)

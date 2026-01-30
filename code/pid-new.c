@@ -20,7 +20,7 @@ float target_speed_set = 0.0f;
 volatile float now_speed       = 0.0f;
 volatile float now_angle       = 0.0f;
 volatile float now_gyro        = 0.0f;
-
+float current_actual_speed = 0.0f; // 当前实际速度变量（单位：r/min）
 float speed_loop_out    = 0.0f;// 速度环的输出 (目标角度)
 float angle_loop_out    = 0.0f;// 角度环的输出 (目标角速度)
 float gyro_loop_out     = 0.0f;// 角速度环的输出 (目标角加速度)

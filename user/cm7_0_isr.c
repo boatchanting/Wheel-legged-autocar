@@ -77,7 +77,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
         float left_speed = (float)motor_value.receive_left_speed_data;
         float right_speed = (float)motor_value.receive_right_speed_data;
-        float current_actual_speed = 0.5f * (right_speed - left_speed);
+        current_actual_speed = 0.5f * (right_speed - left_speed);
 
 
         // 2.3 计算目标速度调整分量
@@ -266,8 +266,15 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
 
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      
 {
+    // static uint32_t ekf_loop_count = 0;
+    // ekf_loop_count++;
     pit_isr_flag_clear(PIT_CH2);
-    
+
+    // if(ekf_loop_count % 100 == 0)
+    // {
+    //     printf("ch2  imu660ra_acc_x: %f,imu660ra_acc_y: %f\n", imu_data.acc_x, imu_data.acc_y);
+    // }
+    Navigation_EKF_Update(imu_data.acc_x, imu_data.acc_y, euler_angle.yaw, -current_actual_speed);//惯导卡尔曼滤波更新函数调用，传入imu加速度，偏航角，编码器速度
 }
 
 void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数      
@@ -505,9 +512,12 @@ void gpio_19_exti_isr()                  // 外部 GPIO_19 中断服务函数
 
 void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数     
 {
-
-
-
+    Navigation_Reset();//外部中断调用导航重置函数
+      if(exti_flag_get(P20_0))	// 示例P1_0端口外部中断判断
+    {
+        printf("EXTI P19_0 Triggered!\n");
+        gpio_toggle_level(P19_0); // 翻转电平      
+    }
 }
 
 void gpio_21_exti_isr()                  // 外部 GPIO_21 中断服务函数     
