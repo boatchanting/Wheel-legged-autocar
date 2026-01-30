@@ -4,7 +4,7 @@
 uint8_t jump_flag = 0;
 uint32_t jump_start_time = 0;
 bool vision_detected_jump_point = false;//跳跃测试用
-// 引用外部变量 (来自 main.c 或 servo.c)
+// 引用外部变量 (来自servo.c)
 extern volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
 extern float servo_height; 
 extern int16 pwm_high; // 查表后的高度duty基准
