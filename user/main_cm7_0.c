@@ -34,7 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
@@ -168,7 +168,7 @@ int g_motor_enable = 0; // 电机使能安全开关
 uint8 pit_state_1 = 0;
 #define PIT_NUM_2         (PIT_CH2) // 使用定时器通道2
 uint8 pit_state_2 = 0;
-#define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于发车
+#define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于重置惯导
 
 int main(void)
 {
@@ -186,8 +186,7 @@ int main(void)
     // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
     uart_receiver_init();//sbus接收机初始化
     Remote_Control_Init(); // 遥控器初始化函数声明
-    pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
-    pit_ms_init(PIT_NUM_2, 5);                                                // 定时器通道2 初始化为5ms 中断 用于 惯导kf 卡尔曼滤波处理
+
     Navigation_EKF_Init(); //导航卡尔曼滤波初始化
     exti_init(EXTI_PORT20_0, EXTI_TRIGGER_RISING);             // 使用的外部中断输入引脚
 
@@ -335,6 +334,8 @@ param_read_from_flash(); // 从 Flash 读取参数
     
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
     pit_ms_init(PIT_NUM, 1);
+    pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
+    pit_ms_init(PIT_NUM_2, 5);                                                // 定时器通道2 初始化为5ms 中断 用于 惯导kf 卡尔曼滤波处理
     
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 

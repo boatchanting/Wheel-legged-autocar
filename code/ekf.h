@@ -8,13 +8,12 @@
 #define dt              (0.005f)
 // 低通滤波系数 (0-1之间，值越大滤波效果越弱)
 #define K               (0.9f)
-extern volatile float gyro_offset_x ;
-extern volatile float gyro_offset_y ;
-extern volatile float gyro_offset_z ;
+
+
 // 加速度静态偏移量变量
-extern volatile float acc_offset_x ;
-extern volatile float acc_offset_y ;
-extern volatile float acc_offset_z ;
+extern float imu660ra_acc_x_AND;
+extern float imu660ra_acc_y_AND;
+extern float imu660ra_acc_z_AND;
 extern  volatile float g_initial_yaw;         // 存储记录下来的初始偏航角
 extern  volatile bool  g_yaw_initialized;     // 偏航角是否已成功初始化的标志
 
@@ -40,7 +39,7 @@ typedef struct
         float acc_y;    // 加速度计Y轴加速度 (g)
         float acc_z;    // 加速度计Z轴加速度 (g)
 }imu_t;
-
+extern imu_t imu_data;
 /**
  * @brief 扩展卡尔曼滤波器初始化函数
  * @note 初始化EKF的状态变量和协方差矩阵

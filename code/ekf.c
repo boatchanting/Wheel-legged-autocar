@@ -79,16 +79,19 @@ static int16 imu660ra_acc_y_l = 0;
 static int16 imu660ra_acc_z_l = 0;
 
 // --- 静态偏移量变量 ---
-volatile float gyro_offset_x = 0.0f;
-volatile float gyro_offset_y = 0.0f;
-volatile float gyro_offset_z = 0.0f;
+static float gyro_offset_x = 0.0f;
+static float gyro_offset_y = 0.0f;
+static float gyro_offset_z = 0.0f;
 // 加速度静态偏移量变量
-volatile float acc_offset_x = 0.0f;
-volatile float acc_offset_y = 0.0f;
-volatile float acc_offset_z = 0.0f;
-
+static float acc_offset_x = 0.0f;
+static float acc_offset_y = 0.0f;
+static float acc_offset_z = 0.0f;
 // --- 死区阈值 (根据传感器噪声调整) ---
 #define GYRO_DEAD_ZONE 8.0f 
+float imu660ra_acc_x_AND=0.0f;
+float imu660ra_acc_y_AND=0.0f;
+float imu660ra_acc_z_AND=0.0f;
+ 
 
 /**
  * @brief 全方位陀螺仪校准
@@ -98,10 +101,11 @@ void IMU_Calibrate_All_Gyro(void)
 {
     float sum_x = 0, sum_y = 0, sum_z = 0;
     float sum_x_a = 0, sum_y_a = 0, sum_z_a = 0;
-    const int sample_count = 1000;
+    const int sample_count = 2000;
 
     for(int i = 0; i < sample_count; i++)
     {   
+
         imu660ra_get_gyro();
         imu660ra_get_acc();
         if(imu660ra_gyro_x==0||imu660ra_gyro_y==0||imu660ra_gyro_z==0||imu660ra_acc_x==0||imu660ra_acc_y==0||imu660ra_acc_z==0)
@@ -127,7 +131,9 @@ void IMU_Calibrate_All_Gyro(void)
     acc_offset_x = sum_x_a / sample_count;
     acc_offset_y = sum_y_a / sample_count;
     acc_offset_z = sum_z_a / sample_count;
-
+    imu660ra_acc_x_AND=acc_offset_x;
+    imu660ra_acc_y_AND=acc_offset_y;
+    imu660ra_acc_z_AND=acc_offset_z;
 }
 /**
  * @brief 获取IMU数据并进行预处理

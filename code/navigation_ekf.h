@@ -1,7 +1,7 @@
 #ifndef _NAVIGATION_EKF_H_
 #define _NAVIGATION_EKF_H_
 #include "zf_common_headfile.h"
-#define WHEEL_CIRCUMFERENCE 1.00943f // 车轮周长，单位米，根据实际车轮调整   Πd  10圈显示1.06大概214cm  待调整
+#define WHEEL_CIRCUMFERENCE 0.214f // 车轮周长，单位米，根据实际车轮调整   Πd  10圈显示1.06大概214cm  待调整
 #define pitch_initialization 0.83176f  //倒地时俯仰角为37.82，机械零点目前为ANG_MECH_ZERO4.1f    cos（37.82°-4.1°）  
 // ==========================================
 // 1. 参数配置区

@@ -171,46 +171,54 @@ void Navigation_EKF_Update(float imu_ax, float imu_ay, float yaw_rad, float enc_
     
     loop_count++;
         // --- 新增：零速检测 ---
-    static int stationary_count = 0;
-    const float ZERO_SPEED_THRESHOLD = 0.01f;  // 0.01 m/s
-    const int STATIONARY_SAMPLES = 20;         // 连续20次认为静止
-    // 检查是否静止
-    if(fabsf(enc_vel_mps) < ZERO_SPEED_THRESHOLD) 
-    {
-        stationary_count++;
-        if(stationary_count >= STATIONARY_SAMPLES) 
-        {
-            if(loop_count % 100 == 0)
-            {
-             printf("pos_x: %.3f, pos_y: %.3f, vel_x: %.3f, vel_y: %.3f\n", nav_result.pos_x, nav_result.pos_y, nav_result.vel_x, nav_result.vel_y);
-            }
-            // 直接返回，不进行EKF更新
-            return;
-        }
-    } 
-    else 
-    {
-        stationary_count = 0;
-    }
+    // static int stationary_count = 0;
+    // const float ZERO_SPEED_THRESHOLD = 0.01f;  // 0.01 m/s
+    // const int STATIONARY_SAMPLES = 20;         // 连续20次认为静止
+    // // 检查是否静止
+    // if(fabsf(enc_vel_mps) < ZERO_SPEED_THRESHOLD) 
+    // {
+    //     stationary_count++;
+    //     if(stationary_count >= STATIONARY_SAMPLES) 
+    //     {
+    //         // if(loop_count % 100 == 0)
+    //         // {
+    //         //  printf("pos_x: %.3f, pos_y: %.3f, vel_x: %.3f, vel_y: %.3f\n", nav_result.pos_x, nav_result.pos_y, nav_result.vel_x, nav_result.vel_y);
+    //         // }
+    //         // 直接返回，不进行EKF更新
+    //         return;
+    //     }
+    // } 
+    // else 
+    // {
+    //     stationary_count = 0;
+    // }
     // 去除加速度计零偏
-    float raw_ax = (imu_ax - acc_offset_x) / 4096.0f * 9.80665f;  // 转为m/s²
-    float raw_ay = (imu_ay*cosf(euler_angle.yaw-ANG_MECH_ZERO) - acc_offset_y*pitch_initialization) / 4096.0f * 9.80665f; // IMU加速度，单位 m/s²
+    float raw_ax = (imu_ax - imu660ra_acc_x_AND) / 4096.0f * 9.80665f;  // 转为m/s²
+    float raw_ay = (imu_ay - imu660ra_acc_y_AND) / 4096.0f * 9.80665f; // IMU加速度，单位 m/s²*pitch_initialization  //*cosf(euler_angle.yaw-ANG_MECH_ZERO)
     float filtered_ax, filtered_ay;
     fast_smart_filter_xy(raw_ax, raw_ay, &filtered_ax, &filtered_ay);
     float ax = filtered_ax;
     float ay = filtered_ay;
-
-    float enc_vel=enc_vel_mps/60.0f*WHEEL_CIRCUMFERENCE;
-    if(g_yaw_initialized==false )
+    if(ax<0.09f && ax>-0.09f)
+        ax=0.0f;
+    if(ay<0.09f && ay>-0.09f)
+        ay=0.0f;
+    if(loop_count % 100 == 0)
     {
-        // 如果偏航角稳定性检测未完成，直接返回
-        return;
+        // printf("imu_ay: %.3f, imu660ra_acc_y_AND: %.3f, imu660ra_acc_x_AND: %.3f\n", imu_ay, imu660ra_acc_y_AND, imu660ra_acc_x_AND);
+        if (ax!=0||ay!=0)
+        printf("ax: %.3f, ay: %.3f\n", ax, ay);
+        // printf("vx_enc: %.3f, vy_enc: %.3f\n", vx_enc, vy_enc);
     }
-    gpio_toggle_level(BUZZER_PIN);
-    gpio_toggle_level(BUZZER_PIN);
+    float enc_vel=enc_vel_mps/60.0f*WHEEL_CIRCUMFERENCE;
+    // if(g_yaw_initialized==false )
+    // {
+    //     // 如果偏航角稳定性检测未完成，直接返回
+    //     return;
+    // }
     // --- Step 1: 数据预处理 (坐标旋转) ---
     // 将 IMU 的车体坐标系加速度 -> 转换到 -> 世界坐标系 (Assuming Z-axis rotation)
-    float yaw = -yaw_rad-g_initial_yaw;
+    float yaw = -yaw_rad+g_initial_yaw;
 
     while(1)
     {
@@ -220,26 +228,26 @@ void Navigation_EKF_Update(float imu_ax, float imu_ay, float yaw_rad, float enc_
             yaw += 360.0f;
         else break;
     }
-    if(loop_count % 100 == 0)
-    {
-    printf("yaw: %.3f, g_initial_yaw: %.3f\n", yaw, g_initial_yaw);
-    }
     // if(loop_count % 100 == 0)
     // {
-    //     printf("acc_offset_x: %.3f, acc_offset_y: %.3f\n", acc_offset_x, acc_offset_y);
-    //     printf("ax: %.3f, ay: %.3f\n", ax, ay);
+    // printf("yaw: %.3f, g_initial_yaw: %.3f\n", yaw, g_initial_yaw);
     // }
     /* 偏航角（世界系，0 对应 +Y） */
     float c = cosf(yaw);
     float s = sinf(yaw);
 
     /* 加速度：车体系 -> 世界系 */
-    float ax_world = -ax * s + ay * c;
+    float ax_world = -ax * c + ay * s;
     float ay_world = ay * c + ax * s;
     // 将编码器速度 -> 转换到 -> 世界坐标系
     float vx_enc = enc_vel * c;
     float vy_enc = enc_vel * s;
-
+    // if(loop_count % 100 == 0)
+    // {
+    //     if (ax!=0||ay!=0)
+    //     printf("ax_world: %.3f, ay_world: %.3f\n", ax_world, ay_world);
+    //     // printf("vx_enc: %.3f, vy_enc: %.3f\n", vx_enc, vy_enc);
+    // }
     // 填入输入向量 U 和 观测向量 Z
     U.data[0][0] = ax_world;
     U.data[1][0] = ay_world;
@@ -299,7 +307,7 @@ void Navigation_EKF_Update(float imu_ax, float imu_ay, float yaw_rad, float enc_
         // 可以添加调试信息
         static int inv_fail_count = 0;
         if(++inv_fail_count % 50 == 0) {
-        printf("警告：矩阵求逆失败（第%d次），使用预测值\n", inv_fail_count);
+        printf("矩阵求逆失败（第%d次），使用预测值\n", inv_fail_count);
         }
        return   ;
     }
@@ -339,10 +347,10 @@ void Navigation_EKF_Update(float imu_ax, float imu_ay, float yaw_rad, float enc_
     nav_result.pos_y = X.data[1][0];
     nav_result.vel_x = X.data[2][0];
     nav_result.vel_y = X.data[3][0];
-    if(loop_count % 100 == 0)
-    {
-    printf("pos_x: %.3f, pos_y: %.3f, vel_x: %.3f, vel_y: %.3f\n", nav_result.pos_x, nav_result.pos_y, nav_result.vel_x, nav_result.vel_y);
-    }
+    // if(loop_count % 100 == 0)
+    // {
+    // printf("pos_x: %.3f, pos_y: %.3f, vel_x: %.3f, vel_y: %.3f\n", nav_result.pos_x, nav_result.pos_y, nav_result.vel_x, nav_result.vel_y);
+    // }
 }
 
 void Navigation_Reset(void)
