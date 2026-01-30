@@ -14,7 +14,8 @@ static matrix_t R;  // 测量噪声矩阵 2x2 (信任编码器程度)
 static matrix_t F;  // 状态转移矩阵 4x4
 static matrix_t H;  // 观测矩阵 2x4
 static matrix_t B;  // 控制矩阵 4x2 (加速度输入)
-
+float ax=0.0f, ay=0.0f; // 全局加速度变量
+float ax_world = 0.0f, ay_world=0.0f; // 世界系加速度变量
 // 临时计算变量 (避免栈溢出，定义为静态)
 static matrix_t U;       // 输入向量 [ax, ay]^T
 static matrix_t Z;       // 观测向量 [vx_enc, vy_enc]^T
@@ -195,21 +196,23 @@ void Navigation_EKF_Update(float imu_ax, float imu_ay, float yaw_rad, float enc_
     // 去除加速度计零偏
     float raw_ax = (imu_ax - imu660ra_acc_x_AND) / 4096.0f * 9.80665f;  // 转为m/s²
     float raw_ay = (imu_ay - imu660ra_acc_y_AND) / 4096.0f * 9.80665f; // IMU加速度，单位 m/s²*pitch_initialization  //*cosf(euler_angle.yaw-ANG_MECH_ZERO)
-    float filtered_ax, filtered_ay;
+    float filtered_ax=0.0f, filtered_ay=0.0f;
     fast_smart_filter_xy(raw_ax, raw_ay, &filtered_ax, &filtered_ay);
-    float ax = filtered_ax;
-    float ay = filtered_ay;
+    // ax = raw_ax; 
+    // ay =raw_ay;
+    ax= filtered_ax;
+    ay= filtered_ay;
     if(ax<0.09f && ax>-0.09f)
         ax=0.0f;
     if(ay<0.09f && ay>-0.09f)
         ay=0.0f;
-    if(loop_count % 100 == 0)
-    {
-        // printf("imu_ay: %.3f, imu660ra_acc_y_AND: %.3f, imu660ra_acc_x_AND: %.3f\n", imu_ay, imu660ra_acc_y_AND, imu660ra_acc_x_AND);
-        if (ax!=0||ay!=0)
-        printf("ax: %.3f, ay: %.3f\n", ax, ay);
-        // printf("vx_enc: %.3f, vy_enc: %.3f\n", vx_enc, vy_enc);
-    }
+    // if(loop_count % 100 == 0)
+    // {
+    //     // printf("imu_ay: %.3f, imu660ra_acc_y_AND: %.3f, imu660ra_acc_x_AND: %.3f\n", imu_ay, imu660ra_acc_y_AND, imu660ra_acc_x_AND);
+    //     if (ax!=0||ay!=0)
+    //     printf("ax: %.3f, ay: %.3f\n", ax, ay);
+    //     // printf("vx_enc: %.3f, vy_enc: %.3f\n", vx_enc, vy_enc);
+    // }
     float enc_vel=enc_vel_mps/60.0f*WHEEL_CIRCUMFERENCE;
     // if(g_yaw_initialized==false )
     // {
@@ -237,8 +240,8 @@ void Navigation_EKF_Update(float imu_ax, float imu_ay, float yaw_rad, float enc_
     float s = sinf(yaw);
 
     /* 加速度：车体系 -> 世界系 */
-    float ax_world = -ax * c + ay * s;
-    float ay_world = ay * c + ax * s;
+    ax_world = -ax * c + ay * s;
+    ay_world = ay * c + ax * s;
     // 将编码器速度 -> 转换到 -> 世界坐标系
     float vx_enc = enc_vel * c;
     float vy_enc = enc_vel * s;

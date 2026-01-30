@@ -8,7 +8,8 @@
 // ==========================================
 // 控制周期 (秒)，务必与你的调用频率一致 (例如 5ms = 0.005)
 #define NAV_DT          0.005f  
-
+extern float ax, ay; // 全局加速度变量
+extern float ax_world, ay_world; // 世界系加速度变量
 // 状态量维度 (X, Y, Vx, Vy)
 #define NAV_STATE_DIM   4       
 // 观测量维度 (Venc_x, Venc_y)

@@ -34,7 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 
@@ -462,10 +462,10 @@ param_read_from_flash(); // 从 Flash 读取参数
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
 
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
-                //通道6 x方向移动距离
-                seekfree_assistant_oscilloscope_data.data[6] = nav_result.pos_x;
-                //通道7 y方向移动距离
-                seekfree_assistant_oscilloscope_data.data[7] = nav_result.pos_y;
+                //通道6 x方向加速度
+                seekfree_assistant_oscilloscope_data.data[6] = ax_world;
+                //通道7 y方向加速度
+                seekfree_assistant_oscilloscope_data.data[7] = ay_world;
                 // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
