@@ -33,7 +33,7 @@ static volatile bool  start_yaw_stability_check = false;//偏航角稳定性检�
 static matrix_t Q;  // 过程噪声协方差矩阵
 static matrix_t R;  // 测量噪声协方差矩阵
 static matrix_t P;  // 协方差矩阵
-
+static volatile bool  start_yaw_stability_check = false;//偏航角稳定性检测
 /**
  * @brief 初始化扩展卡尔曼滤波器
  * @note 将静态数组转换为矩阵类型
@@ -48,6 +48,7 @@ void EKF_Init(void)
     Matrix_From_Array(&R, (const matrix_type*)r, 3, 3);
     // 初始化协方差矩阵P
     Matrix_From_Array(&P, (const matrix_type*)p, 4, 4);
+    start_yaw_stability_check = true;//初始化偏航角稳定性检测
     start_yaw_stability_check = true;//初始化偏航角稳定性检测
 }
 
@@ -291,6 +292,7 @@ void EKF_UpData(void)
     //printf("%f,%f,%f\n",dt,euler_angle.pitch,euler_angle.roll);
     //printf("GX:%.5f, GY:%.5f, GZ:%.5f\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);//用于检测零漂的调试代码
 }
+
 // ================== 偏航角零点初始化模块实现开始 ==================
 
 // --- 全局变量定义 ---
@@ -322,12 +324,12 @@ void record_initial_yaw_task(uint32_t current_tick)
         yaw_init_start_time = current_tick;
         yaw_at_init_start = euler_angle.yaw; // 假设 euler_angle 在此文件可见
     }
-    else if (current_tick - yaw_init_start_time >= 220) // 检查是否已过去至少100ms
+    else if (current_tick - yaw_init_start_time >= 100) // 检查是否已过去至少100ms
     {
         float current_yaw = euler_angle.yaw;
         float yaw_change = fabsf(current_yaw - yaw_at_init_start);
 
-        if (yaw_change < 0.01f)
+        if (yaw_change < 5.0f)
         {
             // 条件满足，记录当前角度为初始零度角
             g_initial_yaw = current_yaw;
