@@ -218,34 +218,28 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 步骤 6: 安全保护 (倒地停止)(9ms)
     // ==========================================================
     if (loop_counter % 9 == 0){
-        // 如果角度过大（例如超过 30 度），逐渐关闭电机
-            if (g_yaw_initialized && (now_angle > 30.0f || now_angle < -30.0f))
+        // 【倒地保护条件】：必须同时满足
+        //   (1) 偏航角已初始化
+        //   (2) 非跳跃状态（jump_flag == 0）
+        //   (3) 倾角超过安全阈值（±30°）
+        //   (4) 第一次站起来之后，loop_counter > 2000(中断开启两秒后)
+        if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
+        {
+             // 如果角度过大（例如超过 30 度），判定为倒地
+            if (now_angle > 30.0f || now_angle < -30.0f)
             {
-                // 逐渐减小电机输出，每次循环减小10%
-                // gyro_loop_out *= 0.9f;
-                
-                // 当输出足够小时，直接置0
-                // if (fabs(gyro_loop_out) < 100.0f) 
-                // {
-                    gyro_loop_out = 0;// 清零平衡PWM
-                    turn_gyro_loop_out = 0.0f; // 清零转向PWM
-                // }
-                
-                // 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
-                PID_Data_Reset();
+                gyro_loop_out = 0;          // 清零平衡PWM
+                turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
+                PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
+                // 彻底关闭电机使能，可以取消下面这行的注释
+                //g_motor_enable = 0; 
             }
+        }
             
-            if(g_motor_enable==0)
-            {
-            // 逐渐减小电机输出
-            // gyro_loop_out *= 0.9f;
-            
-            // // 当输出足够小时，直接置0
-            // if (fabs(gyro_loop_out) < 100.0f) 
-            // {
-                gyro_loop_out = 0.0f;      // 清零平衡PWM
-                turn_gyro_loop_out = 0.0f; // 清零转向PWM
-            // }
+        if(g_motor_enable==0)
+        {
+            gyro_loop_out = 0.0f;      // 清零平衡PWM
+            turn_gyro_loop_out = 0.0f; // 清零转向PWM
             PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
         }
     }
