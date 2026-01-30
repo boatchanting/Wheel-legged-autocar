@@ -102,7 +102,7 @@
 
 //外部变量声明
 extern uint8 image_copy[MT9V03X_H][MT9V03X_W];// 图像备份，防止撕裂
-extern int g_motor_enable;//暂时没用
+extern int g_motor_enable;
 
 // 函数声明
 void wifi_init(void);

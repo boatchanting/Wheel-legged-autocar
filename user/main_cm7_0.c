@@ -37,8 +37,7 @@
 #define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
-
-
+#define REMOTE_CONTROL 0                 //【全局开关】1：开启遥控器 0:关闭
 
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
@@ -159,7 +158,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -176,19 +175,8 @@ int main(void)
     debug_init();                   // 调试串口信息初始化
     // 此处编写用户代码 例如外设初始化代码等
 
-    // 初始化 PID 参数 (必须最先调用)
-    // -------------------------------------------------------------------------
-    target_speed_set = 0.0f;//目标速度，暂时未调用
-
-    flash_init();                                                               // 使用flash前先调用flash初始化 ，包含pid初始化
-    PID_Param_Init() ;                                                      //pid其余参数初始化
-    param_read_from_flash(); // 从 Flash 读取参数
-    // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
-    uart_receiver_init();//sbus接收机初始化
-    Remote_Control_Init(); // 遥控器初始化函数声明
-
-    Navigation_EKF_Init(); //导航卡尔曼滤波初始化
-    exti_init(EXTI_PORT20_0, EXTI_TRIGGER_RISING);             // 使用的外部中断输入引脚
+    
+    target_speed_set = 0.0f;//目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
 
     // *************************** 屏幕初始化开始 ***************************
     // 定义一个变量用于记录屏幕打印的Y坐标（行号）
@@ -308,20 +296,33 @@ IMU_Calibrate_All_Gyro();
     disp_y += 16;
 #endif
 
+Navigation_EKF_Init(); //导航卡尔曼滤波初始化
+exti_init(EXTI_PORT20_0, EXTI_TRIGGER_RISING);             // 使用的外部中断输入引脚
 EKF_Init(); // 初始化扩展卡尔曼滤波
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "EKF Init OK");
     disp_y += 16;
 #endif
 
+#if REMOTE_CONTROL
+    uart_receiver_init();//sbus接收机初始化
+    Remote_Control_Init(); // 遥控器初始化函数声明
+    #if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Remote Control Init OK");
+    disp_y += 16;
+    #endif
+#endif
+
+// 初始化 PID 参数 (必须最先调用)
 flash_init();   // 使用flash前先调用flash初始化 ，包含pid初始化
 PID_Param_Init();//pid其余参数初始化
-param_read_from_flash(); // 从 Flash 读取参数
+//param_read_from_flash(); // 从 Flash 读取参数
 // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Flash Init OK");
     disp_y += 16;
 #endif
+
 
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印uart中断完成 ---
@@ -330,7 +331,7 @@ param_read_from_flash(); // 从 Flash 读取参数
     disp_y += 16;
 #endif
 
-// *****************关键新增步骤*****************
+// *****************中断在这后面开*****************
     
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
     pit_ms_init(PIT_NUM, 1);
@@ -366,9 +367,12 @@ param_read_from_flash(); // 从 Flash 读取参数
     ips200_show_string(80, 215, "R:");  // 右电机
     ips200_show_string(0, 230, "gyro.kp");  // 右电机
     ips200_show_string(0, 245, "gyro.kd");  // 右电机
+    //添加g_yaw_initialized状态
+    ips200_show_string(0, 260, "g_motor_enable");
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
 
+vision_detected_marker = 0;//雷区调用,测试用
     //-------------------------------------------------------------------
     //******************************系统初始化结束************************
     //-------------------------------------------------------------------
@@ -424,7 +428,8 @@ param_read_from_flash(); // 从 Flash 读取参数
                     //显示角速度环pid输出
                      ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
                      ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
-
+                    //显示g_motor_enable状态
+                     ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
                 #endif
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
@@ -504,61 +509,17 @@ param_read_from_flash(); // 从 Flash 读取参数
         #endif
         }
 
+        if (vision_detected_marker == 1) {
+            minefield_flag = 1; // 触发旋转
+            vision_detected_marker = 0;
+        }//雷区旋转调用，测试用
 
-        
-        // ips200_show_int(0, 0, duty,2);
-
-        // small_driver_set_duty(duty * (PWM_DUTY_MAX / 100), -duty * (PWM_DUTY_MAX / 100));   // 计算占空比输出
-
-        // if(dir)                                                                 // 根据方向判断计数方向 本例程仅作参考
-        // {
-        //     duty ++;                                                            // 正向计数
-        //     if(duty >= MAX_DUTY)                                                // 达到最大值
-        //     {
-        //         dir = false;                                                    // 变更计数方向
-        //     }
-        // }
-        // else
-        // {
-        //     duty --;                                                            // 反向计数
-        //     if(duty <= -MAX_DUTY)                                               // 达到最小值
-        //     {
-        //         dir = true;                                                     // 变更计数方向
-        //     }
-        // }
-        // printf("motor\r\n");
-        // printf("left speed:%d, right speed:%d\r\n", motor_value.receive_left_speed_data, motor_value.receive_right_speed_data);
-        // imu660ra_get_acc();                                                     // 获取 imu660ra 的加速度测量数值，已经集成到EKF_UpData();
-        // imu660ra_get_gyro();                                                    // 获取 imu660ra 的角速度测量数值，已经集成到EKF_UpData();
-        
-        // printf("\r\nimu660ra acc data:  x=%5d, y=%5d, z=%5d\r\n", imu660ra_acc_x,  imu660ra_acc_y,  imu660ra_acc_z);
-        // printf("\r\nimu660ra gyro data: x=%5d, y=%5d, z=%5d\r\n", imu660ra_gyro_x, imu660ra_gyro_y, imu660ra_gyro_z);
-        //gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭
-        // #if WIFI_USE
-        //     // 逐飞助手示波器发送代码        
-        //     // 1. 填充速度数据 (通道 0-1)
-        //     // 建议强制转换为 float 或 int (取决于库定义，通常 float 通用性更好)
-        //     seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-        //     seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-        //      // 通道 2: Pitch (俯仰角)
-        //     seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-        //     // 通道 3: Roll (横滚角)
-        //     seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
-        //     // 通道 4: Yaw (偏航角)
-        //     seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
-        //     // 2. 填充加速度计数据 (通道 2-4)
-        //     // seekfree_assistant_oscilloscope_data.data[2] = (float)imu660ra_acc_x;
-        //     // seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_acc_y;
-        //     // seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_acc_z;
-        //     // 3. 填充陀螺仪数据 (通道 5-7)
-        //     seekfree_assistant_oscilloscope_data.data[5] = (float)imu660ra_gyro_x;
-        //     seekfree_assistant_oscilloscope_data.data[6] = (float)imu660ra_gyro_y;
-        //     seekfree_assistant_oscilloscope_data.data[7] = (float)imu660ra_gyro_z;
-        //     // 4. 设置本次发送的通道数量 (一共8个数据)
-        //     seekfree_assistant_oscilloscope_data.channel_num = 8;
-        //     // 5. 调用发送函数
-        //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
-        // #endif
+        // 模拟视觉触发跳跃测试
+        if (vision_detected_jump_point == 1) 
+        {
+            jump_trigger(); // <--- 只需要调用这一句
+            vision_detected_jump_point = 0; // 清除标志位，防止连续触发
+        }
 
         // system_delay_ms(50);
 
