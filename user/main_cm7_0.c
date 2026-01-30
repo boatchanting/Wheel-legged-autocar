@@ -37,7 +37,7 @@
 #define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
-#define REMOTE_CONTROL 0 //【全局开关】1:开启遥控器使能开关，0:关闭
+#define REMOTE_CONTROL 1 //【全局开关】1:开启遥控器使能开关，0:关闭
 
 
 // 打开新的工程或者工程移动了位置务必执行以下操作
@@ -424,8 +424,8 @@ vision_detected_marker = 0;//雷区调用,测试用
                     //显示角速度环pid输出
                      ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
                      ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
-                    //显示g_yaw_initialized状态
-                     ips200_show_string(95, 260, g_motor_enable ? "Yes" : "No");
+                    //显示g_motor_enable状态
+                     ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
                 #endif
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
