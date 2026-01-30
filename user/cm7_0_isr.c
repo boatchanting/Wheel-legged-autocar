@@ -104,7 +104,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             //    目标角度: g_initial_yaw (我们记录的“零度”角)
             //    当前角度: current_yaw
             //    误差 = 目标 - 当前
-            float yaw_error = g_initial_yaw - current_yaw;
+            float yaw_error = g_initial_yaw + err_degree - current_yaw;
 
             // 3. [关键] 处理角度“卷绕”问题 (Wraparound)
             //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
@@ -309,9 +309,41 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数      
 {
+    // 1. 清除中断标志位
     pit_isr_flag_clear(PIT_CH1);
+      // 2. 执行遥控器积分计算
     Remote_Control_Process();
 
+    // ---------------------------------------------------------------
+    // 3. 变量映射 (将遥控器结构体映射到主控全局变量)
+    // ---------------------------------------------------------------
+    //暂时在遥控器内部做了角速度和速度的内部逻辑，没有在这里再做保护，输出那里会有一个保护，这里先这样
+
+    // [映射 1: 安全开关]
+    // robot_ctrl.motor_enable: 1=使能, 0=急停
+    // g_motor_enable:          1=使能, 0=关机
+    if (robot_ctrl.motor_enable == 0) {
+        g_motor_enable = 0; // 关机/急停
+    } else {
+        g_motor_enable = 1; // 正常工作
+    }
+
+    // [映射 2: 转向角度]
+    // 直接赋值积分结果 (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
+    err_degree = robot_ctrl.target_angle;
+
+    // [映射 3: 速度控制]
+    // 主函数定义: 负数代表向前 (-60 = 20m/s)
+    // 遥控器逻辑: 假设推油门 robot_ctrl.target_speed 为正数
+    // 转换逻辑: 取反
+    target_speed_set = -robot_ctrl.target_speed;
+    
+    // [可选: 保护] 如果处于未使能状态，强制目标速度归零，防止后台积分
+    if(g_motor_enable == 0) {
+        target_speed_set = 0.0f;
+        // 同时清除遥控器内部积分，防止再次使能时车突然冲出去
+        robot_ctrl.target_speed = 0.0f; 
+    }
 }
 
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      

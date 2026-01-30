@@ -226,7 +226,7 @@ void wifi_update_pid_params(void)
             {
                 // 参数 0: 角速度环 Kp (pid_gyro.kp)
                 // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
-                //参数 0: 期望速度 (target_speed_set)
+                //参数 0: 期望速度 (target_speed_set) 目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
                 case 0: target_speed_set = seekfree_assistant_parameter[i]; break;
                 // 参数 1: 角度环Kp
                 case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
