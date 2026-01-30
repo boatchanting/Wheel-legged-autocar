@@ -195,7 +195,7 @@ void Navigation_EKF_Update(float imu_ax, float imu_ay, float yaw_rad, float enc_
     // }
     // 去除加速度计零偏
     float raw_ax = (imu_ax - imu660ra_acc_x_AND) / 4096.0f * 9.80665f;  // 转为m/s²
-    float raw_ay = (imu_ay - imu660ra_acc_y_AND) / 4096.0f * 9.80665f; // IMU加速度，单位 m/s²*pitch_initialization  //*cosf(euler_angle.yaw-ANG_MECH_ZERO)
+    float raw_ay = (imu_ay*cosf(euler_angle.yaw-ANG_MECH_ZERO) - imu660ra_acc_y_AND*pitch_initialization) / 4096.0f * 9.80665f; // IMU加速度，单位 m/s²*pitch_initialization  //*cosf(euler_angle.yaw-ANG_MECH_ZERO)
     float filtered_ax=0.0f, filtered_ay=0.0f;
     fast_smart_filter_xy(raw_ax, raw_ay, &filtered_ax, &filtered_ay);
     // ax = raw_ax; 
