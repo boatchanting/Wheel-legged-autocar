@@ -159,7 +159,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 1; // 电机使能安全开关
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -174,7 +174,7 @@ int main(void)
     // 此处编写用户代码 例如外设初始化代码等
 
     
-    target_speed_set = 0.0f;//目标速度，暂时未调用
+    target_speed_set = 0.0f;//目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
 
     
 

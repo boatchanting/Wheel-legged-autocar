@@ -104,12 +104,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             //    目标角度: g_initial_yaw (我们记录的“零度”角)
             //    当前角度: current_yaw
             //    误差 = 目标 - 当前
-            float yaw_error = g_initial_yaw + err_degree - current_yaw;
+            float yaw_error = g_initial_yaw - err_degree - current_yaw;
 
             // 3. [关键] 处理角度“卷绕”问题 (Wraparound)
             //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
             //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
             //    我们需要将误差归一化到 -180 ~ +180 度之间。
+            yaw_error = fmod(yaw_error, 360.0f);//先对yaw_error取模，确保在-360到360之间
             if (yaw_error > 180.0f)
             {
                 yaw_error -= 360.0f; // 例如: 358 -> -2
@@ -119,6 +120,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 yaw_error += 360.0f; // 例如: -358 -> 2
             }
             
+            // ============= 输入误差限幅，这个防止视觉或者gps给的参数一下过大导致小车疯狂旋转，优化方案是如果大角度可以关角度环转一下，但是先这么用，后续可以优化【优化点】 ==================
+            // 设定一个最大误差阈值，例如 30度 或 45度
+            // 如果误差太大，就骗PID说误差只有这么大，防止输出饱和
+            float max_error_limit = 45.0f; 
+
+            if (yaw_error > max_error_limit)
+            {
+                yaw_error = max_error_limit;
+            }
+            else if (yaw_error < -max_error_limit)
+            {
+                yaw_error = -max_error_limit;
+            }
+
             // 4. 将计算出的精确航向误差送入PID控制器
             //    控制器的目标就是将这个 yaw_error 减小到0
             turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
