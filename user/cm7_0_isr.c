@@ -71,7 +71,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
     // ==========================================================
-    if (loop_counter % 20 == 0)
+    if (loop_counter % 20 == 0 && g_yaw_initialized)
     {
          // 2.1 获取编码器速度
         //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
@@ -83,7 +83,6 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         // 2.3 计算目标速度调整分量
         float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
         g_target_pwm_speed_adj = (int16)duty_adjustment;
-
     }
 
     // ==========================================================
@@ -95,7 +94,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
         // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
          // 只有在偏航角成功初始化后，才执行航向保持控制
-        if (g_yaw_initialized)
+         // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
+        if (g_yaw_initialized && Minefield_Is_Active() == 0)
         {
             // 1. 获取当前实时的偏航角
             float current_yaw = euler_angle.yaw;
@@ -104,12 +104,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             //    目标角度: g_initial_yaw (我们记录的“零度”角)
             //    当前角度: current_yaw
             //    误差 = 目标 - 当前
-            float yaw_error = g_initial_yaw - current_yaw;
+            float yaw_error = g_initial_yaw - err_degree - current_yaw;
 
             // 3. [关键] 处理角度“卷绕”问题 (Wraparound)
             //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
             //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
             //    我们需要将误差归一化到 -180 ~ +180 度之间。
+            yaw_error = fmod(yaw_error, 360.0f);//先对yaw_error取模，确保在-360到360之间
             if (yaw_error > 180.0f)
             {
                 yaw_error -= 360.0f; // 例如: 358 -> -2
@@ -119,9 +120,29 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 yaw_error += 360.0f; // 例如: -358 -> 2
             }
             
+            // ============= 输入误差限幅，这个防止视觉或者gps给的参数一下过大导致小车疯狂旋转，优化方案是如果大角度可以关角度环转一下，但是先这么用，后续可以优化【优化点】 ==================
+            // 设定一个最大误差阈值，例如 30度 或 45度
+            // 如果误差太大，就骗PID说误差只有这么大，防止输出饱和
+            float max_error_limit = 45.0f; 
+
+            if (yaw_error > max_error_limit)
+            {
+                yaw_error = max_error_limit;
+            }
+            else if (yaw_error < -max_error_limit)
+            {
+                yaw_error = -max_error_limit;
+            }
+
             // 4. 将计算出的精确航向误差送入PID控制器
             //    控制器的目标就是将这个 yaw_error 减小到0
             turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
+        }
+        else
+        {
+            //1.角度未初始化状态下，外环不输出
+            //2.在雷区旋转模式下，切断外环对内环的控制
+            turn_angle_loop_out = 0.0f; 
         }
     }
 
@@ -147,7 +168,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 4: 转向角速度环 (2ms) - 内环
     // ==========================================================
-    if (loop_counter % 2 == 0)  // 2ms周期
+    if (loop_counter % 2 == 0 && g_yaw_initialized)  // 2ms周期
     {
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
         // Z轴(yaw)处理：用于转向角速度环
@@ -156,7 +177,26 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         float gyro_z_deg = gyro_z_val / 16.384f;  // 转换为°/s
         filtered_gyro_z = 0.8f * filtered_gyro_z + 0.2f * gyro_z_deg;//低通滤波
         // 输入：转向角度环输出(期望角速度) + 实际角速度(filtered_gyro_z)
-        turn_gyro_loop_out = Turn_Gyro_Loop_Control(turn_angle_loop_out, filtered_gyro_z);
+
+        //==================== [雷区旋转调用开始] =================
+        // lq.1. 获取旋转控制器的输出
+        //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s), 当前Yaw角, 全局Yaw目标指针
+        float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.002f, euler_angle.yaw, &g_initial_yaw);
+
+        // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
+        float final_turn_cmd;
+        
+        if (Minefield_Is_Active()) 
+        {
+            final_turn_cmd = spin_cmd; // 使用平滑的旋转指令
+        }
+        else
+        {
+            final_turn_cmd = turn_angle_loop_out; // 使用正常的PID外环指令
+        }
+        //==================== [雷区旋转调用结束] =================
+        // 将雷区旋转指令或者正常转向角速度指令送入内环PID
+        turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
     }
 
     // ==========================================================
@@ -190,37 +230,31 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 
     // ==========================================================
-    // 步骤 6: 安全保护 (倒地停止)(10ms)
+    // 步骤 6: 安全保护 (倒地停止)(9ms)
     // ==========================================================
-    if (loop_counter % 10 == 0){
-        // 如果角度过大（例如超过 30 度），逐渐关闭电机
-            if (now_angle > 30.0f || now_angle < -30.0f) 
-            {
-                // 逐渐减小电机输出，每次循环减小10%
-                // gyro_loop_out *= 0.9f;
-                
-                // 当输出足够小时，直接置0
-                // if (fabs(gyro_loop_out) < 100.0f) 
-                // {
-                    gyro_loop_out = 0;// 清零平衡PWM
-                    turn_gyro_loop_out = 0.0f; // 清零转向PWM
-                // }
-                
-                // 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
-                PID_Data_Reset();
-            }
-            
-            if(g_motor_enable==0)
+    if (loop_counter % 9 == 0){
+        // 【倒地保护条件】：必须同时满足
+        //   (1) 偏航角已初始化
+        //   (2) 非跳跃状态（jump_flag == 0）
+        //   (3) 倾角超过安全阈值（±30°）
+        //   (4) 第一次站起来之后，loop_counter > 2000(中断开启两秒后)
+        if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
         {
-            // 逐渐减小电机输出
-            // gyro_loop_out *= 0.9f;
+             // 如果角度过大（例如超过 30 度），判定为倒地
+            if (now_angle > 30.0f || now_angle < -30.0f)
+            {
+                gyro_loop_out = 0;          // 清零平衡PWM
+                turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
+                PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
+                // 彻底关闭电机使能，可以取消下面这行的注释
+                //g_motor_enable = 0; 
+            }
+        }
             
-            // // 当输出足够小时，直接置0
-            // if (fabs(gyro_loop_out) < 100.0f) 
-            // {
-                gyro_loop_out = 0.0f;      // 清零平衡PWM
-                turn_gyro_loop_out = 0.0f; // 清零转向PWM
-            // }
+        if(g_motor_enable==0)
+        {
+            gyro_loop_out = 0.0f;      // 清零平衡PWM
+            turn_gyro_loop_out = 0.0f; // 清零转向PWM
             PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
         }
     }
@@ -228,23 +262,54 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 7: PWM矢量融合与电机输出
     // ==========================================================
+    if (g_yaw_initialized)
+    {
+        // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
+        // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
+        int16_t pwm_left  = (int16_t)( gyro_loop_out + turn_gyro_loop_out);
+        int16_t pwm_right = (int16_t)(-gyro_loop_out + turn_gyro_loop_out);
 
-    // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
-    // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
-    int16_t pwm_left  = (int16_t)( gyro_loop_out + turn_gyro_loop_out);
-    int16_t pwm_right = (int16_t)(-gyro_loop_out + turn_gyro_loop_out);
-
-    // 统一限幅（防止叠加后超限）
-    pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
-    pwm_right = (int16_t)Float_Constrain(pwm_right, -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
-    // 直接输出即可
-    small_driver_set_duty(pwm_left, pwm_right);
+        // 统一限幅（防止叠加后超限）
+        pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
+        pwm_right = (int16_t)Float_Constrain(pwm_right, -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
+        // 直接输出即可
+        
+         // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
+        if (jump_flag != 0) 
+        {
+            // 在跳跃过程中（特别是空中），轮子失去摩擦力。
+            // 如果此时平衡环继续工作，轮子会疯狂加速。
+            // 建议：直接给0，或者给一个极小的保持速度。
+            small_driver_set_duty(0, 0); 
+            
+            // 进阶玩法：利用动量轮效应调整空中姿态，可以在这里写逻辑
+            // 但为了安全，先置0。
+        }
+        else
+        {
+            // 正常平衡模式
+            small_driver_set_duty(pwm_left, pwm_right);
+        }
+        // --- 【科目三：跳跃时的电机保护逻辑结束】 --- 
+    }
 
     // ==========================================================
     // 步骤 8: 舵机执行器更新
     // ==========================================================
-    if(g_motor_enable!=0 && (now_angle < 30.0f && now_angle > -30.0f)){
-        servo_executor_update();//舵机输出
+    if(g_yaw_initialized){//当姿态角可信时舵机执行器才工作
+        // --- 【科目三：跳跃时舵机控制权切换开始】 ---
+        if (jump_flag != 0)
+        {
+            // 如果处于跳跃状态，调用跳跃专用执行器
+            // 它会根据 loop_counter - start_time 精确控制动作
+            servo_jump_executor();
+        }
+        else
+        {
+            // 正常行驶状态，调用常规平滑执行器
+            servo_executor_update();
+        }
+        // --- 【科目三：跳跃时舵机控制权切换结束】 ---
     }
 
     // ==========================================================
@@ -259,9 +324,41 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数      
 {
+    // 1. 清除中断标志位
     pit_isr_flag_clear(PIT_CH1);
+      // 2. 执行遥控器积分计算
     Remote_Control_Process();
 
+    // ---------------------------------------------------------------
+    // 3. 变量映射 (将遥控器结构体映射到主控全局变量)
+    // ---------------------------------------------------------------
+    //暂时在遥控器内部做了角速度和速度的内部逻辑，没有在这里再做保护，输出那里会有一个保护，这里先这样
+
+    // [映射 1: 安全开关]
+    // robot_ctrl.motor_enable: 1=使能, 0=急停
+    // g_motor_enable:          1=使能, 0=关机
+    if (robot_ctrl.motor_enable == 0) {
+        g_motor_enable = 0; // 关机/急停
+    } else {
+        g_motor_enable = 1; // 正常工作
+    }
+
+    // [映射 2: 转向角度]
+    // 直接赋值积分结果 (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
+    err_degree = robot_ctrl.target_angle;
+
+    // [映射 3: 速度控制]
+    // 主函数定义: 负数代表向前 (-60 = 20m/s)
+    // 遥控器逻辑: 假设推油门 robot_ctrl.target_speed 为正数
+    // 转换逻辑: 取反
+    target_speed_set = -robot_ctrl.target_speed;
+    
+    // [可选: 保护] 如果处于未使能状态，强制目标速度归零，防止后台积分
+    if(g_motor_enable == 0) {
+        target_speed_set = 0.0f;
+        // 同时清除遥控器内部积分，防止再次使能时车突然冲出去
+        robot_ctrl.target_speed = 0.0f; 
+    }
 }
 
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      

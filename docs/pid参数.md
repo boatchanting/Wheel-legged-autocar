@@ -20,3 +20,4 @@ case 5: pid_turn_gyro.kp = seekfree_assistant_parameter[i]; break;
 // 参数6: 转向角度环kp
 case 6: pid_turn_angle.kp = seekfree_assistant_parameter[i]; break;
 -3
+转向角度环kd -1.7

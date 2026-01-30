@@ -225,7 +225,9 @@ void wifi_update_pid_params(void)
             switch(i)
             {
                 // 参数 0: 角速度环 Kp (pid_gyro.kp)
-                case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
+                // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
+                //参数 0: 期望速度 (target_speed_set) 目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
+                case 0: target_speed_set = seekfree_assistant_parameter[i]; break;
                 // 参数 1: 角度环Kp
                 case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
                 // 参数 2: 角度环kd
@@ -246,12 +248,16 @@ void wifi_update_pid_params(void)
                 //             flash_write_flag = 0;
                 //         }
                 //         break;
-                //参数 6: 期望速度 (target_speed_set)
-                // case 6: target_speed_set = seekfree_assistant_parameter[i]; break;
+                
+                
                 // 参数5: 转向角速度环kp
-                case 5: pid_turn_gyro.kp = seekfree_assistant_parameter[i]; break;
-                // 参数6: 转向角度环kp
-                case 6: pid_turn_angle.kp = seekfree_assistant_parameter[i]; break;
+                // case 5: pid_turn_gyro.kp = seekfree_assistant_parameter[i]; break;
+                // 参数5 :vision_detected_jump_point,跳跃测试
+                case 5: vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // 参数6: 转向角速度环kd
+                // case 6: pid_turn_gyro.kd = seekfree_assistant_parameter[i]; break;
+                // 参数6:  vision_detected_marker = 0/1;//雷区调用,测试用
+                case 6: vision_detected_marker = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
                 case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;

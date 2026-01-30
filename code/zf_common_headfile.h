@@ -103,15 +103,21 @@
 #include "seekfree_assistant.h"
 #include "seekfree_assistant_interface.h"
 #include "small_driver_uart_control.h"//无刷电机
-#include "wifi.h"  // 添加 wifi模块
-#include "ekf.h"//扩展卡尔曼滤波器
-#include "matrix.h"//矩阵运算相关库
-#include "servo.h"//舵机控制
-#include "servo_executor.h"  // 舵机速度环平滑执行器
-#include "pid-new.h"//pid 控制器
-#include "flash.h"  // flash 参数存储
-#include "beep.h"   // 蜂鸣器
-#include "sbus.h"  // sbus 协议
-#include "navigation_ekf.h" // 惯导卡尔曼滤波器
+
+#include "calculate/ekf.h"//扩展卡尔曼滤波器
+#include "calculate/navigation_ekf.h" // 惯导卡尔曼滤波器
+#include "calculate/matrix.h"//矩阵运算相关库
+#include "calculate/pid-new.h"//pid 控制器
+
+#include "servo/servo.h"//舵机控制
+#include "servo/servo_executor.h"  // 舵机速度环平滑执行器
+#include "servo/servo_jump.h"//舵机跳跃控制（主要服务科目三，但是仅仅跳跃动作，需要优化添加）
+
+#include "tools/flash.h"  // flash 参数存储
+#include "tools/beep.h"   // 蜂鸣器
+#include "tools/sbus.h"  // sbus 协议
+#include "tools/wifi.h"  // 添加 wifi模块
+
+#include "plan/minefield.h"  // 科目一：雷区旋转控制器
 //=====================================================组件应用层=====================================================
 #endif
