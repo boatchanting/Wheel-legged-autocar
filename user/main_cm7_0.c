@@ -37,7 +37,7 @@
 #define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
-#define REMOTE_CONTROL 0                 //【全局开关】1：开启遥控器 0:关闭
+#define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
 
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
@@ -165,8 +165,8 @@ int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 
 #define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1
 uint8 pit_state_1 = 0;
-#define PIT_NUM_2         (PIT_CH2) // 使用定时器通道2
-uint8 pit_state_2 = 0;
+// #define PIT_NUM_2         (PIT_CH2) // 使用定时器通道2
+// uint8 pit_state_2 = 0;
 // #define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于重置惯导，按钮的实现
 
 int main(void)
@@ -323,6 +323,11 @@ Momentum_Wheel_Control_Init();//pid跳跃控制，动量轮控制参数初始化
     disp_y += 16;
 #endif
 
+InertialNav_Init();//惯性导航初始化
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "InertialNav Init OK");
+    disp_y += 16;
+#endif
 
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印uart中断完成 ---
@@ -336,7 +341,7 @@ Momentum_Wheel_Control_Init();//pid跳跃控制，动量轮控制参数初始化
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
     pit_ms_init(PIT_NUM, 1);
     pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
-    pit_ms_init(PIT_NUM_2, 5);                                                // 定时器通道2 初始化为5ms 中断 用于 惯导kf 卡尔曼滤波处理
+    // pit_ms_init(PIT_NUM_2, 5);                                                // 定时器通道2 初始化为5ms 中断 用于 惯导kf 卡尔曼滤波处理
     
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
@@ -456,7 +461,7 @@ vision_detected_marker = 0;//雷区调用,测试用
                 // // 通道 4: 转向角度环输出
                 // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
                 //通道 5：舵机速度环输出
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)inertial_nav.relative_yaw;
                 // 通道 3: Roll (横滚角)
                 seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
                 // 通道 4: Yaw (偏航角)
@@ -467,10 +472,10 @@ vision_detected_marker = 0;//雷区调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
 
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
-                //通道6 x方向加速度
-                seekfree_assistant_oscilloscope_data.data[6] = ax_world;
-                //通道7 y方向加速度
-                seekfree_assistant_oscilloscope_data.data[7] = ay_world;
+                //通道6 x方向惯性导航位置
+                seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.x;
+                //通道7 y方向惯性导航位置
+                seekfree_assistant_oscilloscope_data.data[7] = inertial_nav.y;
                 // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;
                     

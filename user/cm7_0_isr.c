@@ -59,7 +59,7 @@ volatile struct {
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
-#define REMOTE_CONTROL 1
+#define REMOTE_CONTROL 1 //【全局开关】1：开启遥控器 0:关闭，这里暂时没有修正，后续想和main共用一个，【可以优化点】
 // **************************** PIT中断函数 ****************************
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
@@ -68,6 +68,29 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     loop_counter++;
 
     imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用
+
+    
+    // ==========================================================
+    // 步骤 0: 惯性导航解算 (10ms 跑一次)
+    // ==========================================================
+    if(loop_counter % 10 == 0 && g_yaw_initialized)
+    {
+        // 调用导航更新函数
+        InertialNav_Update(
+            euler_angle.yaw,                                 // 当前偏航角
+            g_initial_yaw,                                   // 初始偏航角
+            imu660ra_gyro_x,                                // 横向加速度 (左+)
+            imu660ra_gyro_y,                                // 纵向加速度 (前+)
+            (float)motor_value.receive_left_speed_data,      // 左轮速
+            (float)motor_value.receive_right_speed_data      // 右轮速
+        );
+        
+        // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y 
+        // 例如, 用于路径规划、位置闭环等
+        // float current_pos_x = inertial_nav.x;
+        // float current_pos_y = inertial_nav.y;
+        // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
+    }
 
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
@@ -634,7 +657,7 @@ void gpio_19_exti_isr()                  // 外部 GPIO_19 中断服务函数
 
 void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数     
 {
-    Navigation_Reset();//外部中断调用导航重置函数
+    // Navigation_Reset();//外部中断调用导航重置函数
       if(exti_flag_get(P20_0))	// 示例P1_0端口外部中断判断
     {
         printf("EXTI P19_0 Triggered!\n");
