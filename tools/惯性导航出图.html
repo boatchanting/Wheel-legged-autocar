@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IMU 惯性导航可视化工具</title>
+    <!-- 引入 Plotly.js 用于绘图 -->
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f9;
+            color: #333;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #2c3e50;
+        }
+        .controls {
+            display: flex;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #ecf0f1;
+            border-radius: 5px;
+            align-items: center;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .control-group label {
+            font-size: 0.9em;
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        input[type="number"] {
+            padding: 5px;
+            border: 1px solid #bdc3c7;
+            border-radius: 4px;
+            width: 100px;
+        }
+        #drop-zone {
+            border: 2px dashed #3498db;
+            border-radius: 5px;
+            padding: 40px;
+            text-align: center;
+            color: #7f8c8d;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        #drop-zone.dragover {
+            background-color: #ebf5fb;
+            border-color: #2980b9;
+        }
+        #file-input {
+            display: none;
+        }
+        #chart-container {
+            width: 100%;
+            height: 700px;
+        }
+        .btn {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 1rem;
+        }
+        .btn:hover {
+            background-color: #2980b9;
+        }
+        #status {
+            margin-top: 10px;
+            font-weight: bold;
+            height: 20px;
+        }
+        .accel-charts {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+            height: 300px;
+        }
+        .sub-chart {
+            flex: 1;
+            height: 100%;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>智能小车惯性导航分析 (HTML版)</h1>
+
+    <div id="drop-zone">
+        <p>拖拽 .txt 数据文件到这里，或点击选择文件</p>
+        <input type="file" id="file-input" accept=".txt,.json">
+    </div>
+
+    <div class="controls">
+        <div class="control-group">
+            <label for="scale">速度比例 (Scale):</label>
+            <input type="number" id="scale" value="1.0" step="0.1">
+        </div>
+        <div class="control-group">
+            <label for="alpha">速度融合系数 (Alpha 0-1):</label>
+            <input type="number" id="alpha" value="0.90" step="0.01" min="0" max="1" title="越接近1越信任轮速，越小越信任加速度">
+        </div>
+        <div class="control-group">
+            <label for="decay">侧滑衰减 (Decay 0-1):</label>
+            <input type="number" id="decay" value="0.90" step="0.01" min="0" max="1" title="模拟地面摩擦，越小侧滑消失越快">
+        </div>
+        <button class="btn" onclick="recalculate()">重新计算并绘图</button>
+    </div>
+
+    <div id="status"></div>
+
+    <div id="chart-container"></div>
+    
+    <div class="accel-charts">
+        <div id="chart-acc-lon" class="sub-chart"></div>
+        <div id="chart-acc-lat" class="sub-chart"></div>
+    </div>
+</div>
+
+<script>
+    // 全局变量存储原始数据
+    let rawDataStore = null;
+    const DT = 0.01; // 10ms
+
+    // 1. 处理文件拖拽和上传逻辑
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length) handleFile(files[0]);
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (fileInput.files.length) handleFile(fileInput.files[0]);
+    });
+
+    function handleFile(file) {
+        document.getElementById('status').innerText = `正在读取文件: ${file.name}...`;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const jsonContent = JSON.parse(e.target.result);
+                processRawData(jsonContent);
+                document.getElementById('status').innerText = "数据加载成功，正在计算...";
+                setTimeout(recalculate, 100); // 让UI刷新一下
+            } catch (err) {
+                alert("文件解析失败，请确保是合法的JSON格式。\n错误信息: " + err);
+                document.getElementById('status').innerText = "文件解析失败";
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    // 2. 数据预处理
+    function processRawData(jsonArray) {
+        const organized = {};
+        let minLen = Infinity;
+
+        // 提取需要的通道
+        const requiredChannels = [0, 1, 4, 5, 6, 7];
+        
+        // 遍历JSON数组转为 Map 结构
+        jsonArray.forEach(item => {
+            if (requiredChannels.includes(item.Channel)) {
+                organized[item.Channel] = item.Points;
+                if (item.Points.length < minLen) minLen = item.Points.length;
+            }
+        });
+
+        // 检查缺失通道
+        const missing = requiredChannels.filter(ch => !organized[ch]);
+        if (missing.length > 0) {
+            alert(`警告: 数据缺少通道: ${missing.join(', ')}。可能无法完成全部计算。`);
+            // 如果缺关键数据则无法继续，这里做个简单的容错
+            if (!organized[0] || !organized[1] || !organized[4]) {
+                 document.getElementById('status').innerText = "缺少关键数据通道 (0, 1, 4)";
+                 return;
+            }
+        }
+
+        // 截断对齐长度
+        for (let key in organized) {
+            organized[key] = organized[key].slice(0, minLen);
+        }
+
+        rawDataStore = organized;
+    }
+
+    // 3. 核心计算逻辑 (对应 Python 的 FusionNavigator)
+    function recalculate() {
+        if (!rawDataStore) {
+            alert("请先上传数据文件！");
+            return;
+        }
+
+        // 获取参数
+        const SCALE = parseFloat(document.getElementById('scale').value);
+        const ALPHA = parseFloat(document.getElementById('alpha').value);
+        const DECAY = parseFloat(document.getElementById('decay').value);
+
+        // 获取数据引用
+        const rawVL = rawDataStore[0];
+        const rawVR = rawDataStore[1];
+        const rawYaw = rawDataStore[4];
+        const rawAccLat = rawDataStore[6] || new Array(rawVL.length).fill(0); // 缺省填0
+        const rawAccLon = rawDataStore[7] || new Array(rawVL.length).fill(0);
+
+        const N = rawVL.length;
+
+        // 结果数组
+        const trajOdom = { x: [0], y: [0] };
+        const trajFuse = { x: [0], y: [0] };
+
+        // 状态变量
+        let odomX = 0, odomY = 0;
+        let fuseX = 0, fuseY = 0;
+        let vxBody = 0, vyBody = 0;
+
+        // 开始循环计算
+        for (let i = 0; i < N; i++) {
+            // --- 输入处理 ---
+            // Ch0: 左轮(负数正转 -> 取反), Ch1: 右轮
+            let vl = -rawVL[i] * SCALE;
+            let vr = rawVR[i] * SCALE;
+            let yawDeg = rawYaw[i];
+            let accLat = rawAccLat[i]; // 左为正
+            let accLon = rawAccLon[i]; // 前为正
+
+            // --- 1. 纯里程计计算 (作为基准) ---
+            let vWheel = (vl + vr) / 2.0;
+            let yawRad = yawDeg * (Math.PI / 180.0);
+
+            // 里程计位置更新
+            odomX += vWheel * DT * Math.cos(yawRad);
+            odomY += vWheel * DT * Math.sin(yawRad);
+            trajOdom.x.push(odomX / 1000); // 转为米
+            trajOdom.y.push(odomY / 1000);
+
+            // --- 2. 融合导航计算 ---
+            
+            // 2.1 纵向融合 (互补滤波)
+            let vPred = vxBody + accLon * DT;
+            
+            // 零速修正 (ZUPT): 如果轮子几乎不转，强制归零，消除漂移
+            if (Math.abs(vWheel) < 1.0) {
+                vxBody = 0.0;
+            } else {
+                vxBody = ALPHA * vWheel + (1.0 - ALPHA) * vPred;
+            }
+
+            // 2.2 横向融合 (侧滑估算)
+            // 纯里程计假设 vyBody = 0
+            // 积分横向加速度，并施加衰减系数
+            vyBody = vyBody * DECAY + accLat * DT;
+            
+            // 简单阈值去噪
+            if (Math.abs(accLat) < 50) vyBody = 0.0;
+
+            // 2.3 坐标系转换 (Body -> World)
+            // 车体坐标系: X前, Y左 (根据Ch6定义)
+            // 旋转矩阵: 
+            // V_world_x = V_bx * cos(theta) - V_by * sin(theta)
+            // V_world_y = V_bx * sin(theta) + V_by * cos(theta)
+            let vxWorld = vxBody * Math.cos(yawRad) - vyBody * Math.sin(yawRad);
+            let vyWorld = vxBody * Math.sin(yawRad) + vyBody * Math.cos(yawRad);
+
+            // 2.4 位置更新
+            fuseX += vxWorld * DT;
+            fuseY += vyWorld * DT;
+
+            trajFuse.x.push(fuseX / 1000); // 转为米
+            trajFuse.y.push(fuseY / 1000);
+        }
+
+        plotTrajectory(trajOdom, trajFuse);
+        plotAccel(rawAccLon, rawAccLat);
+        document.getElementById('status').innerText = `计算完成。处理数据点: ${N}`;
+    }
+
+    // 4. 绘图逻辑
+    function plotTrajectory(odom, fuse) {
+        const traceOdom = {
+            x: odom.x,
+            y: odom.y,
+            mode: 'lines',
+            name: '纯里程计 (Odom)',
+            line: { color: 'gray', dash: 'dash', width: 2 }
+        };
+
+        const traceFuse = {
+            x: fuse.x,
+            y: fuse.y,
+            mode: 'lines',
+            name: 'IMU融合 (Fusion)',
+            line: { color: 'red', width: 3 }
+        };
+
+        const traceStart = {
+            x: [fuse.x[0]], y: [fuse.y[0]],
+            mode: 'markers', name: '起点',
+            marker: { color: 'green', size: 12, symbol: 'circle' }
+        };
+
+        const traceEnd = {
+            x: [fuse.x[fuse.x.length-1]], y: [fuse.y[fuse.y.length-1]],
+            mode: 'markers', name: '终点',
+            marker: { color: 'blue', size: 12, symbol: 'x' }
+        };
+
+        const layout = {
+            title: '导航轨迹对比 (单位: 米)',
+            xaxis: { title: 'X (m)', scaleanchor: 'y', scaleratio: 1 }, // 保持比例一致
+            yaxis: { title: 'Y (m)' },
+            hovermode: 'closest',
+            dragmode: 'pan'
+        };
+
+        Plotly.newPlot('chart-container', [traceOdom, traceFuse, traceStart, traceEnd], layout, {responsive: true});
+    }
+
+    function plotAccel(accLon, accLat) {
+        // 下采样一下，防止点太多卡顿，仅用于趋势查看
+        const step = Math.ceil(accLon.length / 1000); 
+        const index = [];
+        const yLon = [];
+        const yLat = [];
+        
+        for(let i=0; i<accLon.length; i+=step) {
+            index.push(i * DT);
+            yLon.push(accLon[i]);
+            yLat.push(accLat[i]);
+        }
+
+        Plotly.newPlot('chart-acc-lon', [{
+            x: index, y: yLon, type: 'scatter', mode: 'lines', line: {color: 'orange'}
+        }], { title: '纵向加速度 (Ch7)', margin: {t: 30, b: 30, l:30, r:10} }, {responsive: true});
+
+        Plotly.newPlot('chart-acc-lat', [{
+            x: index, y: yLat, type: 'scatter', mode: 'lines', line: {color: 'purple'}
+        }], { title: '横向加速度 (Ch6)', margin: {t: 30, b: 30, l:30, r:10} }, {responsive: true});
+    }
+
+</script>
+
+</body>
+</html>
