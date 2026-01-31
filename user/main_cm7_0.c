@@ -314,8 +314,9 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
 #endif
 
 // 初始化 PID 参数 (必须最先调用)
-flash_init();   // 使用flash前先调用flash初始化 ，包含pid初始化
+//flash_init();   // 使用flash前先调用flash初始化 ，包含pid初始化
 PID_Param_Init();//pid其余参数初始化
+Momentum_Wheel_Control_Init();//pid跳跃控制，动量轮控制参数初始化
 //param_read_from_flash(); // 从 Flash 读取参数
 // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
 #if DEBUG_DISPLAY

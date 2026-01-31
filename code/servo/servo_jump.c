@@ -3,6 +3,7 @@
 // 状态变量
 uint8_t jump_flag = 0;
 uint32_t jump_start_time = 0;
+volatile JumpPhase g_current_jump_phase = JUMP_PHASE_NONE; // 初始化为 NONE
 bool vision_detected_jump_point = false;//跳跃测试用
 // 引用外部变量 (来自servo.c)
 extern volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
@@ -22,6 +23,7 @@ void jump_trigger(void)
     {
         jump_flag = 1;
         jump_start_time = loop_counter; // 锚定当前毫秒时间戳
+        g_current_jump_phase = JUMP_PHASE_LAUNCH; // 初始阶段设为 A
     }
 }
 
@@ -65,6 +67,7 @@ void servo_jump_executor(void)
     {
         // 动作：全力伸腿
         // 限幅：极大值 (10000)，相当于无视斜率限制，电机全速动作
+        g_current_jump_phase = JUMP_PHASE_LAUNCH; // 更新阶段
         dynamic_slope_limit = 10000; 
         
         target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, JUMP_OFFSET_LAUNCH);
@@ -76,6 +79,7 @@ void servo_jump_executor(void)
     else if (time_elapsed <= 280)
     {
         // 动作：快速收缩
+        g_current_jump_phase = JUMP_PHASE_FLIGHT;
         dynamic_slope_limit = 10000;
         
         target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, JUMP_OFFSET_FLIGHT);
@@ -87,6 +91,7 @@ void servo_jump_executor(void)
     else if (time_elapsed <= 300)
     {
         // 动作：伸腿准备触地
+        g_current_jump_phase = JUMP_PHASE_LANDING;
         dynamic_slope_limit = 10000;
         
         target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, JUMP_OFFSET_LAND);
@@ -100,6 +105,7 @@ void servo_jump_executor(void)
         // 动作：恢复到正常身高 (Offset = 0)
         // 限幅：【关键】设为 20 左右，模拟弹簧阻尼
         // 这会让腿“慢慢”缩回到正常高度，消化地面的冲击力
+        g_current_jump_phase = JUMP_PHASE_RECOVERY;
         dynamic_slope_limit = 20; 
         
         target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, 0);
@@ -111,6 +117,7 @@ void servo_jump_executor(void)
     else
     {
         jump_flag = 0; // 动作完成，交还控制权
+        g_current_jump_phase = JUMP_PHASE_NONE;
         return;
     }
 
@@ -139,4 +146,45 @@ void servo_jump_executor(void)
     // 4. 更新角度数组 (用于Debug显示)
     uint16_t current_duties[4] = {(uint16_t)final_lf, (uint16_t)final_rf, (uint16_t)final_rr, (uint16_t)final_lr};
     update_all_servo_angles(current_duties);
+}
+
+//动量轮实现私有变量
+static float g_air_kp;
+static float g_air_kd;
+static float g_air_target_pitch;
+
+/**
+ * @brief 初始化空中姿态控制参数
+ */
+void Momentum_Wheel_Control_Init(void)
+{
+    g_air_kp = 60.0f;  // 空中姿态P，需要非常激进
+    g_air_kd = 8.0f;   // 空中姿态D，抑制空中翻转速度
+    g_air_target_pitch = -1.0f; // 空中目标角度(度)，轻微后仰
+}
+
+/**
+ * @brief 动量轮姿态控制核心算法 (在空中运行时调用)
+ * @param current_pitch 当前俯仰角 (来自 IMU)
+ * @param current_gyro  当前俯仰角速度 (来自 IMU)
+ * @return int16_t       计算出的电机PWM值
+ */
+int16_t Momentum_Wheel_Control_Run(float current_pitch, float current_gyro)
+{
+    // 1. 计算姿态误差
+    float error = g_air_target_pitch - current_pitch;
+    
+    // 2. PD 控制器计算
+    //    原理:
+    //    - 车头过低 (current_pitch > target), error < 0. 需抬头.
+    //    - 抬头需要向后的反作用力矩, 故轮子需向前加速.
+    //    - 假设向前加速是正PWM, 则公式为 Kp * (-error), 即 Kp * (target - current).
+    //    - D项同理, 抑制角速度.
+    float pwm_out = (g_air_kp * error) - (g_air_kd * current_gyro);
+
+    // 3. 输出限幅 (空中需要很大力矩, 限幅可以给高一些)
+    //    现在的 GYR_MAX_O 是 6000，这里可以给到更高，测试为了安全，我先给到6000
+    pwm_out = Float_Constrain(pwm_out, -6000.0f, 6000.0f);
+
+    return (int16_t)pwm_out;
 }
