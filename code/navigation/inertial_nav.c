@@ -1,5 +1,4 @@
 #include "inertial_nav.h"
-#include <math.h> // 用于 sinf, cosf, fabsf
 
 // --- 宏定义 ---
 #ifndef M_PI
