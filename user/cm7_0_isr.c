@@ -59,6 +59,7 @@ volatile struct {
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
+#define REMOTE_CONTROL 1
 // **************************** PIT中断函数 ****************************
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
@@ -395,15 +396,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
 
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      
 {
-    // static uint32_t ekf_loop_count = 0;
-    // ekf_loop_count++;
     pit_isr_flag_clear(PIT_CH2);
-
-    // if(ekf_loop_count % 100 == 0)
-    // {
-    //     printf("ch2  imu660ra_acc_x: %f,imu660ra_acc_y: %f\n", imu_data.acc_x, imu_data.acc_y);
-    // }
-    Navigation_EKF_Update(imu_data.acc_x, imu_data.acc_y, euler_angle.yaw, -current_actual_speed);//惯导卡尔曼滤波更新函数调用，传入imu加速度，偏航角，编码器速度
 }
 
 void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数      

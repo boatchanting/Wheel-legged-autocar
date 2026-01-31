@@ -167,7 +167,7 @@ int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 uint8 pit_state_1 = 0;
 #define PIT_NUM_2         (PIT_CH2) // 使用定时器通道2
 uint8 pit_state_2 = 0;
-#define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于重置惯导
+// #define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于重置惯导，按钮的实现
 
 int main(void)
 {
@@ -296,8 +296,7 @@ IMU_Calibrate_All_Gyro();
     disp_y += 16;
 #endif
 
-Navigation_EKF_Init(); //导航卡尔曼滤波初始化
-exti_init(EXTI_PORT20_0, EXTI_TRIGGER_RISING);             // 使用的外部中断输入引脚
+// exti_init(EXTI_PORT20_0, EXTI_TRIGGER_RISING);             // 使用的外部中断输入引脚，用于按钮的，后面可以拿来写菜单
 EKF_Init(); // 初始化扩展卡尔曼滤波
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "EKF Init OK");
