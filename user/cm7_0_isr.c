@@ -71,7 +71,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
     
     // ==========================================================
-    // 步骤 0: 惯性导航解算 (10ms 跑一次)
+    // 【nav.1】惯性导航解算 (10ms 跑一次)
     // ==========================================================
     if(loop_counter % 10 == 0 && g_yaw_initialized)
     {
@@ -91,6 +91,31 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         // float current_pos_y = inertial_nav.y;
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
     }
+
+    // ------------------------------------------------------
+    // 【nav.2】轨迹记录逻辑 (每100ms记录一次)
+    // ------------------------------------------------------
+    // 只有当：1.开启录制标志 且 2.电机使能有效 时才记录
+    if (loop_counter % 100 == 0) // 100ms 间隔
+    {
+        if (g_nav_recording && g_motor_enable)
+        {
+
+            NAV_RAM_AddRecord(
+                inertial_nav.x,
+                inertial_nav.y,
+                inertial_nav.relative_yaw
+            );
+        }
+        // 如果正在录制，但电机意外关闭（倒地或手动失能），则强制停止录制且不保存
+        else if (g_nav_recording && !g_motor_enable)
+        {
+            g_nav_recording = 0;
+            // 注意：这里不置位 g_save_flash_request，所以数据不会保存，直接丢弃
+            // printf("ISR: Motor disabled, recording aborted.\r\n");
+        }
+    }
+    
 
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
@@ -114,7 +139,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     if (loop_counter % 6 == 0)  // 6ms周期
     {
-        // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后
+        // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
         // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
         // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
          // 只有在偏航角成功初始化后，才执行航向保持控制
@@ -657,25 +682,54 @@ void gpio_19_exti_isr()                  // 外部 GPIO_19 中断服务函数
 
 void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数     
 {
-    // Navigation_Reset();//外部中断调用导航重置函数
-      if(exti_flag_get(P20_0))	// 示例P1_0端口外部中断判断
+    // ==========================================================
+    // 按键 1 (P20_0): 开始录制
+    // ==========================================================
+    if(exti_flag_get(EXTI_PORT20_0))
     {
-        printf("EXTI P19_0 Triggered!\n");
-        gpio_toggle_level(P19_0); // 翻转电平      
+        
+        // 只有电机开启且姿态初始化完成，才允许开始录制
+        if (g_motor_enable && g_yaw_initialized)
+        {
+            NAV_RAM_ClearRecords(); // 清空旧数据
+            g_nav_recording = 1;    // 开启录制标志
+            g_save_flash_request = 0; // 确保没有挂起的保存请求
+            // printf("BTN: Start Recording...\r\n");
+        }
+    }
+
+    // ==========================================================
+    // 按键 2 (P20_1): 停止录制并保存
+    // ==========================================================
+    if(exti_flag_get(EXTI_PORT20_1))
+    {
+
+        if (g_nav_recording)
+        {
+            g_nav_recording = 0; // 停止 RAM 记录
+            
+            // 只有当电机还是开启状态（说明正常跑完了），才请求保存
+            // 如果倒地了，g_motor_enable 会变 0，这里就不会保存
+            if (g_motor_enable) 
+            {
+                g_save_flash_request = 1; // 通知 main 函数去保存 Flash
+                // printf("BTN: Stop Recording, Request Save.\r\n");
+            }
+            else
+            {
+                // printf("BTN: Stop pressed but motor disabled. Discarding.\r\n");
+            }
+        }
     }
 }
 
 void gpio_21_exti_isr()                  // 外部 GPIO_21 中断服务函数     
 {
-
-
-
+    
 }
 
 void gpio_22_exti_isr()                  // 外部 GPIO_22 中断服务函数     
 {
-
-
 
 }
 

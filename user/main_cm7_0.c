@@ -34,7 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 #define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
@@ -167,7 +167,17 @@ int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 uint8 pit_state_1 = 0;
 // #define PIT_NUM_2         (PIT_CH2) // 使用定时器通道2
 // uint8 pit_state_2 = 0;
-// #define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于重置惯导，按钮的实现
+//按钮，暂时用于惯性导航，后面需要更改
+#define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于惯性导航录制
+#define EXTI_PORT20_1              (P20_1) // 外部中断端口定义,用于惯性导航停止录制,停止录制即开启ram转flash的数据压缩储存
+#define EXTI_PORT20_2              (P20_2) // 外部中断端口定义,用于惯性导航开始复现
+
+// ==========================================
+// 导航记录控制标志位
+// ==========================================
+volatile uint8_t g_nav_recording = 0;       // 1: 正在记录 RAM, 0: 停止记录
+volatile uint8_t g_save_flash_request = 0;  // 1: 请求将 RAM 数据存入 Flash
+
 
 int main(void)
 {
@@ -296,7 +306,6 @@ IMU_Calibrate_All_Gyro();
     disp_y += 16;
 #endif
 
-// exti_init(EXTI_PORT20_0, EXTI_TRIGGER_RISING);             // 使用的外部中断输入引脚，用于按钮的，后面可以拿来写菜单
 EKF_Init(); // 初始化扩展卡尔曼滤波
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "EKF Init OK");
@@ -313,7 +322,7 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
 #endif
 
 // 初始化 PID 参数 (必须最先调用)
-//flash_init();   // 使用flash前先调用flash初始化 ，包含pid初始化
+flash_init();   // 使用flash前先调用flash初始化 ，包含pid初始化
 PID_Param_Init();//pid其余参数初始化
 Momentum_Wheel_Control_Init();//pid跳跃控制，动量轮控制参数初始化
 //param_read_from_flash(); // 从 Flash 读取参数
@@ -328,6 +337,23 @@ InertialNav_Init();//惯性导航初始化
     ips200_show_string(0, disp_y, "InertialNav Init OK");
     disp_y += 16;
 #endif
+
+//===============惯性导航初始化开始==================
+InertialNav_Init();             // 坐标系清零
+NAV_RAM_Init();  // 初始化 RAM 存储模块
+R2F_Init();      // 初始化 Flash 压缩存储模块
+// P20_0: 开始录制
+exti_init(P20_0, EXTI_TRIGGER_RISING); 
+// P20_1: 停止录制
+exti_init(P20_1, EXTI_TRIGGER_RISING); 
+// P20_2: 开始复现
+exti_init(P20_2, EXTI_TRIGGER_RISING);
+//===============惯性导航初始化结束==================
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "Button Init OK");
+    disp_y += 16;
+#endif
+
 
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印uart中断完成 ---
@@ -528,6 +554,32 @@ vision_detected_marker = 0;//雷区调用,测试用
 
         // system_delay_ms(50);
 
+
+        // ---------------------------------------------------------
+        //  处理 Flash 保存请求 (必须在 while(1) 中执行)
+        // ---------------------------------------------------------
+        if(g_save_flash_request == 1)
+        {
+            // 为了安全，保存数据时建议关闭电机
+            // g_motor_enable = 0; //如果遥控器是开的，这里不生效，是因为遥控器那个信号等级高，优化点
+            
+            // printf("Main: Received save request.\r\n");
+            
+            // 执行压缩并保存
+            R2F_Status_t status = R2F_SaveTrajectoryFromRAM();
+            
+            if(status == R2F_STATUS_SUCCESS) {
+                gpio_toggle_level(BUZZER_PIN);
+                system_delay_ms(100);
+                gpio_toggle_level(BUZZER_PIN);
+                // printf("Main: Saved successfully.\r\n");
+            } else {
+                // printf("Main: Save failed! Error: %d\r\n", status);
+            }
+            
+            // 清除请求标志
+            g_save_flash_request = 0;
+        }
 
         // 此处编写需要循环执行的代码
     }
