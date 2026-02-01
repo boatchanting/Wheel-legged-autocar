@@ -170,14 +170,15 @@ uint8 pit_state_1 = 0;
 //按钮，暂时用于惯性导航，后面需要更改
 #define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于惯性导航录制
 #define EXTI_PORT20_1              (P20_1) // 外部中断端口定义,用于惯性导航停止录制,停止录制即开启ram转flash的数据压缩储存
-#define EXTI_PORT20_2              (P20_2) // 外部中断端口定义,用于惯性导航开始复现
+
 
 // ==========================================
 // 导航记录控制标志位
 // ==========================================
 volatile uint8_t g_nav_recording = 0;       // 1: 正在记录 RAM, 0: 停止记录
 volatile uint8_t g_save_flash_request = 0;  // 1: 请求将 RAM 数据存入 Flash
-
+volatile uint8_t g_replay_start_request = 0;
+volatile uint8_t g_replay_stop_request = 0;
 
 int main(void)
 {
@@ -339,15 +340,20 @@ InertialNav_Init();//惯性导航初始化
 #endif
 
 //===============惯性导航初始化开始==================
-InertialNav_Init();             // 坐标系清零
-NAV_RAM_Init();  // 初始化 RAM 存储模块
-R2F_Init();      // 初始化 Flash 压缩存储模块
+InertialNav_Init();    // 1. 惯导初始化 (坐标清零)
+NAV_RAM_Init();        // 2. 初始化 RAM 存储模块
+Ram2Flash_Init();      // 3. 初始化 Flash 存储模块 (原 R2F_Init)
+// NAV_Replay_Init();      // 4. 初始化复现模块
+   
 // P20_0: 开始录制
 exti_init(P20_0, EXTI_TRIGGER_RISING); 
 // P20_1: 停止录制
 exti_init(P20_1, EXTI_TRIGGER_RISING); 
 // P20_2: 开始复现
 exti_init(P20_2, EXTI_TRIGGER_RISING);
+// P20_3: 停止复现
+exti_init(P20_3, EXTI_TRIGGER_RISING);
+
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
@@ -554,32 +560,90 @@ vision_detected_marker = 0;//雷区调用,测试用
 
         // system_delay_ms(50);
 
-
         // ---------------------------------------------------------
-        //  处理 Flash 保存请求 (必须在 while(1) 中执行)
+        //  【nav】处理 Flash 保存请求
         // ---------------------------------------------------------
         if(g_save_flash_request == 1)
         {
-            // 为了安全，保存数据时建议关闭电机
-            // g_motor_enable = 0; //如果遥控器是开的，这里不生效，是因为遥控器那个信号等级高，优化点
-            
-            // printf("Main: Received save request.\r\n");
-            
-            // 执行压缩并保存
-            R2F_Status_t status = R2F_SaveTrajectoryFromRAM();
-            
-            if(status == R2F_STATUS_SUCCESS) {
-                gpio_toggle_level(BUZZER_PIN);
+            printf("Main: Saving trajectory to Flash...\r\n");
+            // 调用 Ram2Flash_SaveCompressed() (这是我们实现的带压缩的保存函数)
+            if(Ram2Flash_SaveCompressed()) 
+            {
+                NAV_Replay_ReloadData();
+                // 蜂鸣器反馈：短促鸣叫两次
+                gpio_set_level(BUZZER_PIN, 1);
                 system_delay_ms(100);
-                gpio_toggle_level(BUZZER_PIN);
-                // printf("Main: Saved successfully.\r\n");
-            } else {
-                // printf("Main: Save failed! Error: %d\r\n", status);
+                gpio_set_level(BUZZER_PIN, 0);
+                system_delay_ms(50);
+                gpio_set_level(BUZZER_PIN, 1);
+                system_delay_ms(100);
+                gpio_set_level(BUZZER_PIN, 0);
+                
+                printf("Main: Trajectory saved to Flash successfully.\r\n");
+            } 
+            else 
+            {
+                printf("Main: Save failed! (Check RAM records or Flash area / No data to save)\r\n");
+                // 蜂鸣器报错（急促三声）
+                for(int i=0; i<3; i++) {
+                    gpio_set_level(BUZZER_PIN, 1);
+                    system_delay_ms(50);
+                    gpio_set_level(BUZZER_PIN, 0);
+                    system_delay_ms(50);
+                }
             }
             
             // 清除请求标志
             g_save_flash_request = 0;
         }
+
+        // ---------------------------------------------------------
+        //  【nav】处理复现开始请求 
+        // ---------------------------------------------------------
+        if (g_replay_start_request == 1)
+        {
+            // 每次开始复现，都需要重置惯导，确保起点是 (0,0)
+            InertialNav_Init(); 
+            
+            // 检查 NAV_Replay_IsReady()，它内部已经处理了 Flash 数据是否加载到 RAM 的逻辑
+            if (NAV_Replay_IsReady()) // 如果数据已成功加载到RAM
+            {
+                NAV_Replay_Start(); // 开始复现
+                
+                // 蜂鸣器提示成功
+                gpio_set_level(BUZZER_PIN, 1);
+                system_delay_ms(200);
+                gpio_set_level(BUZZER_PIN, 0);
+                printf("Main: Replay started.\r\n");
+            }
+            else 
+            {
+                // Flash 中无有效数据，或者加载失败
+                printf("Main: Error - No valid trajectory data found for replay!\r\n");
+                
+                // 蜂鸣器报错（急促三声）
+                for(int i=0; i<3; i++) {
+                    gpio_set_level(BUZZER_PIN, 1);
+                    system_delay_ms(50);
+                    gpio_set_level(BUZZER_PIN, 0);
+                    system_delay_ms(50);
+                }
+            }
+
+            g_replay_start_request = 0;
+        }
+
+        // ---------------------------------------------------------
+        //  【nav】处理复现停止请求
+        // ---------------------------------------------------------
+        if (g_replay_stop_request == 1)
+        {
+            NAV_Replay_Stop(); // 这会将 target_speed_set 和 err_degree 归零
+            
+            printf("Main: Replay stopped.\r\n");
+            g_replay_stop_request = 0;
+        }
+        
 
         // 此处编写需要循环执行的代码
     }

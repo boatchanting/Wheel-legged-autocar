@@ -3,9 +3,11 @@
 // 全局标志位
 uint8 g_flash_save_finished = 0;
 
-// 临时页缓冲区 (与 zf_driver_flash.h 中的定义保持一致，通常是一页的大小)
-// 假设 FLASH_PAGE_LENGTH 为一页的字(uint32)数
-static uint32 page_data_buffer[FLASH_PAGE_LENGTH]; 
+// 【修改点 1】声明外部缓冲区 (定义在 zf_driver_flash.c 中)
+extern flash_data_union flash_union_buffer[FLASH_PAGE_LENGTH];
+
+// 【修改点 2】移除本地静态缓冲区
+// static uint32 page_data_buffer[FLASH_PAGE_LENGTH]; 
 
 // 数据转换辅助宏：将 float 的二进制直接视为 uint32，不进行数值转换
 #define FLOAT_BITS_TO_UINT32(f_val) (*((uint32*)&(f_val)))
@@ -37,15 +39,15 @@ uint8 Ram2Flash_SaveCompressed(void) {
     uint16 raw_index = 0;
     uint16 saved_count = 0;       // 实际保存的点数
     uint32 current_page = FLASH_PAGE_DATA_START;
-    uint32 buffer_index = 0;      // 当前页buffer的写入位置
+    uint32 buffer_index = 0;      // 当前页buffer的写入位置 (在 flash_union_buffer 内的索引)
     
     // 临时变量用于算法判断
     NavPoint_t p_prev, p_curr, p_next;
     float yaw_diff_curr, yaw_diff_next;
     uint8 is_key_frame = 0;
 
-    // 清空缓冲区
-    memset(page_data_buffer, 0xFF, sizeof(page_data_buffer));
+    // 【修改点 3】 清空全局缓冲区，防止残留垃圾数据
+    flash_buffer_clear(); 
     
     // 擦除数据区域 (从11页擦除到90页)
     // 注意：实际应用中为了速度，可以边写边擦，这里为了安全先全擦
@@ -96,13 +98,14 @@ uint8 Ram2Flash_SaveCompressed(void) {
         if (is_key_frame) {
             // 检查当前页是否满了 (一个点占3个uint32: x, y, yaw)
             if (buffer_index + 3 > FLASH_PAGE_LENGTH) {
-                // 写入 Flash
-                flash_write_page(0, current_page, page_data_buffer, FLASH_PAGE_LENGTH);
+                // 【修改点 4】 使用高级写入接口 flash_write_page_from_buffer
+                printf("[SAVE-DEBUG] Writing data page %d (FULL) from buffer...\r\n", current_page);
+                flash_write_page_from_buffer(0, current_page, FLASH_PAGE_LENGTH); // 写入一整页
                 current_page++;
                 
                 // 复位 Buffer
                 buffer_index = 0;
-                memset(page_data_buffer, 0xFF, sizeof(page_data_buffer));
+                flash_buffer_clear(); // 写入后清空全局缓冲区
 
                 // 检查页溢出
                 if (current_page > FLASH_PAGE_DATA_END) {
@@ -111,10 +114,10 @@ uint8 Ram2Flash_SaveCompressed(void) {
                 }
             }
 
-            // 将 float 转换为 uint32 存入数组 (禁止结构体指针，使用位拷贝)
-            page_data_buffer[buffer_index++] = FLOAT_BITS_TO_UINT32(p_curr.x);
-            page_data_buffer[buffer_index++] = FLOAT_BITS_TO_UINT32(p_curr.y);
-            page_data_buffer[buffer_index++] = FLOAT_BITS_TO_UINT32(p_curr.yaw);
+            // 【修改点 5】 将数据写入全局缓冲区
+            flash_union_buffer[buffer_index++].uint32_type = FLOAT_BITS_TO_UINT32(p_curr.x);
+            flash_union_buffer[buffer_index++].uint32_type = FLOAT_BITS_TO_UINT32(p_curr.y);
+            flash_union_buffer[buffer_index++].uint32_type = FLOAT_BITS_TO_UINT32(p_curr.yaw);
             
             if(saved_count == 0) {
                 printf("[SAVE-DEBUG] First key point to save: x=%.1f, y=%.1f, yaw=%.1f\r\n", p_curr.x, p_curr.y, p_curr.yaw);
@@ -125,23 +128,20 @@ uint8 Ram2Flash_SaveCompressed(void) {
 
     // 写入最后一页剩余的数据
     if (buffer_index > 0 && current_page <= FLASH_PAGE_DATA_END) {
-        // 【FIX 1】: 修正 len 参数：传入实际写入的字数 buffer_index
-        printf("[SAVE-DEBUG] Writing final data page %d with %d words.\r\n", current_page, buffer_index);
-        flash_write_page(0, current_page, page_data_buffer, buffer_index);
+        // 【修改点 6】 写入实际使用的字数
+        printf("[SAVE-DEBUG] Writing final data page %d with %d words from buffer.\r\n", current_page, buffer_index);
+        flash_write_page_from_buffer(0, current_page, buffer_index);
     }
 
     // --- 写入信息页 (Page 10) ---
-    memset(page_data_buffer, 0xFF, sizeof(page_data_buffer));
-    page_data_buffer[0] = FLASH_MAGIC_NUM;      // 魔数
-    page_data_buffer[1] = (uint32)saved_count;  // 压缩后的点数
-    printf("[SAVE-DEBUG] Writing info page: Magic=0x%08X, Count=%d\r\n", page_data_buffer[0], page_data_buffer[1]);
+    flash_buffer_clear(); 
+    flash_union_buffer[0].uint32_type = FLASH_MAGIC_NUM;      // 魔数
+    flash_union_buffer[1].uint32_type = (uint32)saved_count;  // 压缩后的点数
+    printf("[SAVE-DEBUG] Writing info page: Magic=0x%08X, Count=%d\r\n", flash_union_buffer[0].uint32_type, flash_union_buffer[1].uint32_type);
     
-    // 擦除并写入信息页
-    if(flash_check(0, FLASH_PAGE_INFO)) {
-        flash_erase_page(0, FLASH_PAGE_INFO);
-    }
-    // 【FIX 2】: 修正 len 参数：信息页只写入 2 个字
-    flash_write_page(0, FLASH_PAGE_INFO, page_data_buffer, 2); 
+    // 写入信息页
+    // flash_write_page_from_buffer 内部会检查是否需要擦除
+    flash_write_page_from_buffer(0, FLASH_PAGE_INFO, 2); // 只需要写入 2 个字
 
     // 完成
     g_flash_save_finished = 1;
@@ -154,24 +154,22 @@ uint8 Ram2Flash_SaveCompressed(void) {
  * @brief 从 Flash 读取数据回填到 NAV_RAM
  */
 uint8 Ram2Flash_Load(void) {
-    if (!Ram2Flash_CheckValid()) {
-        printf("Flash Empty or Invalid.\r\n");
+    // 1. 检查数据有效性（必须先读取到全局缓冲区）
+    flash_read_page_to_buffer(0, FLASH_PAGE_INFO, 2); // 读取魔数和点数
+    uint32 magic_read = flash_union_buffer[0].uint32_type;
+
+    if (magic_read != FLASH_MAGIC_NUM) {
+        // 【修改点 7】现在判断是否有效的逻辑更简单
+        printf("Flash Empty or Invalid Magic (Read: 0x%08X, Expected: 0x%08X).\r\n", magic_read, FLASH_MAGIC_NUM);
         return 0;
     }
 
-    // ==========================================================
-    // 【编译错误修复】将局部变量声明放在函数开头 调试用
-    // ==========================================================
-    uint32 magic_read;
-    float x, y, yaw; // 声明 x, y, yaw
-
-    // 1. 读取信息页
-    flash_read_page(0, FLASH_PAGE_INFO, page_data_buffer, FLASH_PAGE_LENGTH);
-    uint32 saved_count = page_data_buffer[1];
+    // 读取点数
+    uint32 saved_count = flash_union_buffer[1].uint32_type;
 
     printf("[LOAD-DEBUG] Read info page: Magic=0x%08X, Count=%d\r\n", magic_read, saved_count);
-
-    if (saved_count == 0 || saved_count > 100000) return 0; // 异常保护
+    
+    if (saved_count == 0 || saved_count > NAV_MAX_RECORDS) return 0; // 异常保护
 
     // 2. 清空 RAM 准备接收
     NAV_RAM_ClearRecords();
@@ -180,34 +178,45 @@ uint8 Ram2Flash_Load(void) {
     uint16 points_read = 0;
     uint32 buffer_idx = 0;
 
-    // 预读取第一页数据
-    flash_read_page(0, current_page, page_data_buffer, FLASH_PAGE_LENGTH);
+    printf("Loading %d points from Flash...\r\n", saved_count);
 
-    // 3. 循环读取
+    // 3. 循环读取数据
     while (points_read < saved_count) {
-        // 检查 buffer 是否读完
-        if (buffer_idx + 3 > FLASH_PAGE_LENGTH) {
-            current_page++;
+        
+        // 检查是否需要加载新页
+        if (buffer_idx + 3 > FLASH_PAGE_LENGTH || buffer_idx == 0) { 
+            // 如果 buffer 读完，或者这是第一次循环，需要从 Flash 读取新页到 buffer
             if (current_page > FLASH_PAGE_DATA_END) break;
 
-            // 读取下一页
-            flash_read_page(0, current_page, page_data_buffer, FLASH_PAGE_LENGTH);
-            buffer_idx = 0;
-        }
-
-        // 【DEBUG】打印每个还原的点
-            printf("[LOAD-DEBUG] Point %d: x=%.1f, y=%.1f, yaw=%.1f\r\n", points_read, x, y, yaw);
-
-            // 【DEBUG】检查数据是否异常 (NaN或无穷大)
-            if(isnan(x) || isnan(y) || isnan(yaw)){
-                printf("[LOAD-DEBUG] Error: Corrupted data (NaN) detected!\r\n");
-                return 0;
+            uint32 remaining_points = saved_count - points_read;
+            uint32 words_to_read = remaining_points * 3;
+            // 一页最多读 FLASH_PAGE_LENGTH 个字
+            if (words_to_read > FLASH_PAGE_LENGTH) {
+                words_to_read = FLASH_PAGE_LENGTH;
             }
 
+            printf("[LOAD-DEBUG] Reading data page %d, %d words...\r\n", current_page, words_to_read);
+            
+            // 【修改点 8】使用高级读取接口
+            flash_read_page_to_buffer(0, current_page, words_to_read); 
+            buffer_idx = 0;
+            current_page++;
+        }
+
         // 还原数据
-        float x = UINT32_BITS_TO_FLOAT(page_data_buffer[buffer_idx++]);
-        float y = UINT32_BITS_TO_FLOAT(page_data_buffer[buffer_idx++]);
-        float yaw = UINT32_BITS_TO_FLOAT(page_data_buffer[buffer_idx++]);
+        float x = UINT32_BITS_TO_FLOAT(flash_union_buffer[buffer_idx++].uint32_type);
+        float y = UINT32_BITS_TO_FLOAT(flash_union_buffer[buffer_idx++].uint32_type);
+        float yaw = UINT32_BITS_TO_FLOAT(flash_union_buffer[buffer_idx++].uint32_type);
+        
+        // 【DEBUG】检查数据是否异常 (NaN或无穷大)
+        if(isnan(x) || isnan(y) || isnan(yaw)){
+            printf("[LOAD-DEBUG] Error: Corrupted data (NaN) detected at point %d!\r\n", points_read);
+            // 遇到坏数据时可以决定是停止还是跳过
+            return 0; // 选择停止加载
+        }
+        
+        // 【DEBUG】打印每个还原的点
+        // printf("[LOAD-DEBUG] Point %d: x=%.1f, y=%.1f, yaw=%.1f\r\n", points_read, x, y, yaw);
 
         // 添加到 RAM (注意：此时 RAM 里存的是压缩后的轨迹)
         // 之后的控制算法遍历这个 RAM 时，会发现点之间的物理距离可能很远（直线段）
@@ -216,7 +225,7 @@ uint8 Ram2Flash_Load(void) {
         points_read++;
     }
     
-    printf("Loaded %d points to RAM.\r\n", points_read);
+    printf("Loaded %d points to RAM.\r\n", NAV_RAM_GetRecordCount());
     return 1;
 }
 
@@ -224,10 +233,10 @@ uint8 Ram2Flash_Load(void) {
  * @brief 检查 Flash 中是否有有效数据
  */
 uint8 Ram2Flash_CheckValid(void) {
-    // 读取信息页第一个字
-    flash_read_page(0, FLASH_PAGE_INFO, page_data_buffer, FLASH_PAGE_LENGTH);
+    // 【修改点 9】 必须读取到全局缓冲区才能判断
+    flash_read_page_to_buffer(0, FLASH_PAGE_INFO, 1);
     
-    if (page_data_buffer[0] == FLASH_MAGIC_NUM) {
+    if (flash_union_buffer[0].uint32_type == FLASH_MAGIC_NUM) {
         return 1;
     }
     return 0;
@@ -240,4 +249,5 @@ void Ram2Flash_Clear(void) {
     // 只需要擦除信息页，数据就不可见了
     flash_erase_page(0, FLASH_PAGE_INFO);
     g_flash_save_finished = 0;
+    printf("Flash storage cleared.\r\n");
 }

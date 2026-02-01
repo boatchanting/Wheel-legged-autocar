@@ -15,6 +15,7 @@
 #define REPLAY_TARGET_RADIUS_MM 50.0f   // 到达目标点的判定半径(mm)
 #define REPLAY_CURVE_YAW_DIFF   1.5f    // 判断为曲线的偏航角变化阈值(度)
 
+#define REPLAY_LOOK_AHEAD_MM    400.0f   // 前瞻距离(mm)，追逐目标点与小车的距离。
 //-------------------------------------------------------------------------
 // 状态定义
 //-------------------------------------------------------------------------
@@ -39,5 +40,12 @@ void NAV_Replay_Task(void); // 核心函数，需要被周期性调用 (如 10-2
 NavReplayStatus_t NAV_Replay_GetStatus(void);
 uint8 NAV_Replay_IsReady(void); // 检查数据是否已成功加载到RAM
 void NAV_Replay_ReloadData(void);//重新从Flash加载数据并更新状态
+/**
+ * @brief 寻找前瞻点 (Look-Ahead Point)
+ * @param current_x, current_y: 小车当前位置
+ * @param look_ahead_x, look_ahead_y: 返回找到的前瞻点坐标
+ * @return 1=找到有效前瞻点, 0=未找到 (已到终点)
+ */
+static uint8 Find_LookAhead_Point(float current_x, float current_y, float *look_ahead_x, float *look_ahead_y);
 
 #endif // _NAV_REPLAY_H_
