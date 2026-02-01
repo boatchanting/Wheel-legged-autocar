@@ -22,8 +22,8 @@ void NAV_RAM_Init(void) {
     // 清空缓冲区
     memset(nav_buffer, 0, sizeof(nav_buffer));
     
-    printf("NAV_RAM: Initialized with %d records capacity (%d KB)\r\n", 
-           NAV_MAX_RECORDS, NAV_MAX_RAM_SIZE_KB);
+    // printf("NAV_RAM: Initialized with %d records capacity (%d KB)\r\n", 
+    //        NAV_MAX_RECORDS, NAV_MAX_RAM_SIZE_KB);
 }
 
 /**
@@ -42,13 +42,13 @@ uint8_t NAV_RAM_AddRecord(float x, float y, float yaw) {
     }
     
     // 检查时间间隔(如果不是在中断中调用，需要保证100ms间隔)
-    uint32_t current_time = systick_get_ms();
-    if (current_time - nav_manager.last_record_time < NAV_RECORD_INTERVAL_MS) {
-        return 0;
-    }
+    // uint32_t current_time = systick_get_ms();
+    // if (current_time - nav_manager.last_record_time < NAV_RECORD_INTERVAL_MS) {
+    //     return 0;
+    // }
     
     // 更新记录时间
-    nav_manager.last_record_time = current_time;
+    // nav_manager.last_record_time = current_time;
     
     // 写入数据
     nav_manager.buffer[nav_manager.write_index].x = x;
@@ -68,7 +68,7 @@ uint8_t NAV_RAM_AddRecord(float x, float y, float yaw) {
     if (nav_manager.record_count >= NAV_MAX_RECORDS) {
         nav_manager.status = NAV_STATUS_FULL;
         nav_manager.overflow_flag = 1;
-        printf("NAV_RAM: Storage full! Records: %d\r\n", nav_manager.record_count);
+        // printf("NAV_RAM: Storage full! Records: %d\r\n", nav_manager.record_count);
     } else {
         nav_manager.status = NAV_STATUS_RECORDING;
     }
@@ -76,8 +76,8 @@ uint8_t NAV_RAM_AddRecord(float x, float y, float yaw) {
     // 定期打印状态
     if (nav_manager.record_count % 100 == 0) {
         float percent = ((float)nav_manager.record_count / NAV_MAX_RECORDS) * 100.0f;
-        printf("NAV_RAM: %d records (%.1f%% used)\r\n", 
-               nav_manager.record_count, percent);
+        // printf("NAV_RAM: %d records (%.1f%% used)\r\n", 
+        //        nav_manager.record_count, percent);
     }
     
     return 1;
@@ -126,7 +126,7 @@ void NAV_RAM_ClearRecords(void) {
     nav_manager.status = NAV_STATUS_IDLE;
     nav_manager.overflow_flag = 0;
     
-    printf("NAV_RAM: All records cleared\r\n");
+    // printf("NAV_RAM: All records cleared\r\n");
 }
 
 /**
