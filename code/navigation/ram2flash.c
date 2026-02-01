@@ -2,6 +2,8 @@
 
 // 模块内部状态
 static R2F_Status_t s_status = R2F_STATUS_IDLE;
+// 静态缓冲区页长度（通常为 512/4 = 128 words）
+#define PAGE_WORD_LENGTH   (FLASH_PAGE_LENGTH) 
 
 // Flash 读写辅助结构体
 typedef struct {
@@ -252,4 +254,92 @@ R2F_Status_t R2F_LoadTrajectoryInfo(uint16_t* segment_count) {
     
     *segment_count = metadata.total_segments;
     return R2F_STATUS_SUCCESS;
+}
+
+/**
+ * @brief 获取指定的轨迹段数据 (兼容不支持结构体指针的编译器)
+ * @param segment_index 要获取的段索引 (从0开始)
+ * @param header_buffer 返回段头信息的缓冲区 (至少 sizeof(R2F_SegmentHeader_t) 字节)
+ * @param points_buffer 返回轨迹点数据的缓冲区 (至少 buffer_size_bytes 字节)
+ * @param buffer_size_bytes 轨迹点缓冲区大小(字节)
+ * @return 操作状态
+ */
+R2F_Status_t R2F_GetSegment(uint16_t segment_index, uint8_t* type_out, uint16_t* count_out, float* coords_buffer, uint16_t buffer_size_f) {
+    uint16_t total_segments;
+    if (R2F_LoadTrajectoryInfo(&total_segments) != R2F_STATUS_SUCCESS) return R2F_STATUS_NO_DATA;
+    if (segment_index >= total_segments || type_out == NULL || count_out == NULL || coords_buffer == NULL) return R2F_STATUS_DATA_ERROR;
+
+    s_status = R2F_STATUS_BUSY;
+    
+    FlashCursor_t cursor = {R2F_METADATA_PAGE + 1, 0}; 
+    uint8_t current_page_loaded = 0; 
+
+    for (uint16_t i = 0; i <= segment_index; ++i) {
+        
+        // 检查是否需要换页或加载新页
+        if (cursor.word_offset == 0 || !current_page_loaded) {
+            if (cursor.current_page > R2F_FLASH_END_PAGE) {
+                return R2F_STATUS_DATA_ERROR; 
+            }
+            // 读取整个页到缓冲区 (3 参数调用)
+            flash_read_page_to_buffer(R2F_FLASH_SECTOR, cursor.current_page, PAGE_WORD_LENGTH);
+            current_page_loaded = 1;
+        }
+
+        // 2. 从缓冲区中读取段头
+        R2F_SegmentHeader_t temp_header;
+        if (cursor.word_offset + sizeof(R2F_SegmentHeader_t)/4 > PAGE_WORD_LENGTH) {
+            return R2F_STATUS_DATA_ERROR; // 段头跨页，简化代码不支持
+        }
+        memcpy(&temp_header, &flash_union_buffer[cursor.word_offset], sizeof(R2F_SegmentHeader_t));
+        
+        // 计算整个段的字数
+        uint16_t point_floats = temp_header.point_count * 3; // 每个点 3 个 float
+        uint32_t data_words = point_floats * (sizeof(float) / 4); // 4字节对齐
+        uint32_t header_words = sizeof(R2F_SegmentHeader_t) / 4;
+        uint32_t words_to_skip = header_words + data_words;
+        
+        // 3. 如果找到了目标段
+        if (i == segment_index) {
+            *type_out = temp_header.type;
+            *count_out = temp_header.point_count;
+            
+            // 缓冲区大小检查：点数 * 3 (float)
+            if (buffer_size_f < point_floats) { 
+                s_status = R2F_STATUS_DATA_ERROR; // 提供的 float 缓冲区太小
+                return s_status;
+            }
+
+            // 更新光标位置到数据开始处
+            cursor.word_offset += header_words;
+            
+            // 检查数据是否跨页
+            if (cursor.word_offset + data_words > PAGE_WORD_LENGTH) {
+                 s_status = R2F_STATUS_DATA_ERROR; // 数据跨页，超出当前页容量 (简化处理)
+                 return s_status;
+            }
+
+            // 从缓冲区中拷贝数据到 coords_buffer (float 数组)
+            // 拷贝的字节数 = 点数 * 12 字节
+            uint32_t data_bytes = data_words * 4;
+            
+            // flash_union_buffer[cursor.word_offset] 是联合体数组，我们取出其 uint32_type 的地址
+            memcpy(coords_buffer, &flash_union_buffer[cursor.word_offset], data_bytes);
+            
+            s_status = R2F_STATUS_SUCCESS;
+            return s_status;
+        }
+
+        // 4. 跳过当前段的数据，准备读取下一段
+        cursor.word_offset += words_to_skip;
+        
+        // 检查是否需要换页
+        if (cursor.word_offset >= PAGE_WORD_LENGTH) {
+            cursor.word_offset -= PAGE_WORD_LENGTH;
+            cursor.current_page++;
+            current_page_loaded = 0; // 下一循环需要加载新页
+        }
+    }
+    
+    return R2F_STATUS_DATA_ERROR; // 未找到目标段
 }

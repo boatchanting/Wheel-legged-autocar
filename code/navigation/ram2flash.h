@@ -64,5 +64,6 @@ R2F_Status_t R2F_SaveTrajectoryFromRAM(void);
 R2F_Status_t R2F_LoadTrajectoryInfo(uint16_t* segment_count);
 R2F_Status_t R2F_EraseTrajectory(void);
 uint8_t R2F_HasValidTrajectory(void);
+R2F_Status_t R2F_GetSegment(uint16_t segment_index, uint8_t* type_out, uint16_t* count_out, float* coords_buffer, uint16_t buffer_size_f);
 
 #endif // _RAM2FLASH_H_

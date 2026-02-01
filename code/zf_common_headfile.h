@@ -103,9 +103,9 @@
 #include "seekfree_assistant.h"
 #include "seekfree_assistant_interface.h"
 #include "small_driver_uart_control.h"//无刷电机
+#include "common.h"
 
 #include "calculate/ekf.h"//扩展卡尔曼滤波器
-#include "calculate/navigation_ekf.h" // 惯导卡尔曼滤波器
 #include "calculate/matrix.h"//矩阵运算相关库
 #include "calculate/pid-new.h"//pid 控制器
 
@@ -117,6 +117,11 @@
 #include "tools/beep.h"   // 蜂鸣器
 #include "tools/sbus.h"  // sbus 协议
 #include "tools/wifi.h"  // 添加 wifi模块
+
+#include "navigation/inertial_nav.h"  // 惯性导航计算坐标模块
+#include "navigation/nav_ram.h"// 惯性导航记录轨迹到内存模块
+#include "navigation/ram2flash.h"  // 惯性导航记录轨迹到闪存模块
+#include "navigation/nav_replay.h"  // 惯性导航复现轨迹模块
 
 #include "plan/minefield.h"  // 科目一：雷区旋转控制器
 //=====================================================组件应用层=====================================================
