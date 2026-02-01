@@ -51,5 +51,7 @@ NavRecordStatus_t NAV_RAM_GetStatus(void);
 uint8_t NAV_RAM_IsFull(void);
 float NAV_RAM_GetUsedPercentage(void);
 uint16_t NAV_RAM_GetFreeSpace(void);
+// 新增一个强制添加记录的函数，无视时间间隔，用于数据加载
+void NAV_RAM_ForceAddRecord(float x, float y, float yaw);
 
 #endif // _NAV_RAM_H_

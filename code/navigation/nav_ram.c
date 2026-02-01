@@ -160,3 +160,41 @@ float NAV_RAM_GetUsedPercentage(void) {
 uint16_t NAV_RAM_GetFreeSpace(void) {
     return NAV_MAX_RECORDS - nav_manager.record_count;
 }
+
+/**
+ * @brief 强制添加轨迹记录点 (无视时间间隔检查)
+ * @note  此函数主要用于从Flash向RAM加载数据时使用
+ * @param x X坐标(mm)
+ * @param y Y坐标(mm)
+ * @param yaw 偏航角(度)
+ */
+void NAV_RAM_ForceAddRecord(float x, float y, float yaw) {
+    // 检查是否已满
+    if (nav_manager.overflow_flag || nav_manager.record_count >= NAV_MAX_RECORDS) {
+        nav_manager.status = NAV_STATUS_FULL;
+        nav_manager.overflow_flag = 1;
+        return; // 如果满了，直接返回
+    }
+    
+    // -- 这里没有时间检查 --
+    
+    // 写入数据
+    nav_manager.buffer[nav_manager.write_index].x = x;
+    nav_manager.buffer[nav_manager.write_index].y = y;
+    nav_manager.buffer[nav_manager.write_index].yaw = yaw;
+    
+    // 更新索引和计数
+    nav_manager.write_index++;
+    nav_manager.record_count++;
+    
+    // 环形缓冲区处理
+    if (nav_manager.write_index >= NAV_MAX_RECORDS) {
+        nav_manager.write_index = 0;
+    }
+    
+    // 检查是否即将写满
+    if (nav_manager.record_count >= NAV_MAX_RECORDS) {
+        nav_manager.status = NAV_STATUS_FULL;
+        nav_manager.overflow_flag = 1;
+    }
+}

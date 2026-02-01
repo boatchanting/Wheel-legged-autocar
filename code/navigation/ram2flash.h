@@ -3,26 +3,31 @@
 
 #include "zf_common_headfile.h"
 
-// Flash 区域配置
-#define FLASH_INFO_PAGE       10      // 信息页：存储标志位和点数
-#define FLASH_DATA_START_PAGE 11      // 数据起始页
-#define FLASH_DATA_END_PAGE   90      // 数据结束页
+//-------------------------------------------------------------------------
+// 参数配置
+//-------------------------------------------------------------------------
+// Flash 空间分配 (用户指定 10-90 页)
+#define FLASH_PAGE_INFO       10      // 信息存储页
+#define FLASH_PAGE_DATA_START 11      // 数据存储起始页
+#define FLASH_PAGE_DATA_END   90      // 数据存储结束页
 
-// 校验魔数 (用于判断Flash中是否有有效轨迹)
-#define TRAJECTORY_MAGIC_NUM  0x5A5A1234 
+// 压缩参数
+#define COMPRESS_YAW_DIFF     1.0f    // 偏航角变化阈值(度)，大于此值视为曲线
 
-// 数据转换辅助宏 (避免使用结构体指针)
-#define FLOAT_TO_UINT32(val)  (*((uint32*)&(val)))
-#define UINT32_TO_FLOAT(val)  (*((float*)&(val)))
+// 校验魔数
+#define FLASH_MAGIC_NUM       0xDEADBEEF
 
-// 状态标志
-extern uint8_t g_save_finished_flag;  // 存档完成标志位
+//-------------------------------------------------------------------------
+// 变量与函数声明
+//-------------------------------------------------------------------------
 
-// 函数声明
+// 保存完成标志位 (0=未完成/闲置, 1=保存成功)
+extern uint8 g_flash_save_finished;
+
 void Ram2Flash_Init(void);
-uint8_t Ram2Flash_Save(void);
-uint8_t Ram2Flash_Load(void);
-uint8_t Ram2Flash_IsDataValid(void);
-void Ram2Flash_ClearStorage(void);
+uint8 Ram2Flash_SaveCompressed(void); // 保存并压缩
+uint8 Ram2Flash_Load(void);           // 读取
+uint8 Ram2Flash_CheckValid(void);     // 检查是否有数据
+void Ram2Flash_Clear(void);           // 清空数据
 
 #endif // _RAM_TO_FLASH_H_
