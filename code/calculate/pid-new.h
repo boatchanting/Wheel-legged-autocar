@@ -141,7 +141,7 @@ extern volatile float turn_gyro_loop_out; // 转向角速度环输出（PWM）
 
 extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
-extern float target_speed_set;
+extern volatile float target_speed_set;
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用

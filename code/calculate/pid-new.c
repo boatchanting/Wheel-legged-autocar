@@ -14,7 +14,7 @@ PID_Param_t pid_turn_gyro = {TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, TURN_GYR_MAX
 
 
 
-float target_speed_set = 0.0f;
+volatile float target_speed_set = 0.0f;
 
 //状态与调试变量
 volatile float now_speed       = 0.0f;
