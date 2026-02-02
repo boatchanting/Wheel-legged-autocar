@@ -1,5 +1,5 @@
 #include "sbus.h"
-
+#include "../common.h"
 // ==========================================
 // 1. 宏定义 (参数配置区)
 // ==========================================
@@ -171,34 +171,46 @@ void Remote_Control_Process(void)
             if (ch4_mode < RC_SW_MID_LOW)
             {
                 robot_ctrl.point_type =0;//ch5 0 ch4 0
+            #if DEBUG_LOG_ENABLE
                 printf("Point Type: NAV_POINT_PATH\n");
+            #endif
             }
             else if (ch4_mode > RC_SW_MID_HIGH)
             {
                 robot_ctrl.point_type =2;//ch5 0 ch4 2
+            #if DEBUG_LOG_ENABLE
                 printf("Point Type: NAV_POINT_SLOPE\n");
+            #endif
             }
             else
             {
                 robot_ctrl.point_type =1;//ch5 0 ch4 1
+            #if DEBUG_LOG_ENABLE
                 printf("Point Type: NAV_POINT_CIRCLE\n");
+            #endif
             }
         }
         else if(ch5_brake > RC_SW_THRESHOLD){
             if (ch4_mode < RC_SW_MID_LOW)
             {
                 robot_ctrl.point_type = 3;//ch5 1 ch4 0
+            #if DEBUG_LOG_ENABLE
                 printf("Point Type: NAV_POINT_JUMP\n");
+            #endif
             }
             else if (ch4_mode > RC_SW_MID_HIGH)
             {
                 robot_ctrl.point_type = 5;//ch5 1 ch4 2
-                printf("Point Type: NAV_POINT_BUMP\n");
+                #if DEBUG_LOG_ENABLE
+                    printf("Point Type: NAV_POINT_BUMP\n");
+                #endif
             }
             else
             {
                 robot_ctrl.point_type = 4;//ch5 1 ch4 1
-                printf("Point Type: NAV_POINT_BRIDGE\n");
+                #if DEBUG_LOG_ENABLE
+                    printf("Point Type: NAV_POINT_BRIDGE\n");
+                #endif
             }
         }
     }

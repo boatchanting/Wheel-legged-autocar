@@ -1,33 +1,48 @@
-#ifndef _RAM_TO_FLASH_H_
-#define _RAM_TO_FLASH_H_
+#ifndef _RAM2FLASH_H_
+#define _RAM2FLASH_H_
 
 #include "zf_common_headfile.h"
 
-//-------------------------------------------------------------------------
-// 参数配置
-//-------------------------------------------------------------------------
-// Flash 空间分配 (用户指定 10-90 页)
-#define FLASH_PAGE_INFO       10      // 信息存储页
-#define FLASH_PAGE_DATA_START 11      // 数据存储起始页
-#define FLASH_PAGE_DATA_END   90      // 数据存储结束页
+// ==========================================
+// Flash 存储配置
+// ==========================================
+// 注意：PID 参数占用了第 0 页，惯导数据建议使用第 1 页
+#define NAV_FLASH_SECTION          (0)
+#define NAV_FLASH_PAGE             (1)   
 
-// 压缩参数
-#define COMPRESS_YAW_DIFF     1.0f    // 偏航角变化阈值(度)，大于此值视为曲线
+// 存储校验码，用于判断 Flash 是否有有效数据
+#define NAV_FLASH_MAGIC            0xABCD1234
 
-// 校验魔数
-#define FLASH_MAGIC_NUM       0xDEADBEEF
+// 缓冲区偏移量定义
+#define OFF_MAGIC                  0   // 魔数位置
+#define OFF_COUNT                  1   // 总点数位置
+#define OFF_PLAN                   2   // Plan 类型位置
+#define OFF_POINTS_START           3   // 点数据开始的索引
 
-//-------------------------------------------------------------------------
-// 变量与函数声明
-//-------------------------------------------------------------------------
+// ==========================================
+// 外部变量声明
+// ==========================================
+extern volatile uint8 g_save_flash_request;  // 1: 请求将 RAM 存入 Flash
+extern volatile uint8 g_load_flash_request;  // 1: 请求将 Flash 读取到 RAM
 
-// 保存完成标志位 (0=未完成/闲置, 1=保存成功)
-extern uint8 g_flash_save_finished;
+// ==========================================
+// 函数声明
+// ==========================================
 
-void Ram2Flash_Init(void);
-uint8 Ram2Flash_SaveCompressed(void); // 保存并压缩
-uint8 Ram2Flash_Load(void);           // 读取
-uint8 Ram2Flash_CheckValid(void);     // 检查是否有数据
-void Ram2Flash_Clear(void);           // 清空数据
+/**
+ * @brief  Flash 任务处理器
+ * @note   建议放在 main 的 while(1) 中调用，处理读取和保存请求
+ */
+void NavFlash_ProcessRequests(void);
 
-#endif // _RAM_TO_FLASH_H_
+/**
+ * @brief  底层保存函数：RAM -> Flash
+ */
+uint8 NavFlash_SaveRamToFlash(void);
+
+/**
+ * @brief  底层读取函数：Flash -> RAM
+ */
+uint8 NavFlash_ReadFlashToRam(void);
+
+#endif
