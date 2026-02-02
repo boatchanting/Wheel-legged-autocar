@@ -1,4 +1,4 @@
-#include "zf_common_headfile.h"
+#include "sbus.h"
 
 // ==========================================
 // 1. 宏定义 (参数配置区)
@@ -42,7 +42,14 @@ void Remote_Control_Init(void)
     robot_ctrl.target_speed = 0.0f;
     robot_ctrl.mark_trigger = 0;
     robot_ctrl.motor_enable = 1;  //1=使能,0=急停
-    robot_ctrl.mode = MODE_LOW;
+    robot_ctrl.point_type = 0;
+    // 模式枚举 (对应 CH4 三态开关和CH5开关的组合状态，使用ch3开关进行触发)
+    // NAV_POINT_PATH = 0,     // 普通路径点
+    // NAV_POINT_CIRCLE = 1,   // 转圈点
+    // NAV_POINT_SLOPE = 2,    // 上坡点
+    // NAV_POINT_JUMP = 3,     // 跳跃点
+    // NAV_POINT_BRIDGE = 4,   // 单边桥点
+    // NAV_POINT_BUMP = 5      // 颠簸路段点
 }
 
 // 核心处理逻辑
@@ -52,25 +59,25 @@ void Remote_Control_Process(void)
     // Step 1: 读取 S.BUS 原始数据
     // --------------------------------------------------------
     // 依赖 zf_device_uart_receiver.h 中的 uart_receiver 全局变量
-            if(1 == uart_receiver.state && 0 == Remote_control_connected)                             // 遥控器失控状态判断 == uart_receiver.state
-            {
-                // gpio_toggle_level(BUZZER_PIN); // 翻转电平
-                // gpio_toggle_level(BUZZER_PIN); // 翻转电平,蜂鸣器
-                // printf("Remote control is connected. ");
-                // // Remote_control_connected=1;
-                // for(int i = 0; i < 6; i++)
-                // {
-                //     printf("%d ", uart_receiver.channel[i]);         // 串口输出6个通道数据
-                // }
-                // printf("\r\n");
-            }
-            else
-            {
-                // printf("Remote control is disconnected. ");
-                robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机
-                return; // 失控则不进行后续处理
+    if(1 == uart_receiver.state && 0 == Remote_control_connected)                             // 遥控器失控状态判断 == uart_receiver.state
+    {
+        // gpio_toggle_level(BUZZER_PIN); // 翻转电平
+        // gpio_toggle_level(BUZZER_PIN); // 翻转电平,蜂鸣器
+        // printf("Remote control is connected. ");
+        // // Remote_control_connected=1;
+        // for(int i = 0; i < 6; i++)
+        // {
+        //     printf("%d ", uart_receiver.channel[i]);         // 串口输出6个通道数据
+        // }
+        // printf("\r\n");
+    }
+    else
+    {
+        // printf("Remote control is disconnected. ");
+        robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机
+        return; // 失控则不进行后续处理
 
-            }
+    }
     int16 ch1_steer = uart_receiver.channel[0];
     int16 ch2_thro  = uart_receiver.channel[1];
     int16 ch3_mark  = uart_receiver.channel[2];
@@ -93,24 +100,6 @@ void Remote_Control_Process(void)
     {
         robot_ctrl.motor_enable = 1;
     }
-
-    // --------------------------------------------------------
-    // Step 3: 处理模式选择 (CH4 三态开关)
-    // --------------------------------------------------------
-    if (ch4_mode < RC_SW_MID_LOW) 
-    {
-        robot_ctrl.mode = MODE_LOW;
-    }
-    else if (ch4_mode > RC_SW_MID_HIGH)
-    {
-        robot_ctrl.mode = MODE_HIGH;
-    }
-    else 
-    {
-        robot_ctrl.mode = MODE_MIDDLE;
-    }
-
-
 
     // --------------------------------------------------------
     // Step 4: 处理转向 (CH1)
@@ -147,8 +136,6 @@ void Remote_Control_Process(void)
         if (abs(diff_speed) > RC_DEADZONE) 
         {
             float current_k_spd = K_SPEED_INC;
-            if(robot_ctrl.mode == MODE_HIGH) current_k_spd *= 1.5f;
-            if(robot_ctrl.mode == MODE_LOW)  current_k_spd *= 0.5f; 
             
             // 积分计算
             robot_ctrl.target_speed += (float)diff_speed * current_k_spd;
@@ -162,19 +149,58 @@ void Remote_Control_Process(void)
         }
     }
 
-
-
     // --------------------------------------------------------
-    // Step 6: 处理打点 (CH3 边沿检测)
+    // Step 6: 处理打点 (CH3 状态跳变检测)利用CH4和CH5的状态判断属于与哪一个type的打点，ch4为三态开关，ch5为两态开关
     // --------------------------------------------------------
     static uint8 last_ch3_state = 0; 
     uint8 curr_ch3_state = (ch3_mark > RC_SW_THRESHOLD) ? 1 : 0;
 
-    // 检测上升沿 (从松开变为按下) 这里根据遥控器的按钮的物理状态，boatchanting怀疑是不是要检测跳变而不是上升沿，后面再确认
-    if (curr_ch3_state == 1 && last_ch3_state == 0) 
+    // 检测状态跳变进行打点 (当前状态 != 上一次状态)
+    // 这意味着无论是从0变1(上升沿)还是从1变0(下降沿)，都会触发
+    if (curr_ch3_state != last_ch3_state) 
     {
-        robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
-        // printf("Mark trigger activated\n");
+    robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
+    // NAV_POINT_PATH = 0,     // 普通路径点
+    // NAV_POINT_CIRCLE = 1,   // 转圈点
+    // NAV_POINT_SLOPE = 2,    // 上坡点
+    // NAV_POINT_JUMP = 3,     // 跳跃点
+    // NAV_POINT_BRIDGE = 4,   // 单边桥点
+    // NAV_POINT_BUMP = 5      // 颠簸路段点
+        if (ch5_brake < RC_SW_THRESHOLD)
+        {
+            if (ch4_mode < RC_SW_MID_LOW)
+            {
+                robot_ctrl.point_type =0;//ch5 0 ch4 0
+                printf("Point Type: NAV_POINT_PATH\n");
+            }
+            else if (ch4_mode > RC_SW_MID_HIGH)
+            {
+                robot_ctrl.point_type =2;//ch5 0 ch4 2
+                printf("Point Type: NAV_POINT_SLOPE\n");
+            }
+            else
+            {
+                robot_ctrl.point_type =1;//ch5 0 ch4 1
+                printf("Point Type: NAV_POINT_CIRCLE\n");
+            }
+        }
+        else if(ch5_brake > RC_SW_THRESHOLD){
+            if (ch4_mode < RC_SW_MID_LOW)
+            {
+                robot_ctrl.point_type = 3;//ch5 1 ch4 0
+                printf("Point Type: NAV_POINT_JUMP\n");
+            }
+            else if (ch4_mode > RC_SW_MID_HIGH)
+            {
+                robot_ctrl.point_type = 5;//ch5 1 ch4 2
+                printf("Point Type: NAV_POINT_BUMP\n");
+            }
+            else
+            {
+                robot_ctrl.point_type = 4;//ch5 1 ch4 1
+                printf("Point Type: NAV_POINT_BRIDGE\n");
+            }
+        }
     }
     last_ch3_state = curr_ch3_state; 
 }

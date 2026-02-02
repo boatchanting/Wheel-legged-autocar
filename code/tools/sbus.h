@@ -5,12 +5,7 @@
 
 
 
-// 模式枚举 (对应 CH4 三态开关)
-typedef enum {
-    MODE_LOW    = 0,  // 开关拨在最下
-    MODE_MIDDLE = 1,  // 开关拨在中间 
-    MODE_HIGH   = 2   // 开关拨在最上 
-} robot_mode_e;
+
 // 遥控器解析后的控制数据
 typedef struct {
     float target_angle;     // [输出] 期望转向角度 (增量积分后)
@@ -19,7 +14,14 @@ typedef struct {
     uint8 mark_trigger;     // [标志] CH3 打点触发 (按下瞬间置1，需手动清零)
     uint8 motor_enable;     // [状态] CH6 总开关 (1=使能, 0=急停)
     
-    robot_mode_e mode;      // [状态] CH4 模式选择
+    uint8 point_type;      // 导航的打点类型
+    // 模式枚举 (对应 CH4 三态开关和CH5开关的组合状态，使用ch3开关进行触发)
+    // NAV_POINT_PATH = 0,     // 普通路径点
+    // NAV_POINT_CIRCLE = 1,   // 转圈点
+    // NAV_POINT_SLOPE = 2,    // 上坡点
+    // NAV_POINT_JUMP = 3,     // 跳跃点
+    // NAV_POINT_BRIDGE = 4,   // 单边桥点
+    // NAV_POINT_BUMP = 5      // 颠簸路段点
 } robot_ctrl_t;
 
 // ==========================================
