@@ -43,7 +43,15 @@ void InertialNav_Update(float curr_yaw, float init_yaw,
     // 融合: 使用互补滤波
     if (fabsf(v_wheel_avg) < 1.0f) { // 如果小车接近静止，则速度清零以防漂移
         inertial_nav.vx_body = 0.0f;
-    } else {
+    }
+    else if (fabsf(acc_lon_forward) < NAV_LON_ACC_ZERO_THRESHOLD) {
+        // A. 如果加速度极小，说明小车实际没有在加速或减速。
+        //    此时，无论轮速计多快，实际位移都应该为零。
+        //    我们应优先强制速度为零，以防止漂移。
+        inertial_nav.vx_body = 0.0f;
+        // printf("acc_lon_forward: %f\n", acc_lon_forward);
+    }
+    else {
         inertial_nav.vx_body = NAV_ALPHA_VEL * v_wheel_avg + (1.0f - NAV_ALPHA_VEL) * v_pred;
     }
 
@@ -55,6 +63,7 @@ void InertialNav_Update(float curr_yaw, float init_yaw,
     // 这是为了防止在直线行驶时, 因为传感器噪声导致位置逐渐偏移
     if (fabsf(acc_lat_left) < NAV_LAT_ACC_DEADZONE) {
         inertial_nav.vy_body = 0.0f;
+        // printf("acc_lat_left: %f\n", acc_lat_left);
     }
 
     // --- 4. 坐标系转换 ---
