@@ -11,8 +11,8 @@
 #define NAV_DT              0.01f   // 导航解算周期 (10ms)【提醒】这个要是改了中断里面也得改
 
 // --- 融合参数 (需要根据实际小车表现进行调优) ---
-#define NAV_ALPHA_VEL       0.90f   // 纵向速度融合系数 (0.9 表示90%信任轮速, 10%信任加速度积分)
-#define NAV_DECAY_LAT       0.90f   // 横向速度(侧滑)衰减系数, 模拟摩擦力, 防止侧滑速度无限累积
+#define NAV_ALPHA_VEL       1.0f   // 纵向速度融合系数 (0.9 表示90%信任轮速, 10%信任加速度积分)
+#define NAV_DECAY_LAT       1.0f   // 横向速度(侧滑)衰减系数, 模拟摩擦力, 防止侧滑速度无限累积
 #define NAV_LAT_ACC_DEADZONE 50.0f  // 横向加速度死区。小于此值视为传感器噪声, 不累积侧滑速度
 #define NAV_LON_ACC_ZERO_THRESHOLD 20.0f // 需要实验调整，防止空转时漂移
 

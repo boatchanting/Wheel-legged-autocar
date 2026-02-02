@@ -15,8 +15,8 @@ InertialNav_t inertial_nav;
  * @brief 初始化惯性导航系统
  */
 void InertialNav_Init(void) {
-    inertial_nav.x = 0.0f;
-    inertial_nav.y = 0.0f;
+    inertial_nav.x = 0.0f;//小车向前为负数
+    inertial_nav.y = 0.0f;//小车向右为正数
     inertial_nav.relative_yaw = 0.0f; // 初始化相对偏航角
     inertial_nav.vx_body = 0.0f;
     inertial_nav.vy_body = 0.0f;

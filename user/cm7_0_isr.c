@@ -61,6 +61,7 @@ static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
 #define REMOTE_CONTROL 1 //【全局开关】1：开启遥控器 0:关闭，这里暂时没有修正，后续想和main共用一个，【可以优化点】
 // **************************** PIT中断函数 ****************************
+
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
     // 1. 清除中断标志位 (必须第一步做)
@@ -92,69 +93,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
     }
 
-    // ------------------------------------------------------
-    // 【nav.1】轨迹记录逻辑 (每100ms记录一次)
-    // ------------------------------------------------------
-    // 只有当：1.开启录制标志 且 2.电机使能有效 时才记录
-    // if (loop_counter % 100 == 0) // 100ms 间隔
-    // {
-    //     if (g_nav_recording && g_motor_enable)
-    //     {
-    //         // 添加当前惯导数据到RAM存储
-    //         uint8_t success = NAV_RAM_AddRecord(
-    //             inertial_nav.x,
-    //             inertial_nav.y,
-    //             inertial_nav.relative_yaw
-    //         );
-            
-    //         // 可选：如果存储已满，自动停止录制并请求保存
-    //         if (!success && NAV_RAM_IsFull())
-    //         {
-    //             g_nav_recording = 0;
-    //             g_save_flash_request = 1;
-    //             printf("ISR: RAM storage full, auto-stopping recording and requesting save\r\n");
-    //         }
-    //     }
-    //     // 如果正在录制，但电机意外关闭（倒地或手动失能），则强制停止录制且不保存
-    //     else if (g_nav_recording && !g_motor_enable)
-    //     {
-    //         g_nav_recording = 0;
-    //         // 注意：这里不置位 g_save_flash_request，所以数据不会保存，直接丢弃
-    //         printf("ISR: Motor disabled, recording aborted. Data discarded.\r\n");
-    //     }
-    // }
-    
-    // ------------------------------------------------------
-    // 【nav.2】轨迹录制状态显示 (每1秒显示一次)
-    // ------------------------------------------------------
-    // if (loop_counter % 1000 == 0) // 1秒间隔
-    // {
-    //     if (g_nav_recording)
-    //     {
-    //         // 显示录制状态和当前点数
-    //         uint16_t record_count = NAV_RAM_GetRecordCount();
-    //         float percent_used = NAV_RAM_GetUsedPercentage();
-    //         printf("ISR: Recording... Points: %d (%.1f%% used)\r\n", 
-    //                record_count, percent_used);
-            
-    //         // 如果使用率超过90%，提示即将存满
-    //         if (percent_used > 90.0f)
-    //         {
-    //             printf("ISR: Warning: RAM storage almost full!\r\n");
-    //         }
-    //     }
-    // }
-
-
    // ------------------------------------------------------
-// 【nav.3】复现控制任务 (10ms运行一次，内部有100ms间隔控制)
-// ------------------------------------------------------
-// if (loop_counter % 10 == 0) {  // 10ms 一次（高频调用，内部有节流）
-//     // 仅当回放运行中才更新控制
-//     if (replay_running_flag) {
-//         NAV_REPLAY_UpdateControl();  // 新函数名，直接更新全局变量
-//     }
-// }
+    // 【nav.4】复现控制任务 (10ms运行一次)
+    // ------------------------------------------------------
+    if (loop_counter % 10 == 0) {  // 10ms 一次
+        if(g_motor_enable){NavReplay_Process();} //复现控制
+    }
     
 
     // ==========================================================
@@ -337,6 +281,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
                 // 彻底关闭电机使能，可以取消下面这行的注释
                 //g_motor_enable = 0; 
+                NavReplay_Stop();//【nav】复现停止
             }
         }
             
@@ -352,6 +297,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             //     target_speed_set = 0.0f;  // 确保速度归零
             //     printf("ISR: Motor disabled, replay stopped.\r\n");
             // }
+            NavReplay_Stop();//【nav】复现停止
         }
     }
     
@@ -469,7 +415,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         g_motor_enable = 1; // 正常工作
     }
 
-    // [映射 2: 转向角度]
+    if (g_replay_state != REPLAY_RUNNING)//【nav】不在复现的时候才可以遥控器给目标速度进去
+    {
+        // [映射 2: 转向角度]
     // 直接赋值积分结果 (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
     err_degree = robot_ctrl.target_angle;
 
@@ -478,6 +426,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
     // 遥控器逻辑: 假设推油门 robot_ctrl.target_speed 为正数
     // 转换逻辑: 取反
     target_speed_set = -robot_ctrl.target_speed;
+    }
     
     // [可选: 保护] 如果处于未使能状态，强制目标速度归零，防止后台积分
     if(g_motor_enable == 0) {
@@ -768,7 +717,7 @@ void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数
     }
 
     // ==========================================================
-    // 按键 3 (P20_2): 读取测试
+    // 按键 3 (P20_2): 读取，然后开始复现轨迹
     // ==========================================================
     if(exti_flag_get(EXTI_PORT20_2))
     {

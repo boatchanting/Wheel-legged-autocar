@@ -505,9 +505,9 @@ vision_detected_marker = 0;//雷区调用,测试用
 
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
                 //通道6 x方向惯性导航位置
-                seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.x;
+                seekfree_assistant_oscilloscope_data.data[6] = g_initial_yaw;
                 //通道7 y方向惯性导航位置
-                seekfree_assistant_oscilloscope_data.data[7] = inertial_nav.y;
+                seekfree_assistant_oscilloscope_data.data[7] = err_degree;
                 // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
@@ -615,7 +615,7 @@ vision_detected_marker = 0;//雷区调用,测试用
         }
 
     // ---------------------------------------------------------
-    //  【nav】处理 Flash 保存请求
+    //  【nav.3】处理 Flash 保存请求
     // ---------------------------------------------------------
     if(g_save_flash_request == 1)
     {
@@ -629,17 +629,26 @@ vision_detected_marker = 0;//雷区调用,测试用
     }
 
     // ---------------------------------------------------------
-    //  【nav】处理读取测试请求 
+    //  【nav.4】处理读取，然后开始调用
     // ---------------------------------------------------------
-    if (g_load_flash_request == 1)
+    if (g_motor_enable == 1 && g_load_flash_request == 1)
     {
         #if DEBUG_LOG_ENABLE
         printf("Main: Starting Flash read test...\r\n");
         #endif
         NavFlash_ReadFlashToRam();
-        Buzzer_Beep_By_PointType(2);//叫三次
         // 清除请求标志
         g_load_flash_request = 0;
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Flash read completed.\r\n");
+        printf("Main: Starting Inertial Navigation...\r\n");
+        #endif
+        InertialNav_Init();
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Starting Inertial Navigation...\r\n");
+        #endif
+        NavReplay_Start();//开始复现
+        Buzzer_Beep_By_PointType(2);//叫三次
     }
 
 

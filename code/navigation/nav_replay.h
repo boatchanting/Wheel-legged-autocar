@@ -3,49 +3,56 @@
 
 #include "zf_common_headfile.h"
 
-//-------------------------------------------------------------------------
-// 参数配置 (可根据实际车辆性能调整)
-//-------------------------------------------------------------------------
+// ========================= 控制参数宏定义 =========================
+// 距离阈值 (单位: mm)
+#define NAV_DIST_FAR            300.0f  // 远距离界限，全速
+#define NAV_DIST_NEAR           100.0f  // 近距离界限，开始最低速
+#define NAV_DIST_ARRIVE         80.0f   // 到达判定阈值
+#define NAV_YAW_TOLERANCE        3.0f    //转向阈值，先转再走
 
-// 速度设置 (负数代表前进)
-#define REPLAY_SPEED_STRAIGHT   -100.0f  // 直线行驶速度 (可以快一些)
-#define REPLAY_SPEED_CURVE      -45.0f  // 弯道行驶速度 (需要慢一些保证循迹精度)
+// 速度设定 (负数为前进，数值对应 motor rpm 或 pwm 级)
+#define NAV_SPEED_FAST          (-120.0f) // 高速行驶速度
+#define NAV_SPEED_SLOW          (-60.0f)  // 低速逼近速度 (-60 约等于 20cm/s)
+#define NAV_SPEED_STOP          (0.0f)
 
-// 导航参数
-#define REPLAY_TARGET_RADIUS_MM 50.0f   // 到达目标点的判定半径(mm)
-#define REPLAY_CURVE_YAW_DIFF   1.5f    // 判断为曲线的偏航角变化阈值(度)
+// ========================= 全局控制变量声明 =========================
+// 这些变量由外部定义 (通常在 control.c 或 main.c)，此处引用
+extern volatile float target_speed_set;
+extern volatile float err_degree;
 
-#define REPLAY_LOOK_AHEAD_MM    400.0f   // 前瞻距离(mm)，追逐目标点与小车的距离。
-//-------------------------------------------------------------------------
-// 状态定义
-//-------------------------------------------------------------------------
+// ========================= 模块状态变量 =========================
+typedef enum
+{
+    REPLAY_IDLE,        // 停止/空闲
+    REPLAY_RUNNING,     // 正在跑图
+    REPLAY_FINISHED     // 完成所有点
+} NavReplayState_e;
 
-// 复现状态枚举
-typedef enum {
-    REPLAY_IDLE = 0,      // 空闲，未开始
-    REPLAY_RUNNING,       // 复现中
-    REPLAY_FINISHED,      // 复现完成
-    REPLAY_NO_DATA        // Flash中无有效数据
-} NavReplayStatus_t;
+// 暴露给外部的状态
+extern NavReplayState_e g_replay_state;         // 当前复现状态
+extern uint8 g_current_point_type;              // 当前正在前往/到达的点的类型
+extern uint8 g_special_action_trigger;          // 特殊动作触发标志 (1: 到达特殊点，请执行动作)
 
+// ========================= 函数接口 =========================
 
-//-------------------------------------------------------------------------
-// 函数声明
-//-------------------------------------------------------------------------
-
-void NAV_Replay_Init(void);
-void NAV_Replay_Start(void);
-void NAV_Replay_Stop(void);
-void NAV_Replay_Task(void); // 核心函数，需要被周期性调用 (如 10-20ms 一次)
-NavReplayStatus_t NAV_Replay_GetStatus(void);
-uint8 NAV_Replay_IsReady(void); // 检查数据是否已成功加载到RAM
-void NAV_Replay_ReloadData(void);//重新从Flash加载数据并更新状态
 /**
- * @brief 寻找前瞻点 (Look-Ahead Point)
- * @param current_x, current_y: 小车当前位置
- * @param look_ahead_x, look_ahead_y: 返回找到的前瞻点坐标
- * @return 1=找到有效前瞻点, 0=未找到 (已到终点)
+ * @brief  开始复现路径
+ * @note   调用前请确保已从 Flash 读取数据到 RAM
+ *         会将状态置为 REPLAY_RUNNING，索引置 0
  */
-static uint8 Find_LookAhead_Point(float current_x, float current_y, float *look_ahead_x, float *look_ahead_y);
+void NavReplay_Start(void);
 
-#endif // _NAV_REPLAY_H_
+/**
+ * @brief  停止复现
+ * @note   速度置 0，状态置 IDLE
+ */
+void NavReplay_Stop(void);
+
+/**
+ * @brief  惯性导航复现控制周期函数
+ * @note   建议放在 10ms 或 20ms 定时器中断或主循环中调用
+ *         它会根据当前 inertial_nav 坐标计算 target_speed_set 和 err_degree
+ */
+void NavReplay_Process(void);
+
+#endif
