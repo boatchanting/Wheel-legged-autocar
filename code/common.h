@@ -12,13 +12,15 @@
 //==========================================
 // 全局变量声明
 //==========================================
+#define DEBUG_LOG_ENABLE 1 // 【全局变量】1开启串口调试日志，0关闭串口调试日志
 
 // 导航记录控制标志位
 extern volatile uint8_t g_nav_recording;       // 1: 正在记录 RAM, 0: 停止记录
 extern volatile uint8_t g_save_flash_request;  // 1: 请求将 RAM 数据存入 Flash
 extern volatile uint8_t g_replay_start_request;
 extern volatile uint8_t g_replay_stop_request;
-
+extern volatile uint8_t g_read_test_request;     // 读取测试请求标志（新添加）
+extern volatile uint8_t g_clear_flash_request;   // 清空Flash请求标志（新添加）
 // ... 声明其他你项目中需要全局访问的变量 ...
 
 #endif // _COMMON_H_

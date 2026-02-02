@@ -3,55 +3,89 @@
 
 #include "zf_common_headfile.h"
 
-// 配置参数
-#define NAV_RECORD_INTERVAL_MS    100     // 记录间隔(ms)
-#define NAV_RECORD_DT             0.1f    // 记录间隔(s)
+//-------------------------------------------------------------------------------------------------------------------
+//  @brief      惯导打点 RAM 管理模块
+//  @note       1. 仅负责“打点 -> 存 RAM”，不涉及 Flash。
+//              2. 点坐标来源于全局 inertial_nav.x / inertial_nav.y。
+//              3. 点类型、plan 类型由外部逻辑（遥控器）控制。
+//              4. 不引入任何时间相关参数。
+//-------------------------------------------------------------------------------------------------------------------
 
-// RAM存储配置
-#define NAV_MAX_RAM_SIZE_KB       128     // 最大占用RAM大小(KB)
-#define NAV_RECORD_SIZE_BYTES     12      // 每条记录大小(字节): x(4) + y(4) + yaw(4)
-#define NAV_MAX_RECORDS           ((NAV_MAX_RAM_SIZE_KB * 1024) / NAV_RECORD_SIZE_BYTES)  // 最大记录条数
+// ========================= 配置 =========================
+#define NAV_RAM_MAX_POINTS      200     // RAM 中最多允许存储的惯导点数
 
-// 状态标志
-typedef enum {
-    NAV_STATUS_IDLE = 0,      // 空闲
-    NAV_STATUS_RECORDING,     // 记录中
-    NAV_STATUS_FULL,          // 存储已满
-    NAV_STATUS_ERROR          // 错误
-} NavRecordStatus_t;
+// ========================= 点类型定义 =========================
+typedef enum
+{
+    NAV_POINT_PATH = 0,     // 普通路径点
+    NAV_POINT_CIRCLE = 1,   // 转圈点
+    NAV_POINT_SLOPE = 2,    // 上坡点
+    NAV_POINT_JUMP = 3,     // 跳跃点
+    NAV_POINT_BRIDGE = 4,   // 单边桥点
+    NAV_POINT_BUMP = 5      // 颠簸路段点
+} NavPointType_e;
 
-// 轨迹点数据结构
-typedef struct {
-    float x;      // X坐标(mm)
-    float y;      // Y坐标(mm)
-    float yaw;    // 偏航角(度)
-} NavPoint_t;
+// ========================= plan 类型 =========================
+typedef enum
+{
+    NAV_PLAN_1 = 1,
+    NAV_PLAN_2 = 2,
+    NAV_PLAN_3 = 3
+} NavPlanType_e;
 
-// 存储管理结构体
-typedef struct {
-    NavPoint_t* buffer;           // 存储缓冲区指针
-    uint16_t write_index;         // 写入索引
-    uint16_t read_index;          // 读取索引
-    uint16_t record_count;        // 当前记录数量
-    NavRecordStatus_t status;     // 当前状态
-    uint32_t last_record_time;    // 上次记录时间(ms)
-    uint8_t overflow_flag;        // 溢出标志: 0=未溢出, 1=已溢出
-} NavRecordManager_t;
+// ========================= 单个惯导点 =========================
+typedef struct
+{
+    float x;                // 惯导 X 坐标 (mm)
+    float y;                // 惯导 Y 坐标 (mm)
+    uint8 point_type;       // 点类型 (NavPointType_e)
+} NavRamPoint_t;
 
-// 全局变量声明
-extern NavRecordManager_t nav_manager;
+// ========================= RAM 总结构 =========================
+typedef struct
+{
+    uint8 plan_type;                        // 当前 plan
+    uint16 point_count;                     // 已记录点数量
+    NavRamPoint_t points[NAV_RAM_MAX_POINTS];
+} NavRamData_t;
 
-// 函数声明
-void NAV_RAM_Init(void);
-uint8_t NAV_RAM_AddRecord(float x, float y, float yaw);
-uint8_t NAV_RAM_GetRecord(uint16_t index, NavPoint_t* point);
-uint16_t NAV_RAM_GetRecordCount(void);
-void NAV_RAM_ClearRecords(void);
-NavRecordStatus_t NAV_RAM_GetStatus(void);
-uint8_t NAV_RAM_IsFull(void);
-float NAV_RAM_GetUsedPercentage(void);
-uint16_t NAV_RAM_GetFreeSpace(void);
-// 新增一个强制添加记录的函数，无视时间间隔，用于数据加载
-void NAV_RAM_ForceAddRecord(float x, float y, float yaw);
+// ========================= 全局变量 =========================
+extern NavRamData_t nav_ram_data;
 
-#endif // _NAV_RAM_H_
+// ========================= 接口函数 =========================
+
+/**
+ * @brief  初始化惯导 RAM 打点模块
+ * @note   清空所有 RAM 数据，一般在进入打点模式时调用
+ */
+void NavRam_Init(void);
+
+/**
+ * @brief  设置当前 plan 类型
+ * @param  plan plan 类型 (NavPlanType_e)
+ */
+void NavRam_SetPlan(uint8 plan);
+
+/**
+ * @brief  记录一个惯导点到 RAM
+ * @param  point_type 点类型 (NavPointType_e)
+ * @return 0: 成功
+ *         1: RAM 已满，记录失败
+ * @note   点坐标自动从 inertial_nav.x / inertial_nav.y 读取
+ */
+uint8 NavRam_RecordPoint(uint8 point_type);
+
+/**
+ * @brief  获取当前已记录点数量
+ * @return 点数量
+ */
+uint16 NavRam_GetPointCount(void);
+
+/**
+ * @brief  根据点类型鸣叫蜂鸣器
+ * @param  point_type 点类型 n
+ * @note   实际鸣叫次数 = n + 1
+ */
+void Buzzer_Beep_By_PointType(uint8 point_type);
+
+#endif  // _NAV_RAM_H_

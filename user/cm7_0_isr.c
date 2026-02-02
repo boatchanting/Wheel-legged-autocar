@@ -93,36 +93,68 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     }
 
     // ------------------------------------------------------
-    // 【nav.2】轨迹记录逻辑 (每100ms记录一次)
+    // 【nav.1】轨迹记录逻辑 (每100ms记录一次)
     // ------------------------------------------------------
-    // 只有当：1.开启录制标志 且 2.电机使能有效 且 3.惯导偏航角已初始化 时才记录
-    if (loop_counter % 100 == 0) // 100ms 间隔
-    {
-        if (g_nav_recording && g_motor_enable && g_yaw_initialized)
-        {
-            NAV_RAM_AddRecord(
-                inertial_nav.x,
-                inertial_nav.y,
-                inertial_nav.relative_yaw
-            );
-        }
-        // 如果正在录制，但电机意外关闭（倒地或手动失能），则强制停止录制且不保存
-        else if (g_nav_recording && (!g_motor_enable || !g_yaw_initialized)) // 增加对 yaw_initialized 的检查
-        {
-            g_nav_recording = 0;
-            // 注意：这里不置位 g_save_flash_request，所以数据不会保存，直接丢弃
-            printf("ISR: Recording aborted due to motor/yaw state.\r\n");
-        }
-    }
+    // 只有当：1.开启录制标志 且 2.电机使能有效 时才记录
+    // if (loop_counter % 100 == 0) // 100ms 间隔
+    // {
+    //     if (g_nav_recording && g_motor_enable)
+    //     {
+    //         // 添加当前惯导数据到RAM存储
+    //         uint8_t success = NAV_RAM_AddRecord(
+    //             inertial_nav.x,
+    //             inertial_nav.y,
+    //             inertial_nav.relative_yaw
+    //         );
+            
+    //         // 可选：如果存储已满，自动停止录制并请求保存
+    //         if (!success && NAV_RAM_IsFull())
+    //         {
+    //             g_nav_recording = 0;
+    //             g_save_flash_request = 1;
+    //             printf("ISR: RAM storage full, auto-stopping recording and requesting save\r\n");
+    //         }
+    //     }
+    //     // 如果正在录制，但电机意外关闭（倒地或手动失能），则强制停止录制且不保存
+    //     else if (g_nav_recording && !g_motor_enable)
+    //     {
+    //         g_nav_recording = 0;
+    //         // 注意：这里不置位 g_save_flash_request，所以数据不会保存，直接丢弃
+    //         printf("ISR: Motor disabled, recording aborted. Data discarded.\r\n");
+    //     }
+    // }
+    
+    // ------------------------------------------------------
+    // 【nav.2】轨迹录制状态显示 (每1秒显示一次)
+    // ------------------------------------------------------
+    // if (loop_counter % 1000 == 0) // 1秒间隔
+    // {
+    //     if (g_nav_recording)
+    //     {
+    //         // 显示录制状态和当前点数
+    //         uint16_t record_count = NAV_RAM_GetRecordCount();
+    //         float percent_used = NAV_RAM_GetUsedPercentage();
+    //         printf("ISR: Recording... Points: %d (%.1f%% used)\r\n", 
+    //                record_count, percent_used);
+            
+    //         // 如果使用率超过90%，提示即将存满
+    //         if (percent_used > 90.0f)
+    //         {
+    //             printf("ISR: Warning: RAM storage almost full!\r\n");
+    //         }
+    //     }
+    // }
 
-    // ------------------------------------------------------
-    // 【nav.3】复现控制任务 ( 10ms 运行一次)
-    // ------------------------------------------------------
-    // 必须调用此任务，target_speed_set 和 err_degree 才会更新
-    if (loop_counter % 10 == 0) // 10ms 一次
-    {
-        NAV_Replay_Task(); 
-    }
+
+   // ------------------------------------------------------
+// 【nav.3】复现控制任务 (10ms运行一次，内部有100ms间隔控制)
+// ------------------------------------------------------
+// if (loop_counter % 10 == 0) {  // 10ms 一次（高频调用，内部有节流）
+//     // 仅当回放运行中才更新控制
+//     if (replay_running_flag) {
+//         NAV_REPLAY_UpdateControl();  // 新函数名，直接更新全局变量
+//     }
+// }
     
 
     // ==========================================================
@@ -314,16 +346,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             turn_gyro_loop_out = 0.0f; // 清零转向PWM
             PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
             // 【惯性导航】检查当前是否正在运行复现
-            if(NAV_Replay_GetStatus() == REPLAY_RUNNING)
-            {
-            NAV_Replay_Stop(); // 这会将 target_speed_set 归零
-            printf("ISR: Motor disabled, replay stopped.\r\n");
-            }
-            // 同时强制清除录制状态，防止 motor enable 切换时意外开始记录
-            g_nav_recording = 0; 
-            g_save_flash_request = 0;
-            g_replay_start_request = 0;
-            g_replay_stop_request = 0;
+            // 检查回放是否正在运行，若是则停止
+            // if (replay_status == REPLAY_STATUS_RUNNING) {
+            //     NAV_REPLAY_Stop();  // 新函数名
+            //     target_speed_set = 0.0f;  // 确保速度归零
+            //     printf("ISR: Motor disabled, replay stopped.\r\n");
+            // }
         }
     }
     
@@ -701,89 +729,77 @@ void gpio_19_exti_isr()                  // 外部 GPIO_19 中断服务函数
 
 void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数     
 {
-     if(exti_flag_get(EXTI_PORT20_0)) // 按键 1: 开始录制
-    {
-        gpio_toggle_level(P19_0); // 假设P19_0是LED指示灯
+    // ==========================================================
+    // 按键 1 (P20_0): 开始录制
+    // ==========================================================
+    // if(exti_flag_get(EXTI_PORT20_0))
+    // {
+    //     gpio_toggle_level(P19_0);       // 指示灯切换
         
-        if (g_motor_enable && g_yaw_initialized) // 确保电机已使能且惯导偏航角已初始化
-        {
-            NAV_RAM_ClearRecords();   // 清空RAM中的旧数据
-            g_nav_recording = 1;      // 开启录制标志
-            printf("Key: Recording started.\r\n");
-        } else {
-            printf("Key: Cannot start recording (Motor/Yaw not ready).\r\n");
-             // 蜂鸣器报错（短促一声）
-            gpio_set_level(BUZZER_PIN, 1);
-            system_delay_ms(50);
-            gpio_set_level(BUZZER_PIN, 0);
-        }
-    }
+    //     if (g_motor_enable && g_yaw_initialized)
+    //     {      
+                
+    //         }
+    //     }
 
-    if(exti_flag_get(EXTI_PORT20_1)) // 按键 2: 停止录制并请求保存
-    {
-        gpio_toggle_level(P19_0);
-        
-        if (g_nav_recording) // 只有当正在录制时才处理停止和保存
-        {
-            g_nav_recording = 0; // 停止录制
+    // ==========================================================
+    // 按键 2 (P20_1): 停止录制并请求保存
+    // ==========================================================
+    // if(exti_flag_get(EXTI_PORT20_1))
+    // {
+      
+    //     gpio_toggle_level(P19_0);       // 指示灯切换
+    //     if (g_nav_recording)
+    //     {
+    //         g_nav_recording = 0; // 停止录制
             
-            // 只有电机仍开启才请求保存（防止倒地保存无效数据）
-            if (g_motor_enable) 
-            {
-                g_save_flash_request = 1; // 通知 main 循环执行 Flash 写操作
-                printf("Key: Recording stopped, Flash save requested.\r\n");
-            } else {
-                printf("Key: Recording stopped, but motor disabled. Data discarded.\r\n");
-                 // 蜂鸣器提示数据丢弃（短促一声）
-                gpio_set_level(BUZZER_PIN, 1);
-                system_delay_ms(50);
-                gpio_set_level(BUZZER_PIN, 0);
-            }
-        }
-    }
+    //         // 只有电机仍开启才保存（防止倒地保存）
+    //         if (g_motor_enable) 
+    //         {
+    //             g_save_flash_request = 1; // 通知 main 循环执行 Flash 写操作。不能在中断中进行写入，以免阻塞中断
+    //         }
+    //         else
+    //         {
+    //             printf("Button2: Recording stopped (motor disabled), data discarded.\r\n");
+                
+    //             // 蜂鸣器提示（急促一声）
+    //             gpio_set_level(BUZZER_PIN, 1);
+    //             system_delay_ms(30);
+    //             gpio_set_level(BUZZER_PIN, 0);
+    //         }
+    //     }
+    //     else
+    //     {
+    //         printf("Button2: Not recording.\r\n");
+    //     }
+    // }
 
-    if(exti_flag_get(EXTI_PORT20_2)) // 按键 3: 请求开始复现
-    {
-        gpio_toggle_level(P19_0);
+    // ==========================================================
+    // 按键 3 (P20_2): 读取测试（原来的是开始复现）
+    // ==========================================================
+    // if(exti_flag_get(EXTI_PORT20_2))
+    // {
+       
+    //     gpio_toggle_level(P19_0);       // 指示灯切换
         
-        if(g_motor_enable && g_yaw_initialized) // 确保电机使能且惯导偏航角初始化
-        {
-            // 确保复现未进行，且录制已停止
-            if (NAV_Replay_GetStatus() != REPLAY_RUNNING && !g_nav_recording) {
-                g_replay_start_request = 1; // 通知 main 循环开始复现
-                printf("Key: Replay start requested.\r\n");
-            } else {
-                printf("Key: Cannot start replay (Already running or recording active).\r\n");
-                 // 蜂鸣器报错（短促一声）
-                gpio_set_level(BUZZER_PIN, 1);
-                system_delay_ms(50);
-                gpio_set_level(BUZZER_PIN, 0);
-            }
-        } else {
-            printf("Key: Cannot start replay (Motor/Yaw not ready).\r\n");
-             // 蜂鸣器报错（短促一声）
-            gpio_set_level(BUZZER_PIN, 1);
-            system_delay_ms(50);
-            gpio_set_level(BUZZER_PIN, 0);
-        }
-    }
-
-    if(exti_flag_get(EXTI_PORT20_3)) // 按键 4: 请求停止复现
-    {
-        gpio_toggle_level(P19_0);
-        
-        // 确保正在复现才进行停止操作，并清空其他请求
-        if (NAV_Replay_GetStatus() == REPLAY_RUNNING) {
-            g_replay_stop_request = 1; // 通知 main 循环停止复现
-            printf("Key: Replay stop requested.\r\n");
-        } else {
-            printf("Key: Replay is not running.\r\n");
-             // 蜂鸣器提示（短促一声）
-            gpio_set_level(BUZZER_PIN, 1);
-            system_delay_ms(50);
-            gpio_set_level(BUZZER_PIN, 0);
-        }
-    }
+    //     if(g_motor_enable)
+    //     {
+    //         g_read_test_request = 1;      // 请求读取测试
+    //         g_save_flash_request = 0;     // 清除保存请求
+    //         g_nav_recording = 0;          // 确保停止录制
+            
+    //         printf("Button3: Read test requested.\r\n");
+            
+    //         // 蜂鸣器提示（短响一声）
+    //         gpio_set_level(BUZZER_PIN, 1);
+    //         system_delay_ms(100);
+    //         gpio_set_level(BUZZER_PIN, 0);
+    //     }
+    //     else
+    //     {
+    //         printf("Button3: Motor not enabled, cannot perform read test.\r\n");
+    //     }
+    // }
 }
 
 void gpio_21_exti_isr()                  // 外部 GPIO_21 中断服务函数     

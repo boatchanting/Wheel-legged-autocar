@@ -34,10 +34,13 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
+#include "common.h"
 #define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 #define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
+// ---------------- plan 配置 ----------------
+#define CURRENT_NAV_PLAN   NAV_PLAN_1   // 【全局开关】在这里切换科目几，科目一为NAV_PLAN_1，科目二NAV_PLAN_2，科目三NAV_PLAN_3
 
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
@@ -339,12 +342,7 @@ InertialNav_Init();//惯性导航初始化
     disp_y += 16;
 #endif
 
-//===============惯性导航初始化开始==================
-InertialNav_Init();    // 1. 惯导初始化 (坐标清零)
-NAV_RAM_Init();        // 2. 初始化 RAM 存储模块
-Ram2Flash_Init();      // 3. 初始化 Flash 存储模块 (原 R2F_Init)
-// NAV_Replay_Init();      // 4. 初始化复现模块
-   
+//按钮初始化
 // P20_0: 开始录制
 exti_init(P20_0, EXTI_TRIGGER_RISING); 
 // P20_1: 停止录制
@@ -561,88 +559,153 @@ vision_detected_marker = 0;//雷区调用,测试用
         // system_delay_ms(50);
 
         // ---------------------------------------------------------
-        //  【nav】处理 Flash 保存请求
+        // ---------------- 【nav】打点处理 ----------------
         // ---------------------------------------------------------
-        if(g_save_flash_request == 1)
+        if (robot_ctrl.mark_trigger)
         {
-            printf("Main: Saving trajectory to Flash...\r\n");
-            // 调用 Ram2Flash_SaveCompressed() (这是我们实现的带压缩的保存函数)
-            if(Ram2Flash_SaveCompressed()) 
-            {
-                NAV_Replay_ReloadData();
-                // 蜂鸣器反馈：短促鸣叫两次
-                gpio_set_level(BUZZER_PIN, 1);
-                system_delay_ms(100);
-                gpio_set_level(BUZZER_PIN, 0);
-                system_delay_ms(50);
-                gpio_set_level(BUZZER_PIN, 1);
-                system_delay_ms(100);
-                gpio_set_level(BUZZER_PIN, 0);
-                
-                printf("Main: Trajectory saved to Flash successfully.\r\n");
-            } 
-            else 
-            {
-                printf("Main: Save failed! (Check RAM records or Flash area / No data to save)\r\n");
-                // 蜂鸣器报错（急促三声）
-                for(int i=0; i<3; i++) {
-                    gpio_set_level(BUZZER_PIN, 1);
-                    system_delay_ms(50);
-                    gpio_set_level(BUZZER_PIN, 0);
-                    system_delay_ms(50);
-                }
-            }
-            
-            // 清除请求标志
-            g_save_flash_request = 0;
-        }
+            uint8_t ret;
 
-        // ---------------------------------------------------------
-        //  【nav】处理复现开始请求 
-        // ---------------------------------------------------------
-        if (g_replay_start_request == 1)
-        {
-            // 每次开始复现，都需要重置惯导，确保起点是 (0,0)
-            InertialNav_Init(); 
-            
-            // 检查 NAV_Replay_IsReady()，它内部已经处理了 Flash 数据是否加载到 RAM 的逻辑
-            if (NAV_Replay_IsReady()) // 如果数据已成功加载到RAM
+            // 写入 RAM
+            ret = NavRam_RecordPoint(robot_ctrl.point_type);
+
+            if (ret == 0)
             {
-                NAV_Replay_Start(); // 开始复现
-                
-                // 蜂鸣器提示成功
-                gpio_set_level(BUZZER_PIN, 1);
-                system_delay_ms(200);
-                gpio_set_level(BUZZER_PIN, 0);
-                printf("Main: Replay started.\r\n");
+                // 写入成功 → 蜂鸣器反馈
+                Buzzer_Beep_By_PointType(robot_ctrl.point_type);
+
+            #if DEBUG_LOG_ENABLE
+                printf("[NAV] Record OK: idx=%d type=%d x=%.2f y=%.2f\r\n",
+                       NavRam_GetPointCount() - 1,
+                       robot_ctrl.point_type,
+                       inertial_nav.x,
+                       inertial_nav.y);
+            #endif
             }
-            else 
+            else
             {
-                // Flash 中无有效数据，或者加载失败
-                printf("Main: Error - No valid trajectory data found for replay!\r\n");
-                
-                // 蜂鸣器报错（急促三声）
-                for(int i=0; i<3; i++) {
-                    gpio_set_level(BUZZER_PIN, 1);
-                    system_delay_ms(50);
-                    gpio_set_level(BUZZER_PIN, 0);
-                    system_delay_ms(50);
-                }
+                // RAM 满
+                #if DEBUG_LOG_ENABLE
+                    printf("[NAV] Record FAILED: RAM FULL\r\n");
+                #endif
             }
 
-            g_replay_start_request = 0;
+            // ★ 必须清零，否则会重复写入 ★
+            robot_ctrl.mark_trigger = 0;
         }
 
-        // ---------------------------------------------------------
-        //  【nav】处理复现停止请求
-        // ---------------------------------------------------------
-        if (g_replay_stop_request == 1)
-        {
-            NAV_Replay_Stop(); // 这会将 target_speed_set 和 err_degree 归零
+//  // ---------------------------------------------------------
+//     //  【nav】处理 Flash 保存请求
+//     // ---------------------------------------------------------
+//     if(g_save_flash_request == 1)
+//     {
+//         printf("Main: Starting Flash save process...\r\n");
+        
+//         // 执行保存（内部已包含压缩逻辑与数据搬运）
+//         // 返回1为成功，0为失败
+//         if(RAM2FLASH_CompressAndSave()) 
+//         {
+//             // 蜂鸣器反馈：短促鸣叫两次
+//             gpio_set_level(BUZZER_PIN, 1);
+//             system_delay_ms(100);
+//             gpio_set_level(BUZZER_PIN, 0);
+//             system_delay_ms(50);
+//             gpio_set_level(BUZZER_PIN, 1);
+//             system_delay_ms(100);
+//             gpio_set_level(BUZZER_PIN, 0);
             
-            printf("Main: Replay stopped.\r\n");
-            g_replay_stop_request = 0;
-        }
+//             printf("Main: Trajectory saved to Flash successfully!\r\n");
+//         } 
+//         else 
+//         {
+//             printf("Main: Save failed! (Check RAM records or Flash area)\r\n");
+            
+//             // 蜂鸣器报错（急促三声）
+//             for(int i=0; i<3; i++) {
+//                 gpio_set_level(BUZZER_PIN, 1);
+//                 system_delay_ms(50);
+//                 gpio_set_level(BUZZER_PIN, 0);
+//                 system_delay_ms(50);
+//             }
+//         }
+        
+//         // 清除请求标志
+//         g_save_flash_request = 0;
+//     }
+
+    // // ---------------------------------------------------------
+    // //  【nav】处理读取测试请求 
+    // // ---------------------------------------------------------
+    // if (g_read_test_request == 1)
+    // {
+    //     printf("Main: Starting Flash read test...\r\n");
+        
+    //     // 1. 检查Flash数据完整性
+    //     if (RAM2FLASH_CheckDataIntegrity())
+    //     {
+    //         printf("Main: Flash data integrity check passed!\r\n");
+            
+    //         // 2. 从Flash加载轨迹数据
+    //         if (RAM2FLASH_LoadFromFlash())
+    //         {
+    //             // 加载成功
+    //             printf("Main: Trajectory loaded successfully!\r\n");
+                
+    //             // 蜂鸣器提示成功（长响一声）
+    //             gpio_set_level(BUZZER_PIN, 1);
+    //             system_delay_ms(300);
+    //             gpio_set_level(BUZZER_PIN, 0);
+                
+    //             // 打印压缩统计信息
+    //             CompressionStats_t stats = RAM2FLASH_GetCompressionStats();
+    //             printf("Main: Compression Statistics:\r\n");
+    //             printf("  Original points: %d\r\n", stats.total_original);
+    //             printf("  Compressed points: %d\r\n", stats.total_compressed);
+    //             printf("  Compression ratio: %.1f%%\r\n", stats.compression_ratio);
+    //             printf("  Straight segments: %d\r\n", stats.straight_segments);
+    //             printf("  Curve points: %d\r\n", stats.curve_points);
+                
+    //             // 可以在这里添加额外的处理逻辑
+    //             // 例如：计算轨迹总长度、检查数据有效性等
+                
+    //             // 示例：计算轨迹总长度
+    //             float total_distance = 0.0f;
+    //             FlashTrajHeader_t header;
+    //             // 获取文件头信息（实际应该从全局变量获取）
+    //             // 这里假设已经通过RAM2FLASH_LoadFromFlash()加载到全局变量
+                
+    //             printf("Main: Read test completed successfully!\r\n");
+    //         }
+    //         else
+    //         {
+    //             printf("Main: Error - Failed to load trajectory from Flash!\r\n");
+                
+    //             // 蜂鸣器报错（急促三声）
+    //             for(int i=0; i<3; i++) {
+    //                 gpio_set_level(BUZZER_PIN, 1);
+    //                 system_delay_ms(50);
+    //                 gpio_set_level(BUZZER_PIN, 0);
+    //                 system_delay_ms(50);
+    //             }
+    //         }
+    //     }
+    //     else
+    //     {
+    //         printf("Main: Error - Flash data integrity check failed!\r\n");
+    //         printf("Main: Flash may be empty or corrupted.\r\n");
+            
+    //         // 蜂鸣器报错（急促四声）
+    //         for(int i=0; i<4; i++) {
+    //             gpio_set_level(BUZZER_PIN, 1);
+    //             system_delay_ms(50);
+    //             gpio_set_level(BUZZER_PIN, 0);
+    //             system_delay_ms(50);
+    //         }
+    //     }
+
+    //     g_read_test_request = 0;
+    // }
+
+
         
 
         // 此处编写需要循环执行的代码
