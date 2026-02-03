@@ -50,6 +50,10 @@ typedef struct
         float acc_x;    // 加速度计X轴加速度 (g)
         float acc_y;    // 加速度计Y轴加速度 (g)
         float acc_z;    // 加速度计Z轴加速度 (g)
+        // --- 新增：估计的重力分量 (单位向量, 1g) ---
+        float grav_x; 
+        float grav_y; 
+        float grav_z;
 }imu_t;
 extern imu_t imu_data;
 /**

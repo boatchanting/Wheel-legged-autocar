@@ -80,8 +80,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         InertialNav_Update(
             euler_angle.yaw,                                 // 当前偏航角
             g_initial_yaw,                                   // 初始偏航角
-            imu660ra_gyro_x,                                // 横向加速度 (左+)
-            imu660ra_gyro_y,                                // 纵向加速度 (前+)
+            9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
+            9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
             (float)motor_value.receive_left_speed_data,      // 左轮速
             (float)motor_value.receive_right_speed_data      // 右轮速
         );

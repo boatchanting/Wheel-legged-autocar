@@ -35,7 +35,7 @@
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "common.h"
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 #define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
@@ -473,41 +473,29 @@ vision_detected_marker = 0;//雷区调用,测试用
                 #if WIFI_USE
                 // 逐飞助手示波器发送代码        
                 // 1. 填充速度数据 (通道 0-1)
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.yaw;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)euler_angle.pitch;
 
                 
-                // 通道 2: Pitch (俯仰角)
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-
-                // 通道 3: imu660ra_gyro_z
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)imu660ra_gyro_z;
-                // // 通道 4: imu660ra_gyro_y
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)imu660ra_gyro_y;
-                // // 通道 3: 角速度环输出
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                // // 通道 4: 角度环输出
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                // // 通道 3: 转向角速度环输出
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_turn_gyro.output;
-                // // 通道 4: 转向角度环输出
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
-                //通道 5：舵机速度环输出
-                seekfree_assistant_oscilloscope_data.data[5] = (float)inertial_nav.relative_yaw;
-                // 通道 3: Roll (横滚角)
-                seekfree_assistant_oscilloscope_data.data[3] = (float)euler_angle.roll;
-                // 通道 4: Yaw (偏航角)
-                seekfree_assistant_oscilloscope_data.data[4] = (float)euler_angle.yaw;
+                // 通道 2
+                seekfree_assistant_oscilloscope_data.data[2] = 9.80665*((float)imu_data.acc_x/4096-(float)imu_data.grav_x);
+                // 通道 3
+                seekfree_assistant_oscilloscope_data.data[3] = 9.80665*((float)imu_data.acc_y/4096-(float)imu_data.grav_y);
+                // 通道 4
+                seekfree_assistant_oscilloscope_data.data[4] = 9.80665*((float)imu_data.acc_z/4096-(float)imu_data.grav_z);
+                //通道 5
+                seekfree_assistant_oscilloscope_data.data[5] = 4096*(float)imu_data.grav_x;
+                
                 
                 //3. 填充陀螺仪数据 (通道 5-7)
                 
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
 
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
-                //通道6 x方向惯性导航位置
-                seekfree_assistant_oscilloscope_data.data[6] = g_initial_yaw;
-                //通道7 y方向惯性导航位置
-                seekfree_assistant_oscilloscope_data.data[7] = err_degree;
+                //通道6
+                seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.x;
+                //通道7
+                seekfree_assistant_oscilloscope_data.data[7] = inertial_nav.y;
                 // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;
                     

@@ -169,128 +169,129 @@ void imu_get_values(void)
     imu660ra_acc_y_l = (int16)imu_data.acc_y;
     imu660ra_acc_z_l = (int16)imu_data.acc_z;
 }
+
 /**
- * @brief 扩展卡尔曼滤波更新函数
- * @note 执行完整的EKF预测和更新步骤
+ * @brief 扩展卡尔曼滤波更新函数 (已融合重力估计)
+ * @note 执行完整的EKF预测、更新步骤以及重力分量提取
  */
 void EKF_UpData(void)
 {
-    // 陀螺仪数据
+    // 1. 获取并处理数据
     float gx, gy, gz;
-    // 获取IMU数据
-    imu_get_values();
+    imu_get_values(); // 获取最新的 acc 和 gyro 数据
     gx = imu_data.gyro_x;
     gy = imu_data.gyro_y;
     gz = imu_data.gyro_z;
 
-    // 测量向量Z (归一化的加速度计数据)
+    // 2. 测量向量Z (归一化的加速度计数据)
     matrix_t Z;
     Matrix_Init(&Z, 3, 1);
-
     Z.data[0][0] = (matrix_type)imu_data.acc_x;
     Z.data[1][0] = (matrix_type)imu_data.acc_y;
     Z.data[2][0] = (matrix_type)imu_data.acc_z;
+    normalize_vector(&Z); // 归一化，只保留方向信息
 
-    // 归一化测量向量
-    normalize_vector(&Z);
-
-    // 状态转移矩阵F (基于陀螺仪数据)
+    // 3. 状态预测: X = F * X (基于陀螺仪积分)
     matrix_type f[4][4]= {{1, -0.5f * gx * dt, -0.5f * gy * dt, -0.5f * gz * dt},
                           {0.5f * gx * dt, 1, 0.5f * gz * dt, -0.5f * gy * dt},
                           {0.5f * gy * dt, -0.5f * gz * dt, 1, 0.5f * gx * dt},
                           {0.5f * gz * dt, 0.5f * gy * dt, -0.5f * gx * dt, 1}};
-
-    // 状态转移矩阵及其转置
-    matrix_t F,FT;
+    matrix_t F, FT;
     Matrix_From_Array(&F, (const matrix_type*)f, 4, 4);
     FT = Matrix_Transpose(&F);
-
-    // 状态预测: X = F * X
     exf_x = multiply_matrices(&F, &exf_x);
-    // 归一化四元数
-    normalize_vector(&exf_x);
+    normalize_vector(&exf_x); // 预测后归一化四元数
 
-    // 提取四元数元素
+    // 提取预测后的四元数
     float q0 = (exf_x.data[0][0]);
     float q1 = (exf_x.data[1][0]);
     float q2 = (exf_x.data[2][0]);
     float q3 = (exf_x.data[3][0]);
 
-    // 观测矩阵H (将四元数转换为重力方向)
+    // 4. 观测矩阵 H (雅可比矩阵)
+    // 对应重力向量 [0,0,1] 旋转后的偏导数
     matrix_type h[3][4]={{-2 * q2, 2 * q3, -2 * q0, 2 * q1},
                          {2 * q1, 2 * q0, 2 * q3, 2 * q2},
                          {2 * q0, -2 * q1, -2 * q2, 2 * q3}};
-
-    // 观测矩阵及其转置
     matrix_t H, HT;
     Matrix_From_Array(&H, (const matrix_type*)h, 3, 4);
     HT = Matrix_Transpose(&H);
+
+    // 5. 协方差预测: P = F * P * FT + Q
     matrix_t PK_;
+    PK_ = multiply_matrices(&F, &P);
+    PK_ = multiply_matrices(&PK_, &FT);
+    P = add_matrices(&PK_, &Q);
 
-    // 预测协方差: P = F * P * FT + Q
-    PK_ = multiply_matrices(&F, &P);       //F * P;
-    PK_ = multiply_matrices(&PK_, &FT);    //F * P * FT;
-    P = add_matrices(&PK_, &Q);            //F * P * FT + Q;
-
-    // 计算新息协方差: DK = H * P * HT + R
+    // 6. 计算卡尔曼增益和更新
     matrix_t DK, invDK;
     DK = multiply_matrices(&H, &P);
     DK = multiply_matrices(&DK, &HT);
     DK = add_matrices(&DK, &R);
 
-    // 检查矩阵是否可逆
-    if(inverse_matrix(&DK, &invDK))
-    {
-    	// 矩阵不可逆，直接转换四元数为欧拉角并返回
-    	quaternion_to_euler();
-    	return;
-    }
+    if(inverse_matrix(&DK, &invDK)) { quaternion_to_euler(); return; }
 
-    // 计算新息: EK = Z - H * X
     matrix_t EK, EKT;
-    EK = multiply_matrices(&H, &exf_x);     //H * X;
-    EK = subtract_matrices(&Z, &EK);        //Z - HX;
+    EK = multiply_matrices(&H, &exf_x); // h(x) 的线性近似
+    EK = subtract_matrices(&Z, &EK);    // 残差
     EKT = Matrix_Transpose(&EK);
 
-    // 计算误差: r = EKT * invDK * EK
+    // 误差检查
     error = multiply_matrices(&EKT, &invDK);
     error = multiply_matrices(&error, &EK);
+    if(error.data[0][0] > r_yz) { quaternion_to_euler(); return; }
 
-    // 检查误差是否过大
-    if(error.data[0][0] > r_yz)
-    {
-    	// 误差过大，直接转换四元数为欧拉角并返回
-    	quaternion_to_euler();
-    	return;
-    }
-
-    // 计算卡尔曼增益: Kk = P * HT * invDK
     matrix_t Kk;
     Kk = multiply_matrices(&P, &HT);
     Kk = multiply_matrices(&Kk, &invDK);
 
-    // 更新状态: X = X + Kk * EK
     matrix_t temp;
     temp = multiply_matrices(&Kk, &EK);
-    exf_x = add_matrices(&exf_x, &temp);
-    // 归一化四元数
-    normalize_vector(&exf_x);
+    exf_x = add_matrices(&exf_x, &temp); // 状态更新
+    normalize_vector(&exf_x);            // 更新后再次归一化
 
-    // 更新协方差: P = (I - Kk * H) * P
+    // 更新协方差
     matrix_t I;
     Matrix_Identity(&I, 4);
     temp = multiply_matrices(&Kk, &H);
     temp = subtract_matrices(&I, &temp);
     P = multiply_matrices(&temp, &P);
-    
-    // 转换四元数为欧拉角
-    quaternion_to_euler();
-    
-    // 调试输出 (已注释)
-    //printf("%f,%f,%f\n",dt,euler_angle.pitch,euler_angle.roll);
-    //printf("GX:%.5f, GY:%.5f, GZ:%.5f\n", imu_data.gyro_x, imu_data.gyro_y, imu_data.gyro_z);//用于检测零漂的调试代码
-}
 
+    // =========================================================================
+    // 融合部分：重力在传感器坐标系下的三轴分量估计
+    // =========================================================================
+    // 必须使用更新后的最新四元数
+    q0 = (exf_x.data[0][0]);
+    q1 = (exf_x.data[1][0]);
+    q2 = (exf_x.data[2][0]);
+    q3 = (exf_x.data[3][0]);
+
+    // 核心原理：将世界坐标系的重力 [0, 0, 1] 旋转到传感器坐标系
+    // 公式源自 Madgwick 算法中的 rotateAndScaleVector 函数优化版
+    // 对应旋转矩阵 R 的转置矩阵 R^T 的第三列
+    
+    // X轴分量: 2 * (q1*q3 - q0*q2)
+    imu_data.grav_x = 2.0f * (q1 * q3 - q0 * q2);
+    
+    // Y轴分量: 2 * (q0*q1 + q2*q3)
+    imu_data.grav_y = 2.0f * (q0 * q1 + q2 * q3);
+    
+    // Z轴分量: 1 - 2*(q1*q1 + q2*q2) (Madgwick 写法为 2 * (0.5 - q1^2 - q2^2))
+    imu_data.grav_z = 2.0f * (0.5f - q1 * q1 - q2 * q2);
+
+    /* 
+       应用说明：
+       现在 imu_data.grav_x/y/z 表示的是传感器处于当前姿态时，
+       重力加速度(1g)在XYZ三个轴上的理论投影分量（单位化向量）。
+       
+       如果想获得不含重力的"运动加速度"(Linear Acceleration)，
+       可以用原始加速度数据(需先换算成 g 单位) 减去 这个分量。
+    */
+    // =========================================================================
+
+    // 7. 转换为欧拉角供控制使用
+    quaternion_to_euler();
+}
 
 // ================== 偏航角零点初始化模块实现开始 ==================
 

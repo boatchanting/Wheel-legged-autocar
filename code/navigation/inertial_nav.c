@@ -15,8 +15,8 @@ InertialNav_t inertial_nav;
  * @brief 初始化惯性导航系统
  */
 void InertialNav_Init(void) {
-    inertial_nav.x = 0.0f;//小车向前为负数
-    inertial_nav.y = 0.0f;//小车向右为正数
+    inertial_nav.x = 0.0f;//小车向前为负数,向后为x正方向
+    inertial_nav.y = 0.0f;//小车向右为正数,向右为y正方向
     inertial_nav.relative_yaw = 0.0f; // 初始化相对偏航角
     inertial_nav.vx_body = 0.0f;
     inertial_nav.vy_body = 0.0f;
@@ -30,7 +30,7 @@ void InertialNav_Update(float curr_yaw, float init_yaw,
                         float speed_L, float speed_R) 
 {
     // --- 1. 预处理输入数据 ---
-    // 将轮速统一为前进方向为正 (单位: mm/s)
+    // 将轮速统一为前进方向为正 (单位: pwm)
     float v_wheel_left = -speed_L; 
     float v_wheel_right = speed_R;
     
@@ -41,7 +41,7 @@ void InertialNav_Update(float curr_yaw, float init_yaw,
     // 预测值: 上一时刻速度 + 加速度积分
     float v_pred = inertial_nav.vx_body + acc_lon_forward * NAV_DT;
     // 融合: 使用互补滤波
-    if (fabsf(v_wheel_avg) < 1.0f) { // 如果小车接近静止，则速度清零以防漂移
+    if (fabsf(v_wheel_avg) < 0.0f) { // 如果小车接近静止，则速度清零以防漂移
         inertial_nav.vx_body = 0.0f;
     }
     else if (fabsf(acc_lon_forward) < NAV_LON_ACC_ZERO_THRESHOLD) {

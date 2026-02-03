@@ -11,15 +11,15 @@
 #define NAV_DT              0.01f   // 导航解算周期 (10ms)【提醒】这个要是改了中断里面也得改
 
 // --- 融合参数 (需要根据实际小车表现进行调优) ---
-#define NAV_ALPHA_VEL       1.0f   // 纵向速度融合系数 (0.9 表示90%信任轮速, 10%信任加速度积分)
-#define NAV_DECAY_LAT       1.0f   // 横向速度(侧滑)衰减系数, 模拟摩擦力, 防止侧滑速度无限累积
+#define NAV_ALPHA_VEL       0.9f   // 纵向速度融合系数 (0.9 表示90%信任轮速, 10%信任加速度积分)
+#define NAV_DECAY_LAT       0.9f   // 横向速度(侧滑)衰减系数, 模拟摩擦力, 防止侧滑速度无限累积
 #define NAV_LAT_ACC_DEADZONE 50.0f  // 横向加速度死区。小于此值视为传感器噪声, 不累积侧滑速度
-#define NAV_LON_ACC_ZERO_THRESHOLD 20.0f // 需要实验调整，防止空转时漂移
+#define NAV_LON_ACC_ZERO_THRESHOLD 0.0f // 需要实验调整，防止空转时漂移
 
 // --- 【换车或者修车需要更换】里程计校准系数 ---
 // 通过实验确定此值: 系数 = 实际行驶距离 / 程序计算距离
 // 初始值设为 1.0f, 如果程序计算的距离偏小, 则该值 > 1.0; 如果偏大, 则该值 < 1.0
-#define NAV_DISTANCE_SCALE_FACTOR   3.624049f // <--- 在这里填入你计算出的校准值
+#define NAV_DISTANCE_SCALE_FACTOR   3.566666f // <--- 在这里填入你计算出的校准值
 
 // --- 坐标系数据结构 ---
 typedef struct {
