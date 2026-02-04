@@ -20,8 +20,10 @@ void InertialNav_Init(void) {
     inertial_nav.relative_yaw = 0.0f; // 初始化相对偏航角
     inertial_nav.vx_body = 0.0f;
     inertial_nav.vy_body = 0.0f;
+    inertial_nav.slip_flag = 0;// 初始化打滑标志位
 }
 
+static float last_yaw_rad = 0.0f; 
 /**
  * @brief 惯性导航更新函数 (10ms 调用一次)
  */
@@ -29,66 +31,75 @@ void InertialNav_Update(float curr_yaw, float init_yaw,
                         float acc_lat_left, float acc_lon_forward, 
                         float speed_L, float speed_R) 
 {
-    // --- 1. 预处理输入数据 ---
-    // 将轮速统一为前进方向为正 (单位: pwm)
-    float v_wheel_left = -speed_L; 
-    float v_wheel_right = speed_R;
+    // --- 1. 物理单位标准化 ---
+    // 参考 Guandao_Plus: 将原始脉冲/数值转换为 mm/s
+    // 假设 speed_R 为正代表前进，speed_L 为负代表前进（需根据你实际极性调整）
+    float v_L_mm = -speed_L * SPEED_TO_MM_S; 
+    float v_R_mm = speed_R * SPEED_TO_MM_S;
+    float v_wheel_avg = (v_L_mm + v_R_mm) * 0.5f;
+
+    // --- 2. 打滑检测逻辑 (学习自 Guandao_Plus) ---
+    float rel_yaw_deg = curr_yaw - init_yaw;
+    // 角度归一化到 [-180, 180]
+    rel_yaw_deg = fmodf(rel_yaw_deg + 180.0f, 360.0f);
+    if (rel_yaw_deg < 0) rel_yaw_deg += 360.0f;
+    rel_yaw_deg -= 180.0f;
     
-    // 计算车身中心点的平均轮速
-    float v_wheel_avg = (v_wheel_left + v_wheel_right) * 0.5f;
+    float curr_yaw_rad = DEG2RAD(rel_yaw_deg);
+    float actual_yaw_rate = (curr_yaw_rad - last_yaw_rad) / NAV_DT; // 算得的角速度
+    last_yaw_rad = curr_yaw_rad;
 
-    // --- 2. 纵向速度融合 ---
-    // 预测值: 上一时刻速度 + 加速度积分
+    // 理论角速度 (基于轮速差): ω = (Vr - Vl) / L
+    float theoretical_yaw_rate = (v_R_mm - v_L_mm) / WHEEL_BASE_MM;
+
+    // 比较偏差
+    if (fabsf(v_wheel_avg) > 100.0f && fabsf(theoretical_yaw_rate - actual_yaw_rate) > YAW_RATE_DIFF_THRES) {
+        inertial_nav.slip_flag = 1; // 发生横向打滑或空转
+    } else {
+        inertial_nav.slip_flag = 0;
+    }
+
+    // 静止修正
+    if (fabsf(v_wheel_avg) < 5.0f) {
+        inertial_nav.vx_body = 0;
+    }
+    //自转修正
+    if (fabsf(speed_L + speed_R) < 5.0f) {
+        acc_lat_left = 0;
+        acc_lon_forward = 0;
+    }
+
+    // --- 3. 纵向速度融合 ---
+    // 如果没有明显打滑，信任轮速多一点；如果打滑，减小轮速权重
+    float alpha = inertial_nav.slip_flag ? 0.3f : NAV_ALPHA_VEL;
     float v_pred = inertial_nav.vx_body + acc_lon_forward * NAV_DT;
-    // 融合: 使用互补滤波
-    if (fabsf(v_wheel_avg) < 0.0f) { // 如果小车接近静止，则速度清零以防漂移
-        inertial_nav.vx_body = 0.0f;
-    }
-    else if (fabsf(acc_lon_forward) < NAV_LON_ACC_ZERO_THRESHOLD) {
-        // A. 如果加速度极小，说明小车实际没有在加速或减速。
-        //    此时，无论轮速计多快，实际位移都应该为零。
-        //    我们应优先强制速度为零，以防止漂移。
-        inertial_nav.vx_body = 0.0f;
-        // printf("acc_lon_forward: %f\n", acc_lon_forward);
-    }
-    else {
-        inertial_nav.vx_body = NAV_ALPHA_VEL * v_wheel_avg + (1.0f - NAV_ALPHA_VEL) * v_pred;
+    inertial_nav.vx_body = alpha * v_wheel_avg + (1.0f - alpha) * v_pred;
+
+    // --- 4. 横向速度 (侧滑) 修正 ---
+    // 参考 Guandao_Plus: 侧滑速度通常难以直接测量，通过加速度积分并给予极大的衰减系数
+    if (fabsf(acc_lat_left) < 200.0f) { // 侧向加速度死区
+        inertial_nav.vy_body *= 0.8f; // 快速衰减
+    } else {
+        inertial_nav.vy_body = inertial_nav.vy_body * 0.95f + acc_lat_left * NAV_DT;
     }
 
-    // --- 3. 横向速度估算 (侧滑) ---
-    // 衰减上一时刻的侧滑速度, 并累加当前加速度产生的侧滑增量
-    inertial_nav.vy_body = inertial_nav.vy_body * NAV_DECAY_LAT + acc_lat_left * NAV_DT;
+    
 
-    // 死区处理: 如果横向加速度过小, 认为是噪声, 强制将侧滑速度清零
-    // 这是为了防止在直线行驶时, 因为传感器噪声导致位置逐渐偏移
-    if (fabsf(acc_lat_left) < NAV_LAT_ACC_DEADZONE) {
-        inertial_nav.vy_body = 0.0f;
-        // printf("acc_lat_left: %f\n", acc_lat_left);
-    }
+    // --- 5. 坐标变换与积分 ---
+    inertial_nav.relative_yaw = rel_yaw_deg;
+    float cos_theta = cosf(curr_yaw_rad);
+    float sin_theta = sinf(curr_yaw_rad);
 
-    // --- 4. 坐标系转换 ---
-    // 计算以初始偏航角为 0 度的当前航向角
-    float relative_yaw_deg = curr_yaw - init_yaw;
-     relative_yaw_deg = fmodf(relative_yaw_deg + 180.0f, 360.0f) - 180.0f;
-
-    // 将计算结果存入全局结构体
-    inertial_nav.relative_yaw = relative_yaw_deg;
-
-    // 将相对角度转换为弧度用于三角函数计算
-    float relative_yaw_rad = DEG2RAD(inertial_nav.relative_yaw);
-
-    float cos_theta = cosf(relative_yaw_rad);
-    float sin_theta = sinf(relative_yaw_rad);
-
-    // 将车身坐标系下的速度旋转到世界坐标系
+    // 车身坐标系 -> 世界坐标系
+    // 车身x前进，车身y向左。根据坐标系定义：
+    // vx_world = vx*cos - vy*sin
+    // vy_world = vx*sin + vy*cos
     float vx_world = inertial_nav.vx_body * cos_theta - inertial_nav.vy_body * sin_theta;
     float vy_world = inertial_nav.vx_body * sin_theta + inertial_nav.vy_body * cos_theta;
 
-    // --- 5. 位置积分 ---
-    // 在最终的位移上乘以校准系数
-    float dx = vx_world * NAV_DT * NAV_DISTANCE_SCALE_FACTOR;
-    float dy = vy_world * NAV_DT * NAV_DISTANCE_SCALE_FACTOR;
-
-    inertial_nav.x += dx;
-    inertial_nav.y += dy;
+    // 积分得到位置 (单位: mm)
+    // 注意：这里的方向需对应你代码注释的“前进为负，向右为正”
+    // 如果 vx_world 是正（前进），则 dx 应为负
+    inertial_nav.x += vx_world * NAV_DT; 
+    inertial_nav.y += vy_world * NAV_DT; 
 }
