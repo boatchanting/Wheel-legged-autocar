@@ -73,13 +73,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     
     // ==========================================================
     // 【nav.1】惯性导航解算 (10ms 跑一次)
-    // ==========================================================
+    // 按下记录按钮之前的惯性导航不可信==========================================================
     if(loop_counter % 10 == 0 && g_yaw_initialized)
     {
         // 调用导航更新函数
         InertialNav_Update(
             euler_angle.yaw,                                 // 当前偏航角
-            g_initial_yaw,                                   // 初始偏航角
             9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
             9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
             (float)motor_value.receive_left_speed_data,      // 左轮速
@@ -130,16 +129,10 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
          // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
         if (g_yaw_initialized && Minefield_Is_Active() == 0)
         {
-            // 1. 获取当前实时的偏航角
-            float current_yaw = euler_angle.yaw;
+            // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
+            float yaw_error = err_degree;
 
-            // 2. 计算航向误差
-            //    目标角度: g_initial_yaw (我们记录的“零度”角)
-            //    当前角度: current_yaw
-            //    误差 = 目标 - 当前
-            float yaw_error = g_initial_yaw - err_degree - current_yaw;
-
-            // 3. [关键] 处理角度“卷绕”问题 (Wraparound)
+            // 2. [关键] 处理角度“卷绕”问题 (Wraparound)
             //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
             //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
             //    我们需要将误差归一化到 -180 ~ +180 度之间。
@@ -418,8 +411,8 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
     if (g_replay_state != REPLAY_RUNNING)//【nav】不在复现的时候才可以遥控器给目标速度进去
     {
         // [映射 2: 转向角度]
-    // 直接赋值积分结果 (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
-    err_degree = robot_ctrl.target_angle;
+    // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
+    err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;//目标想要增加/减少的角度+初始角度-当前角度
 
     // [映射 3: 速度控制]
     // 主函数定义: 负数代表向前 (-60 = 20m/s)

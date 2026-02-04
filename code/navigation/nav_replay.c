@@ -91,10 +91,10 @@ void NavReplay_Process(void)
 
     // 计算期望方位角 (atan2 返回弧度值，转为角度)
     // 根据描述：X正方向向后，Y正方向向右，符合标准笛卡尔坐标旋转。
-    float target_yaw = atan2f(dy, -dx) * 57.29578f; 
+    float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
     
-    // err_degree = 期望 - 实际 (顺时针为正)
-    err_degree = NormalizeAngle(target_yaw);
+    // err_degree = 期望 - 实际
+    err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
     // 5. 控制策略：先转再走
     if (dist <= NAV_DIST_ARRIVE)
@@ -117,7 +117,7 @@ void NavReplay_Process(void)
     {
         // --- B. 未到达目标点 ---
         // 先检查角度是否对准
-        if (fabsf(NormalizeAngle(err_degree + inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE)
+        if (fabsf(NormalizeAngle(err_degree)) > NAV_YAW_TOLERANCE)
         {
             // 角度偏差较大，先原地旋转
             target_speed_set = NAV_SPEED_STOP;

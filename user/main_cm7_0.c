@@ -35,7 +35,7 @@
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "common.h"
-#define WIFI_USE 1 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 #define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
@@ -553,7 +553,7 @@ vision_detected_marker = 0;//雷区调用,测试用
         // ---------------- 【nav.1】初始化惯性导航模块和打点模块 ----------------
         // ---------------------------------------------------------
         if (g_nav_start_recording)
-        {
+        {            
             InertialNav_Init();
             NavRam_Init();
             #if DEBUG_LOG_ENABLE
