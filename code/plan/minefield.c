@@ -75,6 +75,7 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
         // --- 动作结束 ---
         s_is_spinning = 0;
         s_current_speed_cmd = 0.0f;
+        g_special_action_trigger = 0;//来自惯性导航系统的特殊状态位，处理完之后变为0
         
         // [关键] 重置系统的航向目标为当前朝向，防止PID回弹
         if (target_yaw_ptr != 0) 

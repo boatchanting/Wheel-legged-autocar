@@ -64,7 +64,8 @@ void NavReplay_Stop(void)
 
 void NavReplay_Process(void)
 {
-    if (g_replay_state != REPLAY_RUNNING) return;
+    if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) return;
+
 
     // 1. 检查是否跑完全部点位
     if (g_target_idx >= nav_ram_data.point_count)
@@ -106,8 +107,11 @@ void NavReplay_Process(void)
         printf("[Nav] Arrived Point[%d] Type[%d]\r\n", g_target_idx, g_current_point_type);
         #endif
 
-        if (g_current_point_type != NAV_POINT_PATH)
+        if (g_current_point_type != NAV_POINT_PATH)//处理特殊点
         {
+             if (g_current_point_type == NAV_POINT_CIRCLE) {
+                minefield_flag = 1;
+            }
             g_special_action_trigger = 1;
         }
         
