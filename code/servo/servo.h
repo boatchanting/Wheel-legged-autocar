@@ -6,8 +6,8 @@
 // *************************** 【学习板小车】硬件引脚定义开始 ***************************
 #define SERVO_MOTOR_PWM1            (TCPWM_CH09_P05_0)     // 左前 LF
 #define SERVO_MOTOR_PWM2            (TCPWM_CH10_P05_1)      // 右前 RF
-#define SERVO_MOTOR_PWM3            (TCPWM_CH11_P05_2)       // 右后 RR
-#define SERVO_MOTOR_PWM4            (TCPWM_CH12_P05_3)      // 左后 LR
+#define SERVO_MOTOR_PWM3            (TCPWM_CH12_P05_3)       // 右后 RR
+#define SERVO_MOTOR_PWM4            (TCPWM_CH11_P05_2)      // 左后 LR
 // *************************** 【学习板小车】硬件引脚定义结束***************************
 
 // *************************** 【我们板小车1】硬件引脚定义开始 ***************************
@@ -23,52 +23,46 @@
 // ===================== 舵机收腿极限占空比定义 (Duty级) =====================
 // #define SERVO_MOTOR_PWM1_MID            (4500-1500)      // 左前 LF ++
 // #define SERVO_MOTOR_PWM2_MID            (4500+1500)      // 右前 RF --
-// #define SERVO_MOTOR_PWM3_MID            (4500+1500)      // 右后 RR --
-// #define SERVO_MOTOR_PWM4_MID            (4700-1500)      // 左后 LR ++
-
-// ===================== 舵机平腿(90度)占空比定义 (Duty级) =====================
+// #define SERVO_MOTOR_PWM3_MID            (4600+1500)      // 右后 RR ++
+// #define SERVO_MOTOR_PWM4_MID            (4300-1500)      // 左后 LR --
+// ===================== 舵机平腿(90度)占空比定义 (Duty级)【学习板小车】 =====================
 #define SERVO_MOTOR_PWM1_90            (4500)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_90            (4500)      // 右前 RF --
-#define SERVO_MOTOR_PWM3_90            (4500)      // 右后 RR --
-#define SERVO_MOTOR_PWM4_90            (4700)      // 左后 LR ++   
+#define SERVO_MOTOR_PWM3_90            (4600)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_90            (4300)      // 左后 LR --
 // ===================== 舵机伸腿极限占空比定义 (Duty级) =====================
 // #define SERVO_MOTOR_PWM1_MID            (7000)      // 左前 LF ++
 // #define SERVO_MOTOR_PWM2_MID            (2000)      // 右前 RF --
-// #define SERVO_MOTOR_PWM3_MID            (2000)      // 右后 RR --
-// #define SERVO_MOTOR_PWM4_MID            (7200)      // 左后 LR ++
-// ===================== 舵机正常占空比定义 (Duty级) =====================
+// #define SERVO_MOTOR_PWM3_MID            (2100)      // 右后 RR ++
+// #define SERVO_MOTOR_PWM4_MID            (6800)      // 左后 LR --
+// ===================== 舵机正常占空比定义 (Duty级) =====================无意义
 // #define SERVO_MOTOR_PWM1_MID            (3500)      // 左前 LF ++
 // #define SERVO_MOTOR_PWM2_MID            (5500)      // 右前 RF --
-// #define SERVO_MOTOR_PWM3_MID            (5500)      // 右后 RR --
-// #define SERVO_MOTOR_PWM4_MID            (3700)      // 左后 LR ++
-// ===================== 舵机极性定义 (向下伸腿为正) =====================
+// #define SERVO_MOTOR_PWM3_MID            (5500)      // 右后 RR ++
+// #define SERVO_MOTOR_PWM4_MID            (3700)      // 左后 LR --
+// ===================== 舵机极性定义 (向下伸腿为正) 【学习板小车】 =====================
 #define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_DIR            (-1)      // 右前 RF --
-#define SERVO_MOTOR_PWM3_DIR            (-1)      // 右后 RR --
-#define SERVO_MOTOR_PWM4_DIR            (1)      // 左后 LR ++
+#define SERVO_MOTOR_PWM3_DIR            (1)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_DIR            (-1)      // 左后 LR --
 // ===================== 舵机全局配置 =====================
 #define SERVO_FREQ          (300)      // 频率300Hz
 
 // ===================== 8个独立硬件限幅变量 (Duty级) =====================
 // 右前 (RF) 限幅
-#define RF_LIMIT_DUTY_MIN   (3000) 
-#define RF_LIMIT_DUTY_MAX   (7000) 
-
+#define RF_LIMIT_DUTY_MIN   (SERVO_MOTOR_PWM2_90-2000+SERVO_MOTOR_PWM2_DIR*500) 
+#define RF_LIMIT_DUTY_MAX   (SERVO_MOTOR_PWM2_90+2000+SERVO_MOTOR_PWM2_DIR*500) 
 // 右后 (RR) 限幅
-#define RR_LIMIT_DUTY_MIN   (2000) 
-#define RR_LIMIT_DUTY_MAX   (6000) 
-
+#define RR_LIMIT_DUTY_MIN   (SERVO_MOTOR_PWM3_90-2000+SERVO_MOTOR_PWM3_DIR*500) 
+#define RR_LIMIT_DUTY_MAX   (SERVO_MOTOR_PWM3_90+2000+SERVO_MOTOR_PWM3_DIR*500) 
 // 左前 (LF) 限幅
-#define LF_LIMIT_DUTY_MIN   (2000) 
-#define LF_LIMIT_DUTY_MAX   (6000) 
-
+#define LF_LIMIT_DUTY_MIN   (SERVO_MOTOR_PWM1_90-2000+SERVO_MOTOR_PWM1_DIR*500) 
+#define LF_LIMIT_DUTY_MAX   (SERVO_MOTOR_PWM1_90+2000+SERVO_MOTOR_PWM1_DIR*500) 
 // 左后 (LR) 限幅
-#define LR_LIMIT_DUTY_MIN   (3200) 
-#define LR_LIMIT_DUTY_MAX   (7200) 
-
+#define LR_LIMIT_DUTY_MIN   (SERVO_MOTOR_PWM4_90-2000+SERVO_MOTOR_PWM4_DIR*500) 
+#define LR_LIMIT_DUTY_MAX   (SERVO_MOTOR_PWM4_90+2000+SERVO_MOTOR_PWM4_DIR*500) 
 // 舵机初始化高度
 extern float servo_height;
-
 //五连杆参数
 #define L1  6.0f    //左小腿长
 #define L2  9.0f    //左大腿长

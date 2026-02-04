@@ -41,7 +41,7 @@ void NavReplay_Start(void)
         return;
     }
 
-    g_target_idx = 0; // 从第0个点开始（或者第1个，取决于你是否把起始点存为第0点）
+    g_target_idx = 0; // 从第1个点开始（起始点没有储存，默认为(0,0)）
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
     
