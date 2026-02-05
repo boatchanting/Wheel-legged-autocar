@@ -439,7 +439,7 @@ void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数
 void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数      
 {
     pit_isr_flag_clear(PIT_CH10);
-    
+    key_scanner();   // 必须定期调用！可写在中断或者循环
 }
 
 void pit0_ch11_isr()                    // 定时器通道 11 周期中断服务函数      
@@ -671,59 +671,59 @@ void gpio_19_exti_isr()                  // 外部 GPIO_19 中断服务函数
 
 void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数     
 {
-    // ==========================================================
-    // 按键 1 (P20_0): 开始录制
-    // ==========================================================
-    if(exti_flag_get(EXTI_PORT20_0))
-    {
-        gpio_toggle_level(P19_0);       // 指示灯切换
+    // // ==========================================================
+    // // 按键 1 (P20_0): 开始录制
+    // // ==========================================================
+    // if(exti_flag_get(EXTI_PORT20_0))
+    // {
+    //     gpio_toggle_level(P19_0);       // 指示灯切换
         
-        if (g_motor_enable && g_yaw_initialized)
-        {      
-            g_nav_start_recording = 1;//开始录制，会在main中调用惯导系统初始化和点的记录的初始化,然后再变回1
-            g_nav_recording = 1;
-        }
-    }
-    // ==========================================================
-    // 按键 2 (P20_1): 停止录制并请求保存
-    // ==========================================================
-    if(exti_flag_get(EXTI_PORT20_1))
-    {
+    //     if (g_motor_enable && g_yaw_initialized)
+    //     {      
+    //         g_nav_start_recording = 1;//开始录制，会在main中调用惯导系统初始化和点的记录的初始化,然后再变回1
+    //         g_nav_recording = 1;
+    //     }
+    // }
+    // // ==========================================================
+    // // 按键 2 (P20_1): 停止录制并请求保存
+    // // ==========================================================
+    // if(exti_flag_get(EXTI_PORT20_1))
+    // {
       
-        gpio_toggle_level(P19_0);       // 指示灯切换
-        if (g_nav_recording)
-        {
-            g_nav_recording = 0; // 停止录制
+    //     gpio_toggle_level(P19_0);       // 指示灯切换
+    //     if (g_nav_recording)
+    //     {
+    //         g_nav_recording = 0; // 停止录制
             
-            // 只有电机仍开启才保存（防止倒地保存）
-            if (g_motor_enable) 
-            {
-                g_save_flash_request = 1; // 通知 main 循环执行 Flash 写操作。不能在中断中进行写入，以免阻塞中断
-            }
-            else
-            {
-                #if DEBUG_LOG_ENABLE
-                printf("Button2: Recording stopped (motor disabled), data discarded.\r\n");
-                #endif
-            }
-        }
-    }
+    //         // 只有电机仍开启才保存（防止倒地保存）
+    //         if (g_motor_enable) 
+    //         {
+    //             g_save_flash_request = 1; // 通知 main 循环执行 Flash 写操作。不能在中断中进行写入，以免阻塞中断
+    //         }
+    //         else
+    //         {
+    //             #if DEBUG_LOG_ENABLE
+    //             printf("Button2: Recording stopped (motor disabled), data discarded.\r\n");
+    //             #endif
+    //         }
+    //     }
+    // }
 
-    // ==========================================================
-    // 按键 3 (P20_2): 读取，然后开始复现轨迹
-    // ==========================================================
-    if(exti_flag_get(EXTI_PORT20_2))
-    {
+    // // ==========================================================
+    // // 按键 3 (P20_2): 读取，然后开始复现轨迹
+    // // ==========================================================
+    // if(exti_flag_get(EXTI_PORT20_2))
+    // {
        
-        gpio_toggle_level(P19_0);       // 指示灯切换
+    //     gpio_toggle_level(P19_0);       // 指示灯切换
         
-        if(g_motor_enable)
-        {
-            g_load_flash_request = 1;      // 请求读取测试
-            g_save_flash_request = 0;     // 清除保存请求
-            g_nav_recording = 0;          // 确保停止录制
-        }
-    }
+    //     if(g_motor_enable)
+    //     {
+    //         g_load_flash_request = 1;      // 请求读取测试
+    //         g_save_flash_request = 0;     // 清除保存请求
+    //         g_nav_recording = 0;          // 确保停止录制
+    //     }
+    // }
 }
 
 void gpio_21_exti_isr()                  // 外部 GPIO_21 中断服务函数     

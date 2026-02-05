@@ -38,7 +38,7 @@
 #define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
-#define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
+#define REMOTE_CONTROL 0                 //【全局开关】1：开启遥控器 0:关闭
 // ---------------- plan 配置 ----------------
 #define CURRENT_NAV_PLAN   NAV_PLAN_1   // 【全局开关】在这里切换科目几，科目一为NAV_PLAN_1，科目二NAV_PLAN_2，科目三NAV_PLAN_3
 
@@ -154,14 +154,14 @@ extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
 volatile uint8 pit_state = 0;
 // --- EKF宏定义 ---
 #define PIT_NUM         (PIT_CH0) // 使用定时器通道0
-
+#define PIT_NUM_10         (PIT_CH10) // 使用定时器通道0    pit_ms_init(PIT_NUM_10, 10);
 // =================================================================================
 // PID控制中间变量开始
 // =================================================================================
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -346,13 +346,13 @@ InertialNav_Init();//惯性导航初始化
 
 //按钮初始化
 // P20_0: 开始录制
-exti_init(P20_0, EXTI_TRIGGER_RISING); 
+//exti_init(P20_0, EXTI_TRIGGER_RISING); 
 // P20_1: 停止录制
-exti_init(P20_1, EXTI_TRIGGER_RISING); 
+//exti_init(P20_1, EXTI_TRIGGER_RISING); 
 // P20_2: 开始复现
-exti_init(P20_2, EXTI_TRIGGER_RISING);
+//exti_init(P20_2, EXTI_TRIGGER_RISING);
 // P20_3: 停止复现
-exti_init(P20_3, EXTI_TRIGGER_RISING);
+//exti_init(P20_3, EXTI_TRIGGER_RISING);
 
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
@@ -373,39 +373,39 @@ exti_init(P20_3, EXTI_TRIGGER_RISING);
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
     pit_ms_init(PIT_NUM, 1);
     pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
-    // pit_ms_init(PIT_NUM_2, 5);                                                // 定时器通道2 初始化为5ms 中断 用于 惯导kf 卡尔曼滤波处理
-    
+    pit_ms_init(PIT_NUM_10, 10);                                                // 定时器通道10 初始化为 10ms 中断 用于按键扫描
+    key_init(10);  // 每10ms扫描一次
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
 
 #if DEBUG_DISPLAY
-    ips200_show_string(0, disp_y, "PIT & INT OK");
-    disp_y += 16;
+    // ips200_show_string(0, disp_y, "PIT & INT OK");
+    // disp_y += 16;
     
     // 延时一会儿让人看清启动信息，然后清屏准备显示数据
     system_delay_ms(1000); 
     ips200_clear();
     
-    // 绘制静态UI标签 (避免循环里重复绘制浪费时间)
-    ips200_show_string(0, 0,  "EKF Monitor");
-    ips200_show_string(0, 30, "Pitch:");
-    ips200_show_string(0, 50, "Roll :");
-    ips200_show_string(0, 70, "Yaw  :");
-    ips200_show_string(0, 100,"Freq : 20Hz");
+    // // 绘制静态UI标签 (避免循环里重复绘制浪费时间)
+    // ips200_show_string(0, 0,  "EKF Monitor");
+    // ips200_show_string(0, 30, "Pitch:");
+    // ips200_show_string(0, 50, "Roll :");
+    // ips200_show_string(0, 70, "Yaw  :");
+    // ips200_show_string(0, 100,"Freq : 20Hz");
     // 添加舵机角度显示标签
-    ips200_show_string(0, 120, "Servo Angles:");
-    ips200_show_string(0, 135, "RF:");  // 右前
-    ips200_show_string(0, 150, "RR:");  // 右后
-    ips200_show_string(0, 165, "LF:");  // 左前
-    ips200_show_string(0, 180, "LR:");  // 左后
-    // 添加电机转速显示标签
-    ips200_show_string(0, 200, "Motor Speed:");
-    ips200_show_string(0, 215, "L:");  // 左电机
-    ips200_show_string(80, 215, "R:");  // 右电机
-    ips200_show_string(0, 230, "gyro.kp");  // 右电机
-    ips200_show_string(0, 245, "gyro.kd");  // 右电机
-    //添加g_yaw_initialized状态
-    ips200_show_string(0, 260, "g_motor_enable");
+    // ips200_show_string(0, 120, "Servo Angles:");
+    // ips200_show_string(0, 135, "RF:");  // 右前
+    // ips200_show_string(0, 150, "RR:");  // 右后
+    // ips200_show_string(0, 165, "LF:");  // 左前
+    // ips200_show_string(0, 180, "LR:");  // 左后
+    // // 添加电机转速显示标签
+    // ips200_show_string(0, 200, "Motor Speed:");
+    // ips200_show_string(0, 215, "L:");  // 左电机
+    // ips200_show_string(80, 215, "R:");  // 右电机
+    // ips200_show_string(0, 230, "gyro.kp");  // 右电机
+    // ips200_show_string(0, 245, "gyro.kd");  // 右电机
+    // //添加g_yaw_initialized状态
+    // ips200_show_string(0, 260, "g_motor_enable");
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
 
@@ -417,7 +417,12 @@ vision_detected_marker = 0;//雷区调用,测试用
 
     while(true)
     {
-
+        // 菜单处理
+        Menu_HandleKey();
+        #if DEBUG_DISPLAY
+        Menu_ShowStatic();    // 静态显示
+        Menu_ShowDynamic();   // 动态显示
+        #endif
         // 此处编写需要循环执行的代码
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
         if(pit_state == 1)
@@ -432,41 +437,41 @@ vision_detected_marker = 0;//雷区调用,测试用
             {
                 display_count = 0;
                 // 在这里获取舵机角度，而不是在显示时获取
-                float current_angles[4];
-                servo_get_current_angles(current_angles);
+                //float current_angles[4];
+                //servo_get_current_angles(current_angles);
                 // 获取电机速度数据
-                float motor_speeds[2];
+                //float motor_speeds[2];
                 //small_driver_get_speed();
-                motor_speeds[0] = motor_value.receive_left_speed_data;
-                motor_speeds[1] = motor_value.receive_right_speed_data;
+                //motor_speeds[0] = motor_value.receive_left_speed_data;
+                //motor_speeds[1] = motor_value.receive_right_speed_data;
 
                 // gpio_toggle_level(LED1); // LED闪烁指示系统正在运行
                 
                 #if DEBUG_DISPLAY
                     // 显示 Pitch (俯仰角)
-                    // 参数：X坐标, Y坐标, 浮点数值, 整数位宽, 小数位数
-                    ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
+                    // // 参数：X坐标, Y坐标, 浮点数值, 整数位宽, 小数位数
+                    // ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
                     
-                    // 显示 Roll (横滚角)
-                    ips200_show_float(60, 50, euler_angle.roll, 3, 2);
+                    // // 显示 Roll (横滚角)
+                    // ips200_show_float(60, 50, euler_angle.roll, 3, 2);
                     
-                    // 显示 Yaw (偏航角)
-                    ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
+                    // // 显示 Yaw (偏航角)
+                    // ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
 
-                    // 显示已获取的舵机角度
-                    ips200_show_float(25, 135, current_angles[0], 3, 1);
-                    ips200_show_float(25, 150, current_angles[1], 3, 1);
-                    ips200_show_float(25, 165, current_angles[2], 3, 1);
-                    ips200_show_float(25, 180, current_angles[3], 3, 1);
+                    // // 显示已获取的舵机角度
+                    // ips200_show_float(25, 135, current_angles[0], 3, 1);
+                    // ips200_show_float(25, 150, current_angles[1], 3, 1);
+                    // ips200_show_float(25, 165, current_angles[2], 3, 1);
+                    // ips200_show_float(25, 180, current_angles[3], 3, 1);
 
-                    // 显示电机速度
-                    ips200_show_float(25, 215, motor_speeds[0], 5, 1); 
-                    ips200_show_float(105, 215, motor_speeds[1], 5, 1);  
-                    //显示角速度环pid输出
-                     ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
-                     ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
-                    //显示g_motor_enable状态
-                     ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
+                    // // 显示电机速度
+                    // ips200_show_float(25, 215, motor_speeds[0], 5, 1); 
+                    // ips200_show_float(105, 215, motor_speeds[1], 5, 1);  
+                    // //显示角速度环pid输出
+                    //  ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
+                    //  ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
+                    // //显示g_motor_enable状态
+                    //  ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
                 #endif
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里

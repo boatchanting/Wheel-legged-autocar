@@ -1,4 +1,76 @@
 ```c
+//zf_device_key.h
+int main(void)
+{
+    // 系统初始化...
+    
+    // 初始化按键，扫描周期 10ms
+    key_init(10);  // 每10ms扫描一次
+    
+    while (1)
+    {
+        key_scanner();  // 必须定期调用！可写在中断或者循环
+        
+        // 示例：检测“上”键短按
+        if (key_get_state(KEY_1) == KEY_SHORT_PRESS) {
+            printf("UP pressed!\n");
+            key_clear_state(KEY_1);
+        }
+        
+        // 示例：检测“按下”键长按
+        if (key_get_state(KEY_5) == KEY_LONG_PRESS) {
+            printf("CENTER long press!\n");
+            key_clear_state(KEY_5); // 如果只需触发一次
+        }
+        
+        DELAY_MS(10); // 或使用 RTOS delay
+    }
+}
+#include "zf_common_debug.h"
+#include "zf_driver_gpio.h"
+
+//==================================================定义 按键 基本配置================================================
+// 定义按键引脚 用户可以新增可以修改 默认定义四个按键
+// 定义按键顺序对应下方 key_index_enum 枚举体中定义的顺序
+// 如果用户可以新增按键 那么需要同步在下方 key_index_enum 枚举体中新增按键
+#define KEY_LIST                    {P20_1, P20_0, P20_2, P20_3}//按键从左到右依次是0123左上下右
+//#define KEY_LIST                   {P10_2, P10_4, P10_0, P10_1, P10_3}//上：10.2 左：10.4 下：10.0 右：10.1 按下：10.3
+
+#define KEY_RELEASE_LEVEL           (GPIO_HIGH)                                 // 按键的默认状态 也就是按键释放状态的电平
+#define KEY_MAX_SHOCK_PERIOD        (10       )                                 // 按键消抖检测时长 单位毫秒 低于这个时长的信号会被认为是杂波抖动
+#define KEY_LONG_PRESS_PERIOD       (1000     )                                 // 最小长按时长 单位毫秒 高于这个时长的信号会被认为是长按动作
+//==================================================定义 按键 基本配置================================================
+
+
+//==================================================定义 按键 参数结构体===============================================
+typedef enum
+{
+    KEY_1,
+    KEY_2,
+    KEY_3,
+    KEY_4,
+    KEY_5,
+    KEY_NUMBER
+}key_index_enum;                                                                // 按键索引 对应上方定义的按键引脚个数 默认定义四个按键
+
+typedef enum
+{
+    KEY_RELEASE,                                                                // 按键释放状态
+    KEY_SHORT_PRESS,                                                            // 按键短按状态
+    KEY_LONG_PRESS,                                                             // 按键长按状态
+}key_state_enum;
+//==================================================定义 按键 参数结构体===============================================
+
+
+//==================================================声明 按键 基础函数===============================================
+void            key_scanner             (void);                                 // 按键状态扫描
+key_state_enum  key_get_state           (key_index_enum key_n);                 // 获取按键状态
+void            key_clear_state         (key_index_enum key_n);                 // 清除指定按键状态
+void            key_clear_all_state     (void);                                 // 清除所有按键状态
+void            key_init                (uint32 period);                        // 按键初始化
+//==================================================声明 按键 基础函数===============================================
+
+#endif
 #include "zf_common_headfile.h"
 
 // 打开新的工程或者工程移动了位置务必执行以下操作
