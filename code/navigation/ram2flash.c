@@ -1,4 +1,5 @@
 #include "ram2flash.h"
+#include "config/config.h"//【提醒】配置请在这里修改
 #include "../common.h"
 
 /**

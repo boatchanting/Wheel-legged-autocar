@@ -1,4 +1,5 @@
 #include "sbus.h"
+#include "config/config.h"//【提醒】配置请在这里修改
 #include "../common.h"
 // ==========================================
 // 1. 宏定义 (参数配置区)
