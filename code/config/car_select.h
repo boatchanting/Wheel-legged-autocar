@@ -12,6 +12,7 @@
 2.屏幕的引脚配置，来自zf_device/zf_device_ips200.h
 3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
 4.按钮模块配置，来自zf_device/zf_device_key.h
+5.pid参数配置，来自code/calculate/pid-new.h
 */
 
 /* 
@@ -28,6 +29,7 @@
 2.屏幕的引脚配置，来自zf_device/zf_device_ips200.h
 3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
 4.按钮模块配置，来自zf_device/zf_device_key.h
+5.pid参数配置，来自code/calculate/pid-new.h
 */
 
 #endif // __CAR_SELECT_H__
