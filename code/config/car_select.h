@@ -10,7 +10,7 @@
 学习板小车内容
 1.四个舵机的引脚及占90度时候的占空比，极性，每次拆装都需要重新测试，来自servo/servo.h
 2.屏幕的引脚配置，来自zf_device/zf_device_ips200.h
-
+3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
 */
 
 /* 
@@ -25,6 +25,7 @@
 我们的板子1小车内容
 1.四个舵机的引脚及占90度时候的占空比，极性，每次拆装都需要重新测试，来自servo/servo.h
 2.屏幕的引脚配置，来自zf_device/zf_device_ips200.h
+3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
 */
 
 #endif // __CAR_SELECT_H__
