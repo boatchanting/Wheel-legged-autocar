@@ -2,7 +2,9 @@
 #define _SERVO_H_
 
 #include "zf_common_headfile.h"
+#include "../config/car_select.h"
 
+#if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
 // *************************** 【学习板小车】硬件引脚定义开始 ***************************
 #define SERVO_MOTOR_PWM1            (TCPWM_CH09_P05_0)     // 左前 LF
 #define SERVO_MOTOR_PWM2            (TCPWM_CH10_P05_1)      // 右前 RF
@@ -10,45 +12,55 @@
 #define SERVO_MOTOR_PWM4            (TCPWM_CH11_P05_2)      // 左后 LR
 // *************************** 【学习板小车】硬件引脚定义结束***************************
 
-// *************************** 【我们板小车1】硬件引脚定义开始 ***************************
-// #define SERVO_MOTOR_PWM1            (TCPWM_CH13_P00_3)      // 右前 RF
-// #define SERVO_MOTOR_PWM2            (TCPWM_CH12_P01_0)      // 右后 RR 
-// #define SERVO_MOTOR_PWM3            (TCPWM_CH28_P19_3)      // 左前 LF 
-// #define SERVO_MOTOR_PWM4            (TCPWM_CH27_P19_2)      // 左后 LR 
-// *************************** 【我们板小车1】硬件引脚定义结束***************************
-
-
-// ***************++的意思是向下伸腿要加duty*********
-// ===================== 舵机角度-占空比转换宏定义 =====================
-// ===================== 舵机收腿极限占空比定义 (Duty级) =====================
-// #define SERVO_MOTOR_PWM1_MID            (4500-1500)      // 左前 LF ++
-// #define SERVO_MOTOR_PWM2_MID            (4500+1500)      // 右前 RF --
-// #define SERVO_MOTOR_PWM3_MID            (4600+1500)      // 右后 RR ++
-// #define SERVO_MOTOR_PWM4_MID            (4300-1500)      // 左后 LR --
 // ===================== 舵机平腿(90度)占空比定义 (Duty级)【学习板小车】 =====================
 #define SERVO_MOTOR_PWM1_90            (4500)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_90            (4500)      // 右前 RF --
 #define SERVO_MOTOR_PWM3_90            (4600)      // 右后 RR ++
 #define SERVO_MOTOR_PWM4_90            (4300)      // 左后 LR --
-// ===================== 舵机伸腿极限占空比定义 (Duty级) =====================
-// #define SERVO_MOTOR_PWM1_MID            (7000)      // 左前 LF ++
-// #define SERVO_MOTOR_PWM2_MID            (2000)      // 右前 RF --
-// #define SERVO_MOTOR_PWM3_MID            (2100)      // 右后 RR ++
-// #define SERVO_MOTOR_PWM4_MID            (6800)      // 左后 LR --
-// ===================== 舵机正常占空比定义 (Duty级) =====================无意义
-// #define SERVO_MOTOR_PWM1_MID            (3500)      // 左前 LF ++
-// #define SERVO_MOTOR_PWM2_MID            (5500)      // 右前 RF --
-// #define SERVO_MOTOR_PWM3_MID            (5500)      // 右后 RR ++
-// #define SERVO_MOTOR_PWM4_MID            (3700)      // 左后 LR --
+
+// ***************++的意思是向下伸腿要加duty*********
 // ===================== 舵机极性定义 (向下伸腿为正) 【学习板小车】 =====================
 #define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_DIR            (-1)      // 右前 RF --
 #define SERVO_MOTOR_PWM3_DIR            (1)      // 右后 RR ++
 #define SERVO_MOTOR_PWM4_DIR            (-1)      // 左后 LR --
+#endif
+
+#if CAR_SELECT == 1 //1代表学习板小车 对应板子 2026/01 队名还未定 【此板子没有wifi，暂时弃用】 
+// *************************** 【我们板小车1】硬件引脚定义开始 ***************************
+#define SERVO_MOTOR_PWM1            (TCPWM_CH13_P00_3)      // 右前 RF
+#define SERVO_MOTOR_PWM2            (TCPWM_CH12_P01_0)      // 右后 RR 
+#define SERVO_MOTOR_PWM3            (TCPWM_CH28_P19_3)      // 左前 LF 
+#define SERVO_MOTOR_PWM4            (TCPWM_CH27_P19_2)      // 左后 LR 
+// *************************** 【我们板小车1】硬件引脚定义结束***************************
+#endif
+
+#if CAR_SELECT == 2 // 2代表 【2026/1/31新车】 对应板子 【2026/01/16 锦鲤跃龙门】
+// *************************** 【2026/1/31新车】硬件引脚定义开始 ***************************
+#define SERVO_MOTOR_PWM1            (TCPWM_CH29_P22_5)     // 左前 LF
+#define SERVO_MOTOR_PWM2            (TCPWM_CH28_P22_6)      // 右前 RF
+#define SERVO_MOTOR_PWM3            (TCPWM_CH30_P22_4)       // 右后 RR
+#define SERVO_MOTOR_PWM4            (TCPWM_CH31_P22_3)      // 左后 LR
+// *************************** 【2026/1/31新车】硬件引脚定义结束***************************
+// ===================== 舵机平腿(90度)占空比定义 (Duty级)【2026/1/31新车】 =====================
+#define SERVO_MOTOR_PWM1_90            (4550)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_90            (4700)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_90            (4600)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_90            (4600)      // 左后 LR --
+// ===================== 舵机极性定义 (向下伸腿为正) 【2026/1/31新车】=====================
+#define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_DIR            (-1)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_DIR            (1)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_DIR            (-1)      // 左后 LR --
+#endif
+
+
+
 // ===================== 舵机全局配置 =====================
 #define SERVO_FREQ          (300)      // 频率300Hz
 
 // ===================== 8个独立硬件限幅变量 (Duty级) =====================
+//伸腿极限一般正负2500，收腿极限一般正负1500
 // 右前 (RF) 限幅
 #define RF_LIMIT_DUTY_MIN   (SERVO_MOTOR_PWM2_90-2000+SERVO_MOTOR_PWM2_DIR*500) 
 #define RF_LIMIT_DUTY_MAX   (SERVO_MOTOR_PWM2_90+2000+SERVO_MOTOR_PWM2_DIR*500) 

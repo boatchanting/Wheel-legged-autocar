@@ -34,13 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#include "common.h"
-#define WIFI_USE 0 // 【全局开关】选择是否使用WIFI模块，0表示不使用，1表示使用
-#define WIFI_IMAGE_SEND 0 // 【全局开关】选择是否使用WIFI回传摄像机图像，0表示不使用，1表示使用。只有当WIFI_USE和它均为1时有效
-#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
-#define REMOTE_CONTROL 0                 //【全局开关】1：开启遥控器 0:关闭
-// ---------------- plan 配置 ----------------
-#define CURRENT_NAV_PLAN   NAV_PLAN_1   // 【全局开关】在这里切换科目几，科目一为NAV_PLAN_1，科目二NAV_PLAN_2，科目三NAV_PLAN_3
+#include "config/config.h"//【提醒】配置请在这里修改
 
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
@@ -372,6 +366,7 @@ InertialNav_Init();//惯性导航初始化
     
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
     pit_ms_init(PIT_NUM, 1);
+    #if REMOTE_CONTROL
     pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
     pit_ms_init(PIT_NUM_10, 10);                                                // 定时器通道10 初始化为 10ms 中断 用于按键扫描
     key_init(10);  // 每10ms扫描一次

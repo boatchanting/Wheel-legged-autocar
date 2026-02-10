@@ -35,6 +35,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
+#include "config/config.h"//【提醒】配置请在这里修改
 
 // 声明外部函数
 
@@ -59,7 +60,6 @@ volatile struct {
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
-#define REMOTE_CONTROL 1 //【全局开关】1：开启遥控器 0:关闭，这里暂时没有修正，后续想和main共用一个，【可以优化点】
 // **************************** PIT中断函数 ****************************
 
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      

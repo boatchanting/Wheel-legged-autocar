@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>文件夹对比工具 (Diff Tool)</title>
+    <title>文件夹对比工具 (Diff Tool Pro)</title>
     
-    <!-- 引入 Diff2Html 和相关依赖的样式与脚本 -->
+    <!-- 引入样式 -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/github.min.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/diff2html/bundles/css/diff2html.min.css" />
     
@@ -18,17 +18,20 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            background-color: #f4f6f8;
         }
 
         /* 顶部控制栏 */
         .header {
-            padding: 10px 20px;
-            background-color: #f8f9fa;
-            border-bottom: 1px solid #ddd;
+            padding: 12px 20px;
+            background-color: #fff;
+            border-bottom: 1px solid #d1d5da;
             display: flex;
-            align-items: center;
+            align-items: flex-end; /* 底部对齐 */
             gap: 20px;
             flex-shrink: 0;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            z-index: 10;
         }
 
         .input-group {
@@ -38,9 +41,20 @@
         
         .input-group label {
             font-size: 12px;
-            font-weight: bold;
-            color: #555;
-            margin-bottom: 4px;
+            font-weight: 600;
+            color: #24292e;
+            margin-bottom: 6px;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            min-width: 150px;
+        }
+
+        select {
+            padding: 2px 4px;
+            height: 28px;
         }
 
         /* 主体布局 */
@@ -48,59 +62,106 @@
             display: flex;
             flex: 1;
             overflow: hidden;
+            position: relative;
         }
 
         /* 左侧文件列表 */
         .sidebar {
-            width: 300px;
-            background-color: #f0f0f0;
-            border-right: 1px solid #ddd;
+            width: 320px;
+            background-color: #fff;
+            border-right: 1px solid #d1d5da;
             overflow-y: auto;
             flex-shrink: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .file-list-header {
+            padding: 10px;
+            background: #f6f8fa;
+            border-bottom: 1px solid #e1e4e8;
+            font-size: 12px;
+            font-weight: bold;
+            color: #586069;
         }
 
         .file-item {
             padding: 8px 12px;
             cursor: pointer;
-            border-bottom: 1px solid #e0e0e0;
-            font-size: 14px;
+            border-bottom: 1px solid #eaecef;
+            font-size: 13px;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
+            transition: background 0.1s;
         }
 
-        .file-item:hover {
-            background-color: #e8e8e8;
-        }
+        .file-item:hover { background-color: #f1f8ff; }
+        .file-item.active { background-color: #0366d6; color: white; border-left-color: transparent; }
 
-        .file-item.active {
-            background-color: #007bff;
-            color: white;
+        /* 状态颜色指示条 */
+        .status-mod { border-left: 4px solid #dbab09; } /* 修改 (黄色) */
+        .status-add { border-left: 4px solid #28a745; } /* 新增 (绿色) */
+        .status-del { border-left: 4px solid #d73a49; } /* 删除 (红色) */
+        .status-same { border-left: 4px solid #e1e4e8; color: #959da5; } /* 无变化 (灰色) */
+        
+        .status-icon {
+            display: inline-block;
+            width: 16px;
+            text-align: center;
+            margin-right: 5px;
+            font-weight: bold;
         }
-
-        /* 状态颜色 */
-        .status-mod { border-left: 5px solid #ffc107; } /* 修改 */
-        .status-add { border-left: 5px solid #28a745; } /* 新增 */
-        .status-del { border-left: 5px solid #dc3545; } /* 删除 */
-        .status-same { border-left: 5px solid #6c757d; color: #666; } /* 无变化 */
 
         /* 右侧对比区域 */
         .main-content {
             flex: 1;
-            overflow-y: auto;
-            padding: 0;
+            overflow-y: auto; /* 这里控制主滚动 */
             background-color: white;
+            position: relative;
         }
 
-        #diff-container {
-            max-width: 100%;
+        /* 关键修复：覆盖 diff2html 的默认样式以修复滚动错位 */
+        .d2h-wrapper {
+            width: 100%;
+        }
+        .d2h-file-wrapper {
+            margin-bottom: 0 !important;
+            border: none !important;
+            border-radius: 0 !important;
+        }
+        .d2h-file-header {
+            position: sticky;
+            top: 0;
+            z-index: 5; /* 确保文件名头部在滚动时吸顶 */
+            background-color: #f8f9fa;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        /* 强制 diff 内容高度撑开，不要内部滚动 */
+        .d2h-files-diff {
+            height: auto !important; 
+            overflow: visible !important;
+        }
+        .d2h-file-side-diff {
+            overflow-y: visible !important;
         }
 
         /* 提示信息 */
         .empty-state {
-            padding: 50px;
+            padding: 60px 20px;
             text-align: center;
-            color: #888;
+            color: #6a737d;
+        }
+        .loading-bar {
+            height: 2px;
+            background: #0366d6;
+            width: 0%;
+            transition: width 0.3s;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 100;
         }
     </style>
 
@@ -110,6 +171,7 @@
     <script src="https://cdn.jsdelivr.net/npm/diff2html/bundles/js/diff2html-ui.min.js"></script>
 </head>
 <body>
+    <div class="loading-bar" id="progressBar"></div>
 
     <div class="header">
         <div class="input-group">
@@ -120,53 +182,67 @@
             <label>2. 对比文件夹 (Compare):</label>
             <input type="file" id="compInput" webkitdirectory directory multiple>
         </div>
-        <div style="margin-left: auto; font-size: 12px; color: #666;">
-            提示: 仅展示根目录下一级文件的变化
+        
+        <div class="control-group" style="margin-left: 20px;">
+            <label>显示设置:</label>
+            <select id="contextSelect" onchange="refreshCurrentDiff()">
+                <option value="5">折叠相同 (保留5行上下文)</option>
+                <option value="10">折叠相同 (保留10行上下文)</option>
+                <option value="Infinity">显示全部内容 (不折叠)</option>
+            </select>
+        </div>
+
+        <div style="margin-left: auto; font-size: 12px; color: #666; text-align: right;">
+            <div>提示: 文件数 &lt; 50 时自动比对内容</div>
+            <div id="statusMsg">等待选择...</div>
         </div>
     </div>
 
     <div class="container">
-        <div class="sidebar" id="fileList">
-            <div style="padding: 10px; color: #666;">请选择上方两个文件夹...</div>
+        <div class="sidebar">
+            <div class="file-list-header">文件列表 (<span id="fileCount">0</span>)</div>
+            <div id="fileList">
+                <div style="padding: 10px; color: #999;">请选择上方文件夹</div>
+            </div>
         </div>
-        <div class="main-content">
+        <div class="main-content" id="mainScroll">
             <div id="diff-container">
-                <div class="empty-state">请在左侧选择文件查看对比</div>
+                <div class="empty-state">
+                    <h3>准备就绪</h3>
+                    <p>请点击左侧文件查看差异对比</p>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
-        // 存储文件对象的 Map: filename -> File
         let baseFilesMap = new Map();
         let compFilesMap = new Map();
+        let currentFileName = null; // 当前选中的文件名
+        let sortedFileNames = [];
 
         const baseInput = document.getElementById('baseInput');
         const compInput = document.getElementById('compInput');
         const fileListEl = document.getElementById('fileList');
         const diffContainer = document.getElementById('diff-container');
+        const statusMsg = document.getElementById('statusMsg');
+        const progressBar = document.getElementById('progressBar');
+        const contextSelect = document.getElementById('contextSelect');
 
-        // 监听输入变化
         baseInput.addEventListener('change', handleFilesChange);
         compInput.addEventListener('change', handleFilesChange);
 
         function handleFilesChange() {
-            // 清空旧数据
             if (this.id === 'baseInput') baseFilesMap.clear();
             if (this.id === 'compInput') compFilesMap.clear();
 
-            // 处理文件
             const processInput = (input, map) => {
                 if (!input.files) return;
                 for (let file of input.files) {
-                    // webkitRelativePath 格式通常为 "FolderName/FileName.txt"
                     const parts = file.webkitRelativePath.split('/');
-                    
-                    // 过滤：只保留深度为2的（FolderName + FileName），即不包含子文件夹
-                    if (parts.length === 2) {
+                    if (parts.length === 2) { // 仅处理根目录文件
                         const fileName = parts[1];
-                        // 过滤隐藏文件（可选）
-                        if (!fileName.startsWith('.')) {
+                        if (!fileName.startsWith('.')) { // 忽略隐藏文件
                             map.set(fileName, file);
                         }
                     }
@@ -176,47 +252,97 @@
             if (this.id === 'baseInput') processInput(baseInput, baseFilesMap);
             if (this.id === 'compInput') processInput(compInput, compFilesMap);
 
-            // 只有当两个文件夹都有数据（或用户已操作过）时才渲染列表
             renderFileList();
         }
 
         function renderFileList() {
             fileListEl.innerHTML = '';
+            const allNames = new Set([...baseFilesMap.keys(), ...compFilesMap.keys()]);
+            sortedFileNames = Array.from(allNames).sort();
             
-            // 获取所有唯一的文件名并集
-            const allFileNames = new Set([...baseFilesMap.keys(), ...compFilesMap.keys()]);
-            const sortedNames = Array.from(allFileNames).sort();
+            document.getElementById('fileCount').textContent = sortedFileNames.length;
 
-            if (sortedNames.length === 0) {
+            if (sortedFileNames.length === 0) {
                 fileListEl.innerHTML = '<div style="padding:10px;">未找到文件</div>';
                 return;
             }
 
-            sortedNames.forEach(name => {
+            sortedFileNames.forEach(name => {
                 const inBase = baseFilesMap.has(name);
                 const inComp = compFilesMap.has(name);
                 
                 const div = document.createElement('div');
                 div.className = 'file-item';
+                div.dataset.name = name;
                 div.textContent = name;
 
                 if (inBase && inComp) {
-                    div.classList.add('status-mod'); // 潜在修改，具体要点进去看，暂标记为Modify颜色
-                    // 实际上这里应该叫 "Exist in both"，点击后才会算 diff
+                    div.classList.add('status-mod'); 
+                    div.dataset.status = 'mod'; // 初始默认为修改，稍后自动检测
                 } else if (!inBase && inComp) {
-                    div.classList.add('status-add'); // 新增
-                    div.textContent += ' [新增]';
+                    div.classList.add('status-add');
+                    div.innerHTML = `<span style="color:#28a745">[+]</span> ${name}`;
                 } else if (inBase && !inComp) {
-                    div.classList.add('status-del'); // 删除
-                    div.textContent += ' [已删]';
+                    div.classList.add('status-del');
+                    div.innerHTML = `<span style="color:#d73a49">[-]</span> ${name}`;
                 }
 
                 div.onclick = () => loadAndDiff(name, div);
                 fileListEl.appendChild(div);
             });
+
+            statusMsg.textContent = `共 ${sortedFileNames.length} 个文件`;
+
+            // 【新功能】文件少于50个时，自动在后台对比内容
+            if (sortedFileNames.length > 0 && sortedFileNames.length < 50) {
+                autoCompareFiles();
+            }
         }
 
-        // 读取文件内容，自动识别编码
+        // 自动对比功能
+        async function autoCompareFiles() {
+            statusMsg.textContent = "正在自动比对内容...";
+            let processed = 0;
+            const total = sortedFileNames.length;
+
+            // 并行处理所有文件（限制并发或直接 Promise.all，这里数量少直接并行）
+            const checkPromises = sortedFileNames.map(async (name) => {
+                const dom = fileListEl.querySelector(`.file-item[data-name="${CSS.escape(name)}"]`);
+                if (!dom) return;
+
+                // 只有两边都存在的才需要深度比对
+                if (dom.dataset.status === 'mod') {
+                    try {
+                        const baseFile = baseFilesMap.get(name);
+                        const compFile = compFilesMap.get(name);
+                        
+                        // 为了性能，先只读前 4KB 简单判断，还是直接全读？
+                        // <50个文件通常可以直接全读
+                        const [t1, t2] = await Promise.all([
+                            readFileAutoEncoding(baseFile),
+                            readFileAutoEncoding(compFile)
+                        ]);
+
+                        if (normalizeContent(raw1) === normalizeContent(raw2)) {
+                            dom.classList.remove('status-mod');
+                            dom.classList.add('status-same'); // 变为灰色
+                            dom.dataset.status = 'same';
+                        }
+                    } catch (e) {
+                        console.warn("Auto compare error:", name, e);
+                    }
+                }
+                
+                processed++;
+                progressBar.style.width = (processed / total * 100) + "%";
+            });
+
+            await Promise.all(checkPromises);
+            
+            progressBar.style.width = "0%";
+            statusMsg.textContent = "自动比对完成";
+        }
+
         function readFileAutoEncoding(file) {
             return new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -224,30 +350,17 @@
                     try {
                         const buffer = e.target.result;
                         const uint8Array = new Uint8Array(buffer);
-                        
-                        // 使用 jschardet 检测编码
-                        // 取前 4KB 检测即可，提高效率
-                        const sampleSize = Math.min(uint8Array.length, 4096);
-                        const sample = uint8Array.subarray(0, sampleSize);
-                        const strSample = String.fromCharCode.apply(null, sample); 
-                        // 注意: jschardet 需要二进制字符串，但较新版本可以直接传 Uint8Array 或者这里简单转换
-                        
-                        const detected = jschardet.detect(strSample); 
+                        // 检测编码 (取前4KB)
+                        const sub = uint8Array.subarray(0, 4096);
+                        const strSample = String.fromCharCode.apply(null, sub);
+                        let detected = jschardet.detect(strSample);
                         let encoding = detected.encoding || 'utf-8';
-
-                        // 修正一些常见的识别偏差
                         if (encoding.toLowerCase() === 'ascii') encoding = 'utf-8';
-                        
-                        console.log(`File: ${file.name}, Detected Encoding: ${encoding}`);
 
-                        const textDecoder = new TextDecoder(encoding);
-                        const text = textDecoder.decode(uint8Array);
-                        resolve(text);
+                        const decoder = new TextDecoder(encoding);
+                        resolve(decoder.decode(uint8Array));
                     } catch (err) {
-                        console.error("Encoding detection failed, fallback to utf-8", err);
-                        // 失败回退
-                        const textDecoder = new TextDecoder('utf-8');
-                        resolve(textDecoder.decode(e.target.result));
+                        resolve(new TextDecoder('utf-8').decode(e.target.result));
                     }
                 };
                 reader.onerror = reject;
@@ -255,12 +368,22 @@
             });
         }
 
+        // 刷新当前视图（用于切换折叠/展开模式）
+        function refreshCurrentDiff() {
+            if (currentFileName) {
+                const dom = fileListEl.querySelector(`.file-item[data-name="${CSS.escape(currentFileName)}"]`);
+                if (dom) loadAndDiff(currentFileName, dom);
+            }
+        }
+
         async function loadAndDiff(fileName, domElement) {
-            // UI 选中状态切换
+            currentFileName = fileName;
+
+            // UI 状态
             document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
-            domElement.classList.add('active');
+            if (domElement) domElement.classList.add('active');
             
-            diffContainer.innerHTML = '<div class="empty-state">正在读取并对比文件...</div>';
+            diffContainer.innerHTML = '<div class="empty-state">正在加载...</div>';
 
             const baseFile = baseFilesMap.get(fileName);
             const compFile = compFilesMap.get(fileName);
@@ -271,43 +394,62 @@
             try {
                 if (baseFile) baseContent = await readFileAutoEncoding(baseFile);
                 if (compFile) compContent = await readFileAutoEncoding(compFile);
+                 baseContent = normalizeContent(baseContent);
+        compContent = normalizeContent(compContent);//标准化处理
             } catch (e) {
-                diffContainer.innerHTML = `<div class="empty-state" style="color:red">读取文件失败: ${e.message}</div>`;
+                diffContainer.innerHTML = `<div class="empty-state" style="color:red">读取失败: ${e.message}</div>`;
                 return;
             }
 
-            // 如果内容完全一致，标记列表并提示
+            // 更新状态（如果之前未自动检测）
             if (baseContent === compContent) {
-                domElement.className = 'file-item status-same active'; // 更新状态为无变化
-                diffContainer.innerHTML = '<div class="empty-state">文件内容完全一致。</div>';
-                return;
+                if (domElement) {
+                    domElement.className = 'file-item status-same active';
+                }
+                // 如果用户选择了“显示全部”，即使相同也显示内容；如果是一般模式，提示相同
+                // 但为了查看内容，我们还是渲染 Diff，只是 Diff 会是空的或者全部相同
             } else {
-                // 如果之前是 both exist，现在确认有差异
-                if (baseFile && compFile) {
+                if (domElement && baseFile && compFile) {
                     domElement.className = 'file-item status-mod active';
                 }
             }
 
+            // 获取上下文行数设置
+            const contextVal = contextSelect.value;
+            const contextOpt = contextVal === 'Infinity' ? undefined : parseInt(contextVal, 10);
+
             // 生成 Diff
-            // createTwoFilesPatch(fileName, fileName, originalStr, newStr, oldHeader, newHeader)
-            const diffStr = Diff.createTwoFilesPatch(
+            // 如果内容相同且选择了折叠，jsdiff 可能返回空 patch，diff2html 不会显示任何东西
+            // 如果内容相同且选择了显示全部，我们需要手动构造或者强制 diff
+            
+            let diffStr = '';
+            
+            if (baseContent === compContent && contextVal !== 'Infinity') {
+                diffContainer.innerHTML = `
+                    <div class="empty-state">
+                        <div style="font-size:40px; color:#28a745; margin-bottom:10px;">✓</div>
+                        <div>文件内容完全一致</div>
+                        <div style="font-size:12px; margin-top:10px; color:#999;">如需查看内容，请在上方选择 "显示全部内容"</div>
+                    </div>`;
+                return;
+            }
+
+            // jsdiff 的 options 参数中传入 context
+            diffStr = Diff.createTwoFilesPatch(
                 fileName, 
                 fileName, 
                 baseContent, 
                 compContent, 
-                '基准文件', 
-                '对比文件'
+                '基准版本', 
+                '对比版本',
+                { context: contextOpt } // 关键：控制折叠行数
             );
 
-            // 渲染 Diff
             const targetElement = document.getElementById('diff-container');
             const configuration = {
                 drawFileList: false,
-                fileListToggle: false,
-                fileListStartVisible: false,
-                fileContentToggle: false,
                 matching: 'lines',
-                outputFormat: 'side-by-side', // 左右分栏
+                outputFormat: 'side-by-side',
                 synchronisedScroll: true,
                 highlight: true,
                 renderNothingWhenEmpty: false,
@@ -316,7 +458,22 @@
             const diff2htmlUi = new Diff2HtmlUI(targetElement, diffStr, configuration);
             diff2htmlUi.draw();
             diff2htmlUi.highlightCode();
+
+            // 滚动回顶部
+            document.getElementById('mainScroll').scrollTop = 0;
         }
+
+
+        // 标准化内容：统一换行符，移除BOM
+function normalizeContent(text) {
+    if (!text) return '';
+    // 1. 移除 BOM (Byte Order Mark) 防止文件头乱码差异
+    if (text.charCodeAt(0) === 0xFEFF) {
+        text = text.slice(1);
+    }
+    // 2. 统一换行符为 \n (解决 CRLF vs LF 问题)
+    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
     </script>
 </body>
 </html>
