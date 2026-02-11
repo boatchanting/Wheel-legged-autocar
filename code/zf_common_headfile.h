@@ -116,7 +116,8 @@
 #include "tools/flash.h"  // flash 参数存储
 #include "tools/beep.h"   // 蜂鸣器
 #include "tools/sbus.h"  // sbus 协议
-#include "tools/wifi.h"  // 添加 wifi模块
+#include "tools/wifi.h"  // wifi模块
+#include "tools/menu.h"  //菜单模块
 
 #include "navigation/inertial_nav.h"  // 惯性导航计算坐标模块
 #include "navigation/nav_ram.h"// 惯性导航记录轨迹到内存模块

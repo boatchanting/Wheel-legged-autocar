@@ -368,6 +368,7 @@ InertialNav_Init();//惯性导航初始化
     pit_ms_init(PIT_NUM, 1);
     #if REMOTE_CONTROL
     pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
+    #endif
     pit_ms_init(PIT_NUM_10, 10);                                                // 定时器通道10 初始化为 10ms 中断 用于按键扫描
     key_init(10);  // 每10ms扫描一次
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
