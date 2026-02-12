@@ -35,30 +35,39 @@ static void Menu_ShowMainScreen(void)
     if(current_state == MENU_STATE_MAIN)
     {
     // 基本UI框架
-    ips200_show_string(0, 0,  "EKF Monitor");
-    ips200_show_string(0, 30, "Pitch:");
-    ips200_show_string(0, 50, "Roll :");
-    ips200_show_string(0, 70, "Yaw  :");
-    ips200_show_string(0, 100,"Freq : 20Hz");
-    ips200_show_string(0, 120, "Servo Angles:");
+    // ips200_show_string(0,15*0, "Pitch:");
+    // ips200_show_string(0,15*1, "Roll :");
+    // ips200_show_string(0,15*2, "Yaw  :");
+    // ips200宽240，高320，一个字符宽10，高14
+    //字符部分
+    ips200_show_string(0,15*0, "Time:");
+    ips200_show_string(0,15*1, "HMS:");
+    ips200_show_string(0,15*2, "State:"); ips200_show_string(90,15*2, "Lat:");
+    ips200_show_string(0,15*3, "Lon:"); 
+    ips200_show_string(0,15*4, "Spd:");
+    ips200_show_string(0,15*5, "Dir:"); 
+    ips200_show_string(0,15*6, "Sat:");
+    ips200_show_string(0,15*7, "Height:");
+    //ips200_show_string(0, 100,"Freq : 20Hz");
+    //ips200_show_string(0, 120, "Servo Angles:");
     ips200_show_string(0, 135, "RF:");
     ips200_show_string(0, 150, "RR:");
     ips200_show_string(0, 165, "LF:");
     ips200_show_string(0, 180, "LR:");
-    ips200_show_string(0, 200, "Motor Speed:");
+    //ips200_show_string(0, 200, "Motor Speed:");
     ips200_show_string(0, 215, "L:");
     ips200_show_string(80, 215, "R:");
-    ips200_show_string(0, 230, "gyro.kp");
-    ips200_show_string(0, 245, "gyro.kd");
+    //ips200_show_string(0, 230, "gyro.kp");
+    //ips200_show_string(0, 245, "gyro.kd");
     ips200_show_string(0, 260, "g_motor_enable");
     // 提示信息
     ips200_show_string(0, 280, "Press any key to menu");
     }
     else
     {
-    ips200_show_string(0, 30, "Pitch:");
-    ips200_show_string(0, 50, "Roll :");
-    ips200_show_string(0, 70, "Yaw  :");
+    ips200_show_string(0,15*0, "Pitch:");
+    ips200_show_string(0,15*1, "Roll :");
+    ips200_show_string(0,15*2, "Yaw  :");
     ips200_show_string(0, 100,"Freq : 20Hz");
     ips200_show_string(0, 120, "Servo Angles:");
     ips200_show_string(0, 135, "RF:");
@@ -87,7 +96,7 @@ static void Menu_ShowSubjectScreen(void)
     ips200_show_string(0, 40, "Subject 1");
     
     ips200_set_color((subject == 2) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0, 60, "Subject 2");
+    ips200_show_string(0,15*1, "Subject 2");
     
     ips200_set_color((subject == 3) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
     ips200_show_string(0, 80, "Subject 3");
@@ -108,7 +117,7 @@ static void Menu_ShowCalibrationScreen(void)
     ips200_show_string(0, 40, "Auto Calibration");
     
     ips200_set_color((calib == 2) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0, 60, "Manual Calibration");
+    ips200_show_string(0,15*1, "Manual Calibration");
     
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     ips200_draw_line(10, 80, 230, 80, RGB565_RED);
@@ -126,7 +135,7 @@ static void Menu_ShowActionSelectScreen(void)
     ips200_show_string(0, 40, "Record");
     
     ips200_set_color((action == 2) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0, 60, "Start");
+    ips200_show_string(0,15*1, "Start");
     
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     ips200_draw_line(10, 80, 230, 80, RGB565_RED);
@@ -141,9 +150,9 @@ static void Menu_ShowActionConfirmScreen(void)
     ips200_draw_line(10, 20, 230, 20, RGB565_RED);
     
     // 显示动态数据（和主界面一样）
-    ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
-    ips200_show_float(60, 50, euler_angle.roll, 3, 2);
-    ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
+    ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
+    ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
+    ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
     
     ips200_show_float(25, 135, current_angles[0], 3, 1);
     ips200_show_float(25, 150, current_angles[1], 3, 1);
@@ -172,9 +181,9 @@ static void Menu_ShowActionRunningScreen(void)
     ips200_show_string(80, 0, (action == 1) ? "Recording..." : "Starting...");
     ips200_draw_line(10, 20, 230, 20, RGB565_BLUE);
     
-    ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
-    ips200_show_float(60, 50, euler_angle.roll, 3, 2);
-    ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
+    ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
+    ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
+    ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
     
     ips200_show_float(25, 135, current_angles[0], 3, 1);
     ips200_show_float(25, 150, current_angles[1], 3, 1);
@@ -203,14 +212,14 @@ static void Menu_ShowActionCompleteScreen(void)
     if (action == 1)  // Record
     {
         ips200_show_string(0, 10, "Record Complete");
-        ips200_show_string(0, 30, "Data saved successfully");
+        ips200_show_string(0,15*0, "Data saved successfully");
     }
     else if (action == 2)  // Start
     {
         ips200_show_string(0, 10, "Start Complete");
-        ips200_show_string(0, 30, "System paused");
+        ips200_show_string(0,15*0, "System paused");
     }
-     ips200_show_string(0, 50, "Press any key to return");
+     ips200_show_string(0,15*1, "Press any key to return");
 
 }
 
@@ -312,10 +321,24 @@ void Menu_ShowDynamic(void)
     // 在主界面显示动态数据
     else if (current_state == MENU_STATE_MAIN)
     {
-        ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
-        ips200_show_float(60, 50, euler_angle.roll, 3, 2);
-        ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
-        
+        // ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
+        // ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
+        // ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
+        //gnss数据接收与解析都是通过串口中断调用gnss_uart_callback函数进行实现的
+        //数据解析完毕之后gnss_flag标志位会置1
+        if(gnss_flag)
+        {
+            gnss_flag = 0;//将标志位清零
+            gnss_data_parse();           //开始解析数据
+            ips200_show_uint(40,15*0, gnss.time.year,4); ips200_show_uint(90,15*0,gnss.time.month,2); ips200_show_uint(130,15*0,gnss.time.day,2);
+            ips200_show_uint(40,15*1, gnss.time.hour,2); ips200_show_uint(90,15*1,gnss.time.minute,2); ips200_show_uint(120,15*1,gnss.time.second,2);
+            ips200_show_uint(50,15*2, gnss.state,5); ips200_show_float(130,15*2,gnss.latitude,4,6);
+            ips200_show_float(40,15*3, gnss.longitude,7,6); ips200_show_float(40,15*4,gnss.speed,4,6);
+            ips200_show_float(40,15*5, gnss.direction,4,6);
+            ips200_show_uint(40,15*6,gnss.satellite_used,5);
+            ips200_show_float(50,15*7, gnss.height,8,6);
+        }
+
         ips200_show_float(25, 135, current_angles[0], 3, 1);
         ips200_show_float(25, 150, current_angles[1], 3, 1);
         ips200_show_float(25, 165, current_angles[2], 3, 1);

@@ -155,7 +155,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -335,6 +335,12 @@ Momentum_Wheel_Control_Init();//pid跳跃控制，动量轮控制参数初始化
 InertialNav_Init();//惯性导航初始化
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "InertialNav Init OK");
+    disp_y += 16;
+#endif
+
+gnss_init(TAU1201);//gnss导航初始化
+#if DEBUG_DISPLAY
+    ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;
 #endif
 
