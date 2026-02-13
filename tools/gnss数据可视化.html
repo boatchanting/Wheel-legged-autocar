@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GNSS 全通道高精度分析工具</title>
+    <!-- Leaflet 地图样式 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- 引入 ECharts (图表) 和 Leaflet (地图) -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <style>
+        :root { --primary-color: #2196F3; --bg-color: #f4f6f9; }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 0; background-color: var(--bg-color); color: #333; }
+        
+        /* 顶部区域 */
+        header { background: #fff; padding: 15px 20px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); text-align: center; }
+        h1 { margin: 0; font-size: 22px; color: #444; }
+        
+        /* 拖拽区域 */
+        #drop-zone {
+            margin: 30px auto; width: 80%; max-width: 800px;
+            border: 2px dashed #bbb; border-radius: 10px; padding: 50px;
+            text-align: center; background: #fff; transition: 0.3s; cursor: pointer;
+        }
+        #drop-zone:hover, #drop-zone.hover { border-color: var(--primary-color); background: #e3f2fd; }
+        
+        /* 统计面板 */
+        #stats-panel {
+            display: none; width: 96%; margin: 20px auto;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px;
+        }
+        .stat-card { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); text-align: center; border-top: 4px solid var(--primary-color); }
+        .stat-val { font-size: 20px; font-weight: bold; margin-top: 5px; color: #333; }
+        .stat-label { font-size: 12px; color: #777; }
+
+        /* 内容容器 */
+        #dashboard { display: none; width: 98%; margin: 0 auto; padding-bottom: 50px; }
+        
+        /* 地图容器 - 增加高度以便观察 */
+        .map-section { 
+            height: 600px; /* 增加地图高度 */
+            background: #fff; border-radius: 8px; margin-bottom: 20px; 
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1); overflow: hidden; position: relative; 
+            border: 1px solid #ddd;
+        }
+        #map { width: 100%; height: 100%; }
+
+        /* 图表网格 */
+        .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        .chart-box { height: 320px; background: #fff; border-radius: 8px; padding: 10px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+
+        /* 小屏幕适配 */
+        @media (max-width: 768px) { .charts-grid { grid-template-columns: 1fr; } }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h1>GNSS 全通道高精度分析 (支持厘米级缩放)</h1>
+    </header>
+
+    <!-- 1. 文件上传区 -->
+    <div id="drop-zone">
+        <h3>拖拽 .txt / .json 数据文件到此处</h3>
+        <p style="color: #888;">支持 C 代码生成的 JSON 格式数据</p>
+        <input type="file" id="file-input" style="display: none;" accept=".txt,.json">
+    </div>
+
+    <!-- 2. 统计数据栏 -->
+    <div id="stats-panel">
+        <div class="stat-card"><div class="stat-label">总点数</div><div class="stat-val" id="val-count">-</div></div>
+        <div class="stat-card"><div class="stat-label">有效定位占比</div><div class="stat-val" id="val-valid">-</div></div>
+        <div class="stat-card"><div class="stat-label">平均卫星数</div><div class="stat-val" id="val-avg-sats">-</div></div>
+        <div class="stat-card"><div class="stat-label">最大卫星数</div><div class="stat-val" id="val-max-sats">-</div></div>
+        <div class="stat-card"><div class="stat-label">平均高度</div><div class="stat-val" id="val-avg-height">-</div></div>
+        <div class="stat-card"><div class="stat-label">最大速度</div><div class="stat-val" id="val-max-speed">-</div></div>
+    </div>
+
+    <!-- 3. 主仪表盘 -->
+    <div id="dashboard">
+        <!-- 地图 -->
+        <div class="map-section">
+            <div id="map"></div>
+        </div>
+
+        <!-- 图表区域 -->
+        <div class="charts-grid">
+            <!-- 卫星数 (Satellites) -->
+            <div id="chart-sats" class="chart-box"></div>
+            
+            <!-- 高度 (Height) -->
+            <div id="chart-height" class="chart-box"></div>
+            
+            <!-- 速度 (Speed) -->
+            <div id="chart-speed" class="chart-box"></div>
+            
+            <!-- 方向 (Direction) -->
+            <div id="chart-direction" class="chart-box"></div>
+            
+            <!-- 状态 (State) -->
+            <div id="chart-state" class="chart-box"></div>
+
+            <!-- 位置漂移散点 (Drift) -->
+            <div id="chart-drift" class="chart-box"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- 全局变量 ---
+        let mapInstance = null;
+        let chartInstances = []; 
+
+        // --- 拖拽与文件处理 ---
+        const dropZone = document.getElementById('drop-zone');
+        const fileInput = document.getElementById('file-input');
+
+        dropZone.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (e) => loadFile(e.target.files[0]));
+
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover'); });
+        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('hover'));
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('hover');
+            if(e.dataTransfer.files.length) loadFile(e.dataTransfer.files[0]);
+        });
+
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const json = JSON.parse(e.target.result);
+                    parseAndVisualize(json);
+                    document.getElementById('drop-zone').style.display = 'none'; // 隐藏上传框
+                } catch (err) {
+                    alert("文件解析失败：请确保是标准的 JSON 格式。\n" + err);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // --- 数据解析逻辑 ---
+        function parseTime(val) {
+            // Channel 0: Hour*1000000 + Min*1000 + Sec
+            let v = Math.floor(val);
+            let h = Math.floor(v / 1000000);
+            let m = Math.floor((v % 1000000) / 1000);
+            let s = v % 1000;
+            return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+        }
+
+        function parseAndVisualize(rawData) {
+            const map = { 
+                0:'Time', 1:'State', 2:'Lat', 3:'Lon', 
+                4:'Speed', 5:'Dir', 6:'Sats', 7:'Height' 
+            };
+            
+            const cols = {};
+            rawData.forEach(item => {
+                if(map[item.Channel]) cols[map[item.Channel]] = item.Points;
+            });
+
+            if(!cols.Lat || !cols.Lon) { alert("数据缺少经纬度通道 (Channel 2, 3)"); return; }
+
+            const len = cols.Lat.length;
+            const data = [];
+            
+            let stats = {
+                validCount: 0, sumSats: 0, maxSats: 0, sumHeight: 0, maxSpeed: 0
+            };
+
+            for(let i=0; i<len; i++) {
+                let state = cols.State ? cols.State[i] : 0;
+                let lat = cols.Lat[i];
+                let lon = cols.Lon[i];
+                // 简单的过滤：忽略经纬度全为0的点
+                if(Math.abs(lat) > 0.1 && Math.abs(lon) > 0.1) {
+                    let sats = cols.Sats ? cols.Sats[i] : 0;
+                    let height = cols.Height ? cols.Height[i] : 0;
+                    let speed = cols.Speed ? cols.Speed[i] : 0;
+                    let dir = cols.Dir ? cols.Dir[i] : 0;
+                    let timeVal = cols.Time ? cols.Time[i] : 0;
+
+                    data.push({
+                        i: i,
+                        time: parseTime(timeVal),
+                        state: state,
+                        lat: lat,
+                        lon: lon,
+                        sats: sats,
+                        height: height,
+                        speed: speed,
+                        dir: dir
+                    });
+
+                    // 统计
+                    if(state === 1) stats.validCount++;
+                    stats.sumSats += sats;
+                    if(sats > stats.maxSats) stats.maxSats = sats;
+                    stats.sumHeight += height;
+                    if(speed > stats.maxSpeed) stats.maxSpeed = speed;
+                }
+            }
+
+            updateStats(len, data.length, stats);
+            renderMap(data);
+            renderCharts(data);
+        }
+
+        function updateStats(total, validGeo, stats) {
+            document.getElementById('stats-panel').style.display = 'grid';
+            document.getElementById('dashboard').style.display = 'block';
+
+            document.getElementById('val-count').innerText = total;
+            document.getElementById('val-valid').innerText = ((stats.validCount/total)*100).toFixed(1) + "%";
+            document.getElementById('val-avg-sats').innerText = (stats.sumSats / validGeo).toFixed(1);
+            document.getElementById('val-max-sats').innerText = stats.maxSats;
+            document.getElementById('val-avg-height').innerText = (stats.sumHeight / validGeo).toFixed(2) + " m";
+            document.getElementById('val-max-speed').innerText = stats.maxSpeed.toFixed(2) + " km/h";
+        }
+
+        // --- 地图渲染 (Leaflet - 深度缩放版) ---
+        function renderMap(data) {
+            if(mapInstance) mapInstance.remove();
+            
+            const center = [data[0].lat, data[0].lon];
+            
+            // 关键设置1：允许地图逻辑缩放到 24 级
+            mapInstance = L.map('map', {
+                maxZoom: 24
+            }).setView(center, 18);
+
+            // 关键设置2：配置瓦片图层
+            // maxZoom: 24 -> 允许用户滚轮滚到 24
+            // maxNativeZoom: 19 -> 告诉 Leaflet 图片只到 19，超过后自动拉伸图片
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; OpenStreetMap',
+                maxZoom: 24,
+                maxNativeZoom: 19
+            }).addTo(mapInstance);
+
+            // 添加比例尺，方便看清是多少米
+            L.control.scale({maxWidth: 200, imperial: false}).addTo(mapInstance);
+
+            const path = data.map(d => [d.lat, d.lon]);
+            
+            // 绘制轨迹，红色，半透明
+            const polyline = L.polyline(path, {color: 'red', weight: 2, opacity: 0.8}).addTo(mapInstance);
+            
+            // 起点终点
+            L.circleMarker(path[0], {color: 'green', radius: 6, fillOpacity: 1}).addTo(mapInstance).bindPopup("起点");
+            L.circleMarker(path[path.length-1], {color: 'blue', radius: 6, fillOpacity: 1}).addTo(mapInstance).bindPopup("终点");
+
+            mapInstance.fitBounds(polyline.getBounds());
+        }
+
+        // --- 图表渲染 (ECharts) ---
+        function renderCharts(data) {
+            chartInstances.forEach(c => c.dispose());
+            chartInstances = [];
+
+            const timeAxis = data.map(d => d.time);
+
+            // 1. 通用配置 (DataZoom 是关键，用于联动)
+            const commonGrid = { left: 50, right: 30, top: 40, bottom: 25 };
+            const commonTooltip = { trigger: 'axis', axisPointer: { type: 'cross' } };
+            const dataZoomConfig = [{ type: 'inside' }, { type: 'slider', height: 15, bottom: 0 }];
+
+            // --- A. 卫星数 (Satellites) - 使用阶梯图 ---
+            const chartSats = echarts.init(document.getElementById('chart-sats'));
+            chartSats.setOption({
+                title: { text: '使用卫星数 (Satellites)', left: 'center', textStyle: { fontSize: 14 } },
+                tooltip: commonTooltip,
+                grid: commonGrid,
+                xAxis: { type: 'category', data: timeAxis },
+                yAxis: { type: 'value', minInterval: 1, splitLine: { show: false } }, // 强制整数刻度
+                dataZoom: dataZoomConfig,
+                series: [{
+                    name: '卫星数',
+                    type: 'line',
+                    step: 'start', // 关键：阶梯图，不显示斜坡
+                    data: data.map(d => d.sats),
+                    itemStyle: { color: '#4CAF50' },
+                    areaStyle: { opacity: 0.2 }
+                }]
+            });
+            chartInstances.push(chartSats);
+
+            // --- B. 高度 (Height) ---
+            const chartHeight = echarts.init(document.getElementById('chart-height'));
+            chartHeight.setOption({
+                title: { text: '高度 (Height)', left: 'center', textStyle: { fontSize: 14 } },
+                tooltip: commonTooltip,
+                grid: commonGrid,
+                xAxis: { type: 'category', data: timeAxis },
+                yAxis: { type: 'value', scale: true, name: 'm' },
+                dataZoom: dataZoomConfig,
+                series: [{
+                    name: '高度',
+                    type: 'line',
+                    smooth: true,
+                    data: data.map(d => d.height),
+                    itemStyle: { color: '#FF9800' }
+                }]
+            });
+            chartInstances.push(chartHeight);
+
+            // --- C. 速度 (Speed) ---
+            const chartSpeed = echarts.init(document.getElementById('chart-speed'));
+            chartSpeed.setOption({
+                title: { text: '速度 (Speed)', left: 'center', textStyle: { fontSize: 14 } },
+                tooltip: commonTooltip,
+                grid: commonGrid,
+                xAxis: { type: 'category', data: timeAxis },
+                yAxis: { type: 'value', name: 'km/h' },
+                dataZoom: dataZoomConfig,
+                series: [{
+                    name: '速度',
+                    type: 'line',
+                    data: data.map(d => d.speed),
+                    itemStyle: { color: '#2196F3' },
+                    areaStyle: { opacity: 0.1 }
+                }]
+            });
+            chartInstances.push(chartSpeed);
+
+            // --- D. 方向 (Direction) ---
+            const chartDir = echarts.init(document.getElementById('chart-direction'));
+            chartDir.setOption({
+                title: { text: '方向角 (0-360°)', left: 'center', textStyle: { fontSize: 14 } },
+                tooltip: commonTooltip,
+                grid: commonGrid,
+                xAxis: { type: 'category', data: timeAxis },
+                yAxis: { type: 'value', min: 0, max: 360, name: '°' },
+                dataZoom: dataZoomConfig,
+                series: [{
+                    name: '方向',
+                    type: 'scatter', // 关键：散点图，防止 360->0 的连线
+                    symbolSize: 3,
+                    data: data.map(d => d.dir),
+                    itemStyle: { color: '#9C27B0' }
+                }]
+            });
+            chartInstances.push(chartDir);
+
+            // --- E. 状态 (State) ---
+            const chartState = echarts.init(document.getElementById('chart-state'));
+            chartState.setOption({
+                title: { text: '定位状态 (State)', left: 'center', textStyle: { fontSize: 14 } },
+                tooltip: commonTooltip,
+                grid: commonGrid,
+                xAxis: { type: 'category', data: timeAxis },
+                yAxis: { type: 'value', minInterval: 1, max: 2 },
+                dataZoom: dataZoomConfig,
+                series: [{
+                    name: '状态',
+                    type: 'line',
+                    step: 'middle',
+                    data: data.map(d => d.state),
+                    itemStyle: { color: '#F44336' },
+                    areaStyle: { color: '#ffcdd2', opacity: 0.3 }
+                }]
+            });
+            chartInstances.push(chartState);
+
+            // --- F. 静态漂移 (Drift Scatter) ---
+            const chartDrift = echarts.init(document.getElementById('chart-drift'));
+            chartDrift.setOption({
+                title: { text: '平面相对漂移 (Lat vs Lon)', subtext: '不含底图，展示纯粹离散度', left: 'center', textStyle: { fontSize: 14 } },
+                tooltip: {
+                    formatter: (p) => `Lon: ${p.value[0].toFixed(7)}<br>Lat: ${p.value[1].toFixed(7)}`
+                },
+                grid: { left: 50, right: 30, top: 50, bottom: 30 },
+                xAxis: { type: 'value', scale: true, name: 'Lon', axisLabel: {formatter: v=>v.toFixed(6)} },
+                yAxis: { type: 'value', scale: true, name: 'Lat', axisLabel: {formatter: v=>v.toFixed(6)} },
+                series: [{
+                    type: 'scatter',
+                    symbolSize: 4,
+                    data: data.map(d => [d.lon, d.lat]),
+                    itemStyle: { color: 'rgba(33, 150, 243, 0.6)' }
+                }]
+            });
+            chartInstances.push(chartDrift);
+
+            // --- 核心：联动所有时间轴图表 ---
+            // 过滤掉 Drift 图表(无时间轴)
+            const timeCharts = [chartSats, chartHeight, chartSpeed, chartDir, chartState];
+            echarts.connect(timeCharts);
+
+            // 窗口大小改变自适应
+            window.addEventListener('resize', () => {
+                chartInstances.forEach(c => c.resize());
+            });
+        }
+    </script>
+</body>
+</html>
