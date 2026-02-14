@@ -155,7 +155,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -503,36 +503,31 @@ vision_detected_marker = 0;//雷区调用,测试用
                 //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.x;
                 //通道7
                 //seekfree_assistant_oscilloscope_data.data[7] = inertial_nav.y;
+                    
 
+                    // 通道0：gnss合并时间数据 (时*10000000 + 分*10000 + 秒*10) 状态
+                    seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000000 + gnss.time.minute * 10000 + gnss.time.second *10 + gnss.state);
 
-                if(gnss_flag)
-                {
-                    gnss_flag = 0;//将标志位清零
-                    gnss_data_parse();           //开始解析数据
+                    // 通道1：gnss纬度
+                    seekfree_assistant_oscilloscope_data.data[1] = gnss.latitude;
 
-                    // 通道0：合并时间数据 (时*1000000 + 分*1000 + 秒)
-                    seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 1000000 + gnss.time.minute * 1000 + gnss.time.second);
+                    // 通道2：gnss经度
+                    seekfree_assistant_oscilloscope_data.data[2] = gnss.longitude;
 
-                    // 通道1：状态
-                    seekfree_assistant_oscilloscope_data.data[1] = (float)gnss.state;
+                    // 通道3：gnss方向+使用卫星数*10000
+                    seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
 
-                    // 通道2：纬度
-                    seekfree_assistant_oscilloscope_data.data[2] = gnss.latitude;
+                    // 通道4：nav x
+                    seekfree_assistant_oscilloscope_data.data[4] = inertial_nav.x;
 
-                    // 通道3：经度
-                    seekfree_assistant_oscilloscope_data.data[3] = gnss.longitude;
+                    //通道5：nav y
+                    seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.y;
 
-                    // 通道4：速度
-                    seekfree_assistant_oscilloscope_data.data[4] = gnss.speed;
+                    //通道6：nav relative_yaw
+                    seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
 
-                    // 通道5：方向
-                    seekfree_assistant_oscilloscope_data.data[5] = gnss.direction;
-
-                    // 通道6：使用卫星数
-                    seekfree_assistant_oscilloscope_data.data[6] = (float)gnss.satellite_used;
-
-                    // 通道7：高度
-                    seekfree_assistant_oscilloscope_data.data[7] = gnss.height;
+                    //通道7：系统毫秒时间戳
+                    seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
 
                     // 4. 设置本次发送的通道数量 (一共8个数据)
                     seekfree_assistant_oscilloscope_data.channel_num = 8;
@@ -540,9 +535,8 @@ vision_detected_marker = 0;//雷区调用,测试用
                     // 5. 调用发送函数
                     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                }
                 // 用于上位机向小车发送pid信息
-                wifi_update_pid_params(); 
+                //wifi_update_pid_params(); 
                 #endif
             }
         }
