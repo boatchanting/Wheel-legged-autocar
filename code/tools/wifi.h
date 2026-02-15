@@ -109,5 +109,6 @@ void wifi_init(void);
 void wifi_connect_tcp_server(void);
 void wifi_camera_init(void);
 void wifi_update_pid_params(void);//检查并更新从上位机接收到的PID等参数
+void encode_double_to_two_floats(double value, float* out_high, float* out_low);//辅助函数：安全地将 double 拆分为两个 float（作为位容器）
 
 #endif // __WIFI_H__

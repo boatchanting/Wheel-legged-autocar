@@ -265,3 +265,19 @@ void wifi_update_pid_params(void)
         }
     }
 }
+
+// 辅助函数：安全地将 double 拆分为两个 float（作为位容器）
+// 逐飞助手传输的是 float 型数据，如果想要传输 double 型数据，需要将其拆分为两个 float，请直接调用该函数，示例如下
+// encode_double_to_two_floats(gnss.latitude,
+//                            &seekfree_assistant_oscilloscope_data.data[1], // 纬度高32位 → 通道1
+//                            &seekfree_assistant_oscilloscope_data.data[2]); // 纬度低32位 → 通道2
+void encode_double_to_two_floats(double value, float* out_high, float* out_low) {
+    uint64_t u64;
+    memcpy(&u64, &value, sizeof(double));          // 获取 double 的 64 位表示
+
+    uint32_t high = (uint32_t)(u64 >> 32);         // 高 32 位
+    uint32_t low  = (uint32_t)(u64 & 0xFFFFFFFFU); // 低 32 位
+
+    memcpy(out_high, &high, sizeof(uint32_t));     // 将 high 的位模式写入 float
+    memcpy(out_low,  &low,  sizeof(uint32_t));     // 将 low 的位模式写入 float
+}

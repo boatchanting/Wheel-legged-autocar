@@ -505,26 +505,30 @@ vision_detected_marker = 0;//雷区调用,测试用
                 //seekfree_assistant_oscilloscope_data.data[7] = inertial_nav.y;
                     
 
-                    // 通道0：gnss合并时间数据 (时*10000000 + 分*10000 + 秒*10) 状态
-                    seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000000 + gnss.time.minute * 10000 + gnss.time.second *10 + gnss.state);
+                    // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
+                    seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
 
-                    // 通道1：gnss纬度
-                    seekfree_assistant_oscilloscope_data.data[1] = gnss.latitude;
+                    // 通道1,2：gnss纬度，【注意】这个是double型数据，示波器传的是float型数据
+                    encode_double_to_two_floats(gnss.latitude,
+                        &seekfree_assistant_oscilloscope_data.data[1], // 纬度高32位 → 通道1
+                        &seekfree_assistant_oscilloscope_data.data[2]); // 纬度低32位 → 通道2
 
-                    // 通道2：gnss经度
-                    seekfree_assistant_oscilloscope_data.data[2] = gnss.longitude;
+                    // 通道3,4：gnss经度
+                    encode_double_to_two_floats(gnss.longitude,
+                        &seekfree_assistant_oscilloscope_data.data[3], // 经度高32位 → 通道3
+                        &seekfree_assistant_oscilloscope_data.data[4]); // 经度低32位 → 通道4
 
                     // 通道3：gnss方向+使用卫星数*10000
-                    seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
+                    //seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
 
-                    // 通道4：nav x
-                    seekfree_assistant_oscilloscope_data.data[4] = inertial_nav.x;
+                    // 通道5：nav x
+                    seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.x;
 
-                    //通道5：nav y
-                    seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.y;
+                    //通道6：nav y
+                    seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.y;
 
                     //通道6：nav relative_yaw
-                    seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
+                    //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
 
                     //通道7：系统毫秒时间戳
                     seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
@@ -567,17 +571,17 @@ vision_detected_marker = 0;//雷区调用,测试用
         #endif
         }
 
-        if (vision_detected_marker == 1) {
-            minefield_flag = 1; // 触发旋转
-            vision_detected_marker = 0;
-        }//雷区旋转调用，测试用
+        // if (vision_detected_marker == 1) {
+        //     minefield_flag = 1; // 触发旋转
+        //     vision_detected_marker = 0;
+        // }//雷区旋转调用，测试用
 
         // 模拟视觉触发跳跃测试
-        if (vision_detected_jump_point == 1) 
-        {
-            jump_trigger(); // <--- 只需要调用这一句
-            vision_detected_jump_point = 0; // 清除标志位，防止连续触发
-        }
+        // if (vision_detected_jump_point == 1) 
+        // {
+        //     jump_trigger(); // <--- 只需要调用这一句
+        //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
+        // }
 
         // system_delay_ms(50);
 
