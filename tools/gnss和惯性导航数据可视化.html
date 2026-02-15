@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GNSS + 惯性导航 数据可视化 (高缩放OpenStreetMap)</title>
+    <!-- Leaflet 核心样式与脚本 (支持高缩放) -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <!-- Chart.js 用于绘制其他通道数据 -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: system-ui, 'Segoe UI', Roboto, sans-serif;
+        }
+        body {
+            margin: 20px;
+            background: #f5f5f5;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .container {
+            width: 1400px;
+            max-width: 100%;
+            background: white;
+            border-radius: 24px;
+            box-shadow: 0 12px 30px rgba(0,0,0,0.1);
+            padding: 24px;
+        }
+        h2 {
+            margin-top: 0;
+            color: #2c3e50;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .upload-area {
+            background: #f8fafc;
+            padding: 16px 20px;
+            border-radius: 40px;
+            border: 1px dashed #94a3b8;
+            margin-bottom: 24px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+        .file-label {
+            background: #1e3a5f;
+            color: white;
+            padding: 10px 24px;
+            border-radius: 40px;
+            cursor: pointer;
+            font-weight: 500;
+            transition: 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            border: none;
+        }
+        .file-label:hover {
+            background: #0f2b44;
+        }
+        #file-info {
+            color: #475569;
+            font-size: 0.95rem;
+        }
+        #map {
+            height: 500px;
+            width: 100%;
+            border-radius: 20px;
+            border: 1px solid #e2e8f0;
+            margin-bottom: 24px;
+            z-index: 1;
+        }
+        .charts-panel {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin-bottom: 24px;
+        }
+        .chart-card {
+            flex: 1 1 calc(50% - 10px);
+            background: #ffffff;
+            border-radius: 20px;
+            padding: 16px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+            border: 1px solid #eef2f6;
+        }
+        .chart-card h3 {
+            margin: 0 0 12px 0;
+            font-size: 1.1rem;
+            color: #1e293b;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .chart-canvas {
+            width: 100%;
+            height: 200px;
+        }
+        .stats-container {
+            background: #f1f5f9;
+            border-radius: 20px;
+            padding: 20px;
+            border: 1px solid #e2e8f0;
+        }
+        .stats-title {
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #0f172a;
+            font-size: 1.1rem;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 16px;
+        }
+        .stat-item {
+            background: white;
+            border-radius: 16px;
+            padding: 12px 16px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.02);
+            border-left: 4px solid #3b82f6;
+        }
+        .stat-item .chan {
+            font-weight: 600;
+            color: #1e40af;
+            display: flex;
+            justify-content: space-between;
+        }
+        .stat-item .desc {
+            font-size: 0.8rem;
+            color: #64748b;
+            margin: 4px 0 8px 0;
+        }
+        .stat-values {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.9rem;
+        }
+        .badge {
+            background: #e9f0fe;
+            color: #1e3a8a;
+            padding: 4px 10px;
+            border-radius: 40px;
+            font-size: 0.8rem;
+            font-weight: 500;
+        }
+        footer {
+            margin-top: 24px;
+            color: #94a3b8;
+            text-align: center;
+            font-size: 0.9rem;
+        }
+        .leaflet-control-attribution {
+            font-size: 0.7rem;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>
+        <span>🗺️ GNSS + 惯导 高缩放地图可视化</span>
+        <span class="badge">支持 1m 级缩放</span>
+    </h2>
+
+    <div class="upload-area">
+        <label for="fileInput" class="file-label">📁 选择数据文件 (TXT/JSON)</label>
+        <input type="file" id="fileInput" accept=".txt,.json,text/plain" style="display: none;">
+        <span id="file-info">未选择文件 (格式: 通道数组JSON, 含 Channel / Points)</span>
+    </div>
+
+    <!-- OpenStreetMap 容器 -->
+    <div id="map"></div>
+
+    <!-- 图表区 (惯导及其他通道) -->
+    <div class="charts-panel">
+        <div class="chart-card">
+            <h3>📈 惯性导航: X / Y / Relative Yaw</h3>
+            <canvas id="chartNav" class="chart-canvas"></canvas>
+        </div>
+        <div class="chart-card">
+            <h3>📊 其他通道: 方向+卫星数 / 循环计数器</h3>
+            <canvas id="chartOther" class="chart-canvas"></canvas>
+        </div>
+    </div>
+
+    <!-- 统计信息卡片 (展示所有通道概要) -->
+    <div class="stats-container">
+        <div class="stats-title">📋 所有通道数据统计 (点数、最小值/最大值/均值) 及说明</div>
+        <div id="statsGrid" class="stats-grid">
+            <!-- 动态生成 by JavaScript -->
+            <div style="grid-column:1/-1; text-align:center; color:#94a3b8;">上传文件后显示统计</div>
+        </div>
+    </div>
+    <footer>OpenStreetMap 图层 (最大切片缩放20, 可放大至22级, 满足1m精细度) | 数据通道0~7 按描述解析</footer>
+</div>
+
+<script>
+(function() {
+    // --- 地图初始化 (支持高缩放级别) ---
+    const map = L.map('map', {
+        zoomControl: true,
+        maxZoom: 22,          // 允许缩放到22级 (1m级别, 虽然后期是插值)
+        zoomSnap: 0.5,
+    }).setView([39.9, 116.4], 15); // 默认天安门附近
+
+    // 使用CartoDB Voyager图层 (最大原生缩放20, 但可继续放大到22, 体验1m缩放)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>, &copy; CartoDB',
+        maxZoom: 22,
+        maxNativeZoom: 20,     // 原生最高20级，之后放大仍可显示(插值)
+        minZoom: 2
+    }).addTo(map);
+
+    // 全局变量
+    let currentPolyline = null;          // 地图上的GNSS轨迹
+    let markersLayer = L.layerGroup().addTo(map); // 起点/终点标记专用层
+    let navChart = null;                 // Chart.js 实例 (惯导)
+    let otherChart = null;               // Chart.js 实例 (其他)
+
+    // 辅助函数: 解析通道0的时间 (时*10000000 + 分*10000 + 秒*10)
+    function parseChannel0ToTime(value) {
+        if (value === undefined || value === null) return '无效';
+        const v = Math.round(value);      // 避免浮点误差
+        const hour = Math.floor(v / 10000000);
+        const minute = Math.floor((v % 10000000) / 10000);
+        const second = (v % 10000) / 10;
+        return `${hour.toString().padStart(2,'0')}:${minute.toString().padStart(2,'0')}:${second.toFixed(1).padStart(4,'0')}`;
+    }
+
+    // 主处理函数: 解析文件内容
+    function processFileContent(fileText) {
+        // 移除可能的BOM和首尾空白
+        let cleanText = fileText.trim();
+        // 如果以 [ 开头, 尝试直接解析
+        if (!cleanText.startsWith('[')) {
+            // 尝试查找第一个 [ 和最后一个 ] (应对文件头有路径描述的情况)
+            const startIdx = cleanText.indexOf('[');
+            const endIdx = cleanText.lastIndexOf(']');
+            if (startIdx !== -1 && endIdx > startIdx) {
+                cleanText = cleanText.substring(startIdx, endIdx + 1);
+            } else {
+                throw new Error('无法在文件中找到有效的JSON数组');
+            }
+        }
+
+        const rawData = JSON.parse(cleanText);
+        if (!Array.isArray(rawData)) throw new Error('数据根元素应为数组');
+
+        // 构建通道Map: channelIndex -> points数组
+        const channelsMap = new Map();
+        for (const item of rawData) {
+            if (item.hasOwnProperty('Channel') && item.hasOwnProperty('Points') && Array.isArray(item.Points)) {
+                channelsMap.set(item.Channel, item.Points);
+            }
+        }
+
+        // 检查必要通道是否存在 (至少0,1,2,4,5,6 便于展示)
+        const requiredChannels = [0,1,2,3,4,5,6,7]; // 全部8个通道
+        for (const ch of requiredChannels) {
+            if (!channelsMap.has(ch)) {
+                console.warn(`警告: 通道 ${ch} 缺失，部分数据可能不完整`);
+            }
+        }
+
+        // 确定记录数量 (取所有存在通道的最小长度)
+        let recordCount = Infinity;
+        for (const [ch, arr] of channelsMap.entries()) {
+            if (requiredChannels.includes(ch)) {
+                recordCount = Math.min(recordCount, arr.length);
+            }
+        }
+        if (recordCount === Infinity || recordCount === 0) {
+            throw new Error('没有有效的通道数据点');
+        }
+
+        // 构建记录数组 (每个索引包含所有通道值)
+        const records = [];
+        for (let i = 0; i < recordCount; i++) {
+            const rec = {};
+            for (let ch = 0; ch <= 7; ch++) {
+                const arr = channelsMap.get(ch);
+                rec[ch] = (arr && i < arr.length) ? arr[i] : NaN;
+            }
+            records.push(rec);
+        }
+
+        // 提取GNSS轨迹 (通道1=纬度, 通道2=经度)
+        const latLngs = [];
+        for (const rec of records) {
+            const lat = rec[1];
+            const lng = rec[2];
+            // 简单的有效性检查 (纬度范围-90~90, 经度-180~180, 且不为0)
+            if (lat && lng && !isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) {
+                // 排除明显为零的无效点
+                if (Math.abs(lat) > 0.0001 || Math.abs(lng) > 0.0001) {
+                    latLngs.push([lat, lng]);
+                }
+            }
+        }
+
+        if (latLngs.length === 0) {
+            alert('未提取到有效的GNSS坐标点，请检查通道1/2数据');
+            return;
+        }
+
+        // --- 更新地图轨迹 ---
+        if (currentPolyline) map.removeLayer(currentPolyline);
+        markersLayer.clearLayers();
+
+        currentPolyline = L.polyline(latLngs, { color: '#2563eb', weight: 4, opacity: 0.8 }).addTo(map);
+        map.fitBounds(currentPolyline.getBounds(), { padding: [30, 30], maxZoom: 20 });
+
+        // 添加起点(绿)和终点(红)标记
+        const start = latLngs[0];
+        const end = latLngs[latLngs.length-1];
+        L.marker(start, { icon: L.divIcon({ className: 'custom-marker', html: '🚩', iconSize: [24,24] }) })
+            .bindTooltip('起点', { permanent: false }).addTo(markersLayer);
+        L.marker(end, { icon: L.divIcon({ className: 'custom-marker', html: '🏁', iconSize: [24,24] }) })
+            .bindTooltip('终点', { permanent: false }).addTo(markersLayer);
+
+        // --- 准备图表数据 ---
+        const indices = records.map((_, idx) => idx);
+        const navX = records.map(r => r[4]);
+        const navY = records.map(r => r[5]);
+        const relYaw = records.map(r => r[6]);
+        const ch3 = records.map(r => r[3]); // 方向+卫星数*10000
+        const ch7 = records.map(r => r[7]); // loop_counter
+
+        // 销毁旧图表
+        if (navChart) navChart.destroy();
+        if (otherChart) otherChart.destroy();
+
+        // 创建惯导图表 (nav x, nav y, relative_yaw)
+        const ctxNav = document.getElementById('chartNav').getContext('2d');
+        navChart = new Chart(ctxNav, {
+            type: 'line',
+            data: {
+                labels: indices,
+                datasets: [
+                    { label: 'nav X (m)', data: navX, borderColor: '#f97316', backgroundColor: 'transparent', tension: 0.1, yAxisID: 'y' },
+                    { label: 'nav Y (m)', data: navY, borderColor: '#10b981', backgroundColor: 'transparent', tension: 0.1, yAxisID: 'y' },
+                    { label: 'relative yaw (°)', data: relYaw, borderColor: '#8b5cf6', backgroundColor: 'transparent', tension: 0.1, yAxisID: 'y1' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index' },
+                plugins: { legend: { position: 'top' } },
+                scales: {
+                    x: { title: { display: true, text: '采样点索引' } },
+                    y: { type: 'linear', position: 'left', title: { display: true, text: 'X / Y (m)' } },
+                    y1: { type: 'linear', position: 'right', title: { display: true, text: 'Yaw (deg)' }, grid: { drawOnChartArea: false } }
+                }
+            }
+        });
+
+        // 创建其他通道图表 (通道3: 方向+卫星数*10000; 通道7: loop_counter)
+        const ctxOther = document.getElementById('chartOther').getContext('2d');
+        otherChart = new Chart(ctxOther, {
+            type: 'line',
+            data: {
+                labels: indices,
+                datasets: [
+                    { label: '方向+卫星数*10000', data: ch3, borderColor: '#d97706', backgroundColor: 'transparent', yAxisID: 'y', tension: 0.1 },
+                    { label: 'loop_counter (ms时间戳?)', data: ch7, borderColor: '#dc2626', backgroundColor: 'transparent', yAxisID: 'y1', tension: 0.1 }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                interaction: { mode: 'index' },
+                plugins: { legend: { position: 'top' } },
+                scales: {
+                    x: { title: { display: true, text: '采样点索引' } },
+                    y: { type: 'linear', position: 'left', title: { display: true, text: '方向+卫星组合' } },
+                    y1: { type: 'linear', position: 'right', title: { display: true, text: 'loop_counter' }, grid: { drawOnChartArea: false } }
+                }
+            }
+        });
+
+        // --- 生成统计信息 (所有通道 0-7) ---
+        const stats = [];
+        for (let ch = 0; ch <= 7; ch++) {
+            const values = records.map(r => r[ch]).filter(v => !isNaN(v) && v !== null);
+            if (values.length === 0) {
+                stats.push({ ch, min: '—', max: '—', avg: '—', count: 0 });
+                continue;
+            }
+            const min = Math.min(...values);
+            const max = Math.max(...values);
+            const sum = values.reduce((a,b) => a + b, 0);
+            const avg = sum / values.length;
+            stats.push({ ch, min: min.toFixed(4), max: max.toFixed(4), avg: avg.toFixed(4), count: values.length });
+        }
+
+        // 更新DOM统计卡片
+        const statsGrid = document.getElementById('statsGrid');
+        statsGrid.innerHTML = '';
+        const channelDescriptions = [
+            '合并时间 (时*1e7+分*1e4+秒*10)',
+            '纬度',
+            '经度',
+            '方向+卫星数*10000',
+            'nav X (局部)',
+            'nav Y (局部)',
+            'relative yaw',
+            '系统毫秒(loop_counter)'
+        ];
+        stats.forEach((s, idx) => {
+            const card = document.createElement('div');
+            card.className = 'stat-item';
+            let exampleTime = '';
+            if (idx === 0 && s.count > 0) {
+                // 显示第一个点的时间解析
+                const firstVal = records[0][0];
+                exampleTime = `<div style="font-size:0.75rem; color:#3b82f6;">示例: ${parseChannel0ToTime(firstVal)}</div>`;
+            }
+            card.innerHTML = `
+                <div class="chan">通道 ${s.ch} <span style="font-weight:normal;">${s.count} 点</span></div>
+                <div class="desc">${channelDescriptions[idx]}</div>
+                ${idx === 0 ? exampleTime : ''}
+                <div class="stat-values">
+                    <span>min: ${s.min}</span>
+                    <span>max: ${s.max}</span>
+                    <span>avg: ${s.avg}</span>
+                </div>
+            `;
+            statsGrid.appendChild(card);
+        });
+
+        // 额外显示文件信息
+        document.getElementById('file-info').innerHTML = `✅ 已加载: ${recordCount} 个采样点 | 轨迹点数: ${latLngs.length}`;
+    }
+
+    // --- 文件上传处理 ---
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const fileInfo = document.getElementById('file-info');
+        fileInfo.innerHTML = `⏳ 读取文件: ${file.name} ...`;
+
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                processFileContent(ev.target.result);
+            } catch (err) {
+                console.error(err);
+                fileInfo.innerHTML = `❌ 解析失败: ${err.message}`;
+                alert('文件解析错误，请确保是有效的JSON数组格式 (如示例结构)');
+            }
+        };
+        reader.onerror = () => {
+            fileInfo.innerHTML = '❌ 文件读取错误';
+        };
+        reader.readAsText(file, 'UTF-8');
+    });
+
+    // 点击自定义文件标签模拟input点击
+    document.querySelector('.file-label').addEventListener('click', () => {
+        document.getElementById('fileInput').click();
+    });
+
+    // 示例：预加载一个占位说明（用户需自行上传符合格式的文件）
+    // 不做模拟加载，留待用户上传。
+
+})();
+</script>
+
+<!-- 说明：文件格式必须为JSON数组，每个对象包含 Channel 和 Points 字段，与题目描述完全一致。 -->
+</body>
+</html>
