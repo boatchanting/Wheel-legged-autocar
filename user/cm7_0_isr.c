@@ -92,6 +92,15 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
     }
 
+    //【gnss.1】GNSS定位更新
+    if (loop_counter % 100 == 0) {  // 100ms 一次
+        if (gnss_flag) {
+            gnss_flag = 0;//将标志位清零
+            gnss_data_parse();           //开始解析数据
+        } // GNSS更新
+    }
+
+
    // ------------------------------------------------------
     // 【nav.4】复现控制任务 (10ms运行一次)
     // ------------------------------------------------------
