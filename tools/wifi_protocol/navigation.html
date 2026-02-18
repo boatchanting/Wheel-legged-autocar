@@ -1,0 +1,1019 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GNSS/惯导 可视化系统</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        bg: '#080c10',
+                        card: '#0f1419',
+                        border: '#1e2832',
+                        accent: '#00e5a0',
+                        accent2: '#ff7043',
+                        muted: '#5c6b7a',
+                        surface: '#151c24'
+                    },
+                    fontFamily: {
+                        display: ['Space Grotesk', 'sans-serif'],
+                        mono: ['JetBrains Mono', 'monospace']
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <style>
+        :root {
+            --bg: #080c10;
+            --card: #0f1419;
+            --border: #1e2832;
+            --accent: #00e5a0;
+            --accent2: #ff7043;
+            --muted: #5c6b7a;
+            --surface: #151c24;
+        }
+        
+        * { box-sizing: border-box; }
+        
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg);
+            color: #e8eef4;
+            overflow: hidden;
+        }
+        
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: var(--card); }
+        ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+        
+        .leaflet-container {
+            background: #0a0f14;
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        
+        .leaflet-tile-pane {
+            filter: brightness(0.85) saturate(0.9) hue-rotate(180deg) invert(1);
+        }
+        
+        .leaflet-control-zoom a {
+            background: var(--card) !important;
+            color: var(--accent) !important;
+            border-color: var(--border) !important;
+        }
+        
+        .leaflet-control-zoom a:hover { background: var(--surface) !important; }
+        
+        .leaflet-control-attribution {
+            background: rgba(15, 20, 25, 0.8) !important;
+            color: var(--muted) !important;
+            font-size: 10px;
+        }
+        
+        .leaflet-control-attribution a { color: var(--accent) !important; }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(1.1); }
+        }
+        
+        .status-pulse { animation: pulse 2s ease-in-out infinite; }
+        .status-connected { animation: pulse 1s ease-in-out infinite; }
+        
+        @keyframes slideUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .animate-slide-up { animation: slideUp 0.6s ease-out forwards; }
+        .delay-100 { animation-delay: 0.1s; }
+        .delay-200 { animation-delay: 0.2s; }
+        .delay-300 { animation-delay: 0.3s; }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #00c890);
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(0, 229, 160, 0.2);
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(0, 229, 160, 0.35);
+        }
+        
+        .btn-primary:active { transform: translateY(0); }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #ff5252, #ff1744);
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(255, 82, 82, 0.2);
+        }
+        
+        .btn-danger:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 25px rgba(255, 82, 82, 0.35);
+        }
+        
+        .grid-bg {
+            background-image: 
+                linear-gradient(rgba(30, 40, 50, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(30, 40, 50, 0.3) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+        
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 16px 24px;
+            border-radius: 12px;
+            background: var(--card);
+            border: 1px solid var(--border);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.4);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+            z-index: 9999;
+        }
+        
+        .toast.show { transform: translateY(0); opacity: 1; }
+        .toast.success { border-color: var(--accent); }
+        .toast.error { border-color: #ff5252; }
+        
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col">
+    <!-- 顶部状态栏 -->
+    <header class="bg-card border-b border-border px-6 py-4 flex items-center justify-between animate-slide-up" style="opacity: 0;">
+        <div class="flex items-center gap-6">
+            <h1 class="font-display font-bold text-xl tracking-tight">
+                <span class="text-accent">GNSS</span>
+                <span class="text-muted mx-2">/</span>
+                <span class="text-accent2">惯导</span>
+                <span class="ml-2 text-white">可视化系统</span>
+            </h1>
+            
+            <!-- 连接状态 -->
+            <div id="connectionStatus" class="flex items-center gap-2 px-4 py-2 rounded-full bg-surface border border-border">
+                <div id="statusDot" class="w-3 h-3 rounded-full bg-muted"></div>
+                <span id="statusText" class="text-sm font-mono text-muted">等待连接</span>
+            </div>
+            
+            <!-- API 状态指示 -->
+            <div id="apiStatus" class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border text-xs">
+                <span id="apiStatusText" class="font-mono text-muted">API: 检测中...</span>
+            </div>
+        </div>
+        
+        <!-- 统计数据 -->
+        <div class="flex items-center gap-8">
+            <div class="text-center">
+                <div class="text-xs text-muted uppercase tracking-wider mb-1">帧率</div>
+                <div id="frameRate" class="font-mono text-2xl font-semibold text-white">0</div>
+                <div class="text-xs text-muted">FPS</div>
+            </div>
+            <div class="text-center">
+                <div class="text-xs text-muted uppercase tracking-wider mb-1">数据点</div>
+                <div id="dataPoints" class="font-mono text-2xl font-semibold text-accent">0</div>
+                <div class="text-xs text-muted">points</div>
+            </div>
+            <div class="text-center">
+                <div class="text-xs text-muted uppercase tracking-wider mb-1">有效点</div>
+                <div id="validPoints" class="font-mono text-2xl font-semibold text-accent2">0</div>
+                <div class="text-xs text-muted">valid</div>
+            </div>
+        </div>
+        
+        <!-- 控制按钮 -->
+        <div class="flex items-center gap-3">
+            <button id="btnSave" class="btn-primary px-5 py-2.5 rounded-lg font-medium text-bg flex items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17,21 17,13 7,13 7,21"/>
+                    <polyline points="7,3 7,8 15,8"/>
+                </svg>
+                保存数据
+            </button>
+            <button id="btnClear" class="btn-danger px-5 py-2.5 rounded-lg font-medium text-white flex items-center gap-2">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3,6 5,6 21,6"/>
+                    <path d="M19,6v14a2,2,0,0,1-2,2H7a2,2,0,0,1-2-2V6m3,0V4a2,2,0,0,1,2-2h4a2,2,0,0,1,2,2v2"/>
+                </svg>
+                清除数据
+            </button>
+        </div>
+    </header>
+    
+    <!-- 主内容区 -->
+    <main class="flex-1 flex gap-4 p-4 overflow-hidden">
+        <!-- GNSS 地图 -->
+        <section class="flex-1 flex flex-col animate-slide-up delay-100" style="opacity: 0;">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-2 h-8 rounded-full bg-accent"></div>
+                    <h2 class="font-display font-semibold text-lg">GNSS 轨迹</h2>
+                    <span class="text-xs text-muted font-mono">(WGS84)</span>
+                </div>
+                <div id="gnssCoords" class="font-mono text-sm text-muted">
+                    纬度: -- | 经度: --
+                </div>
+            </div>
+            <div class="flex-1 rounded-xl overflow-hidden border border-border relative">
+                <div id="gnssMap" class="w-full h-full"></div>
+                <div class="absolute bottom-4 left-4 bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
+                    <div class="text-xs text-muted mb-1">卫星数</div>
+                    <div id="satCount" class="font-mono text-xl font-semibold text-accent">--</div>
+                </div>
+                <div class="absolute top-4 right-4 bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
+                    <div class="text-xs text-muted mb-1">高度</div>
+                    <div id="height" class="font-mono text-xl font-semibold text-white">-- m</div>
+                </div>
+            </div>
+        </section>
+        
+        <!-- 惯导地图 -->
+        <section class="flex-1 flex flex-col animate-slide-up delay-200" style="opacity: 0;">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-3">
+                    <div class="w-2 h-8 rounded-full bg-accent2"></div>
+                    <h2 class="font-display font-semibold text-lg">惯导轨迹</h2>
+                    <span class="text-xs text-muted font-mono">(单位: mm)</span>
+                </div>
+                <div id="navCoords" class="font-mono text-sm text-muted">
+                    X: -- | Y: --
+                </div>
+            </div>
+            <div class="flex-1 rounded-xl overflow-hidden border border-border relative bg-card grid-bg">
+                <canvas id="navCanvas" class="w-full h-full"></canvas>
+                <div class="absolute bottom-4 left-4 bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
+                    <div class="text-xs text-muted mb-1">累计行程</div>
+                    <div id="totalDistance" class="font-mono text-xl font-semibold text-accent2">0 m</div>
+                </div>
+                <div class="absolute top-4 right-4 bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
+                    <div class="text-xs text-muted mb-1">速度</div>
+                    <div id="speed" class="font-mono text-xl font-semibold text-white">-- km/h</div>
+                </div>
+                <div class="absolute top-4 left-4 bg-card/90 backdrop-blur-sm px-4 py-2 rounded-lg border border-border">
+                    <div class="text-xs text-muted mb-1">航向</div>
+                    <div id="heading" class="font-mono text-xl font-semibold text-white">--</div>
+                </div>
+            </div>
+        </section>
+    </main>
+    
+    <!-- 底部数据面板 -->
+    <footer class="bg-card border-t border-border px-6 py-3 animate-slide-up delay-300" style="opacity: 0;">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-6">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-muted">时间:</span>
+                    <span id="timeStr" class="font-mono text-sm text-white">--:--:--</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-muted">日期:</span>
+                    <span id="dateStr" class="font-mono text-sm text-white">----/--/--</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-muted">天线状态:</span>
+                    <span id="antState" class="font-mono text-sm text-accent">--</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="text-xs text-muted">数据状态:</span>
+                    <span id="dataState" class="font-mono text-sm">--</span>
+                </div>
+            </div>
+            <div class="flex items-center gap-4 text-xs text-muted">
+                <span>拖拽地图移动</span>
+                <span>|</span>
+                <span>滚轮缩放</span>
+                <span>|</span>
+                <span>双击定位</span>
+            </div>
+        </div>
+    </footer>
+    
+    <!-- Toast 通知 -->
+    <div id="toast" class="toast">
+        <div class="flex items-center gap-3">
+            <div id="toastIcon"></div>
+            <span id="toastMessage" class="text-sm"></span>
+        </div>
+    </div>
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        // ============================================================
+        // 全局状态与配置
+        // ============================================================
+        const state = {
+            gnssPoints: [],
+            navPoints: [],
+            lastFrameTime: Date.now(),
+            frameCount: 0,
+            fps: 0,
+            totalDataPoints: 0,
+            validDataPoints: 0,
+            isConnected: false,
+            lastValidState: 0,
+            pywebviewReady: false,
+            testModeActive: false
+        };
+        
+        const navConfig = {
+            scale: 0.01,
+            offsetX: 0,
+            offsetY: 0,
+            isDragging: false,
+            lastMouseX: 0,
+            lastMouseY: 0,
+            originX: 0,
+            originY: 0,
+            initialized: false
+        };
+        
+        // ============================================================
+        // DOM 元素引用
+        // ============================================================
+        const elements = {
+            statusDot: document.getElementById('statusDot'),
+            statusText: document.getElementById('statusText'),
+            frameRate: document.getElementById('frameRate'),
+            dataPoints: document.getElementById('dataPoints'),
+            validPoints: document.getElementById('validPoints'),
+            gnssCoords: document.getElementById('gnssCoords'),
+            navCoords: document.getElementById('navCoords'),
+            satCount: document.getElementById('satCount'),
+            height: document.getElementById('height'),
+            totalDistance: document.getElementById('totalDistance'),
+            speed: document.getElementById('speed'),
+            heading: document.getElementById('heading'),
+            timeStr: document.getElementById('timeStr'),
+            dateStr: document.getElementById('dateStr'),
+            antState: document.getElementById('antState'),
+            dataState: document.getElementById('dataState'),
+            btnSave: document.getElementById('btnSave'),
+            btnClear: document.getElementById('btnClear'),
+            navCanvas: document.getElementById('navCanvas'),
+            toast: document.getElementById('toast'),
+            toastMessage: document.getElementById('toastMessage'),
+            toastIcon: document.getElementById('toastIcon'),
+            apiStatus: document.getElementById('apiStatus'),
+            apiStatusText: document.getElementById('apiStatusText')
+        };
+        
+        // ============================================================
+        // PyWebView API 就绪检测
+        // ============================================================
+        let testModeTimeout = null;
+        
+        function checkPyWebViewReady() {
+            // 检查 pywebview 是否就绪
+            if (window.pywebview && window.pywebview.api) {
+                state.pywebviewReady = true;
+                elements.apiStatusText.textContent = 'API: 已连接';
+                elements.apiStatusText.className = 'font-mono text-accent';
+                console.log('[INFO] PyWebView API 已就绪');
+                
+                // 取消测试模式启动
+                if (testModeTimeout) {
+                    clearTimeout(testModeTimeout);
+                    testModeTimeout = null;
+                }
+                
+                // 开始轮询数据
+                startDataPolling();
+            } else {
+                console.log('[DEBUG] PyWebView API 检测中...', 
+                    'window.pywebview:', !!window.pywebview,
+                    'window.pywebview.api:', !!(window.pywebview && window.pywebview.api));
+            }
+        }
+        
+        // 监听 pywebviewready 事件（PyWebView 官方推荐方式）
+        window.addEventListener('pywebviewready', () => {
+            console.log('[INFO] pywebviewready 事件触发');
+            state.pywebviewReady = true;
+            elements.apiStatusText.textContent = 'API: 已连接';
+            elements.apiStatusText.className = 'font-mono text-accent';
+            
+            if (testModeTimeout) {
+                clearTimeout(testModeTimeout);
+                testModeTimeout = null;
+            }
+            
+            startDataPolling();
+        });
+        
+        // 备用：轮询检测 API
+        let apiCheckCount = 0;
+        const apiCheckInterval = setInterval(() => {
+            apiCheckCount++;
+            checkPyWebViewReady();
+            
+            // 最多检测 100 次（约 10 秒），之后启动测试模式
+            if (apiCheckCount >= 100 && !state.pywebviewReady) {
+                //clearInterval(apiCheckInterval);
+                //startTestMode();
+            }
+            
+            if (state.pywebviewReady) {
+                clearInterval(apiCheckInterval);
+            }
+        }, 100);
+        
+        // ============================================================
+        // 数据轮询
+        // ============================================================
+        let pollingRAF = null;
+        
+        function startDataPolling() {
+            console.log('[INFO] 开始数据轮询');
+            
+            async function poll() {
+                if (state.pywebviewReady && window.pywebview && window.pywebview.api) {
+                    try {
+                        const data = await window.pywebview.api.get_new_data();
+                        if (data && data.length > 0) {
+                            updateData(data);
+                        }
+                    } catch (e) {
+                        console.error('[ERROR] 轮询错误:', e);
+                    }
+                }
+                
+                pollingRAF = requestAnimationFrame(poll);
+            }
+            
+            poll();
+        }
+        
+        // ============================================================
+        // 测试模式
+        // ============================================================
+        function startTestMode() {
+            if (state.pywebviewReady) {
+                console.log('[INFO] API 已就绪，跳过测试模式');
+                return;
+            }
+            
+            state.testModeActive = true;
+            elements.apiStatusText.textContent = 'API: 测试模式';
+            elements.apiStatusText.className = 'font-mono text-accent2';
+            console.log('[INFO] 启动测试模式（无后端连接）');
+            
+            setInterval(() => {
+                if (!state.pywebviewReady) {
+                    const testData = [generateTestData()];
+                    updateData(testData);
+                }
+            }, 100);
+        }
+        
+        function generateTestData() {
+            const t = Date.now() / 1000;
+            const baseLat = 39.9042;
+            const baseLng = 116.4074;
+            
+            const radius = 0.001;
+            const angle = t * 0.1;
+            
+            const hour = Math.floor((t / 3600) % 24);
+            const minute = Math.floor((t / 60) % 60);
+            const second = Math.floor(t % 60);
+            
+            return {
+                loop: Math.floor(t),
+                nav_x: Math.sin(angle) * 10000 + Math.random() * 100,
+                nav_y: Math.cos(angle) * 10000 + Math.random() * 100,
+                year: 2025,
+                month: 1,
+                day: Math.floor(t % 30) + 1,
+                hour: hour,
+                minute: minute,
+                second: second,
+                state: Math.random() > 0.1 ? 1 : 0,
+                lat_deg: 39,
+                lat_cent: 54,
+                lat_sec: Math.floor(Math.random() * 60),
+                lon_deg: 116,
+                lon_cent: 24,
+                lon_sec: Math.floor(Math.random() * 60),
+                latitude: baseLat + Math.sin(angle) * radius,
+                longitude: baseLng + Math.cos(angle) * radius,
+                ns: 1,
+                ew: 1,
+                speed: 10 + Math.random() * 5,
+                direction: (angle * 180 / Math.PI) % 360,
+                ant_state: 1,
+                ant_direction: (angle * 180 / Math.PI) % 360,
+                sat_used: 12 + Math.floor(Math.random() * 5),
+                height: 50 + Math.sin(t) * 5,
+                time_str: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}:${String(second).padStart(2, '0')}`
+            };
+        }
+        
+        // ============================================================
+        // 地图初始化
+        // ============================================================
+        let gnssMap = null;
+        let gnssMarker = null;
+        let gnssPolyline = null;
+        let gnssValidPolyline = null;
+        
+        function initGnssMap() {
+            gnssMap = L.map('gnssMap', {
+                center: [39.9042, 116.4074],
+                zoom: 18,
+                zoomControl: true,
+                attributionControl: true
+            });
+            
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 22,
+                subdomains: ['a', 'b', 'c'],
+                attribution: '&copy; <a href="https://openstreetmap.org">OpenStreetMap</a>'
+            }).addTo(gnssMap);
+            
+            const markerIcon = L.divIcon({
+                className: 'custom-marker',
+                html: `
+                    <div style="
+                        width: 24px; 
+                        height: 24px; 
+                        background: linear-gradient(135deg, #00e5a0, #00c890);
+                        border: 3px solid white;
+                        border-radius: 50%;
+                        box-shadow: 0 0 20px rgba(0, 229, 160, 0.6);
+                    "></div>
+                `,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+            
+            gnssMarker = L.marker([39.9042, 116.4074], { icon: markerIcon }).addTo(gnssMap);
+            
+            gnssPolyline = L.polyline([], {
+                color: '#5c6b7a',
+                weight: 2,
+                opacity: 0.6,
+                lineCap: 'round',
+                lineJoin: 'round'
+            }).addTo(gnssMap);
+            
+            gnssValidPolyline = L.polyline([], {
+                color: '#00e5a0',
+                weight: 3,
+                opacity: 1,
+                lineCap: 'round',
+                lineJoin: 'round'
+            }).addTo(gnssMap);
+            
+            gnssMap.on('dblclick', (e) => {
+                gnssMap.setView(e.latlng, gnssMap.getZoom());
+            });
+        }
+        
+        // ============================================================
+        // 惯导画布
+        // ============================================================
+        let navCtx = null;
+        
+        function initNavCanvas() {
+            const canvas = elements.navCanvas;
+            navCtx = canvas.getContext('2d');
+            
+            resizeNavCanvas();
+            window.addEventListener('resize', resizeNavCanvas);
+            
+            canvas.addEventListener('mousedown', handleNavMouseDown);
+            canvas.addEventListener('mousemove', handleNavMouseMove);
+            canvas.addEventListener('mouseup', handleNavMouseUp);
+            canvas.addEventListener('mouseleave', handleNavMouseUp);
+            canvas.addEventListener('wheel', handleNavWheel, { passive: false });
+            canvas.addEventListener('dblclick', handleNavDblClick);
+            
+            canvas.style.cursor = 'grab';
+        }
+        
+        function resizeNavCanvas() {
+            const canvas = elements.navCanvas;
+            const rect = canvas.parentElement.getBoundingClientRect();
+            canvas.width = rect.width * window.devicePixelRatio;
+            canvas.height = rect.height * window.devicePixelRatio;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            navCtx.setTransform(1, 0, 0, 1, 0, 0);
+            navCtx.scale(window.devicePixelRatio, window.devicePixelRatio);
+            
+            navConfig.originX = rect.width / 2;
+            navConfig.originY = rect.height / 2;
+            
+            drawNavCanvas();
+        }
+        
+        function handleNavMouseDown(e) {
+            navConfig.isDragging = true;
+            navConfig.lastMouseX = e.clientX;
+            navConfig.lastMouseY = e.clientY;
+            elements.navCanvas.style.cursor = 'grabbing';
+        }
+        
+        function handleNavMouseMove(e) {
+            if (!navConfig.isDragging) return;
+            
+            const dx = e.clientX - navConfig.lastMouseX;
+            const dy = e.clientY - navConfig.lastMouseY;
+            
+            navConfig.offsetX += dx;
+            navConfig.offsetY += dy;
+            
+            navConfig.lastMouseX = e.clientX;
+            navConfig.lastMouseY = e.clientY;
+            
+            drawNavCanvas();
+        }
+        
+        function handleNavMouseUp() {
+            navConfig.isDragging = false;
+            elements.navCanvas.style.cursor = 'grab';
+        }
+        
+        function handleNavWheel(e) {
+            e.preventDefault();
+            
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            navConfig.scale *= zoomFactor;
+            navConfig.scale = Math.max(0.00001, Math.min(1, navConfig.scale));
+            
+            drawNavCanvas();
+        }
+        
+        function handleNavDblClick(e) {
+            const rect = elements.navCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            
+            navConfig.offsetX = rect.width / 2 - x + navConfig.offsetX;
+            navConfig.offsetY = rect.height / 2 - y + navConfig.offsetY;
+            
+            drawNavCanvas();
+        }
+        
+        function drawNavCanvas() {
+            if (!navCtx) return;
+            
+            const canvas = elements.navCanvas;
+            const width = canvas.width / window.devicePixelRatio;
+            const height = canvas.height / window.devicePixelRatio;
+            
+            navCtx.clearRect(0, 0, width, height);
+            
+            drawNavGrid(width, height);
+            drawNavAxis(width, height);
+            drawNavTrajectory(width, height);
+            drawNavCurrentPoint(width, height);
+        }
+        
+        function drawNavGrid(width, height) {
+            navCtx.strokeStyle = 'rgba(30, 40, 50, 0.5)';
+            navCtx.lineWidth = 1;
+            
+            let gridSpacing = 100 * navConfig.scale;
+            while (gridSpacing < 30) gridSpacing *= 2;
+            while (gridSpacing > 150) gridSpacing /= 2;
+            
+            const centerX = navConfig.originX + navConfig.offsetX;
+            const centerY = navConfig.originY + navConfig.offsetY;
+            
+            const startX = centerX % gridSpacing;
+            for (let x = startX; x < width; x += gridSpacing) {
+                navCtx.beginPath();
+                navCtx.moveTo(x, 0);
+                navCtx.lineTo(x, height);
+                navCtx.stroke();
+            }
+            
+            const startY = centerY % gridSpacing;
+            for (let y = startY; y < height; y += gridSpacing) {
+                navCtx.beginPath();
+                navCtx.moveTo(0, y);
+                navCtx.lineTo(width, y);
+                navCtx.stroke();
+            }
+        }
+        
+        function drawNavAxis(width, height) {
+            const centerX = navConfig.originX + navConfig.offsetX;
+            const centerY = navConfig.originY + navConfig.offsetY;
+            
+            navCtx.strokeStyle = 'rgba(0, 229, 160, 0.3)';
+            navCtx.lineWidth = 2;
+            navCtx.beginPath();
+            navCtx.moveTo(0, centerY);
+            navCtx.lineTo(width, centerY);
+            navCtx.stroke();
+            
+            navCtx.beginPath();
+            navCtx.moveTo(centerX, 0);
+            navCtx.lineTo(centerX, height);
+            navCtx.stroke();
+            
+            navCtx.fillStyle = 'rgba(0, 229, 160, 0.6)';
+            navCtx.beginPath();
+            navCtx.arc(centerX, centerY, 4, 0, Math.PI * 2);
+            navCtx.fill();
+        }
+        
+        function drawNavTrajectory(width, height) {
+            if (state.navPoints.length < 2) return;
+            
+            const centerX = navConfig.originX + navConfig.offsetX;
+            const centerY = navConfig.originY + navConfig.offsetY;
+            
+            navCtx.strokeStyle = '#ff7043';
+            navCtx.lineWidth = 2;
+            navCtx.lineCap = 'round';
+            navCtx.lineJoin = 'round';
+            
+            navCtx.beginPath();
+            
+            let firstPoint = true;
+            for (const point of state.navPoints) {
+                const x = centerX + point.x * navConfig.scale;
+                const y = centerY - point.y * navConfig.scale;
+                
+                if (firstPoint) {
+                    navCtx.moveTo(x, y);
+                    firstPoint = false;
+                } else {
+                    navCtx.lineTo(x, y);
+                }
+            }
+            
+            navCtx.stroke();
+            
+            navCtx.strokeStyle = 'rgba(255, 112, 67, 0.3)';
+            navCtx.lineWidth = 6;
+            navCtx.stroke();
+        }
+        
+        function drawNavCurrentPoint(width, height) {
+            if (state.navPoints.length === 0) return;
+            
+            const lastPoint = state.navPoints[state.navPoints.length - 1];
+            const centerX = navConfig.originX + navConfig.offsetX;
+            const centerY = navConfig.originY + navConfig.offsetY;
+            
+            const x = centerX + lastPoint.x * navConfig.scale;
+            const y = centerY - lastPoint.y * navConfig.scale;
+            
+            const gradient = navCtx.createRadialGradient(x, y, 0, x, y, 20);
+            gradient.addColorStop(0, 'rgba(255, 112, 67, 0.6)');
+            gradient.addColorStop(1, 'rgba(255, 112, 67, 0)');
+            navCtx.fillStyle = gradient;
+            navCtx.beginPath();
+            navCtx.arc(x, y, 20, 0, Math.PI * 2);
+            navCtx.fill();
+            
+            navCtx.fillStyle = '#ff7043';
+            navCtx.beginPath();
+            navCtx.arc(x, y, 6, 0, Math.PI * 2);
+            navCtx.fill();
+            
+            navCtx.fillStyle = 'white';
+            navCtx.beginPath();
+            navCtx.arc(x, y, 3, 0, Math.PI * 2);
+            navCtx.fill();
+        }
+        
+        // ============================================================
+        // 数据更新
+        // ============================================================
+        function updateData(data) {
+            if (!data || data.length === 0) return;
+            
+            state.isConnected = true;
+            state.lastValidState = data[data.length - 1].state;
+            
+            for (const item of data) {
+                state.totalDataPoints++;
+                
+                if (item.latitude && item.longitude && !isNaN(item.latitude) && !isNaN(item.longitude)) {
+                    const lat = item.latitude;
+                    const lng = item.longitude;
+                    const valid = item.state === 1;
+                    
+                    state.gnssPoints.push({ lat, lng, valid });
+                    
+                    if (valid) {
+                        state.validDataPoints++;
+                    }
+                    
+                    gnssMarker.setLatLng([lat, lng]);
+                    
+                    if (valid) {
+                        gnssValidPolyline.addLatLng([lat, lng]);
+                    } else {
+                        gnssPolyline.addLatLng([lat, lng]);
+                    }
+                    
+                    if (state.gnssPoints.length === 1) {
+                        gnssMap.setView([lat, lng], 20);
+                    }
+                }
+                
+                if (!isNaN(item.nav_x) && !isNaN(item.nav_y)) {
+                    const navX = item.nav_x;
+                    const navY = item.nav_y;
+                    
+                    if (!navConfig.initialized && (navX !== 0 || navY !== 0)) {
+                        navConfig.offsetX = -navX * navConfig.scale;
+                        navConfig.offsetY = navY * navConfig.scale;
+                        navConfig.initialized = true;
+                    }
+                    
+                    state.navPoints.push({ x: navX, y: navY });
+                }
+            }
+            
+            updateUI(data[data.length - 1]);
+            drawNavCanvas();
+            
+            state.frameCount++;
+            const now = Date.now();
+            if (now - state.lastFrameTime >= 1000) {
+                state.fps = state.frameCount;
+                state.frameCount = 0;
+                state.lastFrameTime = now;
+                elements.frameRate.textContent = state.fps;
+            }
+            
+            elements.dataPoints.textContent = state.totalDataPoints;
+            elements.validPoints.textContent = state.validDataPoints;
+        }
+        
+        function updateUI(item) {
+            if (item.state === 1) {
+                elements.statusDot.className = 'w-3 h-3 rounded-full bg-accent status-connected';
+                elements.statusText.textContent = '已连接 (有效)';
+                elements.statusText.className = 'text-sm font-mono text-accent';
+            } else {
+                elements.statusDot.className = 'w-3 h-3 rounded-full bg-accent2 status-pulse';
+                elements.statusText.textContent = '已连接 (无效)';
+                elements.statusText.className = 'text-sm font-mono text-accent2';
+            }
+            
+            if (item.latitude && item.longitude) {
+                elements.gnssCoords.innerHTML = `纬度: <span class="text-white">${item.latitude.toFixed(8)}</span> | 经度: <span class="text-white">${item.longitude.toFixed(8)}</span>`;
+            }
+            
+            elements.navCoords.innerHTML = `X: <span class="text-white">${item.nav_x.toFixed(0)}</span> mm | Y: <span class="text-white">${item.nav_y.toFixed(0)}</span> mm`;
+            
+            elements.satCount.textContent = item.sat_used || '--';
+            elements.height.textContent = (item.height || 0).toFixed(1) + ' m';
+            elements.speed.textContent = ((item.speed || 0) * 3.6).toFixed(1) + ' km/h';
+            elements.heading.textContent = (item.direction || 0).toFixed(1) + '°';
+            
+            elements.timeStr.textContent = item.time_str || '--:--:--';
+            elements.dateStr.textContent = `${item.year || '----'}/${String(item.month || '--').padStart(2, '0')}/${String(item.day || '--').padStart(2, '0')}`;
+            
+            const antStates = ['未知', '正常', '短路', '开路'];
+            elements.antState.textContent = antStates[item.ant_state] || '未知';
+            
+            elements.dataState.textContent = item.state === 1 ? '有效' : '无效';
+            elements.dataState.className = 'font-mono text-sm ' + (item.state === 1 ? 'text-accent' : 'text-accent2');
+            
+            let totalDist = 0;
+            for (let i = 1; i < state.navPoints.length; i++) {
+                const dx = state.navPoints[i].x - state.navPoints[i-1].x;
+                const dy = state.navPoints[i].y - state.navPoints[i-1].y;
+                totalDist += Math.sqrt(dx*dx + dy*dy);
+            }
+            elements.totalDistance.textContent = (totalDist / 1000).toFixed(2) + ' m';
+        }
+        
+        // ============================================================
+        // Toast 通知
+        // ============================================================
+        function showToast(message, type = 'success') {
+            elements.toast.className = `toast ${type}`;
+            elements.toastMessage.textContent = message;
+            
+            if (type === 'success') {
+                elements.toastIcon.innerHTML = `
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00e5a0" stroke-width="2">
+                        <polyline points="20,6 9,17 4,12"/>
+                    </svg>
+                `;
+            } else {
+                elements.toastIcon.innerHTML = `
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#ff5252" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="15" y1="9" x2="9" y2="15"/>
+                        <line x1="9" y1="9" x2="15" y2="15"/>
+                    </svg>
+                `;
+            }
+            
+            elements.toast.classList.add('show');
+            
+            setTimeout(() => {
+                elements.toast.classList.remove('show');
+            }, 3000);
+        }
+        
+        // ============================================================
+        // 事件绑定
+        // ============================================================
+        elements.btnSave.addEventListener('click', async () => {
+            if (state.pywebviewReady && window.pywebview && window.pywebview.api) {
+                try {
+                    const result = await window.pywebview.api.save_csv();
+                    if (result.success) {
+                        showToast(result.msg, 'success');
+                    } else {
+                        showToast(result.msg, 'error');
+                    }
+                } catch (e) {
+                    showToast('保存失败: ' + e.message, 'error');
+                }
+            } else {
+                // 测试模式下载
+                const dataStr = JSON.stringify({
+                    gnss: state.gnssPoints,
+                    nav: state.navPoints
+                }, null, 2);
+                const blob = new Blob([dataStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `gnss_data_${Date.now()}.json`;
+                a.click();
+                URL.revokeObjectURL(url);
+                showToast('测试数据已下载', 'success');
+            }
+        });
+        
+        elements.btnClear.addEventListener('click', async () => {
+            if (state.pywebviewReady && window.pywebview && window.pywebview.api) {
+                try {
+                    await window.pywebview.api.clear_data();
+                } catch (e) {
+                    console.log('[DEBUG] Clear API call:', e);
+                }
+            }
+            
+            state.gnssPoints = [];
+            state.navPoints = [];
+            state.totalDataPoints = 0;
+            state.validDataPoints = 0;
+            navConfig.initialized = false;
+            navConfig.offsetX = 0;
+            navConfig.offsetY = 0;
+            
+            gnssPolyline.setLatLngs([]);
+            gnssValidPolyline.setLatLngs([]);
+            
+            elements.dataPoints.textContent = '0';
+            elements.validPoints.textContent = '0';
+            elements.totalDistance.textContent = '0 m';
+            
+            drawNavCanvas();
+            showToast('数据已清除', 'success');
+        });
+        
+        // ============================================================
+        // 初始化
+        // ============================================================
+        document.addEventListener('DOMContentLoaded', () => {
+            initGnssMap();
+            initNavCanvas();
+            
+            // 立即检查一次
+            checkPyWebViewReady();
+        });
+        
+        window.addEventListener('resize', () => {
+            if (gnssMap) {
+                gnssMap.invalidateSize();
+            }
+        });
+    </script>
+</body>
+</html>

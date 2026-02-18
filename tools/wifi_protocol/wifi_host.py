@@ -214,17 +214,17 @@ if __name__ == '__main__':
     # 获取当前脚本所在的目录
     current_dir = os.path.dirname(os.path.abspath(__file__))
     # 构建 index.html 的绝对路径
-    html_path = os.path.join(current_dir, 'index.html')
+    html_path = os.path.join(current_dir, 'navigation.html')
     if not os.path.exists(html_path):
         print("错误：找不到 index.html 文件！")
         exit()
 
     api = Api()
     window = webview.create_window(
-        '逐飞 GNSS/惯导 协议分析仪', 
+        'GNSS/惯导 协议分析仪', 
         url=html_path,  # 加载本地文件
         js_api=api, 
         width=1280, 
         height=800
     )
-    webview.start(debug=True)
+    webview.start(debug=False)

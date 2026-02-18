@@ -3,636 +3,1212 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>GNSS/惯导协议分析仪</title>
-    <!-- 引入 ECharts -->
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <title>GNSS/惯导 协议分析仪</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
     <style>
         :root {
-            --bg-color: #1e1e2e;
-            --panel-color: #2b2b3b;
-            --text-primary: #e0e0e0;
-            --text-secondary: #a0a0a0;
-            --accent-color: #3b82f6;
-            --success-color: #10b981;
-            --warning-color: #f59e0b;
-            --danger-color: #ef4444;
-            --border-color: #3f3f5f;
-            --font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            --bg-deep: #050810;
+            --bg-primary: #0a0f1a;
+            --bg-secondary: #0f1525;
+            --bg-card: #141c2d;
+            --bg-elevated: #1a2338;
+            --border: #243049;
+            --border-bright: #2d3d5a;
+            --text-primary: #e4e9f2;
+            --text-secondary: #7a8ba8;
+            --text-muted: #4a5a75;
+            --accent: #00ddb3;
+            --accent-dim: rgba(0, 221, 179, 0.15);
+            --accent-glow: rgba(0, 221, 179, 0.4);
+            --warning: #f5a623;
+            --error: #f25c5c;
+            --success: #2dd4a0;
         }
 
         * {
-            box-sizing: border-box;
             margin: 0;
             padding: 0;
+            box-sizing: border-box;
         }
 
         body {
-            font-family: var(--font-family);
-            background-color: var(--bg-color);
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg-deep);
             color: var(--text-primary);
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
+            min-height: 100vh;
+            overflow-x: hidden;
         }
 
-        /* 顶部导航栏 */
-        header {
-            height: 60px;
-            background-color: var(--panel-color);
-            border-bottom: 1px solid var(--border-color);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 20px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
         }
 
-        .brand {
-            font-size: 1.2rem;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+        /* Background Pattern */
+        .bg-pattern {
+            position: fixed;
+            inset: 0;
+            background-image: 
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 221, 179, 0.08), transparent),
+                radial-gradient(circle at 20% 80%, rgba(59, 158, 255, 0.05), transparent),
+                linear-gradient(180deg, var(--bg-deep) 0%, var(--bg-primary) 100%);
+            pointer-events: none;
+            z-index: 0;
         }
 
-        .status-indicator {
-            display: flex;
+        .grid-overlay {
+            position: fixed;
+            inset: 0;
+            background-image: 
+                linear-gradient(rgba(36, 48, 73, 0.3) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(36, 48, 73, 0.3) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: 0;
+            opacity: 0.4;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
             align-items: center;
             gap: 8px;
-            font-size: 0.9rem;
-            color: var(--text-secondary);
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+
+        .status-badge.connected {
+            background: rgba(0, 221, 179, 0.12);
+            border: 1px solid rgba(0, 221, 179, 0.3);
+            color: var(--accent);
+        }
+
+        .status-badge.disconnected {
+            background: rgba(245, 92, 92, 0.12);
+            border: 1px solid rgba(245, 92, 92, 0.3);
+            color: var(--error);
         }
 
         .status-dot {
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            background-color: var(--text-secondary);
-            transition: background-color 0.3s ease;
+            animation: pulse 2s infinite;
         }
 
-        .status-dot.active {
-            background-color: var(--success-color);
-            box-shadow: 0 0 8px var(--success-color);
+        .status-badge.connected .status-dot {
+            background: var(--accent);
+            box-shadow: 0 0 12px var(--accent-glow);
         }
 
-        /* 主内容区域 */
-        main {
-            flex: 1;
+        .status-badge.disconnected .status-dot {
+            background: var(--error);
+            box-shadow: 0 0 12px rgba(245, 92, 92, 0.4);
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.6; transform: scale(0.9); }
+        }
+
+        /* Card Styles */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .card:hover {
+            border-color: var(--border-bright);
+        }
+
+        .card-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+            background: linear-gradient(180deg, var(--bg-elevated), var(--bg-card));
+        }
+
+        /* Channel list */
+        .channel-item {
             display: flex;
-            padding: 20px;
-            gap: 20px;
+            align-items: center;
+            gap: 12px;
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .channel-item:last-child {
+            border-bottom: none;
+        }
+
+        .channel-item:hover {
+            background: var(--bg-elevated);
+        }
+
+        .channel-item.selected {
+            background: var(--accent-dim);
+        }
+
+        .channel-checkbox {
+            width: 20px;
+            height: 20px;
+            border: 2px solid var(--border-bright);
+            border-radius: 5px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            flex-shrink: 0;
+        }
+
+        .channel-item.selected .channel-checkbox {
+            border-color: var(--channel-color);
+            background: var(--channel-color);
+        }
+
+        .channel-checkbox svg {
+            width: 12px;
+            height: 12px;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+        }
+
+        .channel-item.selected .channel-checkbox svg {
+            opacity: 1;
+        }
+
+        .channel-color-indicator {
+            width: 4px;
+            height: 32px;
+            border-radius: 2px;
+            flex-shrink: 0;
+        }
+
+        .channel-name {
+            font-size: 14px;
+            font-weight: 500;
+            color: var(--text-primary);
+        }
+
+        .channel-value {
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-left: auto;
+            font-family: 'JetBrains Mono', monospace;
+            text-align: right;
+            max-width: 140px;
+            word-break: break-all;
+        }
+
+        /* Chart Canvas */
+        .chart-container {
+            position: relative;
+            background: var(--bg-secondary);
+            border-radius: 8px;
             overflow: hidden;
         }
 
-        /* 左侧控制面板 */
-        .sidebar {
-            width: 300px;
-            background-color: var(--panel-color);
-            border-radius: 8px;
-            border: 1px solid var(--border-color);
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 20px;
-            overflow-y: auto;
+        .chart-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
         }
 
-        .control-group {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .control-group label {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            font-weight: 500;
-        }
-
-        select, button {
-            padding: 10px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            background-color: var(--bg-color);
-            color: var(--text-primary);
-            font-family: var(--font-family);
-            font-size: 0.9rem;
-            outline: none;
-            transition: all 0.2s;
-        }
-
-        select:focus, button:focus {
-            border-color: var(--accent-color);
-        }
-
-        button {
-            cursor: pointer;
-            font-weight: 500;
-            display: flex;
+        /* Buttons */
+        .btn {
+            display: inline-flex;
             align-items: center;
             justify-content: center;
             gap: 8px;
-        }
-
-        button:hover {
-            background-color: var(--border-color);
-        }
-
-        button.primary {
-            background-color: var(--accent-color);
-            border-color: var(--accent-color);
-            color: white;
-        }
-
-        button.primary:hover {
-            background-color: #2563eb;
-        }
-
-        button.danger {
-            background-color: transparent;
-            border-color: var(--danger-color);
-            color: var(--danger-color);
-        }
-
-        button.danger:hover {
-            background-color: var(--danger-color);
-            color: white;
-        }
-
-        .data-display {
-            background-color: var(--bg-color);
-            padding: 15px;
-            border-radius: 6px;
-            border: 1px solid var(--border-color);
-            text-align: center;
-        }
-
-        .data-value {
-            font-size: 1.5rem;
-            font-weight: 700;
-            color: var(--accent-color);
-            margin-top: 5px;
-            font-family: 'Consolas', monospace;
-        }
-
-        .data-unit {
-            font-size: 0.8rem;
-            color: var(--text-secondary);
-        }
-
-        /* 右侧图表区域 */
-        .chart-container {
-            flex: 1;
-            background-color: var(--panel-color);
+            padding: 10px 20px;
             border-radius: 8px;
-            border: 1px solid var(--border-color);
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            position: relative;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            font-family: inherit;
         }
 
-        #mainChart {
-            width: 100%;
-            height: 100%;
-            flex: 1;
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #00b89c);
+            color: var(--bg-deep);
         }
 
-        /* 底部状态栏 */
-        footer {
-            height: 30px;
-            background-color: var(--panel-color);
-            border-top: 1px solid var(--border-color);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 20px;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 24px var(--accent-glow);
         }
 
-        /* 加载遮罩 */
-        #loading {
+        .btn-secondary {
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--border-bright);
+            background: var(--bg-card);
+        }
+
+        .btn-danger {
+            background: rgba(245, 92, 92, 0.15);
+            border: 1px solid rgba(245, 92, 92, 0.3);
+            color: var(--error);
+        }
+
+        .btn-danger:hover {
+            background: rgba(245, 92, 92, 0.25);
+        }
+
+        /* Stats Grid */
+        .stat-card {
+            background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            border-color: var(--border-bright);
+        }
+
+        .stat-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+        }
+
+        .stat-value {
+            font-size: 18px;
+            font-weight: 600;
+            font-family: 'JetBrains Mono', monospace;
+            word-break: break-all;
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 3px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--border-bright);
+        }
+
+        /* Animations */
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .animate-in {
+            animation: fadeIn 0.4s ease forwards;
+        }
+
+        @keyframes dataFlow {
+            0% { background-position: 0% 50%; }
+            100% { background-position: 200% 50%; }
+        }
+
+        .data-flow-indicator {
             position: absolute;
             top: 0;
             left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(30, 30, 46, 0.8);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            z-index: 1000;
-            backdrop-filter: blur(2px);
-        }
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid var(--border-color);
-            border-top: 4px solid var(--accent-color);
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent), transparent);
+            background-size: 200% 100%;
+            opacity: 0;
+            transition: opacity 0.3s ease;
         }
 
-        /* 响应式调整 */
-        @media (max-width: 768px) {
-            main {
-                flex-direction: column;
-            }
-            .sidebar {
-                width: 100%;
-                height: auto;
-                max-height: 300px;
+        .data-flow-indicator.active {
+            opacity: 1;
+            animation: dataFlow 1s linear infinite;
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 1000;
+            max-width: 400px;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.success {
+            background: rgba(0, 221, 179, 0.15);
+            border: 1px solid rgba(0, 221, 179, 0.3);
+            color: var(--accent);
+        }
+
+        .toast.error {
+            background: rgba(245, 92, 92, 0.15);
+            border: 1px solid rgba(245, 92, 92, 0.3);
+            color: var(--error);
+        }
+
+        /* Legend */
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 12px;
+            background: var(--bg-elevated);
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 3px;
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: absolute;
+            background: var(--bg-elevated);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 11px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            z-index: 100;
+            white-space: nowrap;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .tooltip.visible {
+            opacity: 1;
+        }
+
+        /* Info row */
+        .info-row {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .info-label {
+            font-size: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-muted);
+        }
+
+        .info-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            word-break: break-all;
+        }
+
+        /* Reduced Motion */
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+                animation-duration: 0.01ms !important;
+                transition-duration: 0.01ms !important;
             }
         }
     </style>
 </head>
 <body>
+    <div class="bg-pattern"></div>
+    <div class="grid-overlay"></div>
 
-    <!-- 加载遮罩 -->
-    <div id="loading">
-        <div class="spinner"></div>
+    <div class="relative z-10 min-h-screen p-6">
+        <!-- Header -->
+        <header class="flex items-center justify-between mb-6 animate-in">
+            <div class="flex items-center gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold tracking-tight">GNSS/惯导 协议分析仪</h1>
+                    <p class="text-sm text-[var(--text-secondary)] mt-1">实时数据可视化与监控</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div id="statusBadge" class="status-badge disconnected">
+                    <span class="status-dot"></span>
+                    <span id="statusText">未连接</span>
+                </div>
+                <div class="text-sm text-[var(--text-secondary)] mono">
+                    <span id="packetCount">0</span> 包
+                </div>
+            </div>
+        </header>
+
+        <!-- Stats Row -->
+        <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-6 animate-in" style="animation-delay: 0.1s;">
+            <div class="stat-card">
+                <div class="stat-label">导航 X (m)</div>
+                <div class="stat-value" id="statNavX" style="color: #00ffcc;">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">导航 Y (m)</div>
+                <div class="stat-value" id="statNavY" style="color: #00aaff;">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">速度</div>
+                <div class="stat-value" id="statSpeed" style="color: #ff6b35;">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">航向 (°)</div>
+                <div class="stat-value" id="statDir" style="color: #e040fb;">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">高度</div>
+                <div class="stat-value" id="statHeight" style="color: #ffdd00;">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">卫星数</div>
+                <div class="stat-value" id="statSat" style="color: #ff4081;">--</div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex gap-6 animate-in" style="animation-delay: 0.2s;">
+            <!-- Sidebar - Channel Selection -->
+            <div class="w-80 flex-shrink-0">
+                <div class="card">
+                    <div class="card-header flex items-center justify-between">
+                        <h2 class="font-semibold">数据通道</h2>
+                        <button id="selectAllBtn" class="text-xs text-[var(--accent)] hover:underline">全选/取消</button>
+                    </div>
+                    <div id="channelList" class="max-h-[500px] overflow-y-auto">
+                        <!-- Channels will be populated by JS -->
+                    </div>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="mt-4 space-y-3">
+                    <button id="saveBtn" class="btn btn-primary w-full">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                            <polyline points="17,21 17,13 7,13 7,21"/>
+                            <polyline points="7,3 7,8 15,8"/>
+                        </svg>
+                        保存数据
+                    </button>
+                    <button id="clearBtn" class="btn btn-danger w-full">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polyline points="3,6 5,6 21,6"/>
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                        </svg>
+                        清除数据
+                    </button>
+                </div>
+
+                <!-- Info Panel -->
+                <div class="card mt-4 p-4">
+                    <h3 class="text-sm font-semibold mb-3 text-[var(--text-secondary)]">连接信息</h3>
+                    <div class="space-y-2 text-xs">
+                        <div class="flex justify-between">
+                            <span class="text-[var(--text-muted)]">服务器</span>
+                            <span class="mono text-[var(--text-secondary)]">192.168.137.1:8086</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-[var(--text-muted)]">数据点</span>
+                            <span class="mono text-[var(--text-secondary)]" id="dataPointCount">0</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-[var(--text-muted)]">更新率</span>
+                            <span class="mono text-[var(--text-secondary)]" id="updateRate">-- Hz</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chart Area -->
+            <div class="flex-1">
+                <div class="card">
+                    <div class="card-header flex items-center justify-between flex-wrap gap-3">
+                        <div class="flex items-center gap-4">
+                            <h2 class="font-semibold">波形显示</h2>
+                            <div id="legend" class="flex gap-2 flex-wrap">
+                                <!-- Legend items -->
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button id="zoomInBtn" class="btn btn-secondary py-1 px-3 text-xs">放大</button>
+                            <button id="zoomOutBtn" class="btn btn-secondary py-1 px-3 text-xs">缩小</button>
+                            <button id="resetZoomBtn" class="btn btn-secondary py-1 px-3 text-xs">重置</button>
+                        </div>
+                    </div>
+                    <div class="chart-container relative" style="height: 420px;">
+                        <div id="dataFlowIndicator" class="data-flow-indicator"></div>
+                        <canvas id="waveformCanvas" class="chart-canvas"></canvas>
+                        <div id="tooltip" class="tooltip"></div>
+                    </div>
+                </div>
+
+                <!-- Time Display -->
+                <div class="card mt-4">
+                    <div class="p-4 flex items-center justify-between flex-wrap gap-4">
+                        <div class="flex items-center gap-6 flex-wrap">
+                            <div class="info-row">
+                                <span class="info-label">UTC时间</span>
+                                <div class="info-value" id="utcTime">--:--:--</div>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">纬度</span>
+                                <div class="info-value" id="latDisplay" style="color: #00ffcc;">--</div>
+                            </div>
+                            <div class="info-row">
+                                <span class="info-label">经度</span>
+                                <div class="info-value" id="lonDisplay" style="color: #00aaff;">--</div>
+                            </div>
+                        </div>
+                        <div class="text-right info-row">
+                            <span class="info-label">定位状态</span>
+                            <div class="info-value" id="stateDisplay">--</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <header>
-        <div class="brand">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
-            </svg>
-            逐飞 GNSS/惯导 协议分析仪
-        </div>
-        <div class="status-indicator">
-            <div class="status-dot" id="connectionDot"></div>
-            <span id="connectionText">等待连接...</span>
-        </div>
-    </header>
-
-    <main>
-        <!-- 侧边控制栏 -->
-        <aside class="sidebar">
-            <div class="control-group">
-                <label for="channelSelect">数据通道选择</label>
-                <select id="channelSelect">
-                    <!-- 选项将由 JS 动态生成 -->
-                </select>
-            </div>
-
-            <div class="data-display">
-                <div>当前数值</div>
-                <div class="data-value" id="currentValue">--</div>
-                <div class="data-unit" id="currentUnit">-</div>
-            </div>
-
-            <div class="control-group">
-                <label>数据操作</label>
-                <button class="primary" id="btnSave">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                        <polyline points="17 21 17 13 7 13 7 21"/>
-                        <polyline points="7 3 7 8 15 8"/>
-                    </svg>
-                    保存数据 (CSV)
-                </button>
-                <button class="danger" id="btnClear">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="3 6 5 6 21 6"/>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                    </svg>
-                    清除数据
-                </button>
-            </div>
-
-            <div class="control-group" style="margin-top: auto;">
-                <label>统计信息</label>
-                <div style="font-size: 0.85rem; color: var(--text-secondary);">
-                    总点数：<span id="totalPoints" style="color: var(--text-primary)">0</span>
-                </div>
-                <div style="font-size: 0.85rem; color: var(--text-secondary);">
-                    采样率：<span id="sampleRate" style="color: var(--text-primary)">0</span> Hz
-                </div>
-            </div>
-        </aside>
-
-        <!-- 图表区域 -->
-        <section class="chart-container">
-            <div id="mainChart"></div>
-        </section>
-    </main>
-
-    <footer>
-        <div>系统状态：正常运行</div>
-        <div id="clock">00:00:00</div>
-    </footer>
+    <!-- Toast -->
+    <div id="toast" class="toast"></div>
 
     <script>
-        // -------------------------------------------------------------------------
-        // 配置与全局变量
-        // -------------------------------------------------------------------------
-        const CONFIG = {
-            maxPoints: 5000,      // 与后端保持一致
-            updateInterval: 500,  // 前端刷新间隔 (ms)
-            chartTheme: 'dark'
-        };
+        // ========================================
+        // 配置与状态
+        // ========================================
+        const MAX_POINTS = 5000;
 
-        // 可选的数据通道 (根据 Python FIELD_NAMES 定义)
-        // 过滤掉了部分非波形类数据，可根据需要调整
-        const AVAILABLE_CHANNELS = [
-            { key: 'loop', label: 'Loop Count', unit: '' },
-            { key: 'nav_x', label: 'Nav X', unit: 'm' },
-            { key: 'nav_y', label: 'Nav Y', unit: 'm' },
-            { key: 'latitude', label: 'Latitude', unit: 'deg' },
-            { key: 'longitude', label: 'Longitude', unit: 'deg' },
-            { key: 'speed', label: 'Speed', unit: 'm/s' },
-            { key: 'direction', label: 'Direction', unit: 'deg' },
-            { key: 'height', label: 'Height', unit: 'm' },
-            { key: 'sat_used', label: 'Satellites Used', unit: 'count' },
-            { key: 'state', label: 'State', unit: '' },
-            { key: 'ant_state', label: 'Ant State', unit: '' }
+        // 每个通道独立的鲜明颜色
+        const CHANNEL_CONFIG = [
+            { key: 'nav_x',      name: '导航 X',      unit: 'm',   color: '#00ffcc', decimals: 6 },
+            { key: 'nav_y',      name: '导航 Y',      unit: 'm',   color: '#00aaff', decimals: 6 },
+            { key: 'speed',      name: '速度',        unit: 'm/s', color: '#ff6b35', decimals: 6 },
+            { key: 'direction',  name: '航向',        unit: '°',   color: '#e040fb', decimals: 6 },
+            { key: 'height',     name: '高度',        unit: 'm',   color: '#ffdd00', decimals: 6 },
+            { key: 'latitude',   name: '纬度',        unit: '°',   color: '#00e676', decimals: 10 },
+            { key: 'longitude',  name: '经度',        unit: '°',   color: '#ff4081', decimals: 10 },
+            { key: 'sat_used',   name: '卫星数',      unit: '',    color: '#ff9100', decimals: 0 }
         ];
 
-        let chartInstance = null;
-        let dataBuffer = {
-            timestamps: [],
-            values: []
-        };
-        let allDataCount = 0;
-        let lastDataTime = 0;
-        let selectedChannel = 'speed'; // 默认通道
-        let isReceiving = false;
-        let receiveTimeout = null;
+        // 全局状态 - 先初始化所有变量
+        let chartData = {};
+        let selectedChannels = new Set(['nav_x', 'nav_y', 'speed']);
+        let isConnected = false;
+        let packetCount = 0;
+        let lastUpdateTime = 0;
+        let updateCount = 0;
+        let zoomLevel = 1;
+        let panOffset = 0;
+        let isDragging = false;
+        let dragStartX = 0;
+        let lastDragOffset = 0;
 
-        // -------------------------------------------------------------------------
-        // 初始化
-        // -------------------------------------------------------------------------
-        document.addEventListener('DOMContentLoaded', () => {
-            initChart();
-            initControls();
-            startDataLoop();
-            startClock();
-            document.getElementById('loading').style.display = 'none';
+        // Canvas 相关
+        let canvas = null;
+        let ctx = null;
+        let animationId = null;
+
+        // 初始化图表数据存储
+        CHANNEL_CONFIG.forEach(ch => {
+            chartData[ch.key] = [];
         });
 
-        // -------------------------------------------------------------------------
-        // 图表初始化
-        // -------------------------------------------------------------------------
-        function initChart() {
-            const chartDom = document.getElementById('mainChart');
-            chartInstance = echarts.init(chartDom, 'dark', { renderer: 'canvas' });
+        // ========================================
+        // DOM 元素引用
+        // ========================================
+        let statusBadge, statusText, packetCountEl, dataPointCountEl;
+        let updateRateEl, channelListEl, legendEl, toastEl;
+        let tooltip, dataFlowIndicator;
+        let statNavX, statNavY, statSpeed, statDir, statHeight, statSat;
+        let utcTimeEl, latDisplayEl, lonDisplayEl, stateDisplayEl;
+
+        // ========================================
+        // 初始化
+        // ========================================
+        document.addEventListener('DOMContentLoaded', () => {
+            // 获取所有 DOM 引用
+            statusBadge = document.getElementById('statusBadge');
+            statusText = document.getElementById('statusText');
+            packetCountEl = document.getElementById('packetCount');
+            dataPointCountEl = document.getElementById('dataPointCount');
+            updateRateEl = document.getElementById('updateRate');
+            channelListEl = document.getElementById('channelList');
+            legendEl = document.getElementById('legend');
+            toastEl = document.getElementById('toast');
+            tooltip = document.getElementById('tooltip');
+            dataFlowIndicator = document.getElementById('dataFlowIndicator');
+
+            statNavX = document.getElementById('statNavX');
+            statNavY = document.getElementById('statNavY');
+            statSpeed = document.getElementById('statSpeed');
+            statDir = document.getElementById('statDir');
+            statHeight = document.getElementById('statHeight');
+            statSat = document.getElementById('statSat');
+
+            utcTimeEl = document.getElementById('utcTime');
+            latDisplayEl = document.getElementById('latDisplay');
+            lonDisplayEl = document.getElementById('lonDisplay');
+            stateDisplayEl = document.getElementById('stateDisplay');
+
+            // 初始化 Canvas
+            canvas = document.getElementById('waveformCanvas');
+            ctx = canvas.getContext('2d');
+
+            // 初始化界面
+            initChannelList();
+            initLegend();
+            initEventListeners();
+            resizeCanvas();
             
-            const option = {
-                backgroundColor: 'transparent',
-                tooltip: {
-                    trigger: 'axis',
-                    backgroundColor: 'rgba(43, 43, 59, 0.9)',
-                    borderColor: '#3f3f5f',
-                    textStyle: { color: '#e0e0e0' }
-                },
-                grid: {
-                    left: '3%',
-                    right: '4%',
-                    bottom: '3%',
-                    top: '10%',
-                    containLabel: true
-                },
-                xAxis: {
-                    type: 'category',
-                    boundaryGap: false,
-                    data: [],
-                    axisLine: { lineStyle: { color: '#a0a0a0' } },
-                    axisLabel: { color: '#a0a0a0' },
-                    splitLine: { lineStyle: { color: '#3f3f5f', type: 'dashed' } }
-                },
-                yAxis: {
-                    type: 'value',
-                    scale: true, // 不从 0 开始，适应数据波动
-                    axisLine: { lineStyle: { color: '#a0a0a0' } },
-                    axisLabel: { color: '#a0a0a0' },
-                    splitLine: { lineStyle: { color: '#3f3f5f', type: 'dashed' } }
-                },
-                series: [{
-                    name: 'Data',
-                    type: 'line',
-                    smooth: true,
-                    showSymbol: false,
-                    data: [],
-                    lineStyle: {
-                        width: 2,
-                        color: '#3b82f6'
-                    },
-                    areaStyle: {
-                        opacity: 0.1,
-                        color: '#3b82f6'
+            // 启动动画循环
+            startAnimation();
+            
+            // 启动数据轮询
+            startDataPolling();
+
+            // 监听窗口大小变化
+            window.addEventListener('resize', resizeCanvas);
+        });
+
+        // ========================================
+        // 界面初始化
+        // ========================================
+        function initChannelList() {
+            if (!channelListEl) return;
+            
+            channelListEl.innerHTML = CHANNEL_CONFIG.map((ch, i) => `
+                <div class="channel-item ${selectedChannels.has(ch.key) ? 'selected' : ''}" 
+                     data-channel="${ch.key}"
+                     style="--channel-color: ${ch.color}">
+                    <div class="channel-checkbox">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="#0a0f1a" stroke-width="3">
+                            <polyline points="20,6 9,17 4,12"/>
+                        </svg>
+                    </div>
+                    <div class="channel-color-indicator" style="background: ${ch.color}"></div>
+                    <span class="channel-name">${ch.name}</span>
+                    <span class="channel-value" id="ch-val-${ch.key}">--</span>
+                </div>
+            `).join('');
+
+            // 绑定点击事件
+            channelListEl.querySelectorAll('.channel-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const key = item.dataset.channel;
+                    if (selectedChannels.has(key)) {
+                        selectedChannels.delete(key);
+                        item.classList.remove('selected');
+                    } else {
+                        selectedChannels.add(key);
+                        item.classList.add('selected');
                     }
-                }]
-            };
-            
-            chartInstance.setOption(option);
-            
-            // 响应窗口大小变化
-            window.addEventListener('resize', () => {
-                chartInstance.resize();
+                    initLegend();
+                });
             });
         }
 
-        // -------------------------------------------------------------------------
-        // 控件初始化
-        // -------------------------------------------------------------------------
-        function initControls() {
-            const select = document.getElementById('channelSelect');
-            AVAILABLE_CHANNELS.forEach(ch => {
-                const option = document.createElement('option');
-                option.value = ch.key;
-                option.text = ch.label;
-                if (ch.key === selectedChannel) option.selected = true;
-                select.appendChild(option);
-            });
-
-            select.addEventListener('change', (e) => {
-                selectedChannel = e.target.value;
-                updateChannelInfo();
-                // 切换通道时不清除历史数据，但图表会重新渲染新通道的数据逻辑
-                // 由于后端存储的是全量字典，前端需要重新处理 buffer 或清空重画
-                // 为简化实现，切换通道时清空图表缓冲区，等待新数据
-                dataBuffer.timestamps = [];
-                dataBuffer.values = [];
-                updateChart();
-            });
-
-            document.getElementById('btnSave').addEventListener('click', saveData);
-            document.getElementById('btnClear').addEventListener('click', clearData);
+        function initLegend() {
+            if (!legendEl) return;
             
-            updateChannelInfo();
+            legendEl.innerHTML = Array.from(selectedChannels).map(key => {
+                const ch = CHANNEL_CONFIG.find(c => c.key === key);
+                return ch ? `
+                    <div class="legend-item">
+                        <div class="legend-color" style="background: ${ch.color}"></div>
+                        <span>${ch.name}</span>
+                    </div>
+                ` : '';
+            }).join('');
         }
 
-        function updateChannelInfo() {
-            const ch = AVAILABLE_CHANNELS.find(c => c.key === selectedChannel);
-            if (ch) {
-                document.getElementById('currentUnit').innerText = ch.unit;
-                const series = chartInstance.getOption().series[0];
-                series.name = ch.label;
-                chartInstance.setOption({ series: [{ name: ch.label }] });
-            }
-        }
-
-        // -------------------------------------------------------------------------
-        // 数据循环 (核心逻辑)
-        // -------------------------------------------------------------------------
-        function startDataLoop() {
-            setInterval(async () => {
+        function initEventListeners() {
+            // 保存按钮
+            document.getElementById('saveBtn')?.addEventListener('click', async () => {
                 try {
-                    // 调用 Python API
-                    // 注意：pywebview 环境下，api 对象全局可用
-                    if (window.pywebview && window.pywebview.api) {
-                        const newData = await window.pywebview.api.get_new_data();
-                        processNewData(newData);
-                    } else {
-                        // 调试模式模拟数据 (如果在浏览器直接打开)
-                        // console.warn("Running in debug mode without API");
-                    }
-                } catch (error) {
-                    console.error("Data fetch error:", error);
-                    setConnectionStatus(false);
-                }
-            }, CONFIG.updateInterval);
-        }
-
-        function processNewData(dataList) {
-            if (!dataList || dataList.length === 0) return;
-
-            setConnectionStatus(true);
-            allDataCount += dataList.length;
-            document.getElementById('totalPoints').innerText = allDataCount;
-
-            // 处理最新的一条数据用于显示数值
-            const latest = dataList[dataList.length - 1];
-            if (latest && latest.hasOwnProperty(selectedChannel)) {
-                const val = latest[selectedChannel];
-                document.getElementById('currentValue').innerText = typeof val === 'number' ? val.toFixed(4) : val;
-            }
-
-            // 更新图表数据
-            dataList.forEach(item => {
-                // 使用 time_str 作为 X 轴标签，或者生成相对时间
-                const timeLabel = item.time_str || new Date().toLocaleTimeString();
-                const value = item[selectedChannel];
-
-                // 确保值是数字
-                if (typeof value === 'number') {
-                    dataBuffer.timestamps.push(timeLabel);
-                    dataBuffer.values.push(value);
+                    const result = await pywebview.api.save_csv();
+                    showToast(result.success ? 'success' : 'error', result.msg);
+                } catch (e) {
+                    showToast('error', '保存失败: ' + e.message);
                 }
             });
 
-            // 限制数据点数以防内存溢出
-            if (dataBuffer.timestamps.length > CONFIG.maxPoints) {
-                const removeCount = dataBuffer.timestamps.length - CONFIG.maxPoints;
-                dataBuffer.timestamps.splice(0, removeCount);
-                dataBuffer.values.splice(0, removeCount);
-            }
-
-            updateChart();
-        }
-
-        function updateChart() {
-            chartInstance.setOption({
-                xAxis: {
-                    data: dataBuffer.timestamps
-                },
-                series: [{
-                    data: dataBuffer.values
-                }]
+            // 清除按钮
+            document.getElementById('clearBtn')?.addEventListener('click', async () => {
+                try {
+                    await pywebview.api.clear_data();
+                    clearAllData();
+                    showToast('success', '数据已清除');
+                } catch (e) {
+                    showToast('error', '清除失败: ' + e.message);
+                }
             });
-        }
 
-        // -------------------------------------------------------------------------
-        // 连接状态管理
-        // -------------------------------------------------------------------------
-        function setConnectionStatus(connected) {
-            const dot = document.getElementById('connectionDot');
-            const text = document.getElementById('connectionText');
-            
-            if (connected) {
-                isReceiving = true;
-                dot.classList.add('active');
-                text.innerText = "数据接收中";
-                text.style.color = "var(--success-color)";
-                
-                // 重置超时计时器
-                if (receiveTimeout) clearTimeout(receiveTimeout);
-                receiveTimeout = setTimeout(() => {
-                    setConnectionStatus(false);
-                }, 2000); // 2 秒无数据视为断开
-            } else {
-                isReceiving = false;
-                dot.classList.remove('active');
-                text.innerText = "等待数据...";
-                text.style.color = "var(--text-secondary)";
-            }
-        }
-
-        // -------------------------------------------------------------------------
-        // API 交互功能
-        // -------------------------------------------------------------------------
-        async function saveData() {
-            const btn = document.getElementById('btnSave');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = "保存中...";
-            btn.disabled = true;
-
-            try {
-                if (window.pywebview && window.pywebview.api) {
-                    const result = await window.pywebview.api.save_csv();
-                    if (result.success) {
-                        alert(`数据已保存至:\n${result.msg.split(': ')[1]}`);
-                    } else {
-                        alert(`保存失败：${result.msg}`);
-                    }
+            // 全选按钮
+            document.getElementById('selectAllBtn')?.addEventListener('click', () => {
+                const allSelected = selectedChannels.size === CHANNEL_CONFIG.length;
+                if (allSelected) {
+                    selectedChannels.clear();
                 } else {
-                    alert("调试模式：模拟保存成功");
+                    CHANNEL_CONFIG.forEach(ch => selectedChannels.add(ch.key));
                 }
-            } catch (e) {
-                alert("保存出错：" + e.message);
-            } finally {
-                btn.innerHTML = originalText;
-                btn.disabled = false;
+                initChannelList();
+                initLegend();
+            });
+
+            // 缩放按钮
+            document.getElementById('zoomInBtn')?.addEventListener('click', () => {
+                zoomLevel = Math.min(zoomLevel * 1.5, 10);
+            });
+
+            document.getElementById('zoomOutBtn')?.addEventListener('click', () => {
+                zoomLevel = Math.max(zoomLevel / 1.5, 1);
+            });
+
+            document.getElementById('resetZoomBtn')?.addEventListener('click', () => {
+                zoomLevel = 1;
+                panOffset = 0;
+            });
+
+            // Canvas 交互
+            if (canvas) {
+                canvas.addEventListener('mousedown', (e) => {
+                    isDragging = true;
+                    dragStartX = e.clientX;
+                    lastDragOffset = panOffset;
+                    canvas.style.cursor = 'grabbing';
+                });
+
+                canvas.addEventListener('mousemove', (e) => {
+                    if (isDragging) {
+                        const dx = e.clientX - dragStartX;
+                        panOffset = lastDragOffset + dx / zoomLevel;
+                    }
+                    updateTooltip(e);
+                });
+
+                canvas.addEventListener('mouseup', () => {
+                    isDragging = false;
+                    canvas.style.cursor = 'crosshair';
+                });
+
+                canvas.addEventListener('mouseleave', () => {
+                    isDragging = false;
+                    canvas.style.cursor = 'crosshair';
+                    if (tooltip) tooltip.classList.remove('visible');
+                });
+
+                canvas.addEventListener('wheel', (e) => {
+                    e.preventDefault();
+                    const delta = e.deltaY > 0 ? 0.9 : 1.1;
+                    zoomLevel = Math.max(1, Math.min(10, zoomLevel * delta));
+                });
+
+                canvas.style.cursor = 'crosshair';
             }
         }
 
-        async function clearData() {
-            if (!confirm("确定要清除所有历史数据吗？此操作不可恢复。")) return;
-
-            try {
-                if (window.pywebview && window.pywebview.api) {
-                    await window.pywebview.api.clear_data();
-                }
-                // 清空前端缓冲
-                dataBuffer.timestamps = [];
-                dataBuffer.values = [];
-                allDataCount = 0;
-                document.getElementById('totalPoints').innerText = 0;
-                document.getElementById('currentValue').innerText = "--";
-                updateChart();
-            } catch (e) {
-                console.error("Clear error:", e);
-            }
+        function resizeCanvas() {
+            if (!canvas || !ctx) return;
+            
+            const container = canvas.parentElement;
+            const dpr = window.devicePixelRatio || 1;
+            const rect = container.getBoundingClientRect();
+            
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            
+            ctx.scale(dpr, dpr);
         }
 
-        // -------------------------------------------------------------------------
-        // 工具功能
-        // -------------------------------------------------------------------------
-        function startClock() {
-            const clockEl = document.getElementById('clock');
+        // ========================================
+        // 数据处理
+        // ========================================
+        function startDataPolling() {
+            const poll = async () => {
+                try {
+                    const data = await pywebview.api.get_new_data();
+                    if (data && data.length > 0) {
+                        processData(data);
+                        updateConnectionStatus(true);
+                    }
+                } catch (e) {
+                    updateConnectionStatus(false);
+                }
+                setTimeout(poll, 20);
+            };
+            poll();
+
+            // 更新频率计算
             setInterval(() => {
-                const now = new Date();
-                clockEl.innerText = now.toLocaleTimeString('zh-CN', { hour12: false });
+                const rate = updateCount;
+                updateCount = 0;
+                if (updateRateEl) {
+                    updateRateEl.textContent = rate + ' Hz';
+                }
             }, 1000);
+
+            // 连接状态超时检测
+            setInterval(() => {
+                if (Date.now() - lastUpdateTime > 2000) {
+                    updateConnectionStatus(false);
+                }
+            }, 1000);
+        }
+
+        function processData(dataArray) {
+            lastUpdateTime = Date.now();
+            packetCount += dataArray.length;
+            updateCount += dataArray.length;
+
+            if (dataFlowIndicator) {
+                dataFlowIndicator.classList.add('active');
+                setTimeout(() => dataFlowIndicator.classList.remove('active'), 500);
+            }
+
+            dataArray.forEach(data => {
+                // 存储图表数据
+                CHANNEL_CONFIG.forEach(ch => {
+                    const key = ch.key;
+                    if (data[key] !== undefined) {
+                        chartData[key].push({
+                            time: packetCount,
+                            value: data[key]
+                        });
+                        if (chartData[key].length > MAX_POINTS) {
+                            chartData[key].shift();
+                        }
+                    }
+                });
+
+                // 更新统计显示
+                updateStats(data);
+            });
+
+            // 更新计数显示
+            if (packetCountEl) packetCountEl.textContent = packetCount.toLocaleString();
+            if (dataPointCountEl) {
+                const total = CHANNEL_CONFIG.reduce((sum, ch) => sum + chartData[ch.key].length, 0);
+                dataPointCountEl.textContent = total.toLocaleString();
+            }
+        }
+
+        function formatValue(value, decimals) {
+            if (value === null || value === undefined) return '--';
+            if (typeof value !== 'number') return String(value);
+            return value.toFixed(decimals);
+        }
+
+        function updateStats(data) {
+            // 顶部统计卡片 - 完整精度
+            if (statNavX && data.nav_x !== undefined) statNavX.textContent = formatValue(data.nav_x, 6);
+            if (statNavY && data.nav_y !== undefined) statNavY.textContent = formatValue(data.nav_y, 6);
+            if (statSpeed && data.speed !== undefined) statSpeed.textContent = formatValue(data.speed, 6);
+            if (statDir && data.direction !== undefined) statDir.textContent = formatValue(data.direction, 6);
+            if (statHeight && data.height !== undefined) statHeight.textContent = formatValue(data.height, 6);
+            if (statSat && data.sat_used !== undefined) statSat.textContent = data.sat_used;
+
+            // 时间显示
+            if (utcTimeEl && data.time_str) utcTimeEl.textContent = data.time_str;
+            
+            // 经纬度显示 - 最高精度（10位小数）
+            if (latDisplayEl && data.latitude !== undefined) {
+                const ns = data.ns > 0 ? 'N' : 'S';
+                latDisplayEl.textContent = formatValue(Math.abs(data.latitude), 10) + '° ' + ns;
+            }
+            if (lonDisplayEl && data.longitude !== undefined) {
+                const ew = data.ew > 0 ? 'E' : 'W';
+                lonDisplayEl.textContent = formatValue(Math.abs(data.longitude), 10) + '° ' + ew;
+            }
+
+            // 状态显示
+            if (stateDisplayEl && data.state !== undefined) {
+                const states = ['无效', '单点定位', '差分定位', 'RTK浮点', 'RTK固定'];
+                stateDisplayEl.textContent = states[data.state] || '未知(' + data.state + ')';
+            }
+
+            // 更新通道列表数值 - 各自精度
+            CHANNEL_CONFIG.forEach(ch => {
+                const el = document.getElementById(`ch-val-${ch.key}`);
+                if (el && data[ch.key] !== undefined) {
+                    el.textContent = formatValue(data[ch.key], ch.decimals);
+                }
+            });
+        }
+
+        function updateConnectionStatus(connected) {
+            isConnected = connected;
+            if (statusBadge) {
+                statusBadge.className = `status-badge ${connected ? 'connected' : 'disconnected'}`;
+            }
+            if (statusText) {
+                statusText.textContent = connected ? '已连接' : '未连接';
+            }
+        }
+
+        function clearAllData() {
+            CHANNEL_CONFIG.forEach(ch => {
+                chartData[ch.key] = [];
+            });
+            packetCount = 0;
+            if (packetCountEl) packetCountEl.textContent = '0';
+            if (dataPointCountEl) dataPointCountEl.textContent = '0';
+            
+            // 清除显示值
+            if (statNavX) statNavX.textContent = '--';
+            if (statNavY) statNavY.textContent = '--';
+            if (statSpeed) statSpeed.textContent = '--';
+            if (statDir) statDir.textContent = '--';
+            if (statHeight) statHeight.textContent = '--';
+            if (statSat) statSat.textContent = '--';
+            if (utcTimeEl) utcTimeEl.textContent = '--:--:--';
+            if (latDisplayEl) latDisplayEl.textContent = '--';
+            if (lonDisplayEl) lonDisplayEl.textContent = '--';
+            if (stateDisplayEl) stateDisplayEl.textContent = '--';
+            
+            CHANNEL_CONFIG.forEach(ch => {
+                const el = document.getElementById(`ch-val-${ch.key}`);
+                if (el) el.textContent = '--';
+            });
+        }
+
+        // ========================================
+        // 波形绘制
+        // ========================================
+        function startAnimation() {
+            const draw = () => {
+                drawWaveform();
+                animationId = requestAnimationFrame(draw);
+            };
+            draw();
+        }
+
+        function drawWaveform() {
+            if (!canvas || !ctx) return;
+            
+            const width = canvas.width / (window.devicePixelRatio || 1);
+            const height = canvas.height / (window.devicePixelRatio || 1);
+
+            // 清除画布
+            ctx.fillStyle = '#0a0f1a';
+            ctx.fillRect(0, 0, width, height);
+
+            // 绘制网格
+            drawGrid(width, height);
+
+            // 绘制每个选中的通道
+            const selectedArray = Array.from(selectedChannels);
+            
+            selectedArray.forEach(key => {
+                const data = chartData[key];
+                const ch = CHANNEL_CONFIG.find(c => c.key === key);
+                if (!ch || data.length < 2) return;
+
+                // 计算该通道的数值范围
+                const values = data.map(d => d.value);
+                let minVal = Math.min(...values);
+                let maxVal = Math.max(...values);
+                
+                // 防止范围过小
+                if (maxVal - minVal < 0.0000001) {
+                    minVal -= 1;
+                    maxVal += 1;
+                }
+                const range = maxVal - minVal;
+
+                // 绘制参数
+                const padding = 50;
+                const chartHeight = height - padding * 2;
+                const chartWidth = width - padding * 2;
+
+                // 绘制波形
+                ctx.strokeStyle = ch.color;
+                ctx.lineWidth = 1.5;
+                ctx.lineJoin = 'round';
+                ctx.lineCap = 'round';
+
+                ctx.beginPath();
+                data.forEach((point, i) => {
+                    const x = padding + (i / (data.length - 1)) * chartWidth * zoomLevel + panOffset;
+                    const y = padding + chartHeight - ((point.value - minVal) / range) * chartHeight;
+                    
+                    if (i === 0) {
+                        ctx.moveTo(x, y);
+                    } else {
+                        ctx.lineTo(x, y);
+                    }
+                });
+                ctx.stroke();
+
+                // 绘制发光效果
+                ctx.strokeStyle = ch.color;
+                ctx.lineWidth = 3;
+                ctx.globalAlpha = 0.2;
+                ctx.stroke();
+                ctx.globalAlpha = 1;
+
+                // 绘制Y轴刻度标签
+                ctx.fillStyle = ch.color;
+                ctx.font = '10px JetBrains Mono';
+                ctx.textAlign = 'right';
+                ctx.globalAlpha = 0.7;
+                
+                const ySteps = 4;
+                for (let i = 0; i <= ySteps; i++) {
+                    const val = minVal + (range / ySteps) * i;
+                    const y = padding + chartHeight - (i / ySteps) * chartHeight;
+                    ctx.fillText(formatValue(val, ch.decimals > 4 ? 4 : ch.decimals), padding - 5, y + 3);
+                }
+                ctx.globalAlpha = 1;
+            });
+
+            // 绘制坐标轴
+            drawAxisLabels(width, height);
+        }
+
+        function drawGrid(width, height) {
+            const padding = 50;
+            const chartWidth = width - padding * 2;
+            const chartHeight = height - padding * 2;
+
+            ctx.strokeStyle = '#1e2a3d';
+            ctx.lineWidth = 1;
+
+            // 垂直线
+            const vLines = 10;
+            for (let i = 0; i <= vLines; i++) {
+                const x = padding + (chartWidth / vLines) * i;
+                ctx.beginPath();
+                ctx.moveTo(x, padding);
+                ctx.lineTo(x, height - padding);
+                ctx.stroke();
+            }
+
+            // 水平线
+            const hLines = 6;
+            for (let i = 0; i <= hLines; i++) {
+                const y = padding + (chartHeight / hLines) * i;
+                ctx.beginPath();
+                ctx.moveTo(padding, y);
+                ctx.lineTo(width - padding, y);
+                ctx.stroke();
+            }
+        }
+
+        function drawAxisLabels(width, height) {
+            const padding = 50;
+            ctx.fillStyle = '#4a5a75';
+            ctx.font = '11px JetBrains Mono';
+            ctx.textAlign = 'center';
+
+            // X轴标签
+            const selectedArray = Array.from(selectedChannels);
+            if (selectedArray.length > 0) {
+                const data = chartData[selectedArray[0]];
+                if (data && data.length > 0) {
+                    ctx.fillText('0', padding, height - 20);
+                    ctx.fillText(data.length.toString(), width - padding, height - 20);
+                    ctx.fillText('数据点', width / 2, height - 8);
+                }
+            }
+        }
+
+        function updateTooltip(e) {
+            if (!canvas || !tooltip) return;
+            
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const padding = 50;
+            const chartWidth = rect.width - padding * 2;
+            
+            const selectedArray = Array.from(selectedChannels);
+            if (selectedArray.length === 0) {
+                tooltip.classList.remove('visible');
+                return;
+            }
+
+            // 计算数据索引
+            const dataLen = chartData[selectedArray[0]]?.length || 0;
+            if (dataLen === 0) return;
+            
+            const ratio = (x - padding) / (chartWidth * zoomLevel) - panOffset / chartWidth;
+            const index = Math.floor(ratio * dataLen);
+            
+            if (index < 0 || index >= dataLen) {
+                tooltip.classList.remove('visible');
+                return;
+            }
+
+            // 构建 tooltip 内容
+            let html = `<div style="margin-bottom:4px;color:#7a8ba8">索引: ${index}</div>`;
+            selectedArray.forEach(key => {
+                const ch = CHANNEL_CONFIG.find(c => c.key === key);
+                const point = chartData[key]?.[index];
+                if (ch && point) {
+                    html += `<div style="color:${ch.color}">${ch.name}: ${formatValue(point.value, ch.decimals)}</div>`;
+                }
+            });
+
+            if (html) {
+                tooltip.innerHTML = html;
+                tooltip.style.left = Math.min(x + 15, rect.width - 200) + 'px';
+                tooltip.style.top = (y - 10) + 'px';
+                tooltip.classList.add('visible');
+            }
+        }
+
+        // ========================================
+        // 工具函数
+        // ========================================
+        function showToast(type, message) {
+            if (!toastEl) return;
+            
+            toastEl.className = `toast ${type}`;
+            toastEl.textContent = message;
+            toastEl.classList.add('show');
+            
+            setTimeout(() => {
+                toastEl.classList.remove('show');
+            }, 3000);
         }
     </script>
 </body>
