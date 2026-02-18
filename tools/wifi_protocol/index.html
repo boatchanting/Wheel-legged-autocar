@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GNSS/惯导协议分析仪</title>
+    <!-- 引入 ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #1e1e2e;
+            --panel-color: #2b2b3b;
+            --text-primary: #e0e0e0;
+            --text-secondary: #a0a0a0;
+            --accent-color: #3b82f6;
+            --success-color: #10b981;
+            --warning-color: #f59e0b;
+            --danger-color: #ef4444;
+            --border-color: #3f3f5f;
+            --font-family: "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* 顶部导航栏 */
+        header {
+            height: 60px;
+            background-color: var(--panel-color);
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .brand {
+            font-size: 1.2rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: var(--text-secondary);
+            transition: background-color 0.3s ease;
+        }
+
+        .status-dot.active {
+            background-color: var(--success-color);
+            box-shadow: 0 0 8px var(--success-color);
+        }
+
+        /* 主内容区域 */
+        main {
+            flex: 1;
+            display: flex;
+            padding: 20px;
+            gap: 20px;
+            overflow: hidden;
+        }
+
+        /* 左侧控制面板 */
+        .sidebar {
+            width: 300px;
+            background-color: var(--panel-color);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            overflow-y: auto;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .control-group label {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+        }
+
+        select, button {
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            font-family: var(--font-family);
+            font-size: 0.9rem;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        select:focus, button:focus {
+            border-color: var(--accent-color);
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        button:hover {
+            background-color: var(--border-color);
+        }
+
+        button.primary {
+            background-color: var(--accent-color);
+            border-color: var(--accent-color);
+            color: white;
+        }
+
+        button.primary:hover {
+            background-color: #2563eb;
+        }
+
+        button.danger {
+            background-color: transparent;
+            border-color: var(--danger-color);
+            color: var(--danger-color);
+        }
+
+        button.danger:hover {
+            background-color: var(--danger-color);
+            color: white;
+        }
+
+        .data-display {
+            background-color: var(--bg-color);
+            padding: 15px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            text-align: center;
+        }
+
+        .data-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--accent-color);
+            margin-top: 5px;
+            font-family: 'Consolas', monospace;
+        }
+
+        .data-unit {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+        }
+
+        /* 右侧图表区域 */
+        .chart-container {
+            flex: 1;
+            background-color: var(--panel-color);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        #mainChart {
+            width: 100%;
+            height: 100%;
+            flex: 1;
+        }
+
+        /* 底部状态栏 */
+        footer {
+            height: 30px;
+            background-color: var(--panel-color);
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 20px;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        /* 加载遮罩 */
+        #loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(30, 30, 46, 0.8);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            backdrop-filter: blur(2px);
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid var(--border-color);
+            border-top: 4px solid var(--accent-color);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 响应式调整 */
+        @media (max-width: 768px) {
+            main {
+                flex-direction: column;
+            }
+            .sidebar {
+                width: 100%;
+                height: auto;
+                max-height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 加载遮罩 -->
+    <div id="loading">
+        <div class="spinner"></div>
+    </div>
+
+    <header>
+        <div class="brand">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2"/>
+            </svg>
+            逐飞 GNSS/惯导 协议分析仪
+        </div>
+        <div class="status-indicator">
+            <div class="status-dot" id="connectionDot"></div>
+            <span id="connectionText">等待连接...</span>
+        </div>
+    </header>
+
+    <main>
+        <!-- 侧边控制栏 -->
+        <aside class="sidebar">
+            <div class="control-group">
+                <label for="channelSelect">数据通道选择</label>
+                <select id="channelSelect">
+                    <!-- 选项将由 JS 动态生成 -->
+                </select>
+            </div>
+
+            <div class="data-display">
+                <div>当前数值</div>
+                <div class="data-value" id="currentValue">--</div>
+                <div class="data-unit" id="currentUnit">-</div>
+            </div>
+
+            <div class="control-group">
+                <label>数据操作</label>
+                <button class="primary" id="btnSave">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                        <polyline points="17 21 17 13 7 13 7 21"/>
+                        <polyline points="7 3 7 8 15 8"/>
+                    </svg>
+                    保存数据 (CSV)
+                </button>
+                <button class="danger" id="btnClear">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3 6 5 6 21 6"/>
+                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+                    </svg>
+                    清除数据
+                </button>
+            </div>
+
+            <div class="control-group" style="margin-top: auto;">
+                <label>统计信息</label>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                    总点数：<span id="totalPoints" style="color: var(--text-primary)">0</span>
+                </div>
+                <div style="font-size: 0.85rem; color: var(--text-secondary);">
+                    采样率：<span id="sampleRate" style="color: var(--text-primary)">0</span> Hz
+                </div>
+            </div>
+        </aside>
+
+        <!-- 图表区域 -->
+        <section class="chart-container">
+            <div id="mainChart"></div>
+        </section>
+    </main>
+
+    <footer>
+        <div>系统状态：正常运行</div>
+        <div id="clock">00:00:00</div>
+    </footer>
+
+    <script>
+        // -------------------------------------------------------------------------
+        // 配置与全局变量
+        // -------------------------------------------------------------------------
+        const CONFIG = {
+            maxPoints: 5000,      // 与后端保持一致
+            updateInterval: 500,  // 前端刷新间隔 (ms)
+            chartTheme: 'dark'
+        };
+
+        // 可选的数据通道 (根据 Python FIELD_NAMES 定义)
+        // 过滤掉了部分非波形类数据，可根据需要调整
+        const AVAILABLE_CHANNELS = [
+            { key: 'loop', label: 'Loop Count', unit: '' },
+            { key: 'nav_x', label: 'Nav X', unit: 'm' },
+            { key: 'nav_y', label: 'Nav Y', unit: 'm' },
+            { key: 'latitude', label: 'Latitude', unit: 'deg' },
+            { key: 'longitude', label: 'Longitude', unit: 'deg' },
+            { key: 'speed', label: 'Speed', unit: 'm/s' },
+            { key: 'direction', label: 'Direction', unit: 'deg' },
+            { key: 'height', label: 'Height', unit: 'm' },
+            { key: 'sat_used', label: 'Satellites Used', unit: 'count' },
+            { key: 'state', label: 'State', unit: '' },
+            { key: 'ant_state', label: 'Ant State', unit: '' }
+        ];
+
+        let chartInstance = null;
+        let dataBuffer = {
+            timestamps: [],
+            values: []
+        };
+        let allDataCount = 0;
+        let lastDataTime = 0;
+        let selectedChannel = 'speed'; // 默认通道
+        let isReceiving = false;
+        let receiveTimeout = null;
+
+        // -------------------------------------------------------------------------
+        // 初始化
+        // -------------------------------------------------------------------------
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            initControls();
+            startDataLoop();
+            startClock();
+            document.getElementById('loading').style.display = 'none';
+        });
+
+        // -------------------------------------------------------------------------
+        // 图表初始化
+        // -------------------------------------------------------------------------
+        function initChart() {
+            const chartDom = document.getElementById('mainChart');
+            chartInstance = echarts.init(chartDom, 'dark', { renderer: 'canvas' });
+            
+            const option = {
+                backgroundColor: 'transparent',
+                tooltip: {
+                    trigger: 'axis',
+                    backgroundColor: 'rgba(43, 43, 59, 0.9)',
+                    borderColor: '#3f3f5f',
+                    textStyle: { color: '#e0e0e0' }
+                },
+                grid: {
+                    left: '3%',
+                    right: '4%',
+                    bottom: '3%',
+                    top: '10%',
+                    containLabel: true
+                },
+                xAxis: {
+                    type: 'category',
+                    boundaryGap: false,
+                    data: [],
+                    axisLine: { lineStyle: { color: '#a0a0a0' } },
+                    axisLabel: { color: '#a0a0a0' },
+                    splitLine: { lineStyle: { color: '#3f3f5f', type: 'dashed' } }
+                },
+                yAxis: {
+                    type: 'value',
+                    scale: true, // 不从 0 开始，适应数据波动
+                    axisLine: { lineStyle: { color: '#a0a0a0' } },
+                    axisLabel: { color: '#a0a0a0' },
+                    splitLine: { lineStyle: { color: '#3f3f5f', type: 'dashed' } }
+                },
+                series: [{
+                    name: 'Data',
+                    type: 'line',
+                    smooth: true,
+                    showSymbol: false,
+                    data: [],
+                    lineStyle: {
+                        width: 2,
+                        color: '#3b82f6'
+                    },
+                    areaStyle: {
+                        opacity: 0.1,
+                        color: '#3b82f6'
+                    }
+                }]
+            };
+            
+            chartInstance.setOption(option);
+            
+            // 响应窗口大小变化
+            window.addEventListener('resize', () => {
+                chartInstance.resize();
+            });
+        }
+
+        // -------------------------------------------------------------------------
+        // 控件初始化
+        // -------------------------------------------------------------------------
+        function initControls() {
+            const select = document.getElementById('channelSelect');
+            AVAILABLE_CHANNELS.forEach(ch => {
+                const option = document.createElement('option');
+                option.value = ch.key;
+                option.text = ch.label;
+                if (ch.key === selectedChannel) option.selected = true;
+                select.appendChild(option);
+            });
+
+            select.addEventListener('change', (e) => {
+                selectedChannel = e.target.value;
+                updateChannelInfo();
+                // 切换通道时不清除历史数据，但图表会重新渲染新通道的数据逻辑
+                // 由于后端存储的是全量字典，前端需要重新处理 buffer 或清空重画
+                // 为简化实现，切换通道时清空图表缓冲区，等待新数据
+                dataBuffer.timestamps = [];
+                dataBuffer.values = [];
+                updateChart();
+            });
+
+            document.getElementById('btnSave').addEventListener('click', saveData);
+            document.getElementById('btnClear').addEventListener('click', clearData);
+            
+            updateChannelInfo();
+        }
+
+        function updateChannelInfo() {
+            const ch = AVAILABLE_CHANNELS.find(c => c.key === selectedChannel);
+            if (ch) {
+                document.getElementById('currentUnit').innerText = ch.unit;
+                const series = chartInstance.getOption().series[0];
+                series.name = ch.label;
+                chartInstance.setOption({ series: [{ name: ch.label }] });
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // 数据循环 (核心逻辑)
+        // -------------------------------------------------------------------------
+        function startDataLoop() {
+            setInterval(async () => {
+                try {
+                    // 调用 Python API
+                    // 注意：pywebview 环境下，api 对象全局可用
+                    if (window.pywebview && window.pywebview.api) {
+                        const newData = await window.pywebview.api.get_new_data();
+                        processNewData(newData);
+                    } else {
+                        // 调试模式模拟数据 (如果在浏览器直接打开)
+                        // console.warn("Running in debug mode without API");
+                    }
+                } catch (error) {
+                    console.error("Data fetch error:", error);
+                    setConnectionStatus(false);
+                }
+            }, CONFIG.updateInterval);
+        }
+
+        function processNewData(dataList) {
+            if (!dataList || dataList.length === 0) return;
+
+            setConnectionStatus(true);
+            allDataCount += dataList.length;
+            document.getElementById('totalPoints').innerText = allDataCount;
+
+            // 处理最新的一条数据用于显示数值
+            const latest = dataList[dataList.length - 1];
+            if (latest && latest.hasOwnProperty(selectedChannel)) {
+                const val = latest[selectedChannel];
+                document.getElementById('currentValue').innerText = typeof val === 'number' ? val.toFixed(4) : val;
+            }
+
+            // 更新图表数据
+            dataList.forEach(item => {
+                // 使用 time_str 作为 X 轴标签，或者生成相对时间
+                const timeLabel = item.time_str || new Date().toLocaleTimeString();
+                const value = item[selectedChannel];
+
+                // 确保值是数字
+                if (typeof value === 'number') {
+                    dataBuffer.timestamps.push(timeLabel);
+                    dataBuffer.values.push(value);
+                }
+            });
+
+            // 限制数据点数以防内存溢出
+            if (dataBuffer.timestamps.length > CONFIG.maxPoints) {
+                const removeCount = dataBuffer.timestamps.length - CONFIG.maxPoints;
+                dataBuffer.timestamps.splice(0, removeCount);
+                dataBuffer.values.splice(0, removeCount);
+            }
+
+            updateChart();
+        }
+
+        function updateChart() {
+            chartInstance.setOption({
+                xAxis: {
+                    data: dataBuffer.timestamps
+                },
+                series: [{
+                    data: dataBuffer.values
+                }]
+            });
+        }
+
+        // -------------------------------------------------------------------------
+        // 连接状态管理
+        // -------------------------------------------------------------------------
+        function setConnectionStatus(connected) {
+            const dot = document.getElementById('connectionDot');
+            const text = document.getElementById('connectionText');
+            
+            if (connected) {
+                isReceiving = true;
+                dot.classList.add('active');
+                text.innerText = "数据接收中";
+                text.style.color = "var(--success-color)";
+                
+                // 重置超时计时器
+                if (receiveTimeout) clearTimeout(receiveTimeout);
+                receiveTimeout = setTimeout(() => {
+                    setConnectionStatus(false);
+                }, 2000); // 2 秒无数据视为断开
+            } else {
+                isReceiving = false;
+                dot.classList.remove('active');
+                text.innerText = "等待数据...";
+                text.style.color = "var(--text-secondary)";
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // API 交互功能
+        // -------------------------------------------------------------------------
+        async function saveData() {
+            const btn = document.getElementById('btnSave');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = "保存中...";
+            btn.disabled = true;
+
+            try {
+                if (window.pywebview && window.pywebview.api) {
+                    const result = await window.pywebview.api.save_csv();
+                    if (result.success) {
+                        alert(`数据已保存至:\n${result.msg.split(': ')[1]}`);
+                    } else {
+                        alert(`保存失败：${result.msg}`);
+                    }
+                } else {
+                    alert("调试模式：模拟保存成功");
+                }
+            } catch (e) {
+                alert("保存出错：" + e.message);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function clearData() {
+            if (!confirm("确定要清除所有历史数据吗？此操作不可恢复。")) return;
+
+            try {
+                if (window.pywebview && window.pywebview.api) {
+                    await window.pywebview.api.clear_data();
+                }
+                // 清空前端缓冲
+                dataBuffer.timestamps = [];
+                dataBuffer.values = [];
+                allDataCount = 0;
+                document.getElementById('totalPoints').innerText = 0;
+                document.getElementById('currentValue').innerText = "--";
+                updateChart();
+            } catch (e) {
+                console.error("Clear error:", e);
+            }
+        }
+
+        // -------------------------------------------------------------------------
+        // 工具功能
+        // -------------------------------------------------------------------------
+        function startClock() {
+            const clockEl = document.getElementById('clock');
+            setInterval(() => {
+                const now = new Date();
+                clockEl.innerText = now.toLocaleTimeString('zh-CN', { hour12: false });
+            }, 1000);
+        }
+    </script>
+</body>
+</html>
