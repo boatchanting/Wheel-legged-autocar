@@ -478,6 +478,8 @@ vision_detected_marker = 0;//雷区调用,测试用
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
                 #if WIFI_USE
+                wifi_protocol_send_data();//自定义wifi协议
+
                 // 逐飞助手示波器发送代码        
                 // 1. 填充速度数据 (通道 0-1)
                 //seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.yaw;
@@ -506,38 +508,32 @@ vision_detected_marker = 0;//雷区调用,测试用
                     
 
                     // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
-                    seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
+                    //seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
 
                     // 通道1,2：gnss纬度，【注意】这个是double型数据，示波器传的是float型数据
-                    encode_double_to_two_floats(gnss.latitude,
-                        &seekfree_assistant_oscilloscope_data.data[1], // 纬度高32位 → 通道1
-                        &seekfree_assistant_oscilloscope_data.data[2]); // 纬度低32位 → 通道2
 
                     // 通道3,4：gnss经度
-                    encode_double_to_two_floats(gnss.longitude,
-                        &seekfree_assistant_oscilloscope_data.data[3], // 经度高32位 → 通道3
-                        &seekfree_assistant_oscilloscope_data.data[4]); // 经度低32位 → 通道4
 
                     // 通道3：gnss方向+使用卫星数*10000
                     //seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
 
                     // 通道5：nav x
-                    seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.x;
+                    //seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.x;
 
                     //通道6：nav y
-                    seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.y;
+                    //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.y;
 
                     //通道6：nav relative_yaw
                     //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
 
                     //通道7：系统毫秒时间戳
-                    seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
+                    //seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
 
                     // 4. 设置本次发送的通道数量 (一共8个数据)
-                    seekfree_assistant_oscilloscope_data.channel_num = 8;
+                    //seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
                     // 5. 调用发送函数
-                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                    //seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
                 // 用于上位机向小车发送pid信息
                 //wifi_update_pid_params(); 
