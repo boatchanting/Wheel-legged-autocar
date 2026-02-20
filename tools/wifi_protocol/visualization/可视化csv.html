@@ -1,0 +1,566 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GNSS 与惯性导航数据可视化系统</title>
+    <!-- 引入 Leaflet 地图库样式 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* 全局样式设置 - 正式风格 */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+            font-size: 14px;
+            color: #333;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+
+        /* 布局容器 */
+        #container {
+            display: flex;
+            height: 100%;
+            width: 100%;
+        }
+
+        /* 侧边控制栏 */
+        #sidebar {
+            width: 320px;
+            background-color: #ffffff;
+            border-right: 1px solid #cccccc;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        /* 地图容器 */
+        #map {
+            flex-grow: 1;
+            height: 100%;
+            background-color: #e5e5e5;
+        }
+
+        /* 标题样式 */
+        h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            color: #34495e;
+        }
+
+        /* 表单元素样式 */
+        .control-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        input[type="number"], input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #cccccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+
+        input[type="range"] {
+            width: 100%;
+        }
+
+        /* 拖拽上传区域 */
+        #drop-zone {
+            border: 2px dashed #cccccc;
+            border-radius: 4px;
+            padding: 30px 20px;
+            text-align: center;
+            color: #7f8c8d;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-bottom: 20px;
+            background-color: #fafafa;
+        }
+
+        #drop-zone.drag-over {
+            border-color: #3498db;
+            background-color: #ebf5fb;
+            color: #2980b9;
+        }
+
+        #drop-zone p {
+            margin: 0;
+            font-size: 13px;
+        }
+
+        /* 信息面板 */
+        #info-panel {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .data-stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .legend {
+            margin-top: 15px;
+            font-size: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 3px;
+            margin-right: 10px;
+        }
+
+        /* 按钮样式 */
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+        }
+
+        button:hover {
+            background-color: #34495e;
+        }
+
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        /* 加载提示 */
+        #loading {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+            color: #e67e22;
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <!-- 侧边控制栏 -->
+    <div id="sidebar">
+        <h1>导航数据可视化系统</h1>
+
+        <!-- 文件上传区域 -->
+        <div class="control-group">
+            <label for="file-input">数据文件导入</label>
+            <div id="drop-zone">
+                <p>拖拽 CSV 文件至此</p>
+                <p>或点击选择文件</p>
+                <input type="file" id="file-input" accept=".csv,.txt" style="display: none;">
+            </div>
+            <div id="loading">正在解析数据...</div>
+        </div>
+
+        <!-- 惯性导航修正控制 -->
+        <div class="control-group">
+            <h2>惯性导航修正参数</h2>
+            <label for="angle-input">偏角修正 (度): <span id="angle-value">0</span>°</label>
+            <input type="range" id="angle-range" min="-180" max="180" step="0.1" value="0">
+            <input type="number" id="angle-input" value="0" step="0.1" style="margin-top: 5px;">
+            
+            <label for="scale-input" style="margin-top: 10px;">INS 数据单位系数:</label>
+            <input type="number" id="scale-input" value="0.001" step="0.001" title="默认 0.001 (mm 转 m), 若数据单位为米则设为 1">
+            <p style="font-size: 11px; color: #7f8c8d; margin-top: 5px;">
+                注：根据规范 INS 单位为 mm，若 CSV 数据已转换为米，请改为 1。
+            </p>
+        </div>
+
+        <!-- 数据统计 -->
+        <div id="info-panel">
+            <h2>数据概览</h2>
+            <div class="data-stat">
+                <span>GNSS 点数:</span>
+                <span id="stat-gnss">0</span>
+            </div>
+            <div class="data-stat">
+                <span>INS 点数:</span>
+                <span id="stat-ins">0</span>
+            </div>
+            <div class="data-stat">
+                <span>起始纬度:</span>
+                <span id="stat-start-lat">-</span>
+            </div>
+            <div class="data-stat">
+                <span>起始经度:</span>
+                <span id="stat-start-lon">-</span>
+            </div>
+        </div>
+
+        <!-- 图例 -->
+        <div class="legend">
+            <h2>图例</h2>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #3388ff;"></div>
+                <span>GNSS 轨迹</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #ff3333;"></div>
+                <span>惯性导航轨迹 (修正后)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #28a745;"></div>
+                <span>起始点</span>
+            </div>
+        </div>
+        
+        <button id="reset-view-btn" style="margin-top: 20px;" disabled>重置视图</button>
+    </div>
+
+    <!-- 地图容器 -->
+    <div id="map"></div>
+</div>
+
+<!-- 引入 Leaflet 地图库脚本 -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    /**
+     * 全局变量与配置
+     */
+    let map;
+    let gnssLayer;
+    let insLayer;
+    let startMarker;
+    let rawData = [];
+    const EARTH_RADIUS = 6378137; // 地球半径 (米)
+
+    /**
+     * 初始化地图
+     */
+    function initMap() {
+        // 创建地图实例，设置最大缩放级别以支持 1m 级别查看
+        map = L.map('map', {
+            center: [33.47739417, 117.8962123], // 默认中心 (示例数据中心)
+            zoom: 19,
+            minZoom: 1,
+            maxZoom: 23, // 支持更高缩放级别
+            zoomControl: true
+        });
+
+        // 添加 OpenStreetMap 图层
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 23
+        }).addTo(map);
+
+        // 初始化图层组
+        gnssLayer = L.layerGroup().addTo(map);
+        insLayer = L.layerGroup().addTo(map);
+    }
+
+    /**
+     * 文件读取与拖拽处理
+     */
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const loadingDiv = document.getElementById('loading');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            handleFile(e.target.files[0]);
+        }
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files.length > 0) {
+            handleFile(e.dataTransfer.files[0]);
+        }
+    });
+
+    function handleFile(file) {
+        loadingDiv.style.display = 'block';
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const text = e.target.result;
+                parseData(text);
+            } catch (error) {
+                alert('文件解析失败：' + error.message);
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        };
+        reader.readAsText(file);
+    }
+
+    /**
+     * 数据解析逻辑
+     */
+    function parseData(text) {
+        const lines = text.trim().split(/\r?\n/);
+        if (lines.length < 2) throw new Error("数据文件内容为空或格式错误");
+
+        // 检测分隔符 (逗号或 Tab)
+        const headerLine = lines[0];
+        const delimiter = headerLine.includes('\t') ? '\t' : ',';
+        
+        const headers = headerLine.split(delimiter).map(h => h.trim());
+        
+        // 映射关键列索引
+        const colIndex = {
+            nav_x: headers.indexOf('nav_x'),
+            nav_y: headers.indexOf('nav_y'),
+            latitude: headers.indexOf('latitude'),
+            longitude: headers.indexOf('longitude'),
+            direction: headers.indexOf('direction'),
+            ant_direction: headers.indexOf('ant_direction'),
+            ant_state: headers.indexOf('ant_state'),
+            state: headers.indexOf('state')
+        };
+
+        // 验证必要列是否存在
+        if (colIndex.latitude === -1 || colIndex.longitude === -1) {
+            throw new Error("CSV 文件中缺少 latitude 或 longitude 列");
+        }
+
+        rawData = [];
+        for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].split(delimiter);
+            if (cols.length < headers.length) continue;
+
+            const state = parseInt(cols[colIndex.state]);
+            // 仅处理导航状态有效的数据 (state == 1)
+            if (state !== 1) continue;
+
+            const lat = parseFloat(cols[colIndex.latitude]);
+            const lon = parseFloat(cols[colIndex.longitude]);
+            
+            if (isNaN(lat) || isNaN(lon)) continue;
+
+            const nav_x = parseFloat(cols[colIndex.nav_x]) || 0;
+            const nav_y = parseFloat(cols[colIndex.nav_y]) || 0;
+            
+            // 优先使用天线航向 (若有效)，否则使用地面航向
+            let heading = 0;
+            const antState = parseInt(cols[colIndex.ant_state]);
+            if (colIndex.ant_direction !== -1 && antState === 1) {
+                heading = parseFloat(cols[colIndex.ant_direction]);
+            } else if (colIndex.direction !== -1) {
+                heading = parseFloat(cols[colIndex.direction]);
+            }
+
+            rawData.push({
+                lat,
+                lon,
+                nav_x,
+                nav_y,
+                heading
+            });
+        }
+
+        if (rawData.length === 0) {
+            throw new Error("未找到有效的导航数据行 (state=1)");
+        }
+
+        // 更新 UI 统计
+        document.getElementById('stat-gnss').textContent = rawData.length;
+        document.getElementById('stat-ins').textContent = rawData.length;
+        document.getElementById('stat-start-lat').textContent = rawData[0].lat.toFixed(6);
+        document.getElementById('stat-start-lon').textContent = rawData[0].lon.toFixed(6);
+        document.getElementById('reset-view-btn').disabled = false;
+
+        // 渲染数据
+        updateVisualization();
+        
+        // 自适应视图
+        const bounds = L.latLngBounds(rawData.map(p => [p.lat, p.lon]));
+        map.fitBounds(bounds, { padding: [50, 50] });
+    }
+
+    /**
+     * 坐标转换与可视化更新
+     */
+    function updateVisualization() {
+        if (rawData.length === 0) return;
+
+        // 获取修正参数
+        const correctionAngle = parseFloat(document.getElementById('angle-input').value);
+        const unitScale = parseFloat(document.getElementById('scale-input').value);
+
+        // 清除旧图层
+        gnssLayer.clearLayers();
+        insLayer.clearLayers();
+        if (startMarker) map.removeLayer(startMarker);
+
+        // 1. 绘制 GNSS 轨迹
+        const gnssPoints = rawData.map(p => [p.lat, p.lon]);
+        const gnssPolyline = L.polyline(gnssPoints, { color: '#3388ff', weight: 3, opacity: 0.8 });
+        gnssLayer.addLayer(gnssPolyline);
+
+        // 2. 计算并绘制 INS 轨迹
+        // 基准点：第一条数据的 GNSS 位置
+        const startLat = rawData[0].lat;
+        const startLon = rawData[0].lon;
+        
+        // 基准航向：第一条数据的航向 + 修正角
+        const baseHeading = rawData[0].heading + correctionAngle;
+        const baseHeadingRad = baseHeading * Math.PI / 180;
+
+        const insPoints = [];
+        
+        // 添加起始点标记
+        startMarker = L.marker([startLat, startLon], {
+            icon: L.divIcon({
+                className: 'custom-div-icon',
+                html: "<div style='background-color:#28a745; width:12px; height:12px; border-radius:50%; border:2px solid white;'></div>",
+                iconSize: [16, 16],
+                iconAnchor: [8, 8]
+            })
+        }).addTo(map);
+
+        // 遍历计算 INS 坐标
+        // 注意：INS 数据通常是相对位移。这里假设 nav_x/nav_y 是相对于启动点的累积位移。
+        // 如果 nav_x/nav_y 是绝对坐标但单位是 mm，则需减去起始值。
+        // 根据需求“默认惯性导航起始点与导航起始点重合”，我们计算相对偏移。
+        const startX_ins = rawData[0].nav_x;
+        const startY_ins = rawData[0].nav_y;
+
+        for (let i = 0; i < rawData.length; i++) {
+            const p = rawData[i];
+            
+            // 计算相对位移 (单位：米)
+            const dx_mm = p.nav_x - startX_ins;
+            const dy_mm = p.nav_y - startY_ins;
+            const dx_m = dx_mm * unitScale;
+            const dy_m = dy_mm * unitScale;
+
+            // 坐标变换逻辑
+            // 惯性导航定义：X+ 向后，Y+ 向右
+            // 地图定义：North (Up), East (Right)
+            // 车辆航向 theta (从北顺时针)
+            // 车辆向后向量 (X+): (-sin(theta), -cos(theta)) 在 (East, North) 系
+            // 车辆向右向量 (Y+): (cos(theta), -sin(theta)) 在 (East, North) 系
+            
+            // 使用基准航向 + 修正角作为整个轨迹的参考方向，或者每点使用各自航向？
+            // 需求：“设置修正惯性导航偏角”。通常意味着 INS 坐标系相对于地图坐标系有一个固定的旋转偏差。
+            // 这里我们使用起始点的航向 + 修正角 作为整个 INS 轨迹的旋转基准，或者使用每点的航向。
+            // 为了可视化“轨迹形状”并与 GNSS 对比，通常 INS 是推算的，应该使用累积航向。
+            // 但简化处理：为了对齐起始段，我们使用每点的航向 + 修正角 来计算该点的局部偏移方向，
+            // 或者更常见的：INS 轨迹是相对起点的位移，旋转一个固定角度。
+            // 鉴于需求是“修正偏角”，我们假设 INS 内部坐标系相对于真北有一个固定偏差。
+            // 因此，我们将 INS 的局部位移 (dx, dy) 旋转 (baseHeading + correction) 角度映射到地图。
+            // 但更精确的做法是：INS 数据本身包含航向变化。如果 nav_x/y 是纯里程计推算，它们已经包含了转向。
+            // 如果 nav_x/y 只是车身坐标系下的位置，我们需要积分航向。
+            // 鉴于数据包含 direction，我们假设 nav_x/y 是车身坐标系下的累积位置。
+            // 为了简单且符合“修正偏角”的直观理解：我们将 INS 轨迹视为一个刚体，基于起始航向进行旋转对齐。
+            // 修正方案：使用每点的航向计算该点的局部坐标变换可能更准确，但“偏角修正”通常指固定偏差。
+            // 这里采用：以起始点 GNSS 为原点，INS 位移向量旋转 (起始航向 + 修正角) 映射到地图。
+            // 这样能看出 INS 的漂移形状。
+            
+            // 为了更佳的可视化匹配，我们使用每点的航向信息来旋转局部增量，但这里简化为整体旋转。
+            // 采用策略：将 INS 局部坐标 (dx, dy) 视为在车辆初始朝向下的位移，然后整体旋转。
+            // 或者：假设 nav_x/y 已经是北东坐标系下的误差？不，说明是车身坐标系。
+            // 最佳实践：使用起始航向 + 修正角 作为 INS 坐标系的“北”方向。
+            
+            const theta = baseHeadingRad; 
+
+            // 变换公式推导：
+            // Offset_North = dx * (-cos(theta)) + dy * (-sin(theta))
+            // Offset_East  = dx * (-sin(theta)) + dy * (cos(theta))
+            // 注意：dx 是向后 (X+)，dy 是向右 (Y+)
+            // 北方向向量 (0, 1)。向后是 (0, -1)。旋转 theta: (-sin(theta), -cos(theta)) -> (East, North)
+            // 东方向向量 (1, 0)。向右是 (1, 0)。旋转 theta: (cos(theta), -sin(theta)) -> (East, North)
+            
+            const offsetNorth = dx_m * (-Math.cos(theta)) + dy_m * (-Math.sin(theta));
+            const offsetEast = dx_m * (-Math.sin(theta)) + dy_m * (Math.cos(theta));
+
+            // 经纬度转换 (近似公式，适用于短距离)
+            const latOffset = offsetNorth / 111320; 
+            const lonOffset = offsetEast / (111320 * Math.cos(startLat * Math.PI / 180));
+
+            const insLat = startLat + latOffset;
+            const insLon = startLon + lonOffset;
+
+            insPoints.push([insLat, insLon]);
+        }
+
+        const insPolyline = L.polyline(insPoints, { color: '#ff3333', weight: 3, opacity: 0.8, dashArray: '5, 5' });
+        insLayer.addLayer(insPolyline);
+    }
+
+    /**
+     * 事件监听：修正参数变化
+     */
+    const angleInput = document.getElementById('angle-input');
+    const angleRange = document.getElementById('angle-range');
+    const scaleInput = document.getElementById('scale-input');
+
+    function syncAngleInputs(source, target) {
+        target.value = source.value;
+        document.getElementById('angle-value').textContent = source.value;
+        updateVisualization();
+    }
+
+    angleInput.addEventListener('input', (e) => syncAngleInputs(e.target, angleRange));
+    angleRange.addEventListener('input', (e) => syncAngleInputs(e.target, angleInput));
+    scaleInput.addEventListener('change', updateVisualization);
+
+    document.getElementById('reset-view-btn').addEventListener('click', () => {
+        if (rawData.length > 0) {
+            const bounds = L.latLngBounds(rawData.map(p => [p.lat, p.lon]));
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+    });
+
+    // 初始化
+    initMap();
+
+</script>
+</body>
+</html>
