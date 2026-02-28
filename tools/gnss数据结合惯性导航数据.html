@@ -1,0 +1,1469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS/INS导航数据可视化分析系统</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #060a10;
+            --bg-panel: #0c1018;
+            --bg-card: #111820;
+            --border: #1e2a38;
+            --text: #e4eaf0;
+            --text-muted: #6a7a8c;
+            --accent: #00d4aa;
+            --accent-glow: rgba(0, 212, 170, 0.3);
+            --gps-raw: #ff6b6b;
+            --gps-corrected: #4ecdc4;
+            --ins: #ffa94d;
+            --warning: #ff922b;
+            --grid: #152030;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* 背景网格 */
+        .bg-grid {
+            position: fixed;
+            inset: 0;
+            background-image: 
+                linear-gradient(rgba(0, 212, 170, 0.03) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(0, 212, 170, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* 拖放区域 */
+        .drop-zone {
+            border: 2px dashed var(--border);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .drop-zone::before {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: radial-gradient(circle at center, var(--accent-glow), transparent 70%);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .drop-zone.dragover {
+            border-color: var(--accent);
+            background: rgba(0, 212, 170, 0.05);
+        }
+
+        .drop-zone.dragover::before {
+            opacity: 1;
+        }
+
+        /* 画布容器 */
+        .canvas-container {
+            position: relative;
+            background: var(--bg-panel);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        .canvas-container canvas {
+            display: block;
+            cursor: grab;
+        }
+
+        .canvas-container canvas:active {
+            cursor: grabbing;
+        }
+
+        /* 坐标显示 */
+        .coord-display {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            background: rgba(12, 16, 24, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        /* 图例 */
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+        }
+
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        /* 滑块样式 */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            background: var(--border);
+            height: 6px;
+            border-radius: 3px;
+            outline: none;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: var(--accent);
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        /* 统计卡片 */
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            transition: all 0.3s ease;
+        }
+
+        .stat-card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        /* 按钮 */
+        .btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-weight: 500;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border: none;
+            outline: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: var(--bg);
+        }
+
+        .btn-primary:hover {
+            background: #00eabb;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px var(--accent-glow);
+        }
+
+        .btn-secondary {
+            background: var(--bg-card);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+
+        .btn-secondary:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* 动画 */
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .pulse {
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .slide-in {
+            animation: slideIn 0.5s ease forwards;
+        }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-panel);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
+        }
+
+        /* 信息提示 */
+        .tooltip {
+            position: relative;
+        }
+
+        .tooltip::after {
+            content: attr(data-tip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.2s ease;
+        }
+
+        .tooltip:hover::after {
+            opacity: 1;
+        }
+
+        /* 复选框 */
+        .checkbox-wrapper {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+        }
+
+        .checkbox-wrapper input {
+            width: 18px;
+            height: 18px;
+            accent-color: var(--accent);
+        }
+
+        /* 缩放控制 */
+        .zoom-controls {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .zoom-btn {
+            width: 36px;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(12, 16, 24, 0.95);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            color: var(--text);
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .zoom-btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        /* 数据表格 */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .data-table th {
+            background: var(--bg-card);
+            font-weight: 600;
+            color: var(--text-muted);
+            position: sticky;
+            top: 0;
+        }
+
+        .data-table tr:hover {
+            background: rgba(0, 212, 170, 0.05);
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-grid"></div>
+
+    <div class="relative z-10 min-h-screen p-4 lg:p-6">
+        <!-- 头部 -->
+        <header class="mb-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl lg:text-3xl font-bold tracking-tight">GPS/INS导航数据可视化分析</h1>
+                    <p class="text-sm text-[var(--text-muted)] mt-1">高斯-克吕格投影 | 厘米级精度 | 惯导融合修正</p>
+                </div>
+                <div id="fileInfo" class="hidden">
+                    <div class="stat-card">
+                        <div class="text-xs text-[var(--text-muted)]">已加载</div>
+                        <div id="fileName" class="mono text-sm text-[var(--accent)]">-</div>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="flex flex-col xl:flex-row gap-6">
+            <!-- 左侧控制面板 -->
+            <aside class="w-full xl:w-80 flex-shrink-0 space-y-4">
+                <!-- 文件上传 -->
+                <div class="bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl p-4">
+                    <h3 class="font-semibold mb-3 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                        </svg>
+                        数据导入
+                    </h3>
+                    <div id="dropZone" class="drop-zone rounded-lg p-8 text-center">
+                        <svg class="w-12 h-12 mx-auto mb-3 text-[var(--text-muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                        </svg>
+                        <p class="text-sm text-[var(--text-muted)]">拖放CSV文件到此处</p>
+                        <p class="text-xs text-[var(--text-muted)] mt-1">或点击选择文件</p>
+                        <input type="file" id="fileInput" accept=".csv" class="hidden">
+                    </div>
+                    <button id="loadDemo" class="btn btn-secondary w-full mt-3">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/>
+                        </svg>
+                        加载示例数据
+                    </button>
+                </div>
+
+                <!-- 显示控制 -->
+                <div class="bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl p-4">
+                    <h3 class="font-semibold mb-3 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/>
+                        </svg>
+                        显示控制
+                    </h3>
+                    <div class="space-y-3">
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="showRawGPS" checked>
+                            <span class="legend-dot" style="background: var(--gps-raw)"></span>
+                            <span>原始GPS轨迹</span>
+                        </label>
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="showCorrectedGPS" checked>
+                            <span class="legend-dot" style="background: var(--gps-corrected)"></span>
+                            <span>修正后GPS轨迹</span>
+                        </label>
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="showINS" checked>
+                            <span class="legend-dot" style="background: var(--ins)"></span>
+                            <span>惯性导航轨迹</span>
+                        </label>
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="showDriftPoints" checked>
+                            <span class="legend-dot" style="background: var(--warning)"></span>
+                            <span>漂移异常点</span>
+                        </label>
+                        <label class="checkbox-wrapper">
+                            <input type="checkbox" id="showGrid" checked>
+                            <span>坐标网格</span>
+                        </label>
+                    </div>
+                </div>
+
+                <!-- 修正参数 -->
+                <div class="bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl p-4">
+                    <h3 class="font-semibold mb-3 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/>
+                        </svg>
+                        修正参数
+                    </h3>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="text-xs text-[var(--text-muted)] block mb-2">
+                                静止判定阈值: <span id="thresholdValue" class="mono text-[var(--accent)]">50</span>
+                            </label>
+                            <input type="range" id="driftThreshold" min="10" max="200" value="50" class="w-full">
+                            <p class="text-xs text-[var(--text-muted)] mt-1">惯性导航移动距离</p>
+                        </div>
+                        <div>
+                            <label class="text-xs text-[var(--text-muted)] block mb-2">
+                                GPS漂移阈值: <span id="gpsDriftValue" class="mono text-[var(--accent)]">10</span>
+                            </label>
+                            <input type="range" id="gpsDriftThreshold" min="1" max="50" value="10" class="w-full">
+                            <p class="text-xs text-[var(--text-muted)] mt-1">GPS移动距离</p>
+                        </div>
+                        <div>
+                            <label class="text-xs text-[var(--text-muted)] block mb-2">
+                                平滑窗口: <span id="smoothValue" class="mono text-[var(--accent)]">5</span>
+                            </label>
+                            <input type="range" id="smoothWindow" min="1" max="20" value="5" class="w-full">
+                        </div>
+                    </div>
+                    <button id="applyCorrection" class="btn btn-primary w-full mt-4">
+                        应用修正算法
+                    </button>
+                </div>
+
+                <!-- 统计信息 -->
+                <div class="bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl p-4" id="statsPanel">
+                    <h3 class="font-semibold mb-3 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                        </svg>
+                        数据统计
+                    </h3>
+                    <div class="grid grid-cols-2 gap-3" id="statsGrid">
+                        <div class="stat-card">
+                            <div class="text-xs text-[var(--text-muted)]">数据点数</div>
+                            <div id="statPoints" class="mono text-lg font-bold">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="text-xs text-[var(--text-muted)]">漂移点数</div>
+                            <div id="statDrift" class="mono text-lg font-bold text-[var(--warning)]">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="text-xs text-[var(--text-muted)]">原始GPS漂移</div>
+                            <div id="statRawDrift" class="mono text-lg font-bold text-[var(--gps-raw)]">-</div>
+                        </div>
+                        <div class="stat-card">
+                            <div class="text-xs text-[var(--text-muted)]">修正后漂移</div>
+                            <div id="statCorrDrift" class="mono text-lg font-bold text-[var(--gps-corrected)]">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 算法说明 -->
+                <div class="bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl p-4">
+                    <h3 class="font-semibold mb-3 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        修正原理
+                    </h3>
+                    <div class="text-xs text-[var(--text-muted)] space-y-2">
+                        <p><strong class="text-[var(--text)]">静止检测：</strong>当INS位移小于阈值时，判定为静止状态。</p>
+                        <p><strong class="text-[var(--text)]">漂移识别：</strong>静止状态下，若GPS位移超过阈值，判定为GPS漂移。</p>
+                        <p><strong class="text-[var(--text)]">位置修正：</strong>漂移点使用前一个有效GPS位置进行修正。</p>
+                        <p><strong class="text-[var(--text)]">平滑滤波：</strong>对修正后的轨迹进行滑动窗口平滑处理。</p>
+                    </div>
+                </div>
+            </aside>
+
+            <!-- 主可视化区域 -->
+            <main class="flex-1 space-y-4">
+                <!-- 画布 -->
+                <div class="canvas-container" id="canvasContainer">
+                    <canvas id="mainCanvas"></canvas>
+                    <div class="coord-display mono" id="coordDisplay">
+                        <div class="text-xs text-[var(--text-muted)] mb-1">鼠标位置</div>
+                        <div id="mouseCoords">X: - Y: -</div>
+                        <div id="mouseLatLon" class="text-xs text-[var(--accent)] mt-1"></div>
+                    </div>
+                    <div class="zoom-controls">
+                        <button class="zoom-btn" id="zoomIn" title="放大">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                            </svg>
+                        </button>
+                        <button class="zoom-btn" id="zoomOut" title="缩小">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 12H4"/>
+                            </svg>
+                        </button>
+                        <button class="zoom-btn" id="zoomFit" title="适应视图">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <!-- 比例尺 -->
+                    <div class="absolute top-4 left-4 bg-[rgba(12,16,24,0.95)] backdrop-blur-sm border border-[var(--border)] rounded-lg px-3 py-2">
+                        <div class="flex items-center gap-2">
+                            <div id="scaleBar" class="h-1 bg-[var(--accent)]" style="width: 100px;"></div>
+                            <span id="scaleText" class="mono text-xs">100m</span>
+                        </div>
+                    </div>
+                    <!-- 图例 -->
+                    <div class="absolute top-4 right-4 bg-[rgba(12,16,24,0.95)] backdrop-blur-sm border border-[var(--border)] rounded-lg px-4 py-3">
+                        <div class="space-y-2 text-xs">
+                            <div class="legend-item">
+                                <span class="legend-dot" style="background: var(--gps-raw)"></span>
+                                <span>原始GPS</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-dot" style="background: var(--gps-corrected)"></span>
+                                <span>修正GPS</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-dot" style="background: var(--ins)"></span>
+                                <span>惯性导航</span>
+                            </div>
+                            <div class="legend-item">
+                                <span class="legend-dot" style="background: var(--warning)"></span>
+                                <span>漂移异常</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 详细数据表格 -->
+                <div class="bg-[var(--bg-panel)] border border-[var(--border)] rounded-xl overflow-hidden">
+                    <div class="p-4 border-b border-[var(--border)] flex items-center justify-between">
+                        <h3 class="font-semibold flex items-center gap-2">
+                            <svg class="w-5 h-5 text-[var(--accent)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+                            </svg>
+                            数据详情
+                        </h3>
+                        <span id="tableInfo" class="text-xs text-[var(--text-muted)]">共 0 条记录</span>
+                    </div>
+                    <div class="max-h-64 overflow-auto">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>序号</th>
+                                    <th>时间</th>
+                                    <th>纬度</th>
+                                    <th>经度</th>
+                                    <th>INS_X(mm)</th>
+                                    <th>INS_Y(mm)</th>
+                                    <th>速度</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody id="dataTableBody">
+                                <tr>
+                                    <td colspan="8" class="text-center text-[var(--text-muted)] py-8">暂无数据，请上传CSV文件</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <script>
+        // ==================== 全局变量初始化 ====================
+        let rawData = [];
+        let processedData = [];
+        let correctedData = [];
+        
+        // 视图状态
+        const viewState = {
+            offsetX: 0,
+            offsetY: 0,
+            scale: 1,
+            minScale: 0.001,
+            maxScale: 1000,
+            isDragging: false,
+            lastMouseX: 0,
+            lastMouseY: 0
+        };
+
+        // 投影中心
+        let projectionCenter = { lat: 0, lon: 0 };
+        let dataBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0 };
+
+        // DOM元素
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvasContainer');
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+
+        // ==================== 高斯-克吕格投影 ====================
+        const GaussKruger = {
+            // WGS84椭球参数
+            a: 6378137.0,
+            f: 1 / 298.257223563,
+
+            get e2() { return 2 * this.f - this.f * this.f; },
+            get e12() { return this.e2 / (1 - this.e2); },
+
+            // 计算中央子午线（3度带）
+            getCentralMeridian(lon) {
+                const zone = Math.floor((lon + 1.5) / 3);
+                return zone * 3;
+            },
+
+            // 经纬度转高斯坐标
+            project(lat, lon, centralMeridian) {
+                if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+                    return { x: 0, y: 0 };
+                }
+
+                const B = lat * Math.PI / 180;
+                const L = lon * Math.PI / 180;
+                const L0 = centralMeridian * Math.PI / 180;
+                const l = L - L0;
+
+                const N = this.a / Math.sqrt(1 - this.e2 * Math.sin(B) * Math.sin(B));
+                const t = Math.tan(B);
+                const eta2 = this.e12 * Math.cos(B) * Math.cos(B);
+
+                // 子午线弧长系数
+                const A0 = this.a * (1 - this.e2 / 4 - 3 * this.e2 * this.e2 / 64 - 5 * this.e2 * this.e2 * this.e2 / 256);
+                const A2 = this.a * (3 * this.e2 / 8 + 3 * this.e2 * this.e2 / 32 + 45 * this.e2 * this.e2 * this.e2 / 1024) / 2;
+                const A4 = this.a * (15 * this.e2 * this.e2 / 256 + 45 * this.e2 * this.e2 * this.e2 / 1024) / 4;
+                const A6 = this.a * (35 * this.e2 * this.e2 * this.e2 / 3072) / 6;
+
+                // 子午线弧长
+                const X = A0 * B - A2 * Math.sin(2 * B) + A4 * Math.sin(4 * B) - A6 * Math.sin(6 * B);
+
+                // 投影坐标（相对坐标，以中心点为原点）
+                const x = X + N * t * l * l / 2 + N * t * (5 - t * t + 9 * eta2 + 4 * eta2 * eta2) * Math.pow(l, 4) / 24
+                    + N * t * (61 - 58 * t * t + t * t * t * t + 270 * eta2 - 330 * t * t * eta2) * Math.pow(l, 6) / 720;
+                const y = N * l + N * (1 - t * t + eta2) * Math.pow(l, 3) / 6
+                    + N * (5 - 18 * t * t + t * t * t * t + 14 * eta2 - 58 * t * t * eta2) * Math.pow(l, 5) / 120;
+
+                return { x, y };
+            },
+
+            // 批量投影转换
+            projectBatch(points, centerLat, centerLon) {
+                const cm = this.getCentralMeridian(centerLon);
+                const center = this.project(centerLat, centerLon, cm);
+
+                return points.map(p => {
+                    const projected = this.project(p.lat, p.lon, cm);
+                    return {
+                        x: projected.x - center.x,
+                        y: -(projected.y - center.y), // Y轴翻转
+                        original: p
+                    };
+                });
+            }
+        };
+
+        // ==================== CSV解析 ====================
+        function parseCSV(text) {
+            const lines = text.trim().split('\n');
+            if (lines.length < 2) return [];
+
+            const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+            const data = [];
+
+            for (let i = 1; i < lines.length; i++) {
+                const values = lines[i].split(',');
+                if (values.length < headers.length) continue;
+
+                const row = {};
+                headers.forEach((h, idx) => {
+                    row[h] = values[idx].trim();
+                });
+
+                const record = {
+                    index: i - 1,
+                    loop: parseInt(row['loop']) || 0,
+                    nav_x: parseFloat(row['nav_x']) || 0,
+                    nav_y: parseFloat(row['nav_y']) || 0,
+                    latitude: parseFloat(row['latitude']) || 0,
+                    longitude: parseFloat(row['longitude']) || 0,
+                    speed: parseFloat(row['speed']) || 0,
+                    direction: parseFloat(row['direction']) || 0,
+                    state: parseInt(row['state']) || 0,
+                    sat_used: parseInt(row['sat_used']) || 0,
+                    height: parseFloat(row['height']) || 0,
+                    time_str: row['time_str'] || '',
+                    year: parseInt(row['year']) || 0,
+                    month: parseInt(row['month']) || 0,
+                    day: parseInt(row['day']) || 0,
+                    hour: parseInt(row['hour']) || 0,
+                    minute: parseInt(row['minute']) || 0,
+                    second: parseInt(row['second']) || 0
+                };
+
+                data.push(record);
+            }
+
+            return data;
+        }
+
+        // ==================== 数据处理与修正算法 ====================
+        function processData(data) {
+            if (data.length === 0) return [];
+
+            // 计算投影中心
+            const lats = data.map(d => d.latitude).filter(v => Number.isFinite(v));
+            const lons = data.map(d => d.longitude).filter(v => Number.isFinite(v));
+            
+            if (lats.length === 0 || lons.length === 0) return [];
+
+            projectionCenter.lat = lats.reduce((a, b) => a + b, 0) / lats.length;
+            projectionCenter.lon = lons.reduce((a, b) => a + b, 0) / lons.length;
+
+            // 转换GPS坐标到高斯投影
+            const projected = GaussKruger.projectBatch(
+                data.map(d => ({ lat: d.latitude, lon: d.longitude, original: d })),
+                projectionCenter.lat,
+                projectionCenter.lon
+            );
+
+            // 合并数据
+            return data.map((d, i) => ({
+                ...d,
+                proj_x: projected[i].x,
+                proj_y: projected[i].y,
+                // INS数据转换单位：mm -> m
+                ins_x: d.nav_x / 1000,
+                ins_y: d.nav_y / 1000
+            }));
+        }
+
+        // GPS修正算法
+        function correctGPS(data) {
+            const threshold = parseFloat(document.getElementById('driftThreshold').value) / 1000; // mm -> m
+            const gpsThreshold = parseFloat(document.getElementById('gpsDriftThreshold').value) / 1000; // cm -> m
+            const smoothWindow = parseInt(document.getElementById('smoothWindow').value);
+
+            const corrected = JSON.parse(JSON.stringify(data));
+            const driftPoints = [];
+
+            // 计算INS移动距离
+            for (let i = 1; i < corrected.length; i++) {
+                const prev = corrected[i - 1];
+                const curr = corrected[i];
+
+                const insMoved = Math.sqrt(
+                    Math.pow(curr.ins_x - prev.ins_x, 2) +
+                    Math.pow(curr.ins_y - prev.ins_y, 2)
+                );
+
+                const gpsMoved = Math.sqrt(
+                    Math.pow(curr.proj_x - prev.proj_x, 2) +
+                    Math.pow(curr.proj_y - prev.proj_y, 2)
+                );
+
+                curr.ins_moved = insMoved;
+                curr.gps_moved = gpsMoved;
+                curr.is_static = insMoved < threshold;
+                curr.is_drift = curr.is_static && gpsMoved > gpsThreshold;
+
+                if (curr.is_drift) {
+                    driftPoints.push(i);
+                    // 修正：使用前一个有效位置
+                    let validIdx = i - 1;
+                    while (validIdx >= 0 && corrected[validIdx].is_drift) {
+                        validIdx--;
+                    }
+                    if (validIdx >= 0) {
+                        curr.corrected_x = corrected[validIdx].proj_x;
+                        curr.corrected_y = corrected[validIdx].proj_y;
+                    } else {
+                        curr.corrected_x = curr.proj_x;
+                        curr.corrected_y = curr.proj_y;
+                    }
+                } else {
+                    curr.corrected_x = curr.proj_x;
+                    curr.corrected_y = curr.proj_y;
+                }
+            }
+
+            // 初始化第一个点
+            if (corrected.length > 0) {
+                corrected[0].corrected_x = corrected[0].proj_x;
+                corrected[0].corrected_y = corrected[0].proj_y;
+                corrected[0].ins_moved = 0;
+                corrected[0].gps_moved = 0;
+                corrected[0].is_static = true;
+                corrected[0].is_drift = false;
+            }
+
+            // 平滑滤波
+            for (let i = smoothWindow; i < corrected.length - smoothWindow; i++) {
+                let sumX = 0, sumY = 0;
+                for (let j = -smoothWindow; j <= smoothWindow; j++) {
+                    sumX += corrected[i + j].corrected_x;
+                    sumY += corrected[i + j].corrected_y;
+                }
+                corrected[i].smoothed_x = sumX / (2 * smoothWindow + 1);
+                corrected[i].smoothed_y = sumY / (2 * smoothWindow + 1);
+            }
+
+            // 边界处理
+            for (let i = 0; i < Math.min(smoothWindow, corrected.length); i++) {
+                corrected[i].smoothed_x = corrected[i].corrected_x;
+                corrected[i].smoothed_y = corrected[i].corrected_y;
+            }
+            for (let i = Math.max(smoothWindow, corrected.length - smoothWindow); i < corrected.length; i++) {
+                corrected[i].smoothed_x = corrected[i].corrected_x;
+                corrected[i].smoothed_y = corrected[i].corrected_y;
+            }
+
+            return { corrected, driftPoints };
+        }
+
+        // ==================== 画布绑定与交互 ====================
+        function resizeCanvas() {
+            const rect = container.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = (window.innerHeight - 300) * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = (window.innerHeight - 300) + 'px';
+            ctx.scale(dpr, dpr);
+            render();
+        }
+
+        function calculateBounds() {
+            if (processedData.length === 0) return;
+
+            let minX = Infinity, maxX = -Infinity;
+            let minY = Infinity, maxY = -Infinity;
+
+            processedData.forEach(d => {
+                minX = Math.min(minX, d.proj_x, d.corrected_x || d.proj_x, d.ins_x);
+                maxX = Math.max(maxX, d.proj_x, d.corrected_x || d.proj_x, d.ins_x);
+                minY = Math.min(minY, d.proj_y, d.corrected_y || d.proj_y, -d.ins_y);
+                maxY = Math.max(maxY, d.proj_y, d.corrected_y || d.proj_y, -d.ins_y);
+            });
+
+            dataBounds = { minX, maxX, minY, maxY };
+        }
+
+        function fitView() {
+            if (processedData.length === 0) return;
+
+            calculateBounds();
+
+            const padding = 60;
+            const w = canvas.width / (window.devicePixelRatio || 1);
+            const h = canvas.height / (window.devicePixelRatio || 1);
+
+            const dataW = Math.max(dataBounds.maxX - dataBounds.minX, 0.01);
+            const dataH = Math.max(dataBounds.maxY - dataBounds.minY, 0.01);
+
+            viewState.scale = Math.min(
+                (w - 2 * padding) / dataW,
+                (h - 2 * padding) / dataH
+            );
+
+            viewState.scale = Math.max(viewState.minScale, Math.min(viewState.maxScale, viewState.scale));
+
+            const centerX = (dataBounds.minX + dataBounds.maxX) / 2;
+            const centerY = (dataBounds.minY + dataBounds.maxY) / 2;
+
+            viewState.offsetX = w / 2 - centerX * viewState.scale;
+            viewState.offsetY = h / 2 + centerY * viewState.scale;
+
+            updateScaleBar();
+            render();
+        }
+
+        function updateScaleBar() {
+            const w = canvas.width / (window.devicePixelRatio || 1);
+            const targetPixels = 100;
+            const metersPerPixel = targetPixels / viewState.scale;
+
+            let niceMeters;
+            if (metersPerPixel >= 1000) {
+                niceMeters = Math.ceil(metersPerPixel / 1000) * 1000;
+            } else if (metersPerPixel >= 100) {
+                niceMeters = Math.ceil(metersPerPixel / 100) * 100;
+            } else if (metersPerPixel >= 10) {
+                niceMeters = Math.ceil(metersPerPixel / 10) * 10;
+            } else if (metersPerPixel >= 1) {
+                niceMeters = Math.ceil(metersPerPixel);
+            } else {
+                niceMeters = Math.ceil(metersPerPixel * 100) / 100;
+            }
+
+            const pixels = niceMeters * viewState.scale;
+            document.getElementById('scaleBar').style.width = pixels + 'px';
+
+            if (niceMeters >= 1000) {
+                document.getElementById('scaleText').textContent = (niceMeters / 1000).toFixed(0) + 'km';
+            } else if (niceMeters >= 1) {
+                document.getElementById('scaleText').textContent = niceMeters.toFixed(0) + 'm';
+            } else {
+                document.getElementById('scaleText').textContent = (niceMeters * 100).toFixed(0) + 'cm';
+            }
+        }
+
+        // 世界坐标转屏幕坐标
+        function worldToScreen(x, y) {
+            return {
+                x: x * viewState.scale + viewState.offsetX,
+                y: -y * viewState.scale + viewState.offsetY
+            };
+        }
+
+        // 屏幕坐标转世界坐标
+        function screenToWorld(sx, sy) {
+            return {
+                x: (sx - viewState.offsetX) / viewState.scale,
+                y: -(sy - viewState.offsetY) / viewState.scale
+            };
+        }
+
+        // ==================== 渲染 ====================
+        function render() {
+            const w = canvas.width / (window.devicePixelRatio || 1);
+            const h = canvas.height / (window.devicePixelRatio || 1);
+
+            // 清空画布
+            ctx.fillStyle = '#060a10';
+            ctx.fillRect(0, 0, w, h);
+
+            if (processedData.length === 0) {
+                ctx.fillStyle = '#6a7a8c';
+                ctx.font = '14px "Space Grotesk", sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('请上传CSV数据文件', w / 2, h / 2);
+                return;
+            }
+
+            const showRawGPS = document.getElementById('showRawGPS').checked;
+            const showCorrectedGPS = document.getElementById('showCorrectedGPS').checked;
+            const showINS = document.getElementById('showINS').checked;
+            const showDriftPoints = document.getElementById('showDriftPoints').checked;
+            const showGrid = document.getElementById('showGrid').checked;
+
+            // 绘制网格
+            if (showGrid) {
+                drawGrid(w, h);
+            }
+
+            // 绘制原始GPS轨迹
+            if (showRawGPS) {
+                drawTrack(correctedData, 'proj_x', 'proj_y', '#ff6b6b', 2);
+            }
+
+            // 绘制修正后GPS轨迹
+            if (showCorrectedGPS) {
+                drawTrack(correctedData, 'smoothed_x', 'smoothed_y', '#4ecdc4', 2.5);
+            }
+
+            // 绘制惯性导航轨迹
+            if (showINS) {
+                drawINSTrack(correctedData, '#ffa94d', 1.5);
+            }
+
+            // 绘制漂移点
+            if (showDriftPoints) {
+                drawDriftPoints(correctedData);
+            }
+
+            // 绘制起点和终点标记
+            drawMarkers();
+        }
+
+        function drawGrid(w, h) {
+            // 计算合适的网格间距
+            const pixelsPerMeter = viewState.scale;
+            let gridSpacing;
+
+            if (pixelsPerMeter > 100) {
+                gridSpacing = 0.01; // 1cm
+            } else if (pixelsPerMeter > 10) {
+                gridSpacing = 0.1; // 10cm
+            } else if (pixelsPerMeter > 1) {
+                gridSpacing = 1; // 1m
+            } else if (pixelsPerMeter > 0.1) {
+                gridSpacing = 10; // 10m
+            } else {
+                gridSpacing = 100; // 100m
+            }
+
+            const topLeft = screenToWorld(0, 0);
+            const bottomRight = screenToWorld(w, h);
+
+            const startX = Math.floor(topLeft.x / gridSpacing) * gridSpacing;
+            const endX = Math.ceil(bottomRight.x / gridSpacing) * gridSpacing;
+            const startY = Math.floor(bottomRight.y / gridSpacing) * gridSpacing;
+            const endY = Math.ceil(topLeft.y / gridSpacing) * gridSpacing;
+
+            ctx.strokeStyle = 'rgba(0, 212, 170, 0.1)';
+            ctx.lineWidth = 1;
+
+            // 垂直线
+            for (let x = startX; x <= endX; x += gridSpacing) {
+                const screen = worldToScreen(x, 0);
+                ctx.beginPath();
+                ctx.moveTo(screen.x, 0);
+                ctx.lineTo(screen.x, h);
+                ctx.stroke();
+            }
+
+            // 水平线
+            for (let y = startY; y <= endY; y += gridSpacing) {
+                const screen = worldToScreen(0, y);
+                ctx.beginPath();
+                ctx.moveTo(0, screen.y);
+                ctx.lineTo(w, screen.y);
+                ctx.stroke();
+            }
+        }
+
+        function drawTrack(data, xKey, yKey, color, lineWidth) {
+            if (data.length < 2) return;
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+            ctx.beginPath();
+
+            let started = false;
+            data.forEach((d, i) => {
+                const x = d[xKey];
+                const y = d[yKey];
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+                const screen = worldToScreen(x, y);
+                if (!started) {
+                    ctx.moveTo(screen.x, screen.y);
+                    started = true;
+                } else {
+                    ctx.lineTo(screen.x, screen.y);
+                }
+            });
+
+            ctx.stroke();
+        }
+
+        function drawINSTrack(data, color, lineWidth) {
+            if (data.length < 2) return;
+
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lineWidth;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+
+            data.forEach((d, i) => {
+                const x = d.ins_x;
+                const y = -d.ins_y;
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+                const screen = worldToScreen(x, y);
+                if (i === 0) {
+                    ctx.moveTo(screen.x, screen.y);
+                } else {
+                    ctx.lineTo(screen.x, screen.y);
+                }
+            });
+
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function drawDriftPoints(data) {
+            data.forEach((d, i) => {
+                if (!d.is_drift) return;
+
+                const x = d[xKey];
+                const y = d[yKey];
+                if (!Number.isFinite(d.proj_x) || !Number.isFinite(d.proj_y)) return;
+
+                const screen = worldToScreen(d.proj_x, d.proj_y);
+                const radius = Math.max(4, 6);
+
+                // 发光效果
+                const gradient = ctx.createRadialGradient(
+                    screen.x, screen.y, 0,
+                    screen.x, screen.y, radius * 3
+                );
+                gradient.addColorStop(0, 'rgba(255, 146, 43, 0.8)');
+                gradient.addColorStop(1, 'rgba(255, 146, 43, 0)');
+
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(screen.x, screen.y, radius * 3, 0, Math.PI * 2);
+                ctx.fill();
+
+                // 核心点
+                ctx.fillStyle = '#ff922b';
+                ctx.beginPath();
+                ctx.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function drawMarkers() {
+            if (correctedData.length === 0) return;
+
+            // 起点
+            const start = correctedData[0];
+            const startScreen = worldToScreen(start.proj_x, start.proj_y);
+
+            ctx.fillStyle = '#00d4aa';
+            ctx.beginPath();
+            ctx.arc(startScreen.x, startScreen.y, 8, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.fillStyle = '#060a10';
+            ctx.beginPath();
+            ctx.arc(startScreen.x, startScreen.y, 4, 0, Math.PI * 2);
+            ctx.fill();
+
+            // 终点
+            const end = correctedData[correctedData.length - 1];
+            const endScreen = worldToScreen(end.proj_x, end.proj_y);
+
+            ctx.fillStyle = '#ff6b6b';
+            ctx.beginPath();
+            ctx.moveTo(endScreen.x, endScreen.y - 10);
+            ctx.lineTo(endScreen.x + 8, endScreen.y + 6);
+            ctx.lineTo(endScreen.x - 8, endScreen.y + 6);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        // ==================== 事件处理 ====================
+        // 拖放处理
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const file = e.dataTransfer.files[0];
+            if (file && file.name.endsWith('.csv')) {
+                loadFile(file);
+            }
+        });
+
+        dropZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                loadFile(file);
+            }
+        });
+
+        function loadFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const text = e.target.result;
+                rawData = parseCSV(text);
+                if (rawData.length > 0) {
+                    processedData = processData(rawData);
+                    applyCorrection();
+                    document.getElementById('fileInfo').classList.remove('hidden');
+                    document.getElementById('fileName').textContent = file.name;
+                    updateTable();
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // 加载示例数据
+        document.getElementById('loadDemo').addEventListener('click', () => {
+            const demoData = generateDemoData();
+            rawData = demoData;
+            processedData = processData(rawData);
+            applyCorrection();
+            document.getElementById('fileInfo').classList.remove('hidden');
+            document.getElementById('fileName').textContent = '示例数据';
+            updateTable();
+        });
+
+        function generateDemoData() {
+            const data = [];
+            const baseTime = new Date(2026, 1, 18, 14, 52, 53);
+            const baseLat = 33.477394;
+            const baseLon = 117.896212;
+
+            // 模拟一段运动轨迹，包含静止和运动状态
+            for (let i = 0; i < 200; i++) {
+                const t = i / 10;
+                let lat, lon, navX, navY;
+
+                // 前50个点：静止但有GPS漂移
+                if (i < 50) {
+                    navX = 0;
+                    navY = 0;
+                    // GPS有随机漂移
+                    lat = baseLat + (Math.random() - 0.5) * 0.00002;
+                    lon = baseLon + (Math.random() - 0.5) * 0.00002;
+                }
+                // 50-100：开始运动
+                else if (i < 100) {
+                    navX = (i - 50) * 10; // mm
+                    navY = (i - 50) * 5;
+                    lat = baseLat + (i - 50) * 0.00001;
+                    lon = baseLon + (i - 50) * 0.00001;
+                }
+                // 100-150：再次静止，GPS漂移
+                else if (i < 150) {
+                    navX = 500;
+                    navY = 250;
+                    // GPS继续漂移（异常）
+                    lat = baseLat + 50 * 0.00001 + (Math.random() - 0.5) * 0.00003;
+                    lon = baseLon + 50 * 0.00001 + (Math.random() - 0.5) * 0.00003;
+                }
+                // 150-200：运动
+                else {
+                    navX = 500 + (i - 150) * 15;
+                    navY = 250 + (i - 150) * 10;
+                    lat = baseLat + 50 * 0.00001 + (i - 150) * 0.000015;
+                    lon = baseLon + 50 * 0.00001 + (i - 150) * 0.000012;
+                }
+
+                const time = new Date(baseTime.getTime() + i * 100);
+
+                data.push({
+                    index: i,
+                    loop: 216497 + i * 73,
+                    nav_x: navX,
+                    nav_y: navY,
+                    latitude: lat + (Math.random() - 0.5) * 0.000001,
+                    longitude: lon + (Math.random() - 0.5) * 0.000001,
+                    speed: i < 50 || (i >= 100 && i < 150) ? 0 : Math.random() * 5 + 1,
+                    direction: 137.24,
+                    state: 1,
+                    sat_used: Math.floor(Math.random() * 3) + 7,
+                    height: 19.9,
+                    time_str: time.toTimeString().slice(0, 8),
+                    year: 2026,
+                    month: 2,
+                    day: 18,
+                    hour: time.getHours(),
+                    minute: time.getMinutes(),
+                    second: time.getSeconds()
+                });
+            }
+
+            return data;
+        }
+
+        function applyCorrection() {
+            const result = correctGPS(processedData);
+            correctedData = result.corrected;
+
+            // 更新统计
+            const driftCount = result.driftPoints.length;
+            document.getElementById('statPoints').textContent = processedData.length;
+            document.getElementById('statDrift').textContent = driftCount;
+
+            // 计算漂移量
+            let rawDrift = 0, corrDrift = 0;
+            correctedData.forEach(d => {
+                if (d.is_drift) {
+                    rawDrift += d.gps_moved;
+                }
+            });
+            document.getElementById('statRawDrift').textContent = rawDrift.toFixed(2) + 'm';
+            document.getElementById('statCorrDrift').textContent = '0.00m';
+
+            fitView();
+        }
+
+        document.getElementById('applyCorrection').addEventListener('click', applyCorrection);
+
+        // 参数滑块更新显示
+        document.getElementById('driftThreshold').addEventListener('input', (e) => {
+            document.getElementById('thresholdValue').textContent = e.target.value;
+        });
+
+        document.getElementById('gpsDriftThreshold').addEventListener('input', (e) => {
+            document.getElementById('gpsDriftValue').textContent = e.target.value;
+        });
+
+        document.getElementById('smoothWindow').addEventListener('input', (e) => {
+            document.getElementById('smoothValue').textContent = e.target.value;
+        });
+
+        // 显示控制复选框
+        ['showRawGPS', 'showCorrectedGPS', 'showINS', 'showDriftPoints', 'showGrid'].forEach(id => {
+            document.getElementById(id).addEventListener('change', render);
+        });
+
+        // 鼠标交互
+        canvas.addEventListener('mousedown', (e) => {
+            viewState.isDragging = true;
+            viewState.lastMouseX = e.clientX;
+            viewState.lastMouseY = e.clientY;
+            canvas.style.cursor = 'grabbing';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            if (viewState.isDragging) {
+                const dx = e.clientX - viewState.lastMouseX;
+                const dy = e.clientY - viewState.lastMouseY;
+                viewState.offsetX += dx;
+                viewState.offsetY += dy;
+                viewState.lastMouseX = e.clientX;
+                viewState.lastMouseY = e.clientY;
+                render();
+            }
+
+            // 更新坐标显示
+            const world = screenToWorld(x, y);
+            document.getElementById('mouseCoords').textContent = 
+                `X: ${world.x.toFixed(4)}m  Y: ${world.y.toFixed(4)}m`;
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            viewState.isDragging = false;
+            canvas.style.cursor = 'grab';
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            viewState.isDragging = false;
+            canvas.style.cursor = 'grab';
+        });
+
+        // 滚轮缩放
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = canvas.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            const worldBefore = screenToWorld(mouseX, mouseY);
+
+            const factor = e.deltaY > 0 ? 0.9 : 1.1;
+            viewState.scale = Math.max(
+                viewState.minScale,
+                Math.min(viewState.maxScale, viewState.scale * factor)
+            );
+
+            const worldAfter = screenToWorld(mouseX, mouseY);
+            viewState.offsetX += (worldAfter.x - worldBefore.x) * viewState.scale;
+            viewState.offsetY -= (worldAfter.y - worldBefore.y) * viewState.scale;
+
+            updateScaleBar();
+            render();
+        });
+
+        // 缩放按钮
+        document.getElementById('zoomIn').addEventListener('click', () => {
+            const w = canvas.width / (window.devicePixelRatio || 1);
+            const h = canvas.height / (window.devicePixelRatio || 1);
+            const world = screenToWorld(w / 2, h / 2);
+
+            viewState.scale = Math.min(viewState.maxScale, viewState.scale * 1.5);
+
+            const newScreen = worldToScreen(world.x, world.y);
+            viewState.offsetX += w / 2 - newScreen.x;
+            viewState.offsetY += h / 2 - newScreen.y;
+
+            updateScaleBar();
+            render();
+        });
+
+        document.getElementById('zoomOut').addEventListener('click', () => {
+            const w = canvas.width / (window.devicePixelRatio || 1);
+            const h = canvas.height / (window.devicePixelRatio || 1);
+            const world = screenToWorld(w / 2, h / 2);
+
+            viewState.scale = Math.max(viewState.minScale, viewState.scale / 1.5);
+
+            const newScreen = worldToScreen(world.x, world.y);
+            viewState.offsetX += w / 2 - newScreen.x;
+            viewState.offsetY += h / 2 - newScreen.y;
+
+            updateScaleBar();
+            render();
+        });
+
+        document.getElementById('zoomFit').addEventListener('click', fitView);
+
+        // 更新数据表格
+        function updateTable() {
+            const tbody = document.getElementById('dataTableBody');
+            const displayData = correctedData.slice(0, 100); // 只显示前100条
+
+            if (displayData.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="8" class="text-center text-[var(--text-muted)] py-8">暂无数据</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = displayData.map((d, i) => `
+                <tr class="${d.is_drift ? 'bg-[rgba(255,146,43,0.1)]' : ''}">
+                    <td class="mono">${d.index}</td>
+                    <td class="mono">${d.time_str}</td>
+                    <td class="mono">${d.latitude.toFixed(8)}</td>
+                    <td class="mono">${d.longitude.toFixed(8)}</td>
+                    <td class="mono">${d.nav_x.toFixed(3)}</td>
+                    <td class="mono">${d.nav_y.toFixed(3)}</td>
+                    <td class="mono">${d.speed.toFixed(2)}</td>
+                    <td class="${d.is_drift ? 'text-[var(--warning)]' : 'text-[var(--accent)]'}">
+                        ${d.is_drift ? '漂移' : (d.state === 1 ? '有效' : '无效')}
+                    </td>
+                </tr>
+            `).join('');
+
+            document.getElementById('tableInfo').textContent = `共 ${correctedData.length} 条记录`;
+        }
+
+        // 窗口大小变化
+        window.addEventListener('resize', resizeCanvas);
+
+        // 初始化
+        resizeCanvas();
+    </script>
+</body>
+</html>
