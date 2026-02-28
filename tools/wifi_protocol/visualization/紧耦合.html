@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GNSS/INS 紧耦合融合可视化系统 (修正版)</title>
+    <!-- 引入 Leaflet 地图库样式 -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* 全局样式设置 - 正式风格 */
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+            font-size: 14px;
+            color: #333;
+            background-color: #f5f5f5;
+            overflow: hidden;
+        }
+
+        /* 布局容器 */
+        #container {
+            display: flex;
+            height: 100%;
+            width: 100%;
+        }
+
+        /* 侧边控制栏 */
+        #sidebar {
+            width: 350px;
+            background-color: #ffffff;
+            border-right: 1px solid #cccccc;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            box-shadow: 2px 0 5px rgba(0,0,0,0.1);
+            z-index: 1000;
+            overflow-y: auto;
+        }
+
+        /* 地图容器 */
+        #map {
+            flex-grow: 1;
+            height: 100%;
+            background-color: #e5e5e5;
+        }
+
+        /* 标题样式 */
+        h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: #2c3e50;
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            color: #34495e;
+        }
+
+        /* 表单元素样式 */
+        .control-group {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #eeeeee;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #555;
+        }
+
+        input[type="number"], input[type="file"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #cccccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-family: inherit;
+        }
+
+        input[type="range"] {
+            width: 100%;
+            margin: 5px 0;
+        }
+
+        /* 拖拽上传区域 */
+        #drop-zone {
+            border: 2px dashed #cccccc;
+            border-radius: 4px;
+            padding: 30px 20px;
+            text-align: center;
+            color: #7f8c8d;
+            transition: all 0.3s ease;
+            cursor: pointer;
+            margin-bottom: 20px;
+            background-color: #fafafa;
+        }
+
+        #drop-zone.drag-over {
+            border-color: #3498db;
+            background-color: #ebf5fb;
+            color: #2980b9;
+        }
+
+        #drop-zone p {
+            margin: 0;
+            font-size: 13px;
+        }
+
+        /* 信息面板 */
+        #info-panel {
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 4px;
+            font-size: 12px;
+            line-height: 1.6;
+        }
+
+        .data-stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+
+        .legend {
+            margin-top: 15px;
+            font-size: 12px;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .legend-color {
+            width: 20px;
+            height: 3px;
+            margin-right: 10px;
+        }
+
+        /* 按钮样式 */
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #2c3e50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background-color 0.2s;
+            margin-top: 10px;
+        }
+
+        button:hover {
+            background-color: #34495e;
+        }
+
+        button:disabled {
+            background-color: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        /* 加载提示 */
+        #loading {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+            color: #e67e22;
+            font-weight: 500;
+        }
+
+        .note {
+            font-size: 11px;
+            color: #7f8c8d;
+            margin-top: 5px;
+            line-height: 1.4;
+        }
+        
+        .fusion-info {
+            background-color: #e8f4fd;
+            border-left: 4px solid #3498db;
+            padding: 10px;
+            font-size: 12px;
+            margin-bottom: 15px;
+            color: #2980b9;
+        }
+    </style>
+</head>
+<body>
+
+<div id="container">
+    <!-- 侧边控制栏 -->
+    <div id="sidebar">
+        <h1>GNSS/INS 融合可视化系统</h1>
+
+        <div class="fusion-info">
+            <strong>融合策略说明：</strong><br>
+            1. <strong>纯惯导轨迹</strong>：直接使用 nav_x/y 坐标转换，<strong>不做积分</strong>。<br>
+            2. <strong>融合轨迹</strong>：以惯导坐标为基准，利用 GNSS 进行加权修正。<br>
+            3. <strong>信任惯导</strong>：增益 K 越小，轨迹越贴近惯导形状。
+        </div>
+
+        <!-- 文件上传区域 -->
+        <div class="control-group">
+            <label for="file-input">数据文件导入</label>
+            <div id="drop-zone">
+                <p>拖拽 CSV/TXT 文件至此</p>
+                <p>或点击选择文件</p>
+                <input type="file" id="file-input" accept=".csv,.txt" style="display: none;">
+            </div>
+            <div id="loading">正在解析与融合数据...</div>
+        </div>
+
+        <!-- 融合参数控制 -->
+        <div class="control-group">
+            <h2>融合算法参数</h2>
+            
+            <label for="gain-input">GNSS 修正增益 (K): <span id="gain-value">0.1</span></label>
+            <input type="range" id="gain-range" min="0" max="1" step="0.01" value="0.1">
+            <input type="number" id="gain-input" value="0.1" step="0.01" style="margin-top: 5px;">
+            <p class="note">
+                0.0 = 完全信任惯导 (仅做坐标转换)<br>
+                1.0 = 完全信任 GNSS (显示原始 GPS 轨迹)
+            </p>
+
+            <label for="scale-input" style="margin-top: 10px;">INS 数据单位系数:</label>
+            <input type="number" id="scale-input" value="0.001" step="0.0001" title="默认 0.001 (mm 转 m)">
+            <p class="note">若 CSV 中 nav_x/y 单位已为米，请设为 1。</p>
+        </div>
+
+        <!-- 初始偏角修正 -->
+        <div class="control-group">
+            <h2>坐标系对齐参数</h2>
+            <label for="angle-input">惯导偏角修正 (度): <span id="angle-value">0</span>°</label>
+            <input type="range" id="angle-range" min="-180" max="180" step="0.5" value="0">
+            <input type="number" id="angle-input" value="0" step="0.5" style="margin-top: 5px;">
+            <p class="note">
+                用于旋转惯导坐标系以匹配真北。<br>
+                基准：起始点 GNSS 航向。
+            </p>
+        </div>
+
+        <!-- 数据统计 -->
+        <div id="info-panel">
+            <h2>数据概览</h2>
+            <div class="data-stat">
+                <span>有效数据点数:</span>
+                <span id="stat-count">0</span>
+            </div>
+            <div class="data-stat">
+                <span>起始纬度:</span>
+                <span id="stat-start-lat">-</span>
+            </div>
+            <div class="data-stat">
+                <span>起始经度:</span>
+                <span id="stat-start-lon">-</span>
+            </div>
+            <div class="data-stat">
+                <span>融合模式:</span>
+                <span style="color: #27ae60;">INS 基准 + GNSS 修正</span>
+            </div>
+        </div>
+
+        <!-- 图例 -->
+        <div class="legend">
+            <h2>图例</h2>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #3388ff;"></div>
+                <span>原始 GNSS 轨迹</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #27ae60;"></div>
+                <span>融合后轨迹 (推荐)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background-color: #e74c3c;"></div>
+                <span>纯惯导轨迹 (坐标转换)</span>
+            </div>
+        </div>
+        
+        <button id="reset-view-btn" disabled>重置视图</button>
+    </div>
+
+    <!-- 地图容器 -->
+    <div id="map"></div>
+</div>
+
+<!-- 引入 Leaflet 地图库脚本 -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    /**
+     * 全局变量与配置
+     */
+    let map;
+    let layers = {
+        gnss: null,
+        fused: null,
+        ins_raw: null,
+        startMarker: null
+    };
+    let rawData = [];
+    let fusedData = [];
+    
+    // 地球半径 (米)
+    const EARTH_RADIUS = 6378137; 
+
+    /**
+     * 初始化地图
+     * 配置支持高倍缩放 (maxZoom: 23) 以满足 1m 级别可视化需求
+     */
+    function initMap() {
+        map = L.map('map', {
+            center: [33.47739417, 117.8962123],
+            zoom: 19,
+            minZoom: 1,
+            maxZoom: 23, 
+            zoomControl: true,
+            preferCanvas: true // 提高大量点渲染性能
+        });
+
+        // 添加 OpenStreetMap 图层
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 23
+        }).addTo(map);
+
+        // 初始化图层组
+        layers.gnss = L.layerGroup().addTo(map);
+        layers.fused = L.layerGroup().addTo(map);
+        layers.ins_raw = L.layerGroup().addTo(map);
+    }
+
+    /**
+     * 文件读取与拖拽处理
+     */
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+    const loadingDiv = document.getElementById('loading');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) handleFile(e.target.files[0]);
+    });
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+    });
+
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+    });
+
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+    });
+
+    function handleFile(file) {
+        loadingDiv.style.display = 'block';
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            setTimeout(() => {
+                try {
+                    const text = e.target.result;
+                    parseAndFuseData(text);
+                } catch (error) {
+                    alert('文件解析失败：' + error.message);
+                    console.error(error);
+                } finally {
+                    loadingDiv.style.display = 'none';
+                }
+            }, 100);
+        };
+        reader.readAsText(file);
+    }
+
+    /**
+     * 数据解析与融合核心逻辑
+     */
+    function parseAndFuseData(text) {
+        const lines = text.trim().split(/\r?\n/);
+        if (lines.length < 2) throw new Error("数据文件内容为空");
+
+        const headerLine = lines[0];
+        const delimiter = headerLine.includes('\t') ? '\t' : ',';
+        const headers = headerLine.split(delimiter).map(h => h.trim());
+        
+        // 映射列索引
+        const col = {
+            nav_x: headers.indexOf('nav_x'),
+            nav_y: headers.indexOf('nav_y'),
+            latitude: headers.indexOf('latitude'),
+            longitude: headers.indexOf('longitude'),
+            direction: headers.indexOf('direction'),
+            ant_direction: headers.indexOf('ant_direction'),
+            ant_state: headers.indexOf('ant_state'),
+            state: headers.indexOf('state')
+        };
+
+        if (col.latitude === -1 || col.longitude === -1) {
+            throw new Error("缺少 latitude 或 longitude 列");
+        }
+
+        rawData = [];
+        // 解析有效数据
+        for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].split(delimiter);
+            if (cols.length < headers.length) continue;
+
+            const state = parseInt(cols[col.state]);
+            if (state !== 1) continue; // 仅处理有效状态
+
+            const lat = parseFloat(cols[col.latitude]);
+            const lon = parseFloat(cols[col.longitude]);
+            if (isNaN(lat) || isNaN(lon)) continue;
+
+            const nav_x = parseFloat(cols[col.nav_x]) || 0;
+            const nav_y = parseFloat(cols[col.nav_y]) || 0;
+            
+            // 获取航向：优先天线航向，其次地面航向
+            let heading = 0;
+            if (col.ant_direction !== -1 && parseInt(cols[col.ant_state]) === 1) {
+                heading = parseFloat(cols[col.ant_direction]);
+            } else if (col.direction !== -1) {
+                heading = parseFloat(cols[col.direction]);
+            }
+
+            rawData.push({ lat, lon, nav_x, nav_y, heading });
+        }
+
+        if (rawData.length === 0) throw new Error("未找到有效数据行");
+
+        // 执行融合算法
+        performFusion();
+
+        // 更新 UI
+        updateUIStats();
+        renderTracks();
+        
+        // 自适应视图
+        const bounds = L.latLngBounds(rawData.map(p => [p.lat, p.lon]));
+        map.fitBounds(bounds, { padding: [50, 50] });
+        document.getElementById('reset-view-btn').disabled = false;
+    }
+
+    /**
+     * 融合算法实现 (修正版：不做积分，直接坐标转换)
+     * 策略：
+     * 1. 纯惯导轨迹：将 nav_x/y 视为局部坐标系下的绝对位置，通过起始航向 + 偏角修正 转换为经纬度。
+     * 2. 融合轨迹：Fused = INS_Global + K * (GNSS - INS_Global)
+     */
+    function performFusion() {
+        fusedData = [];
+        const gain = parseFloat(document.getElementById('gain-input').value);
+        const scale = parseFloat(document.getElementById('scale-input').value);
+        const angleOffset = parseFloat(document.getElementById('angle-input').value);
+        
+        // 起始点 GNSS
+        const startLat = rawData[0].lat;
+        const startLon = rawData[0].lon;
+        
+        // 起始点 INS (作为局部坐标原点)
+        const startInsX = rawData[0].nav_x;
+        const startInsY = rawData[0].nav_y;
+
+        // 基准航向：使用起始点的 GNSS 航向作为 INS 坐标系的参考北
+        // 用户可通过“偏角修正”调整此基准
+        const baseHeading = (rawData[0].heading + angleOffset) * Math.PI / 180;
+
+        for (let i = 0; i < rawData.length; i++) {
+            const p = rawData[i];
+            
+            // 1. 计算 INS 局部坐标偏移 (米)
+            // 直接使用当前坐标减去起始坐标，不做累积积分
+            const local_x_m = (p.nav_x - startInsX) * scale;
+            const local_y_m = (p.nav_y - startInsY) * scale;
+
+            // 2. 坐标变换 (INS 局部 -> 地图全局)
+            // 定义：X+ 向后，Y+ 向右
+            // 基准航向 baseHeading (真北顺时针)
+            // 向后向量 (X+): 航向 + 180 度 -> (-sin, -cos) in (East, North)
+            // 向右向量 (Y+): 航向 - 90 度 -> (cos, -sin) in (East, North)
+            
+            const deltaNorth = local_x_m * (-Math.cos(baseHeading)) + local_y_m * (-Math.sin(baseHeading));
+            const deltaEast  = local_x_m * (-Math.sin(baseHeading)) + local_y_m * (Math.cos(baseHeading));
+
+            // 米转经纬度近似
+            const dLat = deltaNorth / 111320;
+            const dLon = deltaEast / (111320 * Math.cos(startLat * Math.PI / 180));
+
+            // 3. 纯惯导全球坐标
+            const insLat = startLat + dLat;
+            const insLon = startLon + dLon;
+
+            // 4. 融合修正 (互补滤波)
+            // Fused = INS + K * (GNSS - INS)
+            const fusedLat = insLat + gain * (p.lat - insLat);
+            const fusedLon = insLon + gain * (p.lon - insLon);
+
+            // 保存结果
+            fusedData.push({
+                lat: fusedLat,
+                lon: fusedLon,
+                gnssLat: p.lat,
+                gnssLon: p.lon,
+                insLat: insLat, // 纯惯导转换后的位置
+                insLon: insLon
+            });
+        }
+    }
+
+    /**
+     * 渲染轨迹
+     */
+    function renderTracks() {
+        // 清除旧图层
+        layers.gnss.clearLayers();
+        layers.fused.clearLayers();
+        layers.ins_raw.clearLayers();
+        if (layers.startMarker) map.removeLayer(layers.startMarker);
+
+        if (fusedData.length === 0) return;
+
+        // 1. 原始 GNSS 轨迹 (蓝色)
+        const gnssPoints = fusedData.map(p => [p.gnssLat, p.gnssLon]);
+        layers.gnss.addLayer(L.polyline(gnssPoints, { color: '#3388ff', weight: 2, opacity: 0.5, dashArray: '5, 5' }));
+
+        // 2. 融合后轨迹 (绿色，主推)
+        const fusedPoints = fusedData.map(p => [p.lat, p.lon]);
+        layers.fused.addLayer(L.polyline(fusedPoints, { color: '#27ae60', weight: 4, opacity: 0.9 }));
+
+        // 3. 纯惯导轨迹 (红色，直接坐标转换，无积分)
+        const insPoints = fusedData.map(p => [p.insLat, p.insLon]);
+        layers.ins_raw.addLayer(L.polyline(insPoints, { color: '#e74c3c', weight: 2, opacity: 0.6 }));
+
+        // 4. 起始点标记
+        const start = fusedData[0];
+        layers.startMarker = L.marker([start.lat, start.lon], {
+            icon: L.divIcon({
+                className: 'custom-div-icon',
+                html: "<div style='background-color:#2c3e50; width:14px; height:14px; border-radius:50%; border:2px solid white;'></div>",
+                iconSize: [18, 18],
+                iconAnchor: [9, 9]
+            })
+        }).addTo(map);
+    }
+
+    /**
+     * 更新 UI 统计信息
+     */
+    function updateUIStats() {
+        document.getElementById('stat-count').textContent = rawData.length;
+        document.getElementById('stat-start-lat').textContent = rawData[0].lat.toFixed(6);
+        document.getElementById('stat-start-lon').textContent = rawData[0].lon.toFixed(6);
+    }
+
+    /**
+     * 事件监听：参数变化重新融合
+     */
+    const gainInput = document.getElementById('gain-input');
+    const gainRange = document.getElementById('gain-range');
+    const angleInput = document.getElementById('angle-input');
+    const angleRange = document.getElementById('angle-range');
+    const scaleInput = document.getElementById('scale-input');
+
+    function syncInputs(source, target, id) {
+        target.value = source.value;
+        document.getElementById(id).textContent = source.value;
+        if (rawData.length > 0) {
+            performFusion();
+            renderTracks();
+        }
+    }
+
+    gainInput.addEventListener('input', (e) => syncInputs(e.target, gainRange, 'gain-value'));
+    gainRange.addEventListener('input', (e) => syncInputs(e.target, gainInput, 'gain-value'));
+    
+    angleInput.addEventListener('input', (e) => syncInputs(e.target, angleRange, 'angle-value'));
+    angleRange.addEventListener('input', (e) => syncInputs(e.target, angleInput, 'angle-value'));
+
+    scaleInput.addEventListener('change', () => {
+        if (rawData.length > 0) {
+            performFusion();
+            renderTracks();
+        }
+    });
+
+    document.getElementById('reset-view-btn').addEventListener('click', () => {
+        if (fusedData.length > 0) {
+            const bounds = L.latLngBounds(fusedData.map(p => [p.lat, p.lon]));
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+    });
+
+    // 初始化
+    initMap();
+
+</script>
+</body>
+</html>
