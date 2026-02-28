@@ -1,4 +1,43 @@
-#include "zf_common_headfile.h"
+#include "ekf.h"
+#include "../config/sys_options.h"
+
+// ========================================================================
+// IMU 硬件抽象层：根据 IMU_CATEGORY 统一访问接口
+// ========================================================================
+#if IMU_CATEGORY == 1  // IMU660RA
+    #define IMU_GET_GYRO()        imu660ra_get_gyro()
+    #define IMU_GET_ACC()         imu660ra_get_acc()
+    #define IMU_GYRO_X            imu660ra_gyro_x
+    #define IMU_GYRO_Y            imu660ra_gyro_y
+    #define IMU_GYRO_Z            imu660ra_gyro_z
+    #define IMU_ACC_X             imu660ra_acc_x
+    #define IMU_ACC_Y             imu660ra_acc_y
+    #define IMU_ACC_Z             imu660ra_acc_z
+    #define IMU_ACC_X_OFFSET      imu660ra_acc_x_AND
+    #define IMU_ACC_Y_OFFSET      imu660ra_acc_y_AND
+    #define IMU_ACC_Z_OFFSET      imu660ra_acc_z_AND
+    #define IMU_ACC_X_LP          imu660ra_acc_x_l
+    #define IMU_ACC_Y_LP          imu660ra_acc_y_l
+    #define IMU_ACC_Z_LP          imu660ra_acc_z_l
+#elif IMU_CATEGORY == 2  // IMU660RB
+    #define IMU_GET_GYRO()        imu660rb_get_gyro()
+    #define IMU_GET_ACC()         imu660rb_get_acc()
+    #define IMU_GYRO_X            imu660rb_gyro_x
+    #define IMU_GYRO_Y            imu660rb_gyro_y
+    #define IMU_GYRO_Z            imu660rb_gyro_z
+    #define IMU_ACC_X             imu660rb_acc_x
+    #define IMU_ACC_Y             imu660rb_acc_y
+    #define IMU_ACC_Z             imu660rb_acc_z
+    #define IMU_ACC_X_OFFSET      imu660ra_acc_x_AND
+    #define IMU_ACC_Y_OFFSET      imu660ra_acc_y_AND
+    #define IMU_ACC_Z_OFFSET      imu660ra_acc_z_AND //这里暂时未使用，所以先这样命名
+    #define IMU_ACC_X_LP          imu660rb_acc_x_l
+    #define IMU_ACC_Y_LP          imu660rb_acc_y_l
+    #define IMU_ACC_Z_LP          imu660rb_acc_z_l
+#else
+    #error "Unsupported IMU_CATEGORY value"
+#endif
+
 
 // 扩展卡尔曼滤波状态变量 (四元数)
 matrix_t exf_x;
@@ -105,19 +144,19 @@ void IMU_Calibrate_All_Gyro(void)
     for(int i = 0; i < sample_count; i++)
     {   
 
-        imu660ra_get_gyro();
-        imu660ra_get_acc();
-        if(imu660ra_gyro_x==0||imu660ra_gyro_y==0||imu660ra_gyro_z==0||imu660ra_acc_x==0||imu660ra_acc_y==0||imu660ra_acc_z==0)
+        IMU_GET_GYRO();
+        IMU_GET_ACC();
+        if(IMU_GYRO_X==0||IMU_GYRO_Y==0||IMU_GYRO_Z==0||IMU_ACC_X==0||IMU_ACC_Y==0||IMU_ACC_Z==0)
         {
             i--;
             continue;
         }
-        sum_x += imu660ra_gyro_x;
-        sum_y += imu660ra_gyro_y;
-        sum_z += imu660ra_gyro_z;
-        sum_x_a += imu660ra_acc_x;
-        sum_y_a += imu660ra_acc_y;
-        sum_z_a += imu660ra_acc_z;
+        sum_x += IMU_GYRO_X;
+        sum_y += IMU_GYRO_Y;
+        sum_z += IMU_GYRO_Z;
+        sum_x_a += IMU_ACC_X;
+        sum_y_a += IMU_ACC_Y;
+        sum_z_a += IMU_ACC_Z;
         // 简单延时
         // system_delay_us(100); 
     }

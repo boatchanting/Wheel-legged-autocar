@@ -82,6 +82,7 @@
 #include "zf_device_gnss.h"
 #include "zf_device_icm20602.h"
 #include "zf_device_imu660ra.h"
+#include "zf_device_imu660rb.h"//【优化点】可能需要更改的地方，实现通过config动态导入
 #include "zf_device_imu963ra.h"
 #include "zf_device_ips114.h"
 #include "zf_device_ips200.h"
@@ -117,6 +118,7 @@
 #include "tools/beep.h"   // 蜂鸣器
 #include "tools/sbus.h"  // sbus 协议
 #include "tools/wifi.h"  // wifi模块
+#include "tools/wifi_protocol.h"  // wifi自定义协议，用于无损传输下位机数据
 #include "tools/menu.h"  //菜单模块
 
 #include "navigation/inertial_nav.h"  // 惯性导航计算坐标模块
