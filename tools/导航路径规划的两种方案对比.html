@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>路径跟踪算法 - 动态速度控制版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+SC:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0e17;
+            --bg-secondary: #111827;
+            --fg: #e2e8f0;
+            --muted: #64748b;
+            --accent-cyan: #06b6d4;
+            --accent-orange: #f97316;
+            --accent-green: #10b981;
+            --accent-purple: #a855f7;
+            --accent-yellow: #fbbf24;
+            --card: #1e293b;
+            --border: #334155;
+        }
+        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Noto Sans SC', sans-serif; background: var(--bg); color: var(--fg); min-height: 100vh; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .bg-grid {
+            background-image: linear-gradient(rgba(6, 182, 212, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(6, 182, 212, 0.03) 1px, transparent 1px);
+            background-size: 50px 50px;
+        }
+        canvas { border-radius: 8px; }
+        input[type="range"] { -webkit-appearance: none; background: var(--border); height: 4px; border-radius: 2px; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: var(--accent-cyan); cursor: pointer; }
+        .btn { transition: all 0.2s ease; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+        
+        .speed-bar {
+            height: 8px;
+            border-radius: 4px;
+            background: var(--border);
+            overflow: hidden;
+        }
+        .speed-bar-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.1s ease;
+        }
+        
+        .speedometer {
+            position: relative;
+            width: 120px;
+            height: 60px;
+            overflow: hidden;
+        }
+        .speedometer-arc {
+            position: absolute;
+            width: 120px;
+            height: 120px;
+            border: 4px solid var(--border);
+            border-radius: 50%;
+            border-bottom-color: transparent;
+            border-left-color: transparent;
+            transform: rotate(-45deg);
+        }
+        .speedometer-fill {
+            position: absolute;
+            width: 120px;
+            height: 120px;
+            border: 4px solid var(--accent-cyan);
+            border-radius: 50%;
+            border-bottom-color: transparent;
+            border-left-color: transparent;
+            transform: rotate(-45deg);
+            clip-path: polygon(0 0, 50% 0, 50% 100%, 0 100%);
+            transition: transform 0.1s ease;
+        }
+    </style>
+</head>
+<body class="bg-grid">
+    <header class="border-b border-[--border] bg-[--bg-secondary]/80 backdrop-blur-sm sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-9 h-9 rounded-lg bg-gradient-to-br from-cyan-500 to-blue-600 flex items-center justify-center">
+                    <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h1 class="text-lg font-bold">路径跟踪算法可视化</h1>
+                    <p class="text-xs text-[--muted]">动态速度控制 + 曲率自适应</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-4">
+                <div class="flex items-center gap-2 text-xs">
+                    <input type="checkbox" id="autoSpeedCheck" checked class="w-4 h-4 rounded">
+                    <label for="autoSpeedCheck" class="text-[--muted] cursor-pointer">自动变速</label>
+                </div>
+                <div id="statusIndicator" class="flex items-center gap-2 px-3 py-1 rounded-full bg-[--card] text-xs">
+                    <div class="w-2 h-2 rounded-full bg-green-500 pulse"></div>
+                    <span>就绪</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-4">
+        <!-- 控制面板 -->
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-4">
+            <div class="bg-[--card] rounded-xl p-3 border border-[--border]">
+                <h3 class="text-xs font-medium text-[--muted] mb-2">算法选择</h3>
+                <div class="flex gap-1">
+                    <button id="btnPurePursuit" class="btn flex-1 py-1.5 px-2 rounded-lg bg-cyan-500/20 border border-cyan-500/50 text-cyan-400 text-xs font-medium">PP</button>
+                    <button id="btnStanley" class="btn flex-1 py-1.5 px-2 rounded-lg bg-[--bg] border border-[--border] text-[--muted] text-xs font-medium">Stanley</button>
+                    <button id="btnBoth" class="btn flex-1 py-1.5 px-2 rounded-lg bg-[--bg] border border-[--border] text-[--muted] text-xs font-medium">对比</button>
+                </div>
+            </div>
+            
+            <div class="bg-[--card] rounded-xl p-3 border border-[--border]">
+                <h3 class="text-xs font-medium text-[--muted] mb-2">路径类型</h3>
+                <select id="pathSelect" class="w-full bg-[--bg] border border-[--border] rounded-lg px-2 py-1.5 text-xs outline-none focus:border-cyan-500">
+                    <option value="sine">正弦曲线</option>
+                    <option value="circle">圆形路径</option>
+                    <option value="sharp">急转弯</option>
+                    <option value="complex">复杂路径</option>
+                </select>
+            </div>
+            
+            <div class="bg-[--card] rounded-xl p-3 border border-[--border]">
+                <h3 class="text-xs font-medium text-[--muted] mb-2">最大速度</h3>
+                <input type="range" id="speedSlider" min="2" max="15" value="8" class="w-full">
+                <div class="text-center text-xs mono text-cyan-400 mt-1" id="speedValue">8 m/s</div>
+            </div>
+            
+            <div class="bg-[--card] rounded-xl p-3 border border-[--border]">
+                <h3 class="text-xs font-medium text-[--muted] mb-2">最大横向加速度</h3>
+                <input type="range" id="latAccelSlider" min="1" max="5" step="0.5" value="2.0" class="w-full">
+                <div class="text-center text-xs mono text-orange-400 mt-1" id="latAccelValue">2.0 m/s²</div>
+            </div>
+            
+            <div class="bg-[--card] rounded-xl p-3 border border-[--border] flex flex-col justify-center">
+                <div class="flex gap-2">
+                    <button id="btnStart" class="btn flex-1 py-2 px-3 rounded-lg bg-green-500/20 border border-green-500/50 text-green-400 text-xs font-medium">开始</button>
+                    <button id="btnReset" class="btn flex-1 py-2 px-3 rounded-lg bg-[--bg] border border-[--border] text-[--muted] text-xs font-medium">重置</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- 主可视化区域 -->
+        <div class="grid grid-cols-1 lg:grid-cols-4 gap-4 mb-4">
+            <div class="lg:col-span-3">
+                <div class="bg-[--card] rounded-xl border border-[--border] overflow-hidden">
+                    <div class="px-4 py-2 border-b border-[--border] flex items-center justify-between">
+                        <h3 class="font-medium text-sm">路径跟踪可视化</h3>
+                        <div class="flex items-center gap-4 text-xs">
+                            <div class="flex items-center gap-2">
+                                <div class="w-2.5 h-2.5 rounded-full bg-[--accent-green]"></div>
+                                <span class="text-[--muted]">参考路径</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <div class="w-2.5 h-2.5 rounded-full bg-[--accent-cyan]"></div>
+                                <span class="text-[--muted]">Pure Pursuit</span>
+                            </div>
+                            <div class="flex items-center gap-2">
+                                <div class="w-2.5 h-2.5 rounded-full bg-[--accent-orange]"></div>
+                                <span class="text-[--muted]">Stanley</span>
+                            </div>
+                        </div>
+                    </div>
+                    <canvas id="mainCanvas" width="900" height="480"></canvas>
+                </div>
+            </div>
+            
+            <!-- 右侧实时数据面板 -->
+            <div class="space-y-3">
+                <!-- PP速度表 -->
+                <div id="ppSpeedPanel" class="bg-[--card] rounded-xl border border-[--border] p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-medium text-cyan-400">Pure Pursuit</span>
+                        <span class="text-xs text-[--muted]">速度</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1">
+                            <div class="text-3xl font-bold mono text-cyan-400" id="ppSpeedNum">0.0</div>
+                            <div class="text-xs text-[--muted]">m/s</div>
+                        </div>
+                        <div class="w-16 h-16 relative">
+                            <svg viewBox="0 0 36 36" class="w-16 h-16 transform -rotate-90">
+                                <path class="text-[--border]" stroke="currentColor" stroke-width="3" fill="none" d="M3 18a15 15 0 1 1 30 0" />
+                                <path id="ppSpeedArc" class="text-cyan-400" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-dasharray="0, 100" d="M3 18a15 15 0 1 1 30 0" />
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="mt-2 space-y-1 text-xs">
+                        <div class="flex justify-between text-[--muted]">
+                            <span>目标速度</span>
+                            <span class="mono text-cyan-300" id="ppTargetSpeed">--</span>
+                        </div>
+                        <div class="flex justify-between text-[--muted]">
+                            <span>前方曲率</span>
+                            <span class="mono text-cyan-300" id="ppCurvature">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Stanley速度表 -->
+                <div id="stanleySpeedPanel" class="bg-[--card] rounded-xl border border-[--border] p-3">
+                    <div class="flex items-center justify-between mb-2">
+                        <span class="text-xs font-medium text-orange-400">Stanley</span>
+                        <span class="text-xs text-[--muted]">速度</span>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <div class="flex-1">
+                            <div class="text-3xl font-bold mono text-orange-400" id="stSpeedNum">0.0</div>
+                            <div class="text-xs text-[--muted]">m/s</div>
+                        </div>
+                        <div class="w-16 h-16 relative">
+                            <svg viewBox="0 0 36 36" class="w-16 h-16 transform -rotate-90">
+                                <path class="text-[--border]" stroke="currentColor" stroke-width="3" fill="none" d="M3 18a15 15 0 1 1 30 0" />
+                                <path id="stSpeedArc" class="text-orange-400" stroke="currentColor" stroke-width="3" fill="none" stroke-linecap="round" stroke-dasharray="0, 100" d="M3 18a15 15 0 1 1 30 0" />
+                            </svg>
+                        </div>
+                    </div>
+                    <div class="mt-2 space-y-1 text-xs">
+                        <div class="flex justify-between text-[--muted]">
+                            <span>目标速度</span>
+                            <span class="mono text-orange-300" id="stTargetSpeed">--</span>
+                        </div>
+                        <div class="flex justify-between text-[--muted]">
+                            <span>横向误差</span>
+                            <span class="mono text-orange-300" id="stCteDisplay">--</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 曲率图例 -->
+                <div class="bg-[--card] rounded-xl border border-[--border] p-3">
+                    <div class="text-xs font-medium text-[--muted] mb-2">路径曲率指示</div>
+                    <div class="h-3 rounded-full" style="background: linear-gradient(to right, #10b981, #fbbf24, #ef4444)"></div>
+                    <div class="flex justify-between text-xs text-[--muted] mt-1">
+                        <span>直道</span>
+                        <span>缓弯</span>
+                        <span>急弯</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 参数面板 -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div class="bg-[--card] rounded-xl border border-[--border] p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-medium text-cyan-400">Pure Pursuit 参数</h3>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-[--muted]">前视系数 K</span>
+                            <span class="mono text-cyan-400" id="ldValue">1.5</span>
+                        </div>
+                        <input type="range" id="ldSlider" min="0.5" max="4" step="0.1" value="1.5" class="w-full">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 pt-2">
+                        <div class="text-center p-2 bg-[--bg] rounded-lg">
+                            <div class="text-xs text-[--muted]">平均误差</div>
+                            <div class="text-lg font-bold mono text-cyan-400" id="ppAvgError">0.00</div>
+                        </div>
+                        <div class="text-center p-2 bg-[--bg] rounded-lg">
+                            <div class="text-xs text-[--muted]">最大误差</div>
+                            <div class="text-lg font-bold mono text-cyan-400" id="ppMaxError">0.00</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="bg-[--card] rounded-xl border border-[--border] p-4">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="font-medium text-orange-400">Stanley 参数</h3>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="flex justify-between text-xs mb-1">
+                            <span class="text-[--muted]">控制增益 K</span>
+                            <span class="mono text-orange-400" id="kValue">2.0</span>
+                        </div>
+                        <input type="range" id="kSlider" min="0.5" max="5" step="0.1" value="2.0" class="w-full">
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 pt-2">
+                        <div class="text-center p-2 bg-[--bg] rounded-lg">
+                            <div class="text-xs text-[--muted]">平均误差</div>
+                            <div class="text-lg font-bold mono text-orange-400" id="stAvgError">0.00</div>
+                        </div>
+                        <div class="text-center p-2 bg-[--bg] rounded-lg">
+                            <div class="text-xs text-[--muted]">最大误差</div>
+                            <div class="text-lg font-bold mono text-orange-400" id="stMaxError">0.00</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 误差与速度曲线 -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <div class="bg-[--card] rounded-xl border border-[--border]">
+                <div class="px-4 py-2 border-b border-[--border]">
+                    <h3 class="font-medium text-sm">横向误差曲线</h3>
+                </div>
+                <canvas id="errorCanvas" width="450" height="150"></canvas>
+            </div>
+            <div class="bg-[--card] rounded-xl border border-[--border]">
+                <div class="px-4 py-2 border-b border-[--border]">
+                    <h3 class="font-medium text-sm">速度曲线</h3>
+                </div>
+                <canvas id="speedCanvas" width="450" height="150"></canvas>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // ==================== 配置 ====================
+        const CONFIG = {
+            wheelbase: 2.5,
+            maxSteeringAngle: Math.PI / 4,
+            dt: 0.02,
+            scale: 25,
+            colors: {
+                reference: '#10b981',
+                purePursuit: '#06b6d4',
+                stanley: '#f97316',
+                targetPoint: '#a855f7',
+                nearestPoint: '#fbbf24'
+            }
+        };
+
+        // ==================== 路径生成器（带曲率计算）====================
+        const PathGenerator = {
+            sine(canvas) {
+                const path = [];
+                const width = canvas.width;
+                const height = canvas.height;
+                for (let x = 50; x < width - 50; x += 3) {
+                    const y = height / 2 + Math.sin((x - 50) * 0.015) * 120;
+                    path.push({ x, y });
+                }
+                return this.calculateCurvature(path);
+            },
+            
+            circle(canvas) {
+                const path = [];
+                const cx = canvas.width / 2;
+                const cy = canvas.height / 2;
+                const r = Math.min(canvas.width, canvas.height) * 0.35;
+                for (let angle = 0; angle <= Math.PI * 2; angle += 0.03) {
+                    path.push({
+                        x: cx + r * Math.cos(angle),
+                        y: cy + r * Math.sin(angle)
+                    });
+                }
+                return this.calculateCurvature(path);
+            },
+            
+            sharp(canvas) {
+                const path = [];
+                const w = canvas.width;
+                const h = canvas.height;
+                const m = 60;
+                
+                for (let x = m; x < w * 0.35; x += 4) path.push({ x, y: h * 0.3 });
+                const cx1 = w * 0.35, cy1 = h * 0.3 + 80;
+                for (let a = -Math.PI/2; a <= 0; a += 0.05) {
+                    path.push({ x: cx1 + 80 * Math.cos(a), y: cy1 + 80 * Math.sin(a) });
+                }
+                for (let y = cy1 + 80; y < h * 0.7; y += 4) path.push({ x: cx1 + 80, y });
+                const cx2 = cx1 + 80 + 100, cy2 = h * 0.7;
+                for (let a = Math.PI; a >= Math.PI/2; a -= 0.05) {
+                    path.push({ x: cx2 + 100 * Math.cos(a), y: cy2 + 100 * Math.sin(a) });
+                }
+                for (let x = cx2; x < w - m; x += 4) path.push({ x, y: cy2 + 100 });
+                
+                return this.calculateCurvature(path);
+            },
+            
+            complex(canvas) {
+                const path = [];
+                const w = canvas.width;
+                const h = canvas.height;
+                
+                for (let x = 40; x < 150; x += 4) path.push({ x, y: h/2 });
+                for (let t = 0; t <= Math.PI * 2; t += 0.05) {
+                    path.push({ x: 150 + t * 40, y: h/2 + Math.sin(t * 1.5) * 80 });
+                }
+                const lastX = 150 + Math.PI * 2 * 40;
+                for (let x = lastX; x < w - 100; x += 4) path.push({ x, y: h/2 });
+                
+                return this.calculateCurvature(path);
+            },
+            
+            // 计算路径各点曲率
+            calculateCurvature(path) {
+                for (let i = 1; i < path.length - 1; i++) {
+                    const p0 = path[i - 1];
+                    const p1 = path[i];
+                    const p2 = path[i + 1];
+                    
+                    // Menger曲率公式: k = 4 * Area / (a * b * c)
+                    const a = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+                    const b = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+                    const c = Math.hypot(p2.x - p0.x, p2.y - p0.y);
+                    
+                    // 海伦公式计算面积
+                    const s = (a + b + c) / 2;
+                    const areaSquared = s * (s - a) * (s - b) * (s - c);
+                    const area = Math.sqrt(Math.max(0, areaSquared));
+                    
+                    // 曲率
+                    const denominator = a * b * c;
+                    path[i].curvature = denominator > 0.001 ? (4 * area / denominator) : 0;
+                }
+                
+                // 边界处理
+                path[0].curvature = path[1]?.curvature || 0;
+                path[path.length - 1].curvature = path[path.length - 2]?.curvature || 0;
+                
+                return path;
+            }
+        };
+
+        // ==================== 车辆类（带纵向动力学）====================
+        class Vehicle {
+            constructor(x, y, yaw, color) {
+                this.x = x;
+                this.y = y;
+                this.yaw = yaw;
+                this.speed = 0; // 初始速度为0
+                this.targetSpeed = 0;
+                this.maxSpeed = 8;
+                this.maxAccel = 3.0;    // m/s²
+                this.maxDecel = 5.0;    // m/s²
+                this.maxLatAccel = 2.0; // m/s²
+                this.color = color;
+                this.trajectory = [];
+                this.errors = [];
+                this.steering = 0;
+                this.speedHistory = [];
+            }
+            
+            update(steering, targetSpeed, autoSpeed = true) {
+                // 限制转向角
+                steering = Math.max(-CONFIG.maxSteeringAngle, Math.min(CONFIG.maxSteeringAngle, steering));
+                this.steering = steering;
+                
+                // 纵向控制：平滑加减速
+                if (autoSpeed) {
+                    this.targetSpeed = Math.max(0.5, targetSpeed); // 最低速度0.5m/s
+                    const dv = this.targetSpeed - this.speed;
+                    const maxDv = (dv > 0 ? this.maxAccel : this.maxDecel) * CONFIG.dt;
+                    this.speed += Math.sign(dv) * Math.min(Math.abs(maxDv), Math.abs(dv));
+                    this.speed = Math.max(0, Math.min(this.maxSpeed, this.speed));
+                } else {
+                    this.speed = this.targetSpeed;
+                }
+                
+                // 自行车模型更新
+                const dx = this.speed * Math.cos(this.yaw) * CONFIG.dt;
+                const dy = this.speed * Math.sin(this.yaw) * CONFIG.dt;
+                const dyaw = (this.speed / CONFIG.wheelbase) * Math.tan(steering) * CONFIG.dt;
+                
+                this.x += dx;
+                this.y += dy;
+                this.yaw += dyaw;
+                
+                // 角度归一化
+                while (this.yaw > Math.PI) this.yaw -= 2 * Math.PI;
+                while (this.yaw < -Math.PI) this.yaw += 2 * Math.PI;
+                
+                // 记录轨迹
+                this.trajectory.push({ x: this.x, y: this.y });
+                if (this.trajectory.length > 800) this.trajectory.shift();
+                
+                // 记录速度历史
+                this.speedHistory.push(this.speed);
+                if (this.speedHistory.length > 300) this.speedHistory.shift();
+            }
+            
+            reset(x, y, yaw) {
+                this.x = x;
+                this.y = y;
+                this.yaw = yaw;
+                this.speed = 0;
+                this.targetSpeed = 0;
+                this.trajectory = [{ x, y }];
+                this.errors = [];
+                this.steering = 0;
+                this.speedHistory = [];
+            }
+        }
+
+        // ==================== Pure Pursuit 控制器 ====================
+        class PurePursuitController {
+            constructor(k = 1.5) {
+                this.k = k;
+                this.minLd = 2.0;
+                this.maxLd = 10.0;
+                this.targetPoint = null;
+                this.targetIndex = 0;
+                this.currentCurvature = 0;
+            }
+            
+            computeSteering(vehicle, path) {
+                if (!path || path.length < 2) return 0;
+                
+                const dynamicLd = Math.max(this.minLd, Math.min(this.maxLd, this.k * vehicle.speed));
+                const ldPixels = dynamicLd * CONFIG.scale;
+                
+                let startSearchIndex = Math.max(0, this.targetIndex - 10);
+                let nearestDist = Infinity;
+                let nearestIndex = startSearchIndex;
+                
+                for (let i = startSearchIndex; i < path.length; i++) {
+                    const d = Math.hypot(path[i].x - vehicle.x, path[i].y - vehicle.y);
+                    if (d < nearestDist) {
+                        nearestDist = d;
+                        nearestIndex = i;
+                    }
+                }
+                
+                let targetIdx = nearestIndex;
+                for (let i = nearestIndex; i < path.length; i++) {
+                    const d = Math.hypot(path[i].x - vehicle.x, path[i].y - vehicle.y);
+                    if (d >= ldPixels) {
+                        targetIdx = i;
+                        break;
+                    }
+                    if (i === path.length - 1) targetIdx = i;
+                }
+                
+                this.targetIndex = Math.max(this.targetIndex, targetIdx);
+                targetIdx = this.targetIndex;
+                this.targetPoint = path[targetIdx];
+                
+                // 计算前方曲率（用于速度控制）
+                this.currentCurvature = 0;
+                const lookAheadPoints = Math.min(targetIdx + 20, path.length - 1);
+                for (let i = targetIdx; i < lookAheadPoints; i++) {
+                    this.currentCurvature = Math.max(this.currentCurvature, path[i].curvature || 0);
+                }
+                
+                const dx = this.targetPoint.x - vehicle.x;
+                const dy = this.targetPoint.y - vehicle.y;
+                const localX = dx * Math.cos(vehicle.yaw) + dy * Math.sin(vehicle.yaw);
+                const localY = -dx * Math.sin(vehicle.yaw) + dy * Math.cos(vehicle.yaw);
+                const alpha = Math.atan2(localY, localX);
+                const actualLd = Math.hypot(dx, dy) / CONFIG.scale;
+                
+                return Math.atan2(2 * CONFIG.wheelbase * Math.sin(alpha), Math.max(0.1, actualLd));
+            }
+            
+            computeTargetSpeed(vehicle, maxSpeed) {
+                // v = sqrt(a_lat_max / k)，避免除零
+                const curvature = this.currentCurvature;
+                if (curvature < 0.001) return maxSpeed;
+                
+                const speedLimit = Math.sqrt(vehicle.maxLatAccel / curvature);
+                return Math.min(maxSpeed, speedLimit);
+            }
+            
+            reset() {
+                this.targetIndex = 0;
+                this.targetPoint = null;
+                this.currentCurvature = 0;
+            }
+        }
+
+        // ==================== Stanley 控制器 ====================
+        class StanleyController {
+            constructor(k = 2.0) {
+                this.k = k;
+                this.nearestPoint = null;
+                this.nearestIndex = 0;
+                this.crossTrackError = 0;
+                this.headingError = 0;
+                this.currentCurvature = 0;
+            }
+            
+            computeSteering(vehicle, path) {
+                if (!path || path.length < 2) return 0;
+                
+                let nearestIndex = 0;
+                let minDist = Infinity;
+                
+                for (let i = 0; i < path.length; i++) {
+                    const dist = Math.hypot(path[i].x - vehicle.x, path[i].y - vehicle.y);
+                    if (dist < minDist) {
+                        minDist = dist;
+                        nearestIndex = i;
+                    }
+                }
+                
+                this.nearestIndex = nearestIndex;
+                this.nearestPoint = path[nearestIndex];
+                
+                // 计算前方曲率
+                this.currentCurvature = 0;
+                const lookAhead = Math.min(nearestIndex + 30, path.length - 1);
+                for (let i = nearestIndex; i < lookAhead; i++) {
+                    this.currentCurvature = Math.max(this.currentCurvature, path[i].curvature || 0);
+                }
+                
+                let pathYaw = 0;
+                if (nearestIndex < path.length - 1) {
+                    pathYaw = Math.atan2(
+                        path[nearestIndex + 1].y - path[nearestIndex].y,
+                        path[nearestIndex + 1].x - path[nearestIndex].x
+                    );
+                } else {
+                    pathYaw = Math.atan2(
+                        path[nearestIndex].y - path[nearestIndex - 1].y,
+                        path[nearestIndex].x - path[nearestIndex - 1].x
+                    );
+                }
+                
+                this.headingError = pathYaw - vehicle.yaw;
+                while (this.headingError > Math.PI) this.headingError -= 2 * Math.PI;
+                while (this.headingError < -Math.PI) this.headingError += 2 * Math.PI;
+                
+                const dx = vehicle.x - this.nearestPoint.x;
+                const dy = vehicle.y - this.nearestPoint.y;
+                const normalX = -Math.sin(pathYaw);
+                const normalY = Math.cos(pathYaw);
+                this.crossTrackError = (dx * normalX + dy * normalY) / CONFIG.scale;
+                
+                const kSoft = 1.0;
+                return this.headingError + Math.atan2(this.k * this.crossTrackError, vehicle.speed + kSoft);
+            }
+            
+            computeTargetSpeed(vehicle, maxSpeed) {
+                const curvature = this.currentCurvature;
+                if (curvature < 0.001) return maxSpeed;
+                
+                const speedLimit = Math.sqrt(vehicle.maxLatAccel / curvature);
+                
+                // Stanley还可以根据横向误差进一步减速
+                const cteFactor = 1.0 - Math.min(0.5, Math.abs(this.crossTrackError) * 0.1);
+                
+                return Math.min(maxSpeed, speedLimit) * cteFactor;
+            }
+        }
+
+        // ==================== 主可视化类 ====================
+        class PathTrackingVisualization {
+            constructor() {
+                this.algorithmMode = 'purePursuit';
+                this.pathType = 'sine';
+                this.isRunning = false;
+                this.path = [];
+                this.animationId = null;
+                this.errorHistory = { purePursuit: [], stanley: [] };
+                this.autoSpeed = true;
+                
+                this.mainCanvas = document.getElementById('mainCanvas');
+                this.errorCanvas = document.getElementById('errorCanvas');
+                this.speedCanvas = document.getElementById('speedCanvas');
+                this.mainCtx = this.mainCanvas.getContext('2d');
+                this.errorCtx = this.errorCanvas.getContext('2d');
+                this.speedCtx = this.speedCanvas.getContext('2d');
+                
+                this.ppController = new PurePursuitController(1.5);
+                this.stanleyController = new StanleyController(2.0);
+                
+                this.purePursuitVehicle = null;
+                this.stanleyVehicle = null;
+                
+                this.initPath();
+                this.initVehicles();
+                this.bindEvents();
+                this.render();
+            }
+            
+            initPath() {
+                this.path = PathGenerator[this.pathType](this.mainCanvas);
+            }
+            
+            initVehicles() {
+                if (this.path.length > 0) {
+                    const startPoint = this.path[0];
+                    let startYaw = 0;
+                    if (this.path.length > 1) {
+                        startYaw = Math.atan2(
+                            this.path[1].y - this.path[0].y,
+                            this.path[1].x - this.path[0].x
+                        );
+                    }
+                    
+                    const maxSpeed = parseFloat(document.getElementById('speedSlider').value);
+                    const maxLatAccel = parseFloat(document.getElementById('latAccelSlider').value);
+                    
+                    this.purePursuitVehicle = new Vehicle(
+                        startPoint.x - 20, startPoint.y + 30, startYaw, CONFIG.colors.purePursuit
+                    );
+                    this.purePursuitVehicle.maxSpeed = maxSpeed;
+                    this.purePursuitVehicle.maxLatAccel = maxLatAccel;
+                    
+                    this.stanleyVehicle = new Vehicle(
+                        startPoint.x - 20, startPoint.y - 30, startYaw, CONFIG.colors.stanley
+                    );
+                    this.stanleyVehicle.maxSpeed = maxSpeed;
+                    this.stanleyVehicle.maxLatAccel = maxLatAccel;
+                }
+            }
+            
+            bindEvents() {
+                document.getElementById('btnPurePursuit').addEventListener('click', () => this.setMode('purePursuit'));
+                document.getElementById('btnStanley').addEventListener('click', () => this.setMode('stanley'));
+                document.getElementById('btnBoth').addEventListener('click', () => this.setMode('both'));
+                
+                document.getElementById('pathSelect').addEventListener('change', (e) => {
+                    this.pathType = e.target.value;
+                    this.reset();
+                });
+                
+                document.getElementById('speedSlider').addEventListener('input', (e) => {
+                    const speed = parseFloat(e.target.value);
+                    document.getElementById('speedValue').textContent = `${speed} m/s`;
+                    if (this.purePursuitVehicle) this.purePursuitVehicle.maxSpeed = speed;
+                    if (this.stanleyVehicle) this.stanleyVehicle.maxSpeed = speed;
+                });
+                
+                document.getElementById('latAccelSlider').addEventListener('input', (e) => {
+                    const accel = parseFloat(e.target.value);
+                    document.getElementById('latAccelValue').textContent = `${accel.toFixed(1)} m/s²`;
+                    if (this.purePursuitVehicle) this.purePursuitVehicle.maxLatAccel = accel;
+                    if (this.stanleyVehicle) this.stanleyVehicle.maxLatAccel = accel;
+                });
+                
+                document.getElementById('ldSlider').addEventListener('input', (e) => {
+                    this.ppController.k = parseFloat(e.target.value);
+                    document.getElementById('ldValue').textContent = parseFloat(e.target.value).toFixed(1);
+                });
+                
+                document.getElementById('kSlider').addEventListener('input', (e) => {
+                    this.stanleyController.k = parseFloat(e.target.value);
+                    document.getElementById('kValue').textContent = parseFloat(e.target.value).toFixed(1);
+                });
+                
+                document.getElementById('autoSpeedCheck').addEventListener('change', (e) => {
+                    this.autoSpeed = e.target.checked;
+                });
+                
+                document.getElementById('btnStart').addEventListener('click', () => this.toggleSimulation());
+                document.getElementById('btnReset').addEventListener('click', () => this.reset());
+            }
+            
+            setMode(mode) {
+                this.algorithmMode = mode;
+                const buttons = {
+                    purePursuit: 'btnPurePursuit',
+                    stanley: 'btnStanley', 
+                    both: 'btnBoth'
+                };
+                
+                Object.entries(buttons).forEach(([m, btnId]) => {
+                    const btn = document.getElementById(btnId);
+                    if (m === mode) {
+                        btn.className = 'btn flex-1 py-1.5 px-2 rounded-lg bg-cyan-500/20 border border-cyan-500/50 text-cyan-400 text-xs font-medium';
+                    } else {
+                        btn.className = 'btn flex-1 py-1.5 px-2 rounded-lg bg-[--bg] border border-[--border] text-[--muted] text-xs font-medium';
+                    }
+                });
+                
+                this.render();
+            }
+            
+            toggleSimulation() {
+                if (this.isRunning) this.stop();
+                else this.start();
+            }
+            
+            start() {
+                this.isRunning = true;
+                document.getElementById('btnStart').textContent = '暂停';
+                document.getElementById('btnStart').className = 'btn flex-1 py-2 px-3 rounded-lg bg-yellow-500/20 border border-yellow-500/50 text-yellow-400 text-xs font-medium';
+                this.animate();
+            }
+            
+            stop() {
+                this.isRunning = false;
+                if (this.animationId) cancelAnimationFrame(this.animationId);
+                document.getElementById('btnStart').textContent = '继续';
+                document.getElementById('btnStart').className = 'btn flex-1 py-2 px-3 rounded-lg bg-green-500/20 border border-green-500/50 text-green-400 text-xs font-medium';
+            }
+            
+            reset() {
+                this.stop();
+                this.errorHistory = { purePursuit: [], stanley: [] };
+                this.ppController.reset();
+                this.initPath();
+                this.initVehicles();
+                
+                document.getElementById('btnStart').textContent = '开始';
+                document.getElementById('btnStart').className = 'btn flex-1 py-2 px-3 rounded-lg bg-green-500/20 border border-green-500/50 text-green-400 text-xs font-medium';
+                
+                this.updateMetrics();
+                this.render();
+                this.renderErrorChart();
+                this.renderSpeedChart();
+            }
+            
+            animate() {
+                if (!this.isRunning) return;
+                
+                // 更新Pure Pursuit
+                if (this.algorithmMode === 'purePursuit' || this.algorithmMode === 'both') {
+                    const steering = this.ppController.computeSteering(this.purePursuitVehicle, this.path);
+                    const targetSpeed = this.ppController.computeTargetSpeed(
+                        this.purePursuitVehicle, 
+                        this.purePursuitVehicle.maxSpeed
+                    );
+                    this.purePursuitVehicle.update(steering, targetSpeed, this.autoSpeed);
+                    
+                    const cte = this.calculateCTE(this.purePursuitVehicle);
+                    this.purePursuitVehicle.errors.push(cte);
+                    this.errorHistory.purePursuit.push(cte);
+                    if (this.errorHistory.purePursuit.length > 300) this.errorHistory.purePursuit.shift();
+                }
+                
+                // 更新Stanley
+                if (this.algorithmMode === 'stanley' || this.algorithmMode === 'both') {
+                    const steering = this.stanleyController.computeSteering(this.stanleyVehicle, this.path);
+                    const targetSpeed = this.stanleyController.computeTargetSpeed(
+                        this.stanleyVehicle,
+                        this.stanleyVehicle.maxSpeed
+                    );
+                    this.stanleyVehicle.update(steering, targetSpeed, this.autoSpeed);
+                    
+                    const cte = this.calculateCTE(this.stanleyVehicle);
+                    this.stanleyVehicle.errors.push(cte);
+                    this.errorHistory.stanley.push(cte);
+                    if (this.errorHistory.stanley.length > 300) this.errorHistory.stanley.shift();
+                }
+                
+                // 检查完成
+                if (this.path.length > 0) {
+                    const lastPoint = this.path[this.path.length - 1];
+                    const distPP = this.purePursuitVehicle ? Math.hypot(this.purePursuitVehicle.x - lastPoint.x, this.purePursuitVehicle.y - lastPoint.y) : Infinity;
+                    const distST = this.stanleyVehicle ? Math.hypot(this.stanleyVehicle.x - lastPoint.x, this.stanleyVehicle.y - lastPoint.y) : Infinity;
+                    
+                    if (distPP < 50 && distST < 50) {
+                        this.stop();
+                        return;
+                    }
+                }
+                
+                this.updateInfo();
+                this.updateMetrics();
+                this.render();
+                this.renderErrorChart();
+                this.renderSpeedChart();
+                
+                this.animationId = requestAnimationFrame(() => this.animate());
+            }
+            
+            calculateCTE(vehicle) {
+                let minDist = Infinity;
+                for (const point of this.path) {
+                    const dist = Math.hypot(point.x - vehicle.x, point.y - vehicle.y);
+                    if (dist < minDist) minDist = dist;
+                }
+                return minDist / CONFIG.scale;
+            }
+            
+            updateInfo() {
+                // PP速度表
+                if (this.purePursuitVehicle && (this.algorithmMode === 'purePursuit' || this.algorithmMode === 'both')) {
+                    const v = this.purePursuitVehicle;
+                    document.getElementById('ppSpeedNum').textContent = v.speed.toFixed(1);
+                    document.getElementById('ppTargetSpeed').textContent = v.targetSpeed.toFixed(1) + ' m/s';
+                    document.getElementById('ppCurvature').textContent = this.ppController.currentCurvature.toFixed(4);
+                    
+                    // 速度弧形
+                    const percent = v.speed / v.maxSpeed;
+                    const arc = document.getElementById('ppSpeedArc');
+                    arc.style.strokeDasharray = `${percent * 75}, 100`;
+                }
+                
+                // Stanley速度表
+                if (this.stanleyVehicle && (this.algorithmMode === 'stanley' || this.algorithmMode === 'both')) {
+                    const v = this.stanleyVehicle;
+                    document.getElementById('stSpeedNum').textContent = v.speed.toFixed(1);
+                    document.getElementById('stTargetSpeed').textContent = v.targetSpeed.toFixed(1) + ' m/s';
+                    document.getElementById('stCteDisplay').textContent = this.stanleyController.crossTrackError.toFixed(2) + ' m';
+                    
+                    const percent = v.speed / v.maxSpeed;
+                    const arc = document.getElementById('stSpeedArc');
+                    arc.style.strokeDasharray = `${percent * 75}, 100`;
+                }
+            }
+            
+            updateMetrics() {
+                if (this.algorithmMode === 'purePursuit' || this.algorithmMode === 'both') {
+                    const errors = this.purePursuitVehicle?.errors || [];
+                    if (errors.length > 0) {
+                        const avg = errors.reduce((a, b) => a + b, 0) / errors.length;
+                        const max = Math.max(...errors);
+                        document.getElementById('ppAvgError').textContent = avg.toFixed(2);
+                        document.getElementById('ppMaxError').textContent = max.toFixed(2);
+                    }
+                }
+                
+                if (this.algorithmMode === 'stanley' || this.algorithmMode === 'both') {
+                    const errors = this.stanleyVehicle?.errors || [];
+                    if (errors.length > 0) {
+                        const avg = errors.reduce((a, b) => a + b, 0) / errors.length;
+                        const max = Math.max(...errors);
+                        document.getElementById('stAvgError').textContent = avg.toFixed(2);
+                        document.getElementById('stMaxError').textContent = max.toFixed(2);
+                    }
+                }
+            }
+            
+            render() {
+                const ctx = this.mainCtx;
+                const w = this.mainCanvas.width;
+                const h = this.mainCanvas.height;
+                
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, w, h);
+                
+                // 网格
+                ctx.strokeStyle = 'rgba(100, 116, 139, 0.08)';
+                ctx.lineWidth = 1;
+                for (let x = 0; x < w; x += 50) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
+                for (let y = 0; y < h; y += 50) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+                
+                // 绘制带曲率颜色的路径
+                if (this.path.length > 1) {
+                    ctx.lineWidth = 4;
+                    ctx.lineCap = 'round';
+                    ctx.lineJoin = 'round';
+                    
+                    for (let i = 1; i < this.path.length; i++) {
+                        const p0 = this.path[i - 1];
+                        const p1 = this.path[i];
+                        const curvature = p1.curvature || 0;
+                        
+                        // 根据曲率映射颜色：绿 -> 黄 -> 红
+                        const t = Math.min(1, curvature * 15); // 归一化
+                        const r = Math.floor(16 + t * 223);
+                        const g = Math.floor(185 - t * 100);
+                        const b = Math.floor(129 - t * 100);
+                        
+                        ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+                        ctx.beginPath();
+                        ctx.moveTo(p0.x, p0.y);
+                        ctx.lineTo(p1.x, p1.y);
+                        ctx.stroke();
+                    }
+                    
+                    // 起点终点
+                    ctx.fillStyle = CONFIG.colors.reference;
+                    ctx.beginPath();
+                    ctx.arc(this.path[0].x, this.path[0].y, 8, 0, Math.PI * 2);
+                    ctx.fill();
+                    
+                    const lastP = this.path[this.path.length - 1];
+                    ctx.strokeStyle = '#ef4444';
+                    ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.arc(lastP.x, lastP.y, 10, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+                
+                // 绘制车辆
+                if (this.algorithmMode === 'purePursuit' || this.algorithmMode === 'both') {
+                    this.drawVehicleTrace(ctx, this.purePursuitVehicle, CONFIG.colors.purePursuit);
+                    this.drawPurePursuitVisuals(ctx);
+                    this.drawVehicle(ctx, this.purePursuitVehicle, CONFIG.colors.purePursuit);
+                }
+                
+                if (this.algorithmMode === 'stanley' || this.algorithmMode === 'both') {
+                    this.drawVehicleTrace(ctx, this.stanleyVehicle, CONFIG.colors.stanley);
+                    this.drawStanleyVisuals(ctx);
+                    this.drawVehicle(ctx, this.stanleyVehicle, CONFIG.colors.stanley);
+                }
+            }
+            
+            drawVehicleTrace(ctx, vehicle, color) {
+                if (vehicle.trajectory.length > 1) {
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.globalAlpha = 0.3;
+                    ctx.beginPath();
+                    ctx.moveTo(vehicle.trajectory[0].x, vehicle.trajectory[0].y);
+                    for (const p of vehicle.trajectory) ctx.lineTo(p.x, p.y);
+                    ctx.stroke();
+                    ctx.globalAlpha = 1;
+                }
+            }
+            
+            drawPurePursuitVisuals(ctx) {
+                const v = this.purePursuitVehicle;
+                const tp = this.ppController.targetPoint;
+                if (!tp) return;
+                
+                const ld = Math.hypot(tp.x - v.x, tp.y - v.y);
+                ctx.strokeStyle = 'rgba(168, 85, 247, 0.3)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.arc(v.x, v.y, ld, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                ctx.strokeStyle = CONFIG.colors.targetPoint;
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(v.x, v.y);
+                ctx.lineTo(tp.x, tp.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                ctx.fillStyle = CONFIG.colors.targetPoint;
+                ctx.beginPath();
+                ctx.arc(tp.x, tp.y, 8, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            drawStanleyVisuals(ctx) {
+                const v = this.stanleyVehicle;
+                const np = this.stanleyController.nearestPoint;
+                if (!np) return;
+                
+                ctx.strokeStyle = CONFIG.colors.nearestPoint;
+                ctx.lineWidth = 2;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(v.x, v.y);
+                ctx.lineTo(np.x, np.y);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                ctx.fillStyle = CONFIG.colors.nearestPoint;
+                ctx.beginPath();
+                ctx.arc(np.x, np.y, 6, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            
+            drawVehicle(ctx, vehicle, color) {
+                const length = 30;
+                const width = 16;
+                
+                ctx.save();
+                ctx.translate(vehicle.x, vehicle.y);
+                ctx.rotate(vehicle.yaw);
+                
+                // 速度指示光晕
+                const speedRatio = vehicle.speed / vehicle.maxSpeed;
+                const glowRadius = 20 + speedRatio * 15;
+                const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, glowRadius);
+                gradient.addColorStop(0, color.replace(')', ', 0.2)').replace('rgb', 'rgba'));
+                gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+                ctx.fillStyle = gradient;
+                ctx.beginPath();
+                ctx.arc(0, 0, glowRadius, 0, Math.PI * 2);
+                ctx.fill();
+                
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+                ctx.fillRect(-length/2 + 3, -width/2 + 3, length, width);
+                
+                ctx.fillStyle = color;
+                ctx.fillRect(-length/2, -width/2, length, width);
+                
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+                ctx.fillRect(length/2 - 8, -width/2, 8, width);
+                
+                ctx.save();
+                ctx.translate(length/2 - 5, 0);
+                ctx.rotate(vehicle.steering);
+                ctx.fillStyle = '#fff';
+                ctx.fillRect(-4, -2, 8, 4);
+                ctx.restore();
+                
+                ctx.restore();
+            }
+            
+            renderErrorChart() {
+                const ctx = this.errorCtx;
+                const w = this.errorCanvas.width;
+                const h = this.errorCanvas.height;
+                
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, w, h);
+                
+                ctx.strokeStyle = 'rgba(100, 116, 139, 0.2)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([2, 2]);
+                ctx.beginPath();
+                ctx.moveTo(0, h/2);
+                ctx.lineTo(w, h/2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                
+                const drawCurve = (data, color) => {
+                    if (data.length < 2) return;
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    
+                    const maxError = 3;
+                    for (let i = 0; i < data.length; i++) {
+                        const x = (i / (data.length - 1)) * w;
+                        const y = h/2 - (data[i] / maxError) * (h/2 - 10);
+                        const clampedY = Math.max(10, Math.min(h - 10, y));
+                        if (i === 0) ctx.moveTo(x, clampedY);
+                        else ctx.lineTo(x, clampedY);
+                    }
+                    ctx.stroke();
+                };
+                
+                if (this.algorithmMode === 'purePursuit' || this.algorithmMode === 'both') {
+                    drawCurve(this.errorHistory.purePursuit, CONFIG.colors.purePursuit);
+                }
+                if (this.algorithmMode === 'stanley' || this.algorithmMode === 'both') {
+                    drawCurve(this.errorHistory.stanley, CONFIG.colors.stanley);
+                }
+                
+                ctx.fillStyle = '#64748b';
+                ctx.font = '9px "JetBrains Mono"';
+                ctx.fillText('误差(m)', 5, 12);
+            }
+            
+            renderSpeedChart() {
+                const ctx = this.speedCtx;
+                const w = this.speedCanvas.width;
+                const h = this.speedCanvas.height;
+                
+                ctx.fillStyle = '#0f172a';
+                ctx.fillRect(0, 0, w, h);
+                
+                const drawSpeedCurve = (vehicle, color) => {
+                    if (!vehicle || vehicle.speedHistory.length < 2) return;
+                    
+                    // 目标速度线
+                    ctx.strokeStyle = color.replace(')', ', 0.3)').replace('rgb', 'rgba');
+                    ctx.lineWidth = 1;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    
+                    const maxSpeed = vehicle.maxSpeed;
+                    for (let i = 0; i < vehicle.speedHistory.length; i++) {
+                        const x = (i / (vehicle.speedHistory.length - 1)) * w;
+                        const y = h - (vehicle.targetSpeed / maxSpeed) * (h - 20) - 10;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                    
+                    // 实际速度线
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    
+                    for (let i = 0; i < vehicle.speedHistory.length; i++) {
+                        const x = (i / (vehicle.speedHistory.length - 1)) * w;
+                        const y = h - (vehicle.speedHistory[i] / maxSpeed) * (h - 20) - 10;
+                        if (i === 0) ctx.moveTo(x, y);
+                        else ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                };
+                
+                if (this.algorithmMode === 'purePursuit' || this.algorithmMode === 'both') {
+                    drawSpeedCurve(this.purePursuitVehicle, CONFIG.colors.purePursuit);
+                }
+                if (this.algorithmMode === 'stanley' || this.algorithmMode === 'both') {
+                    drawSpeedCurve(this.stanleyVehicle, CONFIG.colors.stanley);
+                }
+                
+                ctx.fillStyle = '#64748b';
+                ctx.font = '9px "JetBrains Mono"';
+                ctx.fillText('速度(m/s)', 5, 12);
+            }
+        }
+
+        // 启动
+        document.addEventListener('DOMContentLoaded', () => {
+            new PathTrackingVisualization();
+        });
+    </script>
+</body>
+</html>
