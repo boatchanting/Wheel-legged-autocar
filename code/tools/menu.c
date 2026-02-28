@@ -326,18 +326,18 @@ void Menu_ShowDynamic(void)
         // ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
         //gnss数据接收与解析都是通过串口中断调用gnss_uart_callback函数进行实现的
         //数据解析完毕之后gnss_flag标志位会置1
-        if(gnss_flag)
-        {
-            gnss_flag = 0;//将标志位清零
-            gnss_data_parse();           //开始解析数据
-            ips200_show_uint(40,15*0, gnss.time.year,4); ips200_show_uint(90,15*0,gnss.time.month,2); ips200_show_uint(130,15*0,gnss.time.day,2);
-            ips200_show_uint(40,15*1, gnss.time.hour,2); ips200_show_uint(90,15*1,gnss.time.minute,2); ips200_show_uint(120,15*1,gnss.time.second,2);
-            ips200_show_uint(50,15*2, gnss.state,5); ips200_show_float(130,15*2,gnss.latitude,4,6);
-            ips200_show_float(40,15*3, gnss.longitude,7,6); ips200_show_float(40,15*4,gnss.speed,4,6);
-            ips200_show_float(40,15*5, gnss.direction,4,6);
-            ips200_show_uint(40,15*6,gnss.satellite_used,5);
-            ips200_show_float(50,15*7, gnss.height,8,6);
-        }
+        // if(gnss_flag)
+        // {
+        //     gnss_flag = 0;//将标志位清零
+        //     gnss_data_parse();           //开始解析数据
+        //     ips200_show_uint(40,15*0, gnss.time.year,4); ips200_show_uint(90,15*0,gnss.time.month,2); ips200_show_uint(130,15*0,gnss.time.day,2);
+        //     ips200_show_uint(40,15*1, gnss.time.hour,2); ips200_show_uint(90,15*1,gnss.time.minute,2); ips200_show_uint(120,15*1,gnss.time.second,2);
+        ips200_show_uint(50,15*2, gnss.state,5); //ips200_show_float(130,15*2,gnss.latitude,4,6);
+        //     ips200_show_float(40,15*3, gnss.longitude,7,6); ips200_show_float(40,15*4,gnss.speed,4,6);
+        //     ips200_show_float(40,15*5, gnss.direction,4,6);
+        //     ips200_show_uint(40,15*6,gnss.satellite_used,5);
+        //     ips200_show_float(50,15*7, gnss.height,8,6);
+        // }
 
         ips200_show_float(25, 135, current_angles[0], 3, 1);
         ips200_show_float(25, 150, current_angles[1], 3, 1);
