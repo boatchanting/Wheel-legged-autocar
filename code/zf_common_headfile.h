@@ -125,6 +125,7 @@
 #include "navigation/nav_ram.h"// 惯性导航记录轨迹到内存模块
 #include "navigation/ram2flash.h"  // 惯性导航记录轨迹到闪存模块
 #include "navigation/nav_replay.h"  // 惯性导航复现轨迹模块
+#include "navigation/gnss_transform.h"  // gnss坐标转为笛卡尔坐标
 
 #include "plan/minefield.h"  // 科目一：雷区旋转控制器
 //=====================================================组件应用层=====================================================
