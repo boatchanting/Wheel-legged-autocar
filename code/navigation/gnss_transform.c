@@ -142,9 +142,9 @@ void Gnss_Transform_Update(void)
         lat = _dms_to_decimal(gnss.latitude_degree, gnss.latitude_cent, gnss.latitude_second);
         lon = _dms_to_decimal(gnss.longitude_degree, gnss.longitude_cent, gnss.longitude_second);
         
-        // 处理南纬和西经
-        if (gnss.ns == 'S' || gnss.ns == -1) lat = -lat;
-        if (gnss.ew == 'W' || gnss.ew == -1) lon = -lon;
+        // 处理南纬和西经，这个没有条件测试，我们在中国比赛也用不着，其实也可以优化掉【优化点】
+        //if (gnss.ns == 'S' || gnss.ns == -1) lat = -lat;
+        //if (gnss.ew == 'W' || gnss.ew == -1) lon = -lon;
     }
 
     // 3. 高斯投影计算当前绝对坐标
