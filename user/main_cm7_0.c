@@ -339,6 +339,7 @@ InertialNav_Init();//惯性导航初始化
 #endif
 
 gnss_init(TAU1201);//gnss导航初始化
+Gnss_Transform_Init();//GNSS坐标转换笛卡尔初始化
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;
@@ -670,7 +671,7 @@ vision_detected_marker = 0;//雷区调用,测试用
         #endif
         NavReplay_Start();//开始复现
         Buzzer_Beep_By_PointType(2);//叫三次
-    }
+    }    
 
 
 

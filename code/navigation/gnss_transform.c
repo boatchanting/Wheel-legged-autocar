@@ -12,7 +12,7 @@ static double s_origin_y_abs = 0.0; // 原点高斯 Y (东向)
 #define WGS84_F         (1.0 / 298.257223563) // 扁率
 #define WGS84_E2        (2.0 * WGS84_F - WGS84_F * WGS84_F) // 第一偏心率平方
 #define WGS84_E12       (WGS84_E2 / (1.0 - WGS84_E2))       // 第二偏心率平方
-#define PI              3.14159265358979323846 //【优化点】可以把类似的地方都用这一个变量名字
+//#define PI              3.14159265358979323846 //【优化点】可以把类似的地方都用这一个变量名字
 #define RAD_PER_DEG     (PI / 180.0)  //【优化点】可以把类似的地方都用同一个变量名字
 
 // ==================== 内部辅助函数 ====================
@@ -113,13 +113,6 @@ void Gnss_Transform_Init(void)
     s_origin_y_abs = 0.0;
 }
 
-void Gnss_Transform_Reset_Origin(void)
-{
-    gnss_trans.is_origin_set = 0;
-    s_origin_x_abs = 0.0;
-    s_origin_y_abs = 0.0;
-}
-
 void Gnss_Transform_Update(void)
 {
     // 1. 检查 GNSS 数据有效性 (假设 extern 变量名为 gnss)
@@ -172,6 +165,4 @@ void Gnss_Transform_Update(void)
         gnss_trans.x = (float)(current_y_abs - s_origin_y_abs); // 东向位移 (X 通常对应东)
         gnss_trans.y = (float)(current_x_abs - s_origin_x_abs); // 北向位移 (Y 通常对应北)
     }
-
-
 }

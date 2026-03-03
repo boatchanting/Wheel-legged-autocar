@@ -44,10 +44,4 @@ void Gnss_Transform_Init(void);
  */
 void Gnss_Transform_Update(void);
 
-/**
- * @brief 强制重置原点
- * @note  用于手动设置新的参考原点
- */
-void Gnss_Transform_Reset_Origin(void);
-
 #endif // __GNSS_TRANSFORM_H
