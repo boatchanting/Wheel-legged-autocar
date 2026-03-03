@@ -78,6 +78,8 @@ void wifi_protocol_send_data(void) {
     // --- B. 惯导信息 (InertialNav_t) ---
     write_u32_or_float(&inertial_nav.x);    // 4 bytes (float)
     write_u32_or_float(&inertial_nav.y);    // 4 bytes (float)
+    write_u32_or_float(&inertial_nav.vx_body);   // 4 bytes (float)
+    write_u32_or_float(&inertial_nav.vy_body);   // 4 bytes (float)
     // 如果需要 vx_body, slip_flag 等，在这里继续添加 write_xx
 
     // --- C. GNSS 信息 (gnss_info_struct) ---

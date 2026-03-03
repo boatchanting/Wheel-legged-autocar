@@ -18,11 +18,11 @@ MAX_CHART_POINTS = 5000     # 前端图表保留的最大点数
 # 协议解析配置 (修正版)
 # -------------------------------------------------------------------------
 # 修正说明：
-# 1. PAYLOAD_SIZE 修正为 68 字节
-# 2. STRUCT_FMT 修正为 <IffHBBBBBBHHHHHHddbbffBfBf
+# 1. PAYLOAD_SIZE 修正为 76 字节
+# 2. STRUCT_FMT 修正为 <IffffHBBBBBBHHHHHHddbbffBfBf
 #    差异在于：时间+状态共6个u8(BBBBBB)，整型经纬度共6个u16(HHHHHH)
 
-PAYLOAD_SIZE = 68
+PAYLOAD_SIZE = 76
 FRAME_SIZE = PAYLOAD_SIZE + 6 
 
 # Python struct 格式化字符串 (严格对应 C 语言发送顺序)
@@ -53,11 +53,11 @@ FRAME_SIZE = PAYLOAD_SIZE + 6
 # B : u8 (sat_used) -> 1
 # f : float (height) -> 4
 # 总计：4+8+2+6+12+16+2+8+5+5 = 68 字节
-STRUCT_FMT = '<IffHBBBBBBHHHHHHddbbffBfBf'
+STRUCT_FMT = '<IffffHBBBBBBHHHHHHddbbffBfBf'
 
 # 字段名称映射 (必须与 STRUCT_FMT 解析出的 26 个变量一一对应)
 FIELD_NAMES = [
-    'loop', 'nav_x', 'nav_y',
+    'loop', 'nav_x', 'nav_y','vx_body', 'vy_body',
     'year', 'month', 'day', 'hour', 'minute', 'second',
     'state',
     'lat_deg', 'lat_cent', 'lat_sec',
