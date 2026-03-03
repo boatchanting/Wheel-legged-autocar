@@ -61,7 +61,7 @@ extern NavRamData_t nav_ram_data;
 void NavRam_Init(void);
 
 /**
- * @brief  设置当前 plan 类型
+ * @brief  设置当前 plan 类型【优化点】【暂时未调用】
  * @param  plan plan 类型 (NavPlanType_e)
  */
 void NavRam_SetPlan(uint8 plan);
