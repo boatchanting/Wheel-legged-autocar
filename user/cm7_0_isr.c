@@ -97,6 +97,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         if (gnss_flag) {
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
+            Gnss_Transform_Update();//GNSS转换为笛卡尔更新
         } // GNSS更新
     }
 
@@ -105,7 +106,10 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 【nav.4】复现控制任务 (10ms运行一次)
     // ------------------------------------------------------
     if (loop_counter % 10 == 0) {  // 10ms 一次
-        if(g_motor_enable){NavReplay_Process();} //复现控制
+        if(g_motor_enable){
+            NavReplay_Process();//惯性导航复现
+            GnssReplay_Process();//GNSS导航复现
+        } //复现控制
     }
     
 

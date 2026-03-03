@@ -2,7 +2,6 @@
 #define _GNSSRAM2FLASH_H_
 
 #include "zf_common_headfile.h"
-#include "gnss_ram.h" // 引入 GNSS RAM 结构
 
 // ==========================================
 // Flash 存储配置

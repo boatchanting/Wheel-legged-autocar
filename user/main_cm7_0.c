@@ -174,10 +174,12 @@ uint8 pit_state_1 = 0;
 // ==========================================
 volatile uint8_t g_nav_recording = 0;       // 1: 正在记录 RAM, 0: 停止记录
 volatile uint8_t g_nav_start_recording = 0;  // 1: 请求开始录制，创建内存区
-volatile uint8_t g_save_flash_request = 0;  // 1: 请求将 RAM 数据存入 Flash
+volatile uint8_t g_save_flash_request = 0;  // 1: 请求将 RAM 数据存入 Flash【优化点】可以移动到对应的文件里面的，不用都放在main里面
 volatile uint8_t g_load_flash_request = 0;      // 1: 请求从 Flash 加载数据
 volatile uint8_t g_replay_start_request = 0;
 volatile uint8_t g_replay_stop_request = 0;
+//【gnss】导航记录控制标志位
+volatile uint8_t g_gnss_start_recording = 0; // 1: 开始录制, 0: 清除开始录制标记
 
 int main(void)
 {
@@ -673,7 +675,115 @@ vision_detected_marker = 0;//雷区调用,测试用
         Buzzer_Beep_By_PointType(2);//叫三次
     }    
 
+    // 假设你在外部定义了这几个控制标志（或者直接替换你原本的标志名称）
+    // extern uint8 g_gnss_start_recording;
+    // extern uint8 g_gnss_save_flash_request;
+    // extern uint8 g_gnss_load_flash_request;
 
+    // ---------------------------------------------------------
+    // ---------------- 【GNSS.1】初始化 GNSS 定位与打点模块 ----------------
+    // ---------------------------------------------------------
+    if (g_gnss_start_recording)
+    {            
+        // ★ 惯导依然需要初始化，以重置 IMU 的 relative_yaw 和积分速度
+        InertialNav_Init();
+        
+        // 初始化 GNSS 转换模块（此时会将当前位置记作 (0,0) 的相对原点）
+        Gnss_Transform_Init();
+        
+        // 初始化 GNSS RAM 存储区
+        GnssRam_Init();
+        
+        #if DEBUG_LOG_ENABLE
+            printf("[GNSS] Init OK: x=%.2f y=%.2f fused_yaw=%.2f\r\n",
+                   gnss_trans.x,
+                   gnss_trans.y,
+                   GnssReplay_GetFusedYaw()); // 打印当前的绝对融合航向
+        #endif
+        
+        GnssRam_Buzzer_Beep_By_PointType(2); // 叫三次
+        g_gnss_start_recording = 0;          // 初始化后置0处理
+    }
+
+    // ---------------------------------------------------------
+    // ---------------- 【GNSS.2】打点处理 ----------------
+    // ---------------------------------------------------------
+    if (robot_ctrl.mark_trigger)
+    {
+        uint8_t ret;
+
+        // 写入 GNSS RAM
+        ret = GnssRam_RecordPoint(robot_ctrl.point_type);
+
+        if (ret == 0)
+        {
+            // 写入成功 → 蜂鸣器反馈
+            GnssRam_Buzzer_Beep_By_PointType(robot_ctrl.point_type);
+
+        #if DEBUG_LOG_ENABLE
+            printf("[GNSS] Record OK: idx=%d type=%d x=%.2f y=%.2f\r\n",
+                   GnssRam_GetPointCount() - 1,
+                   robot_ctrl.point_type,
+                   gnss_trans.x,
+                   gnss_trans.y);
+        #endif
+        }
+        else
+        {
+            // RAM 满
+            #if DEBUG_LOG_ENABLE
+                printf("[GNSS] Record FAILED: RAM FULL\r\n");
+            #endif
+        }
+
+        // ★ 必须清零，否则会重复写入 ★
+        robot_ctrl.mark_trigger = 0;
+    }
+
+    // ---------------------------------------------------------
+    //  【GNSS.3】处理 Flash 保存请求
+    // ---------------------------------------------------------
+    if(g_gnss_save_flash_request == 1)
+    {
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Starting GNSS Flash save process...\r\n");
+        #endif
+        
+        // 将 RAM 里的 GNSS 点存入第 2 页 Flash
+        GnssFlash_SaveRamToFlash();
+        GnssRam_Buzzer_Beep_By_PointType(2); // 叫三次
+        
+        // 清除请求标志
+        g_gnss_save_flash_request = 0;
+    }
+
+    // ---------------------------------------------------------
+    //  【GNSS.4】处理读取请求，然后开始复现调用
+    // ---------------------------------------------------------
+    if (g_motor_enable == 1 && g_gnss_load_flash_request == 1)
+    {
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Starting GNSS Flash read test...\r\n");
+        #endif
+        
+        // 从 Flash 读取点位数据到 RAM
+        GnssFlash_ReadFlashToRam();
+        // 清除请求标志
+        g_gnss_load_flash_request = 0;
+        
+        #if DEBUG_LOG_ENABLE
+        printf("Main: GNSS Flash read completed.\r\n");
+        printf("Main: Starting GNSS Navigation...\r\n");
+        #endif
+        
+        // ★ 每次重新跑图前，都要把当前物理位置重置为相对原点 (0,0) ★
+        InertialNav_Init();     // 重置 IMU 相对参数
+        Gnss_Transform_Init();  // 重置 GNSS 原点
+        
+        // 开始复现
+        GnssReplay_Start();
+        GnssRam_Buzzer_Beep_By_PointType(2); // 叫三次
+    }
 
         
 
