@@ -30,7 +30,7 @@ extern volatile uint8 g_load_flash_request;  // 1: 请求将 Flash 读取到 RAM
 // ==========================================
 
 /**
- * @brief  Flash 任务处理器
+ * @brief  Flash 任务处理器【优化点】【暂时未调用】
  * @note   建议放在 main 的 while(1) 中调用，处理读取和保存请求
  */
 void NavFlash_ProcessRequests(void);
