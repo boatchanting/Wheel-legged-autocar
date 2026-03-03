@@ -10,7 +10,7 @@ uint8 g_gnss_special_action_trigger = 0;
 
 // --- 航向融合相关变量 ---
 static float g_yaw_offset = 0.0f;       // 绝对角度与相对角度的差值
-static uint8 g_yaw_initialized = 0;     // 是否已完成首次航向校准
+static uint8 gnss_yaw_initialized = 0;     // 是否已完成首次航向校准
 
 // ========================= 辅助函数 =========================
 
@@ -53,11 +53,11 @@ static void Update_Fused_Yaw(void)
         // 计算当前误差偏移 (Offset = GNSS绝对 - IMU相对)
         float raw_offset = NormalizeAngle(raw_gnss_yaw - inertial_nav.relative_yaw);
 
-        if (!g_yaw_initialized)
+        if (!gnss_yaw_initialized)
         {
             // 首次满足条件，直接暴力初始化
             g_yaw_offset = raw_offset;
-            g_yaw_initialized = 1;
+            gnss_yaw_initialized = 1;
         }
         else
         {
@@ -88,7 +88,7 @@ void GnssReplay_Start(void)
     g_gnss_special_action_trigger = 0;
     
     // 重置航向校准状态（每次跑图开始都重新校准）
-    g_yaw_initialized = 0;
+    gnss_yaw_initialized = 0;
     
     #if DEBUG_LOG_ENABLE
     printf("[GNSS] Replay START. Total Points: %d\r\n", gnss_ram_data.point_count);
@@ -111,7 +111,7 @@ void GnssReplay_Process(void)
 
     // 2. 检查是否未初始化航向 (防呆保护)
     // 如果还没校准出真北方向，小车直接打轮转向会迷失方向
-    if (!g_yaw_initialized)
+    if (!gnss_yaw_initialized)
     {
         // 【自动校准阶段】强制小车直线慢速前进，以激活 Update_Fused_Yaw 的条件
         target_speed_set = GNSS_SPEED_SLOW; 

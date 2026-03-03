@@ -2,7 +2,6 @@
 #define _GNSS_REPLAY_H_
 
 #include "zf_common_headfile.h"
-#include "gnss_ram.h"
 
 // ========================= 控制参数宏定义 =========================
 #define GNSS_DIST_FAR            0.30f   // 远距离界限 (单位: 米)
@@ -18,11 +17,6 @@
 // ========================= 航向融合参数 =========================
 // 融合低通滤波系数 (0.01 ~ 0.1 之间，越小越平滑但跟随越慢)
 #define YAW_FUSION_KP            0.05f   
-
-// ========================= 全局控制变量声明 =========================
-extern volatile float target_speed_set;
-extern volatile float err_degree;
-extern uint8 minefield_flag; 
 
 // ========================= 模块状态变量 =========================
 typedef enum
