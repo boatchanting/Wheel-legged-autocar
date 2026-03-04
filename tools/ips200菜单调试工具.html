@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IPS200 Screen Simulator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0f14;
+      --bg-secondary: #111921;
+      --fg: #e8edf3;
+      --muted: #5a6a7a;
+      --accent: #00d4aa;
+      --accent-dim: #00a888;
+      --border: #1e2a36;
+      --card: #141c24;
+      --lcd-bg: #1a1a1a;
+      --lcd-pixel-on: #00ff88;
+      --lcd-pixel-off: #0a0a0a;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Space Grotesk', sans-serif;
+      background: var(--bg);
+      color: var(--fg);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* 背景纹理 */
+    .bg-pattern {
+      position: fixed;
+      inset: 0;
+      background-image: 
+        radial-gradient(ellipse at 20% 20%, rgba(0, 212, 170, 0.03) 0%, transparent 50%),
+        radial-gradient(ellipse at 80% 80%, rgba(0, 212, 170, 0.02) 0%, transparent 50%),
+        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.3) 100%);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .grid-overlay {
+      position: fixed;
+      inset: 0;
+      background-image: 
+        linear-gradient(rgba(30, 42, 54, 0.3) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(30, 42, 54, 0.3) 1px, transparent 1px);
+      background-size: 40px 40px;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+    }
+
+    /* LCD屏幕样式 */
+    .lcd-screen {
+      background: var(--lcd-bg);
+      border-radius: 8px;
+      box-shadow: 
+        inset 0 0 30px rgba(0, 0, 0, 0.8),
+        0 0 0 3px #0d0d0d,
+        0 0 0 6px #1a1a1a,
+        0 8px 32px rgba(0, 0, 0, 0.5);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .lcd-screen::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(
+        180deg,
+        rgba(255, 255, 255, 0.02) 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.1) 100%
+      );
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .lcd-scanlines {
+      position: absolute;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 1px,
+        rgba(0, 0, 0, 0.15) 1px,
+        rgba(0, 0, 0, 0.15) 2px
+      );
+      pointer-events: none;
+      z-index: 11;
+      opacity: 0.3;
+    }
+
+    /* 物理按键样式 */
+    .hw-button {
+      position: relative;
+      width: 60px;
+      height: 60px;
+      background: linear-gradient(145deg, #2a2a2a, #1a1a1a);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.1s ease;
+      box-shadow: 
+        0 4px 8px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0 0 2px #0a0a0a;
+    }
+
+    .hw-button::before {
+      content: '';
+      position: absolute;
+      inset: 4px;
+      background: linear-gradient(145deg, #222, #181818);
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .hw-button:hover {
+      background: linear-gradient(145deg, #333, #222);
+    }
+
+    .hw-button:active,
+    .hw-button.pressed {
+      transform: translateY(2px);
+      box-shadow: 
+        0 2px 4px rgba(0, 0, 0, 0.4),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        0 0 0 2px #0a0a0a;
+    }
+
+    .hw-button .label {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 1;
+      color: #666;
+      font-size: 10px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .hw-button .label svg {
+      width: 20px;
+      height: 20px;
+      margin-bottom: 4px;
+      stroke: var(--muted);
+    }
+
+    .hw-button:active .label svg,
+    .hw-button.pressed .label svg {
+      stroke: var(--accent);
+    }
+
+    /* LED指示灯 */
+    .led-indicator {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #1a1a1a;
+      box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+      transition: all 0.2s ease;
+    }
+
+    .led-indicator.on {
+      background: var(--accent);
+      box-shadow: 
+        0 0 8px var(--accent),
+        0 0 16px rgba(0, 212, 170, 0.5);
+    }
+
+    /* 拖拽区域 */
+    .drop-zone {
+      border: 2px dashed var(--border);
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .drop-zone::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(circle at center, rgba(0, 212, 170, 0.05), transparent 70%);
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(0, 212, 170, 0.05);
+    }
+
+    .drop-zone.drag-over::before {
+      opacity: 1;
+    }
+
+    /* 状态标签 */
+    .state-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      background: rgba(0, 212, 170, 0.1);
+      border: 1px solid rgba(0, 212, 170, 0.2);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    /* 滚动条样式 */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: var(--bg-secondary);
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--muted);
+    }
+
+    /* 动画 */
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .animate-in {
+      animation: fadeIn 0.4s ease forwards;
+    }
+
+    .pulse {
+      animation: pulse 2s ease-in-out infinite;
+    }
+
+    /* 快捷键提示 */
+    .kbd {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      background: var(--bg-secondary);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      color: var(--muted);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="bg-pattern"></div>
+  <div class="grid-overlay"></div>
+
+  <div class="relative z-10 min-h-screen p-4 md:p-8">
+    <!-- Header -->
+    <header class="mb-8 animate-in" style="animation-delay: 0.1s;">
+      <div class="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 class="text-2xl md:text-3xl font-bold tracking-tight">
+            <span class="text-[var(--muted)]">IPS200</span> Simulator
+          </h1>
+          <p class="text-sm text-[var(--muted)] mt-1">嵌入式菜单系统可视化调试工具</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="state-tag">
+            <div class="led-indicator on"></div>
+            <span id="currentState">MAIN</span>
+          </div>
+          <div class="text-xs text-[var(--muted)] mono">
+            <span id="screenInfo">240 x 320</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex flex-col lg:flex-row gap-6 items-start">
+      <!-- Left Panel: Screen + Buttons -->
+      <div class="flex-shrink-0 animate-in" style="animation-delay: 0.2s;">
+        <div class="bg-[var(--card)] rounded-xl p-6 border border-[var(--border)]">
+          <!-- Screen Device Frame -->
+          <div class="flex flex-col items-center">
+            <!-- LED Bar -->
+            <div class="flex items-center gap-2 mb-4 px-4 py-2 bg-[var(--bg-secondary)] rounded-lg">
+              <div class="led-indicator on" id="led1"></div>
+              <div class="led-indicator" id="led2"></div>
+              <div class="led-indicator" id="led3"></div>
+              <span class="text-xs text-[var(--muted)] ml-2 mono">IPS200 LCD</span>
+            </div>
+
+            <!-- LCD Screen -->
+            <div class="lcd-screen" style="width: 240px; height: 320px;">
+              <canvas id="lcdCanvas" width="240" height="320" class="block"></canvas>
+              <div class="lcd-scanlines"></div>
+            </div>
+
+            <!-- Physical Buttons -->
+            <div class="mt-6 flex items-center gap-4">
+              <button class="hw-button" id="btnUp" title="KEY1 - 上">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                    <path d="M12 19V5M5 12l7-7 7 7"/>
+                  </svg>
+                  UP
+                </span>
+              </button>
+              <button class="hw-button" id="btnLeft" title="KEY2 - 左/返回">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                    <path d="M19 12H5M12 19l-7-7 7-7"/>
+                  </svg>
+                  BACK
+                </span>
+              </button>
+              <button class="hw-button" id="btnDown" title="KEY3 - 下">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                    <path d="M12 5v14M5 12l7 7 7-7"/>
+                  </svg>
+                  DOWN
+                </span>
+              </button>
+              <button class="hw-button" id="btnRight" title="KEY4 - 右/确认">
+                <span class="label">
+                  <svg viewBox="0 0 24 24" fill="none" stroke-width="2">
+                    <path d="M5 12h14M12 5l7 7-7 7"/>
+                  </svg>
+                  ENTER
+                </span>
+              </button>
+            </div>
+
+            <!-- Keyboard Hints -->
+            <div class="mt-4 flex items-center gap-3 text-xs text-[var(--muted)]">
+              <span class="kbd">W</span>
+              <span class="kbd">A</span>
+              <span class="kbd">S</span>
+              <span class="kbd">D</span>
+              <span class="ml-2">或方向键控制</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel: Code Upload + Info -->
+      <div class="flex-1 min-w-0 animate-in" style="animation-delay: 0.3s;">
+        <!-- Drop Zone -->
+        <div 
+          id="dropZone" 
+          class="drop-zone rounded-xl p-8 text-center cursor-pointer bg-[var(--card)]"
+        >
+          <input type="file" id="fileInput" accept=".c,.h" class="hidden">
+          <div class="flex flex-col items-center gap-4">
+            <div class="w-16 h-16 rounded-full bg-[var(--bg-secondary)] flex items-center justify-center">
+              <svg class="w-8 h-8 text-[var(--muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/>
+                <line x1="12" y1="18" x2="12" y2="12"/>
+                <line x1="9" y1="15" x2="15" y2="15"/>
+              </svg>
+            </div>
+            <div>
+              <p class="text-[var(--fg)] font-medium mb-1">拖拽C文件到此处</p>
+              <p class="text-sm text-[var(--muted)]">或点击选择文件 (.c, .h)</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- File Info -->
+        <div id="fileInfo" class="hidden mt-4 p-4 bg-[var(--card)] rounded-lg border border-[var(--border)]">
+          <div class="flex items-center justify-between mb-3">
+            <span class="text-sm font-medium">已加载文件</span>
+            <button id="clearFile" class="text-xs text-[var(--muted)] hover:text-[var(--accent)] transition-colors">
+              清除
+            </button>
+          </div>
+          <div class="mono text-xs text-[var(--muted)]" id="fileName">-</div>
+          <div class="mt-2 text-xs text-[var(--muted)]">
+            解析到 <span id="parseCount" class="text-[var(--accent)]">0</span> 个绘制调用
+          </div>
+        </div>
+
+        <!-- State Machine Info -->
+        <div class="mt-4 p-4 bg-[var(--card)] rounded-lg border border-[var(--border)]">
+          <h3 class="text-sm font-medium mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 6v6l4 2"/>
+            </svg>
+            状态机
+          </h3>
+          <div class="grid grid-cols-2 gap-2 text-xs">
+            <div class="flex items-center gap-2">
+              <span class="state-tag text-[10px] py-1" id="stateMain">MAIN</span>
+              <span class="text-[var(--muted)]">主界面</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="state-tag text-[10px] py-1" id="stateSubject">SUBJECT</span>
+              <span class="text-[var(--muted)]">选择项目</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="state-tag text-[10px] py-1" id="stateCalib">CALIBRATION</span>
+              <span class="text-[var(--muted)]">校准</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="state-tag text-[10px] py-1" id="stateAction">ACTION</span>
+              <span class="text-[var(--muted)]">动作选择</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="state-tag text-[10px] py-1" id="stateConfirm">CONFIRM</span>
+              <span class="text-[var(--muted)]">确认</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="state-tag text-[10px] py-1" id="stateRunning">RUNNING</span>
+              <span class="text-[var(--muted)]">运行中</span>
+            </div>
+            <div class="flex items-center gap-2 col-span-2">
+              <span class="state-tag text-[10px] py-1" id="stateComplete">COMPLETE</span>
+              <span class="text-[var(--muted)]">完成</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Values Panel -->
+        <div class="mt-4 p-4 bg-[var(--card)] rounded-lg border border-[var(--border)]">
+          <h3 class="text-sm font-medium mb-3">当前值</h3>
+          <div class="grid grid-cols-3 gap-2 text-xs mono" id="valuesPanel">
+            <div class="p-2 bg-[var(--bg-secondary)] rounded">
+              <div class="text-[var(--muted)] text-[10px]">SUBJECT</div>
+              <div class="text-[var(--accent)]" id="valSubject">1</div>
+            </div>
+            <div class="p-2 bg-[var(--bg-secondary)] rounded">
+              <div class="text-[var(--muted)] text-[10px]">CALIB</div>
+              <div class="text-[var(--accent)]" id="valCalib">1</div>
+            </div>
+            <div class="p-2 bg-[var(--bg-secondary)] rounded">
+              <div class="text-[var(--muted)] text-[10px]">ACTION</div>
+              <div class="text-[var(--accent)]" id="valAction">1</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Code Preview -->
+        <div class="mt-4 p-4 bg-[var(--card)] rounded-lg border border-[var(--border)]">
+          <h3 class="text-sm font-medium mb-3">模拟数据</h3>
+          <div class="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <label class="text-[var(--muted)] block mb-1">motor_speed L</label>
+              <input type="number" id="motorL" value="0.0" step="0.1" class="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-sm mono focus:outline-none focus:border-[var(--accent)]">
+            </div>
+            <div>
+              <label class="text-[var(--muted)] block mb-1">motor_speed R</label>
+              <input type="number" id="motorR" value="0.0" step="0.1" class="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-sm mono focus:outline-none focus:border-[var(--accent)]">
+            </div>
+            <div>
+              <label class="text-[var(--muted)] block mb-1">g_motor_enable</label>
+              <select id="motorEnable" class="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-sm mono focus:outline-none focus:border-[var(--accent)]">
+                <option value="0">No</option>
+                <option value="1">Yes</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-[var(--muted)] block mb-1">gnss.state</label>
+              <input type="number" id="gnssState" value="0" step="1" class="w-full bg-[var(--bg-secondary)] border border-[var(--border)] rounded px-2 py-1 text-sm mono focus:outline-none focus:border-[var(--accent)]">
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // ==================== 全局配置 ====================
+    const CONFIG = {
+      SCREEN_WIDTH: 240,
+      SCREEN_HEIGHT: 320,
+      CHAR_WIDTH: 10,
+      CHAR_HEIGHT: 14,
+      COLORS: {
+        RGB565_BLACK: 0x0000,
+        RGB565_WHITE: 0xFFFF,
+        RGB565_RED: 0xF800,
+        RGB565_GREEN: 0x07E0,
+        RGB565_BLUE: 0x001F,
+        RGB565_YELLOW: 0xFFE0,
+        RGB565_CYAN: 0x07FF,
+        RGB565_MAGENTA: 0xF81F
+      }
+    };
+
+    // ==================== 状态管理 ====================
+    const MENU_STATE = {
+      MAIN: 0,
+      SUBJECT: 1,
+      CALIBRATION: 2,
+      ACTION_SELECT: 3,
+      ACTION_CONFIRM: 4,
+      ACTION_RUNNING: 5,
+      ACTION_COMPLETE: 6,
+      COUNT: 7
+    };
+
+    const state = {
+      current_state: MENU_STATE.MAIN,
+      menu_index: MENU_STATE.SUBJECT,
+      menu_values: [0, 1, 1, 1, 1, 1, 1],
+      menu_max_values: [1, 3, 2, 2, 1, 1, 1],
+      need_redraw: true,
+      // 模拟数据
+      motor_speeds: [0.0, 0.0],
+      current_angles: [0.0, 45.0, -15.0, 30.0],
+      euler_angle: { pitch: 1.23, roll: -0.45, yaw: 89.5 },
+      pid_gyro: { kp: 2.50, kd: 0.80 },
+      g_motor_enable: false,
+      gnss: { state: 0 }
+    };
+
+    // 当前颜色
+    let currentFgColor = CONFIG.COLORS.RGB565_GREEN;
+    let currentBgColor = CONFIG.COLORS.RGB565_BLACK;
+
+    // ==================== Canvas 初始化 ====================
+    const canvas = document.getElementById('lcdCanvas');
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(CONFIG.SCREEN_WIDTH, CONFIG.SCREEN_HEIGHT);
+
+    // ==================== 颜色转换 ====================
+    function rgb565ToRgb(rgb565) {
+      const r = ((rgb565 >> 11) & 0x1F) << 3;
+      const g = ((rgb565 >> 5) & 0x3F) << 2;
+      const b = (rgb565 & 0x1F) << 3;
+      return { r, g, b };
+    }
+
+    function setPixel(x, y, color) {
+      x = Math.floor(x);
+      y = Math.floor(y);
+      if (x < 0 || x >= CONFIG.SCREEN_WIDTH || y < 0 || y >= CONFIG.SCREEN_HEIGHT) return;
+      const rgb = rgb565ToRgb(color);
+      const idx = (y * CONFIG.SCREEN_WIDTH + x) * 4;
+      imageData.data[idx] = rgb.r;
+      imageData.data[idx + 1] = rgb.g;
+      imageData.data[idx + 2] = rgb.b;
+      imageData.data[idx + 3] = 255;
+    }
+
+    function clearScreen(color = CONFIG.COLORS.RGB565_BLACK) {
+      const rgb = rgb565ToRgb(color);
+      for (let i = 0; i < imageData.data.length; i += 4) {
+        imageData.data[i] = rgb.r;
+        imageData.data[i + 1] = rgb.g;
+        imageData.data[i + 2] = rgb.b;
+        imageData.data[i + 3] = 255;
+      }
+    }
+
+    // ==================== 字符渲染 ====================
+    // 简单的5x7点阵字体
+    const FONT_5X7 = {
+      'A': [0x7C,0x12,0x11,0x12,0x7C], 'B': [0x7F,0x49,0x49,0x49,0x36],
+      'C': [0x3E,0x41,0x41,0x41,0x22], 'D': [0x7F,0x41,0x41,0x22,0x1C],
+      'E': [0x7F,0x49,0x49,0x49,0x41], 'F': [0x7F,0x09,0x09,0x09,0x01],
+      'G': [0x3E,0x41,0x49,0x49,0x7A], 'H': [0x7F,0x08,0x08,0x08,0x7F],
+      'I': [0x00,0x41,0x7F,0x41,0x00], 'J': [0x20,0x40,0x41,0x3F,0x01],
+      'K': [0x7F,0x08,0x14,0x22,0x41], 'L': [0x7F,0x40,0x40,0x40,0x40],
+      'M': [0x7F,0x02,0x0C,0x02,0x7F], 'N': [0x7F,0x04,0x08,0x10,0x7F],
+      'O': [0x3E,0x41,0x41,0x41,0x3E], 'P': [0x7F,0x09,0x09,0x09,0x06],
+      'Q': [0x3E,0x41,0x51,0x21,0x5E], 'R': [0x7F,0x09,0x19,0x29,0x46],
+      'S': [0x46,0x49,0x49,0x49,0x31], 'T': [0x01,0x01,0x7F,0x01,0x01],
+      'U': [0x3F,0x40,0x40,0x40,0x3F], 'V': [0x1F,0x20,0x40,0x20,0x1F],
+      'W': [0x3F,0x40,0x38,0x40,0x3F], 'X': [0x63,0x14,0x08,0x14,0x63],
+      'Y': [0x07,0x08,0x70,0x08,0x07], 'Z': [0x61,0x51,0x49,0x45,0x43],
+      '0': [0x3E,0x51,0x49,0x45,0x3E], '1': [0x00,0x42,0x7F,0x40,0x00],
+      '2': [0x42,0x61,0x51,0x49,0x46], '3': [0x21,0x41,0x45,0x4B,0x31],
+      '4': [0x18,0x14,0x12,0x7F,0x10], '5': [0x27,0x45,0x45,0x45,0x39],
+      '6': [0x3C,0x4A,0x49,0x49,0x30], '7': [0x01,0x71,0x09,0x05,0x03],
+      '8': [0x36,0x49,0x49,0x49,0x36], '9': [0x06,0x49,0x49,0x29,0x1E],
+      ' ': [0x00,0x00,0x00,0x00,0x00], '.': [0x00,0x60,0x60,0x00,0x00],
+      ':': [0x00,0x36,0x36,0x00,0x00], '-': [0x08,0x08,0x08,0x08,0x08],
+      '+': [0x08,0x08,0x3E,0x08,0x08], '/': [0x20,0x10,0x08,0x04,0x02],
+      '(': [0x00,0x1C,0x22,0x41,0x00], ')': [0x00,0x41,0x22,0x1C,0x00],
+      '[': [0x00,0x7F,0x41,0x41,0x00], ']': [0x00,0x41,0x41,0x7F,0x00],
+      '_': [0x40,0x40,0x40,0x40,0x40], '=': [0x14,0x14,0x14,0x14,0x14],
+      '<': [0x08,0x14,0x22,0x41,0x00], '>': [0x00,0x41,0x22,0x14,0x08],
+      ',': [0x00,0x80,0x60,0x20,0x00], "'": [0x00,0x00,0x07,0x00,0x00],
+      '!': [0x00,0x00,0x5F,0x00,0x00], '?': [0x02,0x01,0x51,0x09,0x06],
+      '@': [0x3E,0x41,0x5D,0x55,0x1E], '#': [0x14,0x7F,0x14,0x7F,0x14],
+      '%': [0x23,0x13,0x08,0x64,0x62],
+      'a': [0x20,0x54,0x54,0x54,0x78], 'b': [0x7F,0x48,0x44,0x44,0x38],
+      'c': [0x38,0x44,0x44,0x44,0x20], 'd': [0x38,0x44,0x44,0x48,0x7F],
+      'e': [0x38,0x54,0x54,0x54,0x18], 'f': [0x08,0x7E,0x09,0x01,0x02],
+      'g': [0x0C,0x52,0x52,0x52,0x3E], 'h': [0x7F,0x08,0x04,0x04,0x78],
+      'i': [0x00,0x44,0x7D,0x40,0x00], 'j': [0x20,0x40,0x44,0x3D,0x00],
+      'k': [0x7F,0x10,0x28,0x44,0x00], 'l': [0x00,0x41,0x7F,0x40,0x00],
+      'm': [0x7C,0x04,0x18,0x04,0x78], 'n': [0x7C,0x08,0x04,0x04,0x78],
+      'o': [0x38,0x44,0x44,0x44,0x38], 'p': [0x7C,0x14,0x14,0x14,0x08],
+      'q': [0x08,0x14,0x14,0x18,0x7C], 'r': [0x7C,0x08,0x04,0x04,0x08],
+      's': [0x48,0x54,0x54,0x54,0x20], 't': [0x04,0x3F,0x44,0x40,0x20],
+      'u': [0x3C,0x40,0x40,0x20,0x7C], 'v': [0x1C,0x20,0x40,0x20,0x1C],
+      'w': [0x3C,0x40,0x30,0x40,0x3C], 'x': [0x44,0x28,0x10,0x28,0x44],
+      'y': [0x0C,0x50,0x50,0x50,0x3C], 'z': [0x44,0x64,0x54,0x4C,0x44]
+    };
+
+    function drawChar(char, x, y, fgColor, bgColor) {
+      const fontData = FONT_5X7[char.toUpperCase()] || FONT_5X7[' '];
+      const charW = 6;
+      const charH = 8;
+      const scale = 2; // 放大以接近10x14
+      
+      for (let col = 0; col < 5; col++) {
+        const data = fontData[col];
+        for (let row = 0; row < 7; row++) {
+          const bit = (data >> row) & 1;
+          const color = bit ? fgColor : bgColor;
+          // 简单缩放
+          for (let sy = 0; sy < scale; sy++) {
+            for (let sx = 0; sx < scale; sx++) {
+              setPixel(x + col * scale + sx, y + row * scale + sy, color);
+            }
+          }
+        }
+      }
+      // 字符间距背景
+      for (let py = 0; py < charH * scale - 4; py++) {
+        for (let px = 5 * scale; px < charW; px++) {
+          setPixel(x + px, y + py, bgColor);
+        }
+      }
+    }
+
+    function drawString(str, x, y, fgColor, bgColor) {
+      const charW = 12; // 实际字符宽度
+      for (let i = 0; i < str.length; i++) {
+        drawChar(str[i], x + i * charW, y, fgColor, bgColor);
+      }
+    }
+
+    // ==================== IPS200 API 模拟 ====================
+    const ips200 = {
+      clear: function() {
+        clearScreen(CONFIG.COLORS.RGB565_BLACK);
+      },
+      
+      show_string: function(x, y, str) {
+        drawString(str, x, y, currentFgColor, currentBgColor);
+      },
+      
+      show_float: function(x, y, value, width, precision) {
+        const str = value.toFixed(precision).padStart(width + precision + 1, ' ');
+        drawString(str, x, y, currentFgColor, currentBgColor);
+      },
+      
+      show_uint: function(x, y, value, width) {
+        const str = Math.floor(value).toString().padStart(width, ' ');
+        drawString(str, x, y, currentFgColor, currentBgColor);
+      },
+      
+      draw_line: function(x1, y1, x2, y2, color) {
+        // Bresenham 线段算法
+        const dx = Math.abs(x2 - x1);
+        const dy = Math.abs(y2 - y1);
+        const sx = x1 < x2 ? 1 : -1;
+        const sy = y1 < y2 ? 1 : -1;
+        let err = dx - dy;
+        let cx = x1, cy = y1;
+        
+        while (true) {
+          setPixel(cx, cy, color);
+          if (cx === x2 && cy === y2) break;
+          const e2 = 2 * err;
+          if (e2 > -dy) { err -= dy; cx += sx; }
+          if (e2 < dx) { err += dx; cy += sy; }
+        }
+      },
+      
+      set_color: function(fg, bg) {
+        currentFgColor = fg;
+        currentBgColor = bg;
+      }
+    };
+
+    // ==================== 菜单渲染函数 ====================
+    function Menu_ShowMainScreen() {
+      ips200.clear();
+      
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      
+      // 字符部分
+      ips200.show_string(0, 0, "Time:");
+      ips200.show_string(0, 14, "HMS:");
+      ips200.show_string(0, 28, "State:");
+      ips200.show_string(90, 28, "Lat:");
+      ips200.show_string(0, 42, "Lon:");
+      ips200.show_string(0, 56, "Spd:");
+      ips200.show_string(0, 70, "Dir:");
+      ips200.show_string(0, 84, "Sat:");
+      ips200.show_string(0, 98, "Height:");
+      
+      ips200.show_string(0, 130, "RF:");
+      ips200.show_string(0, 144, "RR:");
+      ips200.show_string(0, 158, "LF:");
+      ips200.show_string(0, 172, "LR:");
+      
+      ips200.show_string(0, 212, "L:");
+      ips200.show_string(80, 212, "R:");
+      ips200.show_string(0, 254, "g_motor_enable");
+      
+      // 提示信息
+      ips200.show_string(0, 290, "Press any key");
+    }
+
+    function Menu_ShowSubjectScreen() {
+      ips200.clear();
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(60, 0, "Select Subject");
+      ips200.draw_line(10, 20, 230, 20, CONFIG.COLORS.RGB565_RED);
+      
+      const subject = state.menu_values[MENU_STATE.SUBJECT];
+      
+      ips200.set_color(subject === 1 ? CONFIG.COLORS.RGB565_RED : CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 40, "Subject 1");
+      
+      ips200.set_color(subject === 2 ? CONFIG.COLORS.RGB565_RED : CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 60, "Subject 2");
+      
+      ips200.set_color(subject === 3 ? CONFIG.COLORS.RGB565_RED : CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 80, "Subject 3");
+      
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+    }
+
+    function Menu_ShowCalibrationScreen() {
+      ips200.clear();
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(60, 0, "Calibration");
+      ips200.draw_line(10, 20, 230, 20, CONFIG.COLORS.RGB565_RED);
+      
+      const calib = state.menu_values[MENU_STATE.CALIBRATION];
+      
+      ips200.set_color(calib === 1 ? CONFIG.COLORS.RGB565_RED : CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 40, "Auto Calibration");
+      
+      ips200.set_color(calib === 2 ? CONFIG.COLORS.RGB565_RED : CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 60, "Manual Calib");
+      
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+    }
+
+    function Menu_ShowActionSelectScreen() {
+      ips200.clear();
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(70, 0, "Select Action");
+      ips200.draw_line(10, 20, 230, 20, CONFIG.COLORS.RGB565_RED);
+      
+      const action = state.menu_values[MENU_STATE.ACTION_SELECT];
+      
+      ips200.set_color(action === 1 ? CONFIG.COLORS.RGB565_RED : CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 40, "Record");
+      
+      ips200.set_color(action === 2 ? CONFIG.COLORS.RGB565_RED : CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 60, "Start");
+      
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+    }
+
+    function Menu_ShowActionConfirmScreen() {
+      const action = state.menu_values[MENU_STATE.ACTION_SELECT];
+      
+      ips200.show_string(60, 0, action === 1 ? "Record Mode" : "Start Mode");
+      ips200.draw_line(10, 20, 230, 20, CONFIG.COLORS.RGB565_RED);
+      
+      ips200.show_float(60, 0 + 28, state.euler_angle.pitch, 3, 2);
+      ips200.show_float(60, 14 + 28, state.euler_angle.roll, 3, 2);
+      ips200.show_float(60, 28 + 28, state.euler_angle.yaw, 3, 2);
+      
+      ips200.show_float(25, 130, state.current_angles[0], 3, 1);
+      ips200.show_float(25, 144, state.current_angles[1], 3, 1);
+      ips200.show_float(25, 158, state.current_angles[2], 3, 1);
+      ips200.show_float(25, 172, state.current_angles[3], 3, 1);
+      
+      ips200.show_float(25, 212, state.motor_speeds[0], 5, 1);
+      ips200.show_float(105, 212, state.motor_speeds[1], 5, 1);
+      
+      ips200.show_string(155, 254, state.g_motor_enable ? "Yes" : "No");
+      
+      ips200.set_color(CONFIG.COLORS.RGB565_YELLOW, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 290, "Not Started");
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+    }
+
+    function Menu_ShowActionRunningScreen() {
+      const action = state.menu_values[MENU_STATE.ACTION_SELECT];
+      
+      ips200.show_string(60, 0, action === 1 ? "Recording..." : "Starting...");
+      ips200.draw_line(10, 20, 230, 20, CONFIG.COLORS.RGB565_BLUE);
+      
+      ips200.show_float(60, 28, state.euler_angle.pitch, 3, 2);
+      ips200.show_float(60, 42, state.euler_angle.roll, 3, 2);
+      ips200.show_float(60, 56, state.euler_angle.yaw, 3, 2);
+      
+      ips200.show_float(25, 130, state.current_angles[0], 3, 1);
+      ips200.show_float(25, 144, state.current_angles[1], 3, 1);
+      ips200.show_float(25, 158, state.current_angles[2], 3, 1);
+      ips200.show_float(25, 172, state.current_angles[3], 3, 1);
+      
+      ips200.show_float(25, 212, state.motor_speeds[0], 5, 1);
+      ips200.show_float(105, 212, state.motor_speeds[1], 5, 1);
+      
+      ips200.show_string(155, 254, state.g_motor_enable ? "Yes" : "No");
+      
+      ips200.set_color(CONFIG.COLORS.RGB565_GREEN, CONFIG.COLORS.RGB565_BLACK);
+      ips200.show_string(0, 290, "Started OK!");
+    }
+
+    function Menu_ShowActionCompleteScreen() {
+      ips200.clear();
+      
+      const action = state.menu_values[MENU_STATE.ACTION_SELECT];
+      
+      if (action === 1) {
+        ips200.show_string(0, 10, "Record Complete");
+        ips200.show_string(0, 40, "Data saved OK");
+      } else {
+        ips200.show_string(0, 10, "Start Complete");
+        ips200.show_string(0, 40, "System paused");
+      }
+      ips200.show_string(0, 80, "Press any key");
+    }
+
+    function Menu_ShowStatic() {
+      if (!state.need_redraw) return;
+      
+      switch (state.current_state) {
+        case MENU_STATE.MAIN:
+          Menu_ShowMainScreen();
+          break;
+        case MENU_STATE.SUBJECT:
+          Menu_ShowSubjectScreen();
+          break;
+        case MENU_STATE.CALIBRATION:
+          Menu_ShowCalibrationScreen();
+          break;
+        case MENU_STATE.ACTION_SELECT:
+          Menu_ShowActionSelectScreen();
+          break;
+        case MENU_STATE.ACTION_CONFIRM:
+          Menu_ShowMainScreen();
+          break;
+        case MENU_STATE.ACTION_RUNNING:
+          Menu_ShowMainScreen();
+          break;
+        case MENU_STATE.ACTION_COMPLETE:
+          Menu_ShowActionCompleteScreen();
+          break;
+      }
+      
+      state.need_redraw = false;
+    }
+
+    function Menu_ShowDynamic() {
+      if (state.current_state === MENU_STATE.ACTION_RUNNING) {
+        Menu_ShowActionRunningScreen();
+      } else if (state.current_state === MENU_STATE.ACTION_CONFIRM) {
+        Menu_ShowActionConfirmScreen();
+      } else if (state.current_state === MENU_STATE.MAIN) {
+        ips200.show_uint(50, 28, state.gnss.state, 5);
+        ips200.show_float(25, 130, state.current_angles[0], 3, 1);
+        ips200.show_float(25, 144, state.current_angles[1], 3, 1);
+        ips200.show_float(25, 158, state.current_angles[2], 3, 1);
+        ips200.show_float(25, 172, state.current_angles[3], 3, 1);
+        ips200.show_float(25, 212, state.motor_speeds[0], 5, 1);
+        ips200.show_float(105, 212, state.motor_speeds[1], 5, 1);
+        ips200.show_string(155, 254, state.g_motor_enable ? "Yes" : "No");
+      }
+    }
+
+    // ==================== 按键处理 ====================
+    const KEY = { UP: 1, LEFT: 2, DOWN: 3, RIGHT: 4 };
+    const keyState = {};
+
+    function key_get_state(key) {
+      return keyState[key] ? 'SHORT_PRESS' : null;
+    }
+
+    function key_clear_state(key) {
+      keyState[key] = false;
+    }
+
+    function Menu_HandleKey() {
+      // 主界面：任意键进入菜单
+      if (state.current_state === MENU_STATE.MAIN) {
+        if (key_get_state(KEY.UP) || key_get_state(KEY.LEFT) || 
+            key_get_state(KEY.DOWN) || key_get_state(KEY.RIGHT)) {
+          state.current_state = MENU_STATE.SUBJECT;
+          state.menu_index = MENU_STATE.SUBJECT;
+          state.menu_values[state.menu_index] = 1;
+          state.need_redraw = true;
+          key_clear_state(KEY.UP);
+          key_clear_state(KEY.LEFT);
+          key_clear_state(KEY.DOWN);
+          key_clear_state(KEY.RIGHT);
+        }
+        return;
+      }
+      
+      // 完成界面：任意键返回
+      if (state.current_state === MENU_STATE.ACTION_COMPLETE) {
+        if (key_get_state(KEY.UP) || key_get_state(KEY.LEFT) || 
+            key_get_state(KEY.DOWN) || key_get_state(KEY.RIGHT)) {
+          state.current_state = MENU_STATE.MAIN;
+          state.menu_index = MENU_STATE.SUBJECT;
+          state.need_redraw = true;
+          key_clear_state(KEY.UP);
+          key_clear_state(KEY.LEFT);
+          key_clear_state(KEY.DOWN);
+          key_clear_state(KEY.RIGHT);
+        }
+        return;
+      }
+      
+      // 左键：返回
+      if (key_get_state(KEY.LEFT)) {
+        if (state.current_state === MENU_STATE.ACTION_CONFIRM) {
+          state.current_state = MENU_STATE.ACTION_SELECT;
+          state.menu_index = state.current_state;
+        } else if (state.current_state === MENU_STATE.ACTION_RUNNING) {
+          state.current_state = MENU_STATE.ACTION_CONFIRM;
+          state.menu_index = state.current_state;
+        } else if (state.current_state > MENU_STATE.SUBJECT) {
+          state.current_state--;
+          state.menu_index = state.current_state;
+        } else if (state.current_state === MENU_STATE.SUBJECT) {
+          state.current_state = MENU_STATE.MAIN;
+          state.menu_index = MENU_STATE.SUBJECT;
+        }
+        state.need_redraw = true;
+        key_clear_state(KEY.LEFT);
+      }
+      // 右键：前进
+      else if (key_get_state(KEY.RIGHT)) {
+        if (state.current_state === MENU_STATE.ACTION_SELECT) {
+          state.current_state = MENU_STATE.ACTION_CONFIRM;
+          state.menu_index = state.current_state;
+        } else if (state.current_state === MENU_STATE.ACTION_CONFIRM) {
+          state.current_state = MENU_STATE.ACTION_RUNNING;
+          state.menu_index = state.current_state;
+        } else if (state.current_state === MENU_STATE.ACTION_RUNNING) {
+          state.current_state = MENU_STATE.ACTION_COMPLETE;
+          state.menu_index = state.current_state;
+        } else if (state.current_state < MENU_STATE.ACTION_SELECT) {
+          state.current_state++;
+          state.menu_index = state.current_state;
+          if (state.menu_values[state.menu_index] === 0) {
+            state.menu_values[state.menu_index] = 1;
+          }
+        }
+        state.need_redraw = true;
+        key_clear_state(KEY.RIGHT);
+      }
+      // 上键：减小值
+      else if (key_get_state(KEY.UP) && state.current_state <= MENU_STATE.ACTION_SELECT) {
+        if (state.current_state !== MENU_STATE.MAIN) {
+          if (state.menu_values[state.menu_index] > 1) {
+            state.menu_values[state.menu_index]--;
+          } else {
+            state.menu_values[state.menu_index] = state.menu_max_values[state.menu_index];
+          }
+          state.need_redraw = true;
+        }
+        key_clear_state(KEY.UP);
+      }
+      // 下键：增大值
+      else if (key_get_state(KEY.DOWN) && state.current_state <= MENU_STATE.ACTION_SELECT) {
+        if (state.current_state !== MENU_STATE.MAIN) {
+          if (state.menu_values[state.menu_index] < state.menu_max_values[state.menu_index]) {
+            state.menu_values[state.menu_index]++;
+          } else {
+            state.menu_values[state.menu_index] = 1;
+          }
+          state.need_redraw = true;
+        }
+        key_clear_state(KEY.DOWN);
+      }
+    }
+
+    // ==================== UI 更新 ====================
+    function updateUI() {
+      const stateNames = ['MAIN', 'SUBJECT', 'CALIBRATION', 'ACTION', 'CONFIRM', 'RUNNING', 'COMPLETE'];
+      document.getElementById('currentState').textContent = stateNames[state.current_state];
+      
+      // 更新状态指示
+      const stateEls = ['stateMain', 'stateSubject', 'stateCalib', 'stateAction', 'stateConfirm', 'stateRunning', 'stateComplete'];
+      stateEls.forEach((id, i) => {
+        const el = document.getElementById(id);
+        if (i === state.current_state) {
+          el.style.background = 'rgba(0, 212, 170, 0.3)';
+          el.style.borderColor = 'rgba(0, 212, 170, 0.5)';
+        } else {
+          el.style.background = 'rgba(0, 212, 170, 0.1)';
+          el.style.borderColor = 'rgba(0, 212, 170, 0.2)';
+        }
+      });
+      
+      // 更新值显示
+      document.getElementById('valSubject').textContent = state.menu_values[MENU_STATE.SUBJECT];
+      document.getElementById('valCalib').textContent = state.menu_values[MENU_STATE.CALIBRATION];
+      document.getElementById('valAction').textContent = state.menu_values[MENU_STATE.ACTION_SELECT];
+    }
+
+    // ==================== 主循环 ====================
+    function render() {
+      Menu_HandleKey();
+      Menu_ShowStatic();
+      Menu_ShowDynamic();
+      ctx.putImageData(imageData, 0, 0);
+      updateUI();
+      requestAnimationFrame(render);
+    }
+
+    // ==================== 文件处理 ====================
+    function parseCFile(content) {
+      let count = 0;
+      const lines = content.split('\n');
+      
+      lines.forEach(line => {
+        // 统计 ips200 函数调用
+        if (line.match(/ips200_(show_string|show_float|show_uint|draw_line|clear|set_color)/)) {
+          count++;
+        }
+      });
+      
+      return count;
+    }
+
+    function handleFile(file) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = e.target.result;
+        const count = parseCFile(content);
+        
+        document.getElementById('fileInfo').classList.remove('hidden');
+        document.getElementById('fileName').textContent = file.name;
+        document.getElementById('parseCount').textContent = count;
+      };
+      reader.readAsText(file);
+    }
+
+    // ==================== 事件绑定 ====================
+    document.addEventListener('DOMContentLoaded', () => {
+      // 按钮事件
+      const buttons = {
+        btnUp: KEY.UP,
+        btnLeft: KEY.LEFT,
+        btnDown: KEY.DOWN,
+        btnRight: KEY.RIGHT
+      };
+      
+      Object.entries(buttons).forEach(([id, key]) => {
+        const btn = document.getElementById(id);
+        btn.addEventListener('mousedown', () => {
+          keyState[key] = true;
+          btn.classList.add('pressed');
+        });
+        btn.addEventListener('mouseup', () => {
+          btn.classList.remove('pressed');
+        });
+        btn.addEventListener('mouseleave', () => {
+          btn.classList.remove('pressed');
+        });
+        // 触摸支持
+        btn.addEventListener('touchstart', (e) => {
+          e.preventDefault();
+          keyState[key] = true;
+          btn.classList.add('pressed');
+        });
+        btn.addEventListener('touchend', () => {
+          btn.classList.remove('pressed');
+        });
+      });
+      
+      // 键盘事件
+      document.addEventListener('keydown', (e) => {
+        const keyMap = {
+          'w': KEY.UP, 'W': KEY.UP, 'ArrowUp': KEY.UP,
+          'a': KEY.LEFT, 'A': KEY.LEFT, 'ArrowLeft': KEY.LEFT,
+          's': KEY.DOWN, 'S': KEY.DOWN, 'ArrowDown': KEY.DOWN,
+          'd': KEY.RIGHT, 'D': KEY.RIGHT, 'ArrowRight': KEY.RIGHT
+        };
+        if (keyMap[e.key]) {
+          keyState[keyMap[e.key]] = true;
+          const btnIds = ['btnUp', 'btnLeft', 'btnDown', 'btnRight'];
+          document.getElementById(btnIds[keyMap[keyMap[e.key]] - 1]).classList.add('pressed');
+        }
+      });
+      
+      document.addEventListener('keyup', (e) => {
+        const keyMap = {
+          'w': KEY.UP, 'W': KEY.UP, 'ArrowUp': KEY.UP,
+          'a': KEY.LEFT, 'A': KEY.LEFT, 'ArrowLeft': KEY.LEFT,
+          's': KEY.DOWN, 'S': KEY.DOWN, 'ArrowDown': KEY.DOWN,
+          'd': KEY.RIGHT, 'D': KEY.RIGHT, 'ArrowRight': KEY.RIGHT
+        };
+        if (keyMap[e.key]) {
+          const btnIds = ['btnUp', 'btnLeft', 'btnDown', 'btnRight'];
+          document.getElementById(btnIds[keyMap[keyMap[e.key]] - 1]).classList.remove('pressed');
+        }
+      });
+      
+      // 拖拽上传
+      const dropZone = document.getElementById('dropZone');
+      const fileInput = document.getElementById('fileInput');
+      
+      dropZone.addEventListener('click', () => fileInput.click());
+      
+      dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('drag-over');
+      });
+      
+      dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('drag-over');
+      });
+      
+      dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('drag-over');
+        const file = e.dataTransfer.files[0];
+        if (file && (file.name.endsWith('.c') || file.name.endsWith('.h'))) {
+          handleFile(file);
+        }
+      });
+      
+      fileInput.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) handleFile(file);
+      });
+      
+      // 清除文件
+      document.getElementById('clearFile').addEventListener('click', () => {
+        document.getElementById('fileInfo').classList.add('hidden');
+        fileInput.value = '';
+      });
+      
+      // 模拟数据更新
+      document.getElementById('motorL').addEventListener('input', (e) => {
+        state.motor_speeds[0] = parseFloat(e.target.value) || 0;
+      });
+      document.getElementById('motorR').addEventListener('input', (e) => {
+        state.motor_speeds[1] = parseFloat(e.target.value) || 0;
+      });
+      document.getElementById('motorEnable').addEventListener('change', (e) => {
+        state.g_motor_enable = e.target.value === '1';
+      });
+      document.getElementById('gnssState').addEventListener('input', (e) => {
+        state.gnss.state = parseInt(e.target.value) || 0;
+      });
+      
+      // 动态数据模拟
+      setInterval(() => {
+        state.current_angles = state.current_angles.map((a, i) => {
+          const newVal = a + (Math.random() - 0.5) * 2;
+          return Math.max(-90, Math.min(90, newVal));
+        });
+        state.euler_angle.pitch += (Math.random() - 0.5) * 0.5;
+        state.euler_angle.roll += (Math.random() - 0.5) * 0.3;
+      }, 500);
+      
+      // 启动渲染
+      render();
+    });
+  </script>
+</body>
+</html>
