@@ -180,6 +180,7 @@ volatile uint8_t g_replay_start_request = 0;
 volatile uint8_t g_replay_stop_request = 0;
 //【gnss】导航记录控制标志位
 volatile uint8_t g_gnss_start_recording = 0; // 1: 开始录制, 0: 清除开始录制标记
+volatile uint8_t g_gnss_recording = 0;       // 1: 正在记录 RAM, 0: 停止记录
 
 int main(void)
 {

@@ -23,6 +23,7 @@ extern volatile uint8_t g_replay_stop_request;
 
 //【gnss】导航记录控制标志位
 extern volatile uint8_t g_gnss_start_recording; // 1: 开始录制, 0: 清除开始录制标记
+extern volatile uint8_t g_gnss_recording;       // 1: 正在记录 RAM, 0: 停止记录
 extern volatile uint8_t g_gnss_save_flash_request; // 1: 请求将 RAM 数据存入 Flash
 extern volatile uint8_t g_gnss_load_flash_request; // 1: 请求将 Flash 数据存入 RAM
 

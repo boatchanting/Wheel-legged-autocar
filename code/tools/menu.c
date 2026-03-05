@@ -246,7 +246,9 @@ void Menu_ShowStatic(void)
         case MENU_STATE_ACTION_CONFIRM:
            Menu_ShowMainScreen(); // 先显示主界面框架
             break;
-        case MENU_STATE_ACTION_RUNNING:
+
+/*  //下面的部分注释掉是原有的惯性导航模块的科目一和科目二的实现。暂时注释掉，以便调试gnss
+         case MENU_STATE_ACTION_RUNNING:
             if(action==1)
             {        
                 gpio_toggle_level(P19_0);       // 指示灯切换
@@ -293,7 +295,67 @@ void Menu_ShowStatic(void)
                 gpio_toggle_level(P19_0);       // 指示灯切换
             }
             Menu_ShowActionCompleteScreen();
+            break;*/ 
+        case MENU_STATE_ACTION_RUNNING:
+            if(action==1)
+            {        
+                gpio_toggle_level(P19_0);       // 指示灯切换
+                
+                // 判断电机开启，并且 GNSS 定位有效 (state == 1) 才能开始录制
+                if (g_motor_enable && gnss.state == 1)
+                {      
+                    g_gnss_start_recording = 1; // 开始录制，会在 main 中触发 Gnss_Transform_Init 和打点初始化
+                    g_gnss_recording = 1;       // 标记正在录制中
+                }
+                else if (gnss.state != 1)
+                {
+                    // 如果 GNSS 没定位，可以加个蜂鸣器长鸣报警，提示不能录制
+                    #if DEBUG_LOG_ENABLE
+                    printf("[Menu] Start Failed: No GNSS Fix!\r\n");
+                    #endif
+                }
+            }
+            if(action==2)
+            {
+                gpio_toggle_level(P19_0);       // 指示灯切换
+                if(g_motor_enable)
+                {
+                    g_gnss_load_flash_request = 1;  // 请求从 Flash 读取 GNSS 点并开始复现
+                    g_gnss_save_flash_request = 0;  // 清除保存请求，防止冲突
+                    g_gnss_recording = 0;           // 确保停止录制状态
+                }
+            }
+            Menu_ShowMainScreen(); // 先显示主界面框架
             break;
+
+        case MENU_STATE_ACTION_COMPLETE:
+            if(action==1)
+            {
+                gpio_toggle_level(P19_0);       // 指示灯切换
+                if (g_gnss_recording)
+                {
+                    g_gnss_recording = 0; // 停止录制
+                    
+                    // 只有电机仍开启才保存（防止倒地、异常断电时保存了错误数据）
+                    if (g_motor_enable) 
+                    {
+                        g_gnss_save_flash_request = 1; // 通知 main 循环执行 GNSS Flash 写操作
+                    }
+                    else
+                    {
+                        #if DEBUG_LOG_ENABLE
+                        printf("Menu: GNSS Recording stopped (motor disabled), data discarded.\r\n");
+                        #endif
+                    }
+                }
+            }
+            if(action==2)
+            {
+                gpio_toggle_level(P19_0);       // 指示灯切换
+                // 这里未来可以预留给 GNSS 的其他功能（比如手动清除 Flash）
+            }
+            Menu_ShowActionCompleteScreen();
+            break; 
         default:
             break;
     }
