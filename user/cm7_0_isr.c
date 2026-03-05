@@ -107,7 +107,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ------------------------------------------------------
     if (loop_counter % 10 == 0) {  // 10ms 一次
         if(g_motor_enable){
-            NavReplay_Process();//惯性导航复现
+            NavReplay_Process();//惯性导航复现【优化点】：复现控制的时候遥控器给0速度是不行的，可以考虑支持遥控器0速度的控制，遥控器使能和失能是支持的
             GnssReplay_Process();//GNSS导航复现
         } //复现控制
     }
