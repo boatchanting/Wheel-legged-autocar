@@ -100,7 +100,7 @@ extern float current_actual_speed;
 // 4. 舵机速度环参数 (周期20ms)
 //    作用：控制舵机的转动速度，使其平滑地达到目标位置，避免突然动作
 // ----------------------------------------------------------------------------
-#define SERVO_SPEED_KP  0.5f   // [比例控制] 控制舵机速度响应的快慢
+#define SERVO_SPEED_KP  0.0f   // [比例控制] 控制舵机速度响应的快慢
 #define SERVO_SPEED_KI  0.0f   // [积分控制] 
 #define SERVO_SPEED_KD  0.0f   // [微分控制] 
 #define SERVO_SPEED_MAX_I  100000.0f  // [积分限幅] 限制积分项的最大值

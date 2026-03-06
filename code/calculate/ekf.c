@@ -188,7 +188,10 @@ void imu_get_values(void)
     float gx_temp = (float)imu660ra_gyro_x - gyro_offset_x; 
     float gy_temp = (float)imu660ra_gyro_y - gyro_offset_y;
     float gz_temp = (float)imu660ra_gyro_z - gyro_offset_z; 
-
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
+    gx_temp =(float)-gx_temp;
+    gz_temp =(float)-gz_temp;
+    #endif
     // 3. 死区处理
     if (fabs(gx_temp) < GYRO_DEAD_ZONE) gx_temp = 0.0f;
     if (fabs(gy_temp) < GYRO_DEAD_ZONE) gy_temp = 0.0f;
