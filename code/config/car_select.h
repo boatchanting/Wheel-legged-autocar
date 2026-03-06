@@ -11,7 +11,7 @@
 1.四个舵机的引脚及占90度时候的占空比，极性，每次拆装都需要重新测试，来自servo/servo.h
 2.屏幕的引脚配置，来自zf_device/zf_device_ips200.h
 3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
-4.按钮模块配置，来自zf_device/zf_device_key.h
+4.按钮模块配置，来自zf_device/zf_device_key.h，需要更改按钮和结构体
 5.pid参数配置，来自code/calculate/pid-new.h
 6.GNSS的配置：zf_driver_uart.c末尾的检测不动，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
 
@@ -30,7 +30,7 @@
 1.四个舵机的引脚及占90度时候的占空比，极性，每次拆装都需要重新测试，来自servo/servo.h
 2.屏幕的引脚配置，来自zf_device/zf_device_ips200.h
 3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
-4.按钮模块配置，来自zf_device/zf_device_key.h
+4.按钮模块配置，来自zf_device/zf_device_key.h，需要更改按钮和结构体
 5.pid参数配置，来自code/calculate/pid-new.h
 6.GNSS的配置：zf_driver_uart.c末尾的检测要注释掉，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
 */
