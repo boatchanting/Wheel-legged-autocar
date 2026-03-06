@@ -13,7 +13,8 @@
 3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
 4.按钮模块配置，来自zf_device/zf_device_key.h
 5.pid参数配置，来自code/calculate/pid-new.h
-6.zf_driver_uart.c末尾的检测不动，参考语雀文档，来自zf_driver/zf_driver_uart.c
+6.GNSS的配置：zf_driver_uart.c末尾的检测不动，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
+
 */
 
 /* 
@@ -31,7 +32,7 @@
 3.无线模块配置，来自zf_device/zf_device_wifi_spi.h
 4.按钮模块配置，来自zf_device/zf_device_key.h
 5.pid参数配置，来自code/calculate/pid-new.h
-6.zf_driver_uart.c末尾的检测要注释掉，参考语雀文档，来自zf_driver/zf_driver_uart.c
+6.GNSS的配置：zf_driver_uart.c末尾的检测要注释掉，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
 */
 
 #endif // __CAR_SELECT_H__
