@@ -421,7 +421,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         g_motor_enable = 1; // 正常工作
     }
 
-    if (g_replay_state != REPLAY_RUNNING)//【nav】不在复现的时候才可以遥控器给目标速度进去
+    if (g_replay_state != REPLAY_RUNNING && g_gnss_replay_state != GNSS_REPLAY_RUNNING)//【nav】不在复现的时候才可以遥控器给目标速度进去 【gnss】不在复现的时候才可以遥控器给目标速度进去【优化点】如果遥控器给的速度是ch5，那应该可以控制，即让小车急停
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
