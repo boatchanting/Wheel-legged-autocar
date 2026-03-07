@@ -106,5 +106,5 @@ void servo_executor_update(void)
         (uint16_t)current_duty_rr,
         (uint16_t)current_duty_lr
     };
-    update_all_servo_angles(current_duties);//更新舵机角度数组，舵机debug使用，优化时可以删除
+    update_all_servo_angles(current_duties);//更新舵机角度数组，舵机debug使用，优化时可以删除【优化点】
 }
