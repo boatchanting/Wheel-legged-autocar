@@ -140,7 +140,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         {
             // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
             float yaw_error = err_degree;
-
+            //yaw_error =  g_initial_yaw-euler_angle.yaw ; // 调节pid转向角度环时使用【调试pid打开】
             // 2. [关键] 处理角度“卷绕”问题 (Wraparound)
             //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
             //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
@@ -206,6 +206,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     if (loop_counter % 2 == 0 && g_yaw_initialized)  // 2ms周期
     {
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
+
         // Z轴(yaw)处理：用于转向角速度环
         float gyro_z_val = (float)raw_gyro_z;
         if (fabsf(gyro_z_val) < 5.0f) gyro_z_val = 0.0f;
@@ -241,7 +242,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 5.1 获取原始陀螺仪数据
     //陀螺仪数据获取已经在中断函数最前面的地方获取完成
     int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
-
+    
     // 5.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
     float gyro_val = (float)raw_gyro_y;
     if (fabs(gyro_val) < 5.0f) gyro_val = 0;

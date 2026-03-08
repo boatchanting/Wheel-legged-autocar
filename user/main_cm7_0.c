@@ -155,7 +155,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -478,33 +478,18 @@ vision_detected_marker = 0;//雷区调用,测试用
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
                 #if WIFI_USE
-                wifi_protocol_send_data();//自定义wifi协议
+                //wifi_protocol_send_data();//自定义wifi协议
 
                 // 逐飞助手示波器发送代码        
-                // 1. 填充速度数据 (通道 0-1)
-                //seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.yaw;
-                //seekfree_assistant_oscilloscope_data.data[1] = (float)euler_angle.pitch;
-
-                
-                // 通道 2
-                //seekfree_assistant_oscilloscope_data.data[2] = 9.80665*((float)imu_data.acc_x/4096-(float)imu_data.grav_x);
-                // 通道 3
-                //seekfree_assistant_oscilloscope_data.data[3] = 9.80665*((float)imu_data.acc_y/4096-(float)imu_data.grav_y);
-                // 通道 4
-                //seekfree_assistant_oscilloscope_data.data[4] = 9.80665*((float)imu_data.acc_z/4096-(float)imu_data.grav_z);
-                //通道 5
-                //seekfree_assistant_oscilloscope_data.data[5] = 4096*(float)imu_data.grav_x;
-                
-                
-                //3. 填充陀螺仪数据 (通道 5-7)
-                
-                // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
-
-                // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
-                //通道6
-                //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.x;
-                //通道7
-                //seekfree_assistant_oscilloscope_data.data[7] = inertial_nav.y;
+                // 1. 填充速度数据 (通道 0-2)姿态角    角速度环输出，角速度，左右轮，角度环输出，舵机速度环输出，
+                seekfree_assistant_oscilloscope_data.data[0] =(float)inertial_nav.x;
+                seekfree_assistant_oscilloscope_data.data[1] =(float)inertial_nav.y;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)inertial_nav.vx_body;
+                seekfree_assistant_oscilloscope_data.data[3] = (float)inertial_nav.vy_body;
+                seekfree_assistant_oscilloscope_data.data[4] =(float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)pid_turn_angle.output;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
                     
 
                     // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
@@ -530,13 +515,13 @@ vision_detected_marker = 0;//雷区调用,测试用
                     //seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
 
                     // 4. 设置本次发送的通道数量 (一共8个数据)
-                    //seekfree_assistant_oscilloscope_data.channel_num = 8;
+                    seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
                     // 5. 调用发送函数
-                    //seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
                 // 用于上位机向小车发送pid信息
-                //wifi_update_pid_params(); 
+                wifi_update_pid_params(); 
                 #endif
             }
         }
@@ -572,13 +557,13 @@ vision_detected_marker = 0;//雷区调用,测试用
         //     vision_detected_marker = 0;
         // }//雷区旋转调用，测试用
 
-        // 模拟视觉触发跳跃测试
+        // //模拟视觉触发跳跃测试
         // if (vision_detected_jump_point == 1) 
         // {
         //     jump_trigger(); // <--- 只需要调用这一句
         //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
         // }
-
+        //跳跃雷区测试用，【调试】打开
         // system_delay_ms(50);
 
 
