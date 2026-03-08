@@ -90,6 +90,18 @@ extern float current_actual_speed;
 #define TURN_GYR_MAX_O  5000.0f  // [PWM限幅] 普通赛道转向PWM上限
 #define TURN_GYR_MAX_O_BRIDGE 7000.0f // [单边桥限幅] 单边桥需更大转向力矩
 
+// ----------------------------------------------------------------------------
+// 7. 单边桥 Rolling (横滚) 自适应平衡环参数
+//    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
+//    策略：一边不动，一边缩短 (Drop-Leg Strategy)
+// ----------------------------------------------------------------------------
+#define ROLL_KP      0.0f   // [响应力度] 决定对抗倾斜的猛烈程度
+#define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
+#define ROLL_KD      0.0f    // [阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_MAX_I   0.0f    
+#define ROLL_MAX_O   1000.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
+#define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
+
 // *************************** 【学习板小车】pid参数定义结束***************************
 #endif
 
@@ -219,6 +231,7 @@ extern PID_Param_t pid_speed;//速度环(外环)pid参数，未调用
 extern PID_Param_t pid_gyro;//加速度环pid参数
 extern PID_Param_t pid_turn_angle;//转向角度环pid参数
 extern PID_Param_t pid_turn_gyro;//转向角速度环pid参数
+extern PID_Param_t pid_roll; //Rolling环pid参数
 
 extern volatile float now_speed;        // 当前速度 (来自编码器)
 extern volatile float now_angle;        // 当前角度 (来自IMU)
@@ -234,6 +247,7 @@ extern volatile float turn_gyro_loop_out; // 转向角速度环输出（PWM）
 extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern volatile float target_speed_set;
+extern uint8_t roll_balance_enable; // rolling环使能开关
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
@@ -245,6 +259,7 @@ float Servo_Speed_Control(float target_speed, float actual_speed);//速度环(�
 float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)(电机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
+float Roll_Balance_Control(float actual_roll);//横滚平衡环控制
 
 // 辅助宏：取绝对值
 #define MY_ABS(x) ((x) > 0 ? (x) : -(x))

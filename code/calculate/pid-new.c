@@ -11,7 +11,7 @@ PID_Param_t pid_angle = {ANG_KP, ANG_KI, ANG_KD, ANG_MAX_O, ANG_MAX_I, ANG_MECH_
 PID_Param_t pid_gyro  = {GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE, 0,0,0,0,0};//角速度环初始化参数
 PID_Param_t pid_turn_angle = {TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE, 0,0,0,0,0};//转向角度环初始化参数
 PID_Param_t pid_turn_gyro = {TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, TURN_GYR_MAX_O, TURN_GYR_MAX_I, TURN_GYR_DEAD_ZONE, 0,0,0,0,0};//转向角速度环初始化参数
-
+PID_Param_t pid_roll = {ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_MECH_ZERO, 0,0,0,0,0};//横滚环初始化参数
 
 
 volatile float target_speed_set = 0.0f;
@@ -27,8 +27,8 @@ float gyro_loop_out     = 0.0f;// 角速度环的输出 (目标角加速度)
 volatile float turn_angle_loop_out = 0.0f;// 转向角度环输出（期望角速度）
 volatile float turn_gyro_loop_out = 0.0f;// 转向角速度环输出（PWM）
 volatile float final_motor_pwm = 0.0f;
-
-
+uint8_t roll_balance_enable = 0; // 横滚平衡环使能开关
+volatile int16 g_target_pwm_roll_adj = 0; // 目标横滚调整分量
 
 // ============================================================================
 //  辅助函数实现
@@ -139,6 +139,25 @@ void PID_Param_Init(void) {
     pid_turn_gyro.error_integral = 0;
     pid_turn_gyro.output = 0;
 
+    // 初始化横滚环PID参数
+    pid_roll.kp = ROLL_KP;
+    pid_roll.ki = ROLL_KI;
+    pid_roll.kd = ROLL_KD;
+    pid_roll.max_output = ROLL_MAX_O;
+    pid_roll.max_integral = ROLL_MAX_I;
+    pid_roll.compensation = ROLL_MECH_ZERO;
+
+    // 重置横滚环状态变量
+    pid_roll.error = 0;
+    pid_roll.last_error = 0;
+    pid_roll.prev_error = 0;
+    pid_roll.error_integral = 0;
+    pid_roll.output = 0;
+
+     // 重置横滚环使能位
+    roll_balance_enable = 0;
+    g_target_pwm_roll_adj = 0;
+
     // 重置目标速度
     target_speed_set = 0.0f;
 }
@@ -236,6 +255,21 @@ void PID_Data_Reset(void) {
     pid_turn_gyro.prev_error = 0;
     pid_turn_gyro.error_integral = 0;
     pid_turn_gyro.output = 0;
+
+    //初始化横滚环PID参数
+    pid_roll.kp = 0;
+    pid_roll.ki = 0;
+    pid_roll.kd = 0;
+    pid_roll.max_output = ROLL_MAX_O;
+    pid_roll.max_integral = ROLL_MAX_I;
+    pid_roll.compensation = ROLL_MECH_ZERO;
+
+    // 重置横滚环状态变量
+    pid_roll.error = 0;
+    pid_roll.last_error = 0;
+    pid_roll.prev_error = 0;
+    pid_roll.error_integral = 0;
+    pid_roll.output = 0;
 
     // 重置目标速度
     target_speed_set = 0.0f;
@@ -553,4 +587,50 @@ float Gyro_Loop_Control(float angle_loop_output, float actual_gyro)
     pid_gyro.last_error = pid_gyro.error;
 
     return pid_gyro.output;
+}
+
+/**
+ * @brief Rolling 自适应平衡控制，主要用于单边桥
+ * @param actual_roll 当前横滚角 (单位: 度, 右高左低为正)
+ * @return float 计算出的单侧缩短量 (PWM值, 总是 >= 0)
+ * @note 此函数应在 5ms 定时器中调用
+ */
+float Roll_Balance_Control(float actual_roll)
+{
+    // 0. 安全检查
+    if (roll_balance_enable == 0) {
+        g_target_pwm_roll_adj = 0; // 这里的含义稍后解释
+        return 0.0f;
+    }
+
+    // 1. 计算误差 (目标 - 实际)
+    // 目标是 0 度
+    float error = 0.0f - actual_roll; 
+
+    // 2. 计算 PD 输出 (标准 PID 公式)
+    // 注意：这里计算的是一个“总矫正力”，正负代表方向
+    float p_out = pid_roll.kp * error;
+    float d_out = pid_roll.kd * (error - pid_roll.last_error);
+    
+    pid_roll.last_error = error; // 更新历史误差
+    
+    float total_out = p_out + d_out;
+    
+    // 限幅
+    total_out = Float_Constrain(total_out, -pid_roll.max_output, pid_roll.max_output);
+    
+    // 3. 将总输出转换为 "一边不动，一边缩短" 的逻辑
+    // total_out 的物理含义：
+    // 如果 roll > 0 (右高)，error < 0，total_out < 0。我们需要缩短右腿。
+    // 如果 roll < 0 (左高)，error > 0，total_out > 0。我们需要缩短左腿。
+    
+    // 我们约定 g_target_pwm_roll_adj 的含义：
+    // 这个变量不再直接加减，而是作为一个“带符号的缩短量”传递给 servo_executor。
+    // > 0 : 表示左侧需要缩短 (值越大缩得越多)
+    // < 0 : 表示右侧需要缩短 (绝对值越大缩得越多)
+    // = 0 : 大家都不动
+    
+    g_target_pwm_roll_adj = (int16)total_out; 
+    
+    return total_out;
 }
