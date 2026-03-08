@@ -188,7 +188,10 @@ void imu_get_values(void)
     float gx_temp = (float)imu660ra_gyro_x - gyro_offset_x; 
     float gy_temp = (float)imu660ra_gyro_y - gyro_offset_y;
     float gz_temp = (float)imu660ra_gyro_z - gyro_offset_z; 
-
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
+    gx_temp =(float)-gx_temp;
+    gz_temp =(float)-gz_temp;
+    #endif
     // 3. 死区处理
     if (fabs(gx_temp) < GYRO_DEAD_ZONE) gx_temp = 0.0f;
     if (fabs(gy_temp) < GYRO_DEAD_ZONE) gy_temp = 0.0f;
@@ -207,6 +210,10 @@ void imu_get_values(void)
     imu660ra_acc_x_l = (int16)imu_data.acc_x;
     imu660ra_acc_y_l = (int16)imu_data.acc_y;
     imu660ra_acc_z_l = (int16)imu_data.acc_z;
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
+    imu_data.acc_x =(float)-imu_data.acc_x;
+    imu_data.acc_z =(float)-imu_data.acc_z;
+    #endif
 }
 
 /**
@@ -317,7 +324,6 @@ void EKF_UpData(void)
     
     // Z轴分量: 1 - 2*(q1*q1 + q2*q2) (Madgwick 写法为 2 * (0.5 - q1^2 - q2^2))
     imu_data.grav_z = 2.0f * (0.5f - q1 * q1 - q2 * q2);
-
     /* 
        应用说明：
        现在 imu_data.grav_x/y/z 表示的是传感器处于当前姿态时，

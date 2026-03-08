@@ -1,6 +1,7 @@
 #ifndef _INERTIAL_NAV_H_
 #define _INERTIAL_NAV_H_
 #include "zf_common_headfile.h"
+#include "../config/car_select.h"//根据小车选择配置不同的车轮半径参数
 //-------------------------------------------------------------------------------------------------------------------
 //  @brief      惯性导航模块头文件
 //  @note       1. 依赖外部提供正确的偏航角、加速度和轮速数据。
@@ -19,10 +20,17 @@
 // --- 【换车或者修车需要更换】里程计校准系数 ---
 // 通过实验确定此值: 系数 = 实际行驶距离 / 程序计算距离
 // 初始值设为 1.0f, 如果程序计算的距离偏小, 则该值 > 1.0; 如果偏大, 则该值 < 1.0
-#define NAV_DISTANCE_SCALE_FACTOR   3.566666f // <--- 在这里填入你计算出的校准值
+#if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
+#define NAV_DISTANCE_SCALE_FACTOR   3.566666f // <--- 在这里填入你计算出的校准值，未调用【优化点】
 #define WHEEL_BASE_MM       159.7f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       3.566666f
+#define SPEED_TO_MM_S       3.566666f//大致为车轮半径
+#endif
+#if CAR_SELECT == 2 // 2代表我们新车 板子 2026 /01/16 锦鲤跃龙门
 
+#define NAV_DISTANCE_SCALE_FACTOR   3.566666f // <--- 在这里填入你计算出的校准值，未调用【优化点】
+#define WHEEL_BASE_MM       185.0f  // 小车轮距 (单位: mm)
+#define SPEED_TO_MM_S       4.866666f*1.065//大致为车轮半径
+#endif
 // --- 坐标系数据结构 ---
 typedef struct {
     // [输出] 世界坐标系下的位置 (单位: mm)
