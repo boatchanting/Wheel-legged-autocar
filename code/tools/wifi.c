@@ -234,8 +234,8 @@ void wifi_update_pid_params(void)
                 case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
                 // 参数 3: 舵机速度控制环kp
                 case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
-                // 参数 4: 舵机速度控制环ki
-                case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
+                // 参数 4: servo_height测试
+                case 4: servo_height = seekfree_assistant_parameter[i]; break;
                 // 参数 5: 是否存储数据到 Flash 
                 // case 5: flash_write = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; 
                 //         if (flash_write_flag == 0&& flash_write == 1)
@@ -257,7 +257,8 @@ void wifi_update_pid_params(void)
                 // 参数6: 转向角速度环kd
                 // case 6: pid_turn_gyro.kd = seekfree_assistant_parameter[i]; break;
                 // 参数6:  vision_detected_marker = 0/1;//雷区调用,测试用
-                case 6: vision_detected_marker = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                //debug_force_height_up，单边桥抬高双腿，测试用
+                case 6: debug_force_height_up = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
                 case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;

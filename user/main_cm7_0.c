@@ -353,7 +353,7 @@ gnss_init(TAU1201);//gnss导航初始化
 //exti_init(P20_2, EXTI_TRIGGER_RISING);
 // P20_3: 停止复现
 //exti_init(P20_3, EXTI_TRIGGER_RISING);
-
+Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
@@ -478,7 +478,7 @@ vision_detected_marker = 0;//雷区调用,测试用
                 
                 // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
                 #if WIFI_USE
-                wifi_protocol_send_data();//自定义wifi协议
+                // wifi_protocol_send_data();//自定义wifi协议
 
                 // 逐飞助手示波器发送代码        
                 // 1. 填充速度数据 (通道 0-1)
@@ -536,7 +536,7 @@ vision_detected_marker = 0;//雷区调用,测试用
                     //seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
                 // 用于上位机向小车发送pid信息
-                //wifi_update_pid_params(); 
+                wifi_update_pid_params(); 
                 #endif
             }
         }
