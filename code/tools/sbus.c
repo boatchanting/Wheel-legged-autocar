@@ -80,7 +80,11 @@ void Remote_Control_Process(void)
 
     }
     int16 ch1_steer = uart_receiver.channel[0];
+#if SUBS_CATEGORY == 1
     int16 ch2_thro  = uart_receiver.channel[1];
+#else
+    int16 ch2_thro  = 1952 - uart_receiver.channel[1];
+#endif
     int16 ch3_mark  = uart_receiver.channel[2];
     int16 ch4_mode  = uart_receiver.channel[3];
     int16 ch5_brake = uart_receiver.channel[4];
