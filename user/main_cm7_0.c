@@ -482,15 +482,22 @@ vision_detected_marker = 0;//雷区调用,测试用
 
                 // 逐飞助手示波器发送代码        
                 // 1. 填充速度数据 (通道 0-2)姿态角    角速度环输出，角速度，左右轮，角度环输出，舵机速度环输出，
-                seekfree_assistant_oscilloscope_data.data[0] =(float)inertial_nav.x;
-                seekfree_assistant_oscilloscope_data.data[1] =(float)inertial_nav.y;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)inertial_nav.vx_body;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)inertial_nav.vy_body;
-                seekfree_assistant_oscilloscope_data.data[4] =(float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)pid_turn_angle.output;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
-                    
+                // seekfree_assistant_oscilloscope_data.data[0] =(float)inertial_nav.x;
+                // seekfree_assistant_oscilloscope_data.data[1] =(float)inertial_nav.y;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)inertial_nav.vx_body;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)inertial_nav.vy_body;
+                // seekfree_assistant_oscilloscope_data.data[4] =(float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_turn_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                                    seekfree_assistant_oscilloscope_data.data[0] = (float)uart_receiver.channel[0];
+                seekfree_assistant_oscilloscope_data.data[1] =(float)uart_receiver.channel[1];
+                seekfree_assistant_oscilloscope_data.data[2] = (float)uart_receiver.channel[2];
+                seekfree_assistant_oscilloscope_data.data[3] = (float)uart_receiver.channel[3];
+                seekfree_assistant_oscilloscope_data.data[4] =(float)uart_receiver.channel[4];
+                seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
+                                seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
+                seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
 
                     // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
                     //seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
