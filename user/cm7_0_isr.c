@@ -450,6 +450,7 @@ void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数
 {
     pit_isr_flag_clear(PIT_CH10);
     key_scanner();   // 必须定期调用！可写在中断或者循环
+    Menu_HandleKey();
 }
 
 void pit0_ch11_isr()                    // 定时器通道 11 周期中断服务函数      

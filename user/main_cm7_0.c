@@ -420,7 +420,6 @@ vision_detected_marker = 0;//雷区调用,测试用
     while(true)
     {
         // 菜单处理
-        Menu_HandleKey();
         #if DEBUG_DISPLAY
         Menu_ShowStatic();    // 静态显示
         Menu_ShowDynamic();   // 动态显示
