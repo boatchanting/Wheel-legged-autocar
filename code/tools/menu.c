@@ -4,7 +4,8 @@
 // ==================== 全局变量定义 ====================
 MenuState_t current_state = MENU_STATE_MAIN;
 uint8_t menu_index = MENU_STATE_SUBJECT;
-
+// 新增：推车模式全局标志位（供底层PID控制环使用）
+uint8_t g_is_push_mode = 0; // 0: 非推车模式，正常PID控制；1: 推车模式
 uint8_t menu_values[MENU_STATE_COUNT] = {0};
 const uint8_t menu_max_values[MENU_STATE_COUNT] = {
     1,  // MENU_STATE_MAIN
