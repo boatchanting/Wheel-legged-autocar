@@ -228,14 +228,14 @@ void wifi_update_pid_params(void)
                 // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
                 //参数 0: 期望速度 (target_speed_set) 目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
                 case 0: target_speed_set = seekfree_assistant_parameter[i]; break;
-                // 参数 1: 角度环Kp
-                case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
-                // 参数 2: 角度环kd
-                case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
+                // 参数 1: rolling环Kp
+                case 1: pid_roll.kp  = seekfree_assistant_parameter[i]; break;
+                // 参数 2: rolling环kd
+                case 2: pid_roll.kd  = seekfree_assistant_parameter[i]; break;
                 // 参数 3: 舵机速度控制环kp
                 case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
-                // 参数 4: servo_height测试
-                case 4: servo_height = seekfree_assistant_parameter[i]; break;
+                // 参数 4: rolling平衡使能
+                case 4: roll_balance_enable = seekfree_assistant_parameter[i]; break;
                 // 参数 5: 是否存储数据到 Flash 
                 // case 5: flash_write = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; 
                 //         if (flash_write_flag == 0&& flash_write == 1)

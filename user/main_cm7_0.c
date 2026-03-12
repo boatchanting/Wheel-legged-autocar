@@ -482,25 +482,25 @@ vision_detected_marker = 0;//雷区调用,测试用
 
                 // 逐飞助手示波器发送代码        
                 // 1. 填充速度数据 (通道 0-1)
-                //seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.yaw;
-                //seekfree_assistant_oscilloscope_data.data[1] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.yaw;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)euler_angle.pitch;
 
                 
                 // 通道 2
-                //seekfree_assistant_oscilloscope_data.data[2] = 9.80665*((float)imu_data.acc_x/4096-(float)imu_data.grav_x);
+                seekfree_assistant_oscilloscope_data.data[2] = 9.80665*((float)imu_data.acc_x/4096-(float)imu_data.grav_x);
                 // 通道 3
-                //seekfree_assistant_oscilloscope_data.data[3] = 9.80665*((float)imu_data.acc_y/4096-(float)imu_data.grav_y);
+                seekfree_assistant_oscilloscope_data.data[3] = 9.80665*((float)imu_data.acc_y/4096-(float)imu_data.grav_y);
                 // 通道 4
-                //seekfree_assistant_oscilloscope_data.data[4] = 9.80665*((float)imu_data.acc_z/4096-(float)imu_data.grav_z);
+                seekfree_assistant_oscilloscope_data.data[4] = 9.80665*((float)imu_data.acc_z/4096-(float)imu_data.grav_z);
                 //通道 5
-                //seekfree_assistant_oscilloscope_data.data[5] = 4096*(float)imu_data.grav_x;
+                seekfree_assistant_oscilloscope_data.data[5] = 4096*(float)imu_data.grav_x;
                 
                 
                 //3. 填充陀螺仪数据 (通道 5-7)
                 
-                // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)g_target_pwm_roll_adj;
 
-                // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
                 //通道6
                 //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.x;
                 //通道7
@@ -530,10 +530,10 @@ vision_detected_marker = 0;//雷区调用,测试用
                     //seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
 
                     // 4. 设置本次发送的通道数量 (一共8个数据)
-                    //seekfree_assistant_oscilloscope_data.channel_num = 8;
+                    seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
                     // 5. 调用发送函数
-                    //seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
                 // 用于上位机向小车发送pid信息
                 wifi_update_pid_params(); 

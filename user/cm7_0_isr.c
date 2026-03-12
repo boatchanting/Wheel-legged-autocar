@@ -266,6 +266,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 返回: gyro_loop_out (最终PWM)
     gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
 
+    // 6.rolling平衡环(5ms一次)
+    if (loop_counter % 5 == 0){
+        Roll_Balance_Control(euler_angle.roll);
+    }
+
 
     // ==========================================================
     // 步骤 6: 安全保护 (倒地停止)(9ms)
