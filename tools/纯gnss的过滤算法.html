@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>GNSS与惯导数据融合验证可视化</title>
+    <!-- 引入 ECharts 用于高性能渲染和缩放 -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f5f7fa; }
+        .header { text-align: center; margin-bottom: 20px; }
+        #drop-zone {
+            width: 100%; height: 100px; border: 2px dashed #409EFF; border-radius: 8px;
+            background-color: #ecf5ff; display: flex; align-items: center; justify-content: center;
+            color: #409EFF; font-size: 18px; font-weight: bold; cursor: pointer; transition: 0.3s;
+        }
+        #drop-zone.dragover { background-color: #c6e2ff; border-color: #337ecc; }
+        .controls { margin-top: 15px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 12px 0 rgba(0,0,0,0.1); display: flex; gap: 20px; align-items: center;}
+        #chart-container { width: 100%; height: 75vh; margin-top: 20px; background: white; border-radius: 8px; box-shadow: 0 2px 12px 0 rgba(0,0,0,0.1); padding: 10px; box-sizing: border-box;}
+        input[type="number"] { width: 80px; padding: 4px; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h2>GNSS 与 底盘运动学 融合修正验证工具</h2>
+        <p>基于高斯-克吕格投影 | 支持滚动鼠标滚轮无限放大到 **厘米级** | 拖入 CSV 文件立即渲染</p>
+    </div>
+
+    <!-- 拖拽上传区域 -->
+    <div id="drop-zone">拖拽 CSV 数据文件到此处，或点击选择文件</div>
+    <input type="file" id="file-input" style="display: none;" accept=".csv">
+
+    <!-- 参数控制面板 -->
+    <div class="controls">
+        <span><b>修正参数设置：</b></span>
+        <label title="小于此速度无视GPS移动">静止漂移过滤阈值: <input type="number" id="param-stop" value="30"> mm/s</label>
+        <label title="大于此速度才信任GPS航向">航向有效直行速度(vx): &lt; <input type="number" id="param-vx" value="-150"> mm/s</label>
+        <label title="小于此速度说明没有侧滑">航向有效横滑速度(vy): |vy| &lt; <input type="number" id="param-vy" value="50"> mm/s</label>
+        <button onclick="recalculate()" style="padding: 5px 15px; background: #409EFF; color: white; border: none; border-radius: 4px; cursor: pointer;">重新计算</button>
+    </div>
+
+    <!-- 图表容器 -->
+    <div id="chart-container"></div>
+
+<script>
+    // ================== WGS84 高斯-克吕格投影算法 ==================
+    const WGS84_A = 6378137.0;
+    const WGS84_F = 1.0 / 298.257223563;
+    const WGS84_E2 = 2.0 * WGS84_F - WGS84_F * WGS84_F;
+    const WGS84_E12 = WGS84_E2 / (1.0 - WGS84_E2);
+    const RAD_PER_DEG = Math.PI / 180.0;
+
+    function gaussProject(lat, lon) {
+        let B = lat * RAD_PER_DEG;
+        let L = lon * RAD_PER_DEG;
+        let zone = Math.floor((lon + 1.5) / 3.0);
+        let L0 = zone * 3.0 * RAD_PER_DEG;
+        let l = L - L0;
+
+        let sinB = Math.sin(B), cosB = Math.cos(B), tanB = Math.tan(B);
+        let N = WGS84_A / Math.sqrt(1.0 - WGS84_E2 * sinB * sinB);
+        let eta2 = WGS84_E12 * cosB * cosB;
+
+        let m0 = WGS84_A * (1.0 - WGS84_E2 / 4.0 - 3.0 * Math.pow(WGS84_E2, 2) / 64.0);
+        let m2 = WGS84_A * (3.0 * WGS84_E2 / 8.0 + 3.0 * Math.pow(WGS84_E2, 2) / 32.0);
+        let m4 = WGS84_A * (15.0 * Math.pow(WGS84_E2, 2) / 256.0);
+        let X = m0 * B - m2 * Math.sin(2.0 * B) + m4 * Math.sin(4.0 * B);
+
+        let t = tanB, l2 = l * l, l4 = l2 * l2;
+        
+        let x_val = X + N * t * l2 / 2.0 + N * t * (5.0 - t * t + 9.0 * eta2) * l4 / 24.0; // 北向 (Northing)
+        let y_val = N * l + N * (1.0 - t * t + eta2) * l * l2 / 6.0;                        // 东向 (Easting)
+        
+        return { N: x_val, E: y_val };
+    }
+
+    // ================== 全局变量 ==================
+    let globalParsedData = [];
+    let myChart = echarts.init(document.getElementById('chart-container'));
+
+    // ================== 数据处理与融合算法 ==================
+    function processAndVisualize(dataRows) {
+        let paramStop = parseFloat(document.getElementById('param-stop').value);
+        let paramVx = parseFloat(document.getElementById('param-vx').value);
+        let paramVy = parseFloat(document.getElementById('param-vy').value);
+
+        let rawGpsPath = [];
+        let correctedGpsPath = [];
+        let validHeadingData = []; // 记录可信的航向点 (仅作展示)
+
+        let isFirst = true;
+        let originN = 0, originE = 0;
+        
+        // 修正状态变量
+        let lastEstE = 0, lastEstN = 0;
+        let filteredHeading = 0;
+
+        for (let i = 0; i < dataRows.length; i++) {
+            let row = dataRows[i];
+            
+            // 数据解析
+            let lat = parseFloat(row.latitude);
+            let lon = parseFloat(row.longitude);
+            let state = parseInt(row.state);
+            if(state !== 1 || isNaN(lat) || isNaN(lon) || lat === 0) continue;
+
+            let vx = parseFloat(row.vx_body) || 0;
+            let vy = parseFloat(row.vy_body) || 0;
+            let direction = parseFloat(row.direction) || 0;
+
+            // 1. 高斯投影转换为米
+            let gk = gaussProject(lat, lon);
+            
+            // 原点对齐
+            if (isFirst) {
+                originN = gk.N;
+                originE = gk.E;
+                isFirst = false;
+            }
+
+            // 相对坐标 (X轴为东，Y轴为北)
+            let rawE = gk.E - originE;
+            let rawN = gk.N - originN;
+            rawGpsPath.push([rawE, rawN]);
+
+            // ================== 核心修正算法 ==================
+            // 计算底盘合速度 (mm/s)
+            let bodySpeed = Math.sqrt(vx * vx + vy * vy);
+
+            // A. 位置漂移抑制：如果底盘没动，GPS在动，强制锁死坐标
+            if (bodySpeed < paramStop) {
+                // 静止状态，使用上一次的估计坐标
+            } else {
+                // 运动状态，引入平滑滤波（防止GPS个别点突变），权重可调，这里取0.8信任GPS
+                if(lastEstE === 0 && lastEstN === 0) {
+                    lastEstE = rawE; lastEstN = rawN;
+                } else {
+                    lastEstE = lastEstE * 0.2 + rawE * 0.8;
+                    lastEstN = lastEstN * 0.2 + rawN * 0.8;
+                }
+            }
+            correctedGpsPath.push([lastEstE, lastEstN]);
+
+            // B. 航向跳变过滤：只有向前走且没有侧滑时，才信任GPS航向
+            if (vx < paramVx && Math.abs(vy) < paramVy) {
+                filteredHeading = direction; // 更新可信航向
+                // 用散点记录一下这些位置，用于可视化
+                validHeadingData.push([lastEstE, lastEstN, filteredHeading]);
+            }
+        }
+
+        renderChart(rawGpsPath, correctedGpsPath, validHeadingData);
+    }
+
+    // ================== ECharts 渲染 ==================
+    function renderChart(rawGps, correctedGps, validHeadings) {
+        let option = {
+            title: { text: '车辆轨迹俯视图 (X:东向/米, Y:北向/米)', left: 'center' },
+            tooltip: { 
+                trigger: 'item',
+                formatter: function (params) {
+                    if(params.seriesName === '可信航向提取点') {
+                        return `提取航向: ${params.data[2].toFixed(2)}°<br/>坐标: (${params.data[0].toFixed(3)}, ${params.data[1].toFixed(3)})`;
+                    }
+                    return `${params.seriesName}<br/>E(X): ${params.data[0].toFixed(3)} m<br/>N(Y): ${params.data[1].toFixed(3)} m`;
+                }
+            },
+            legend: { top: 30 },
+            dataZoom: [
+                { type: 'inside', xAxisIndex: 0, filterMode: 'none' }, // 允许鼠标滚轮无限放大
+                { type: 'inside', yAxisIndex: 0, filterMode: 'none' },
+                { type: 'slider', xAxisIndex: 0 },
+                { type: 'slider', yAxisIndex: 0 }
+            ],
+            xAxis: { type: 'value', name: '东向偏移 (m)', scale: true, splitLine: { show: true, lineStyle: { type: 'dashed' } } },
+            yAxis: { type: 'value', name: '北向偏移 (m)', scale: true, splitLine: { show: true, lineStyle: { type: 'dashed' } } },
+            series: [
+                {
+                    name: '原始 GNSS 轨迹 (发散点)',
+                    type: 'line',
+                    data: rawGps,
+                    lineStyle: { color: '#ccc', width: 1, type: 'dashed' },
+                    itemStyle: { color: '#aaa' },
+                    symbolSize: 4
+                },
+                {
+                    name: '修正后 轨迹 (静止锁定)',
+                    type: 'line',
+                    data: correctedGps,
+                    lineStyle: { color: '#E53935', width: 3 },
+                    itemStyle: { color: '#E53935' },
+                    symbolSize: 6
+                },
+                {
+                    name: '可信航向提取点',
+                    type: 'scatter',
+                    data: validHeadings,
+                    itemStyle: { color: '#43A047' },
+                    symbol: 'triangle',
+                    symbolSize: 10
+                }
+            ]
+        };
+        myChart.setOption(option, true);
+    }
+
+    // ================== CSV 交互与解析逻辑 ==================
+    function recalculate() {
+        if(globalParsedData.length > 0) {
+            processAndVisualize(globalParsedData);
+        } else {
+            alert("请先拖入数据文件！");
+        }
+    }
+
+    function parseCSV(text) {
+        let lines = text.trim().split('\n');
+        if(lines.length < 2) return [];
+        
+        // 兼容制表符 \t 和 逗号 , 的分隔
+        let headers = lines[0].split(/[\t,]/).map(h => h.trim());
+        let result = [];
+        
+        for(let i = 1; i < lines.length; i++) {
+            let values = lines[i].split(/[\t,]/);
+            if(values.length < headers.length - 2) continue; // 容错
+            
+            let rowObj = {};
+            headers.forEach((h, idx) => {
+                rowObj[h] = values[idx] ? values[idx].trim() : "";
+            });
+            result.push(rowObj);
+        }
+        return result;
+    }
+
+    // 拖拽事件监听
+    const dropZone = document.getElementById('drop-zone');
+    const fileInput = document.getElementById('file-input');
+
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            handleFile(e.dataTransfer.files[0]);
+        }
+    });
+
+    fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length) {
+            handleFile(e.target.files[0]);
+        }
+    });
+
+    function handleFile(file) {
+        if(!file.name.endsWith('.csv') && !file.name.endsWith('.txt')) {
+            alert("请上传 CSV 或 TXT 格式的文件！");
+            return;
+        }
+        dropZone.innerText = `正在处理: ${file.name} ...`;
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const text = e.target.result;
+            globalParsedData = parseCSV(text);
+            processAndVisualize(globalParsedData);
+            dropZone.innerText = `解析完成: ${file.name} (共 ${globalParsedData.length} 行数据)。可继续拖入新文件`;
+        };
+        reader.readAsText(file);
+    }
+
+    // 自适应缩放
+    window.addEventListener('resize', () => myChart.resize());
+</script>
+
+</body>
+</html>
+
