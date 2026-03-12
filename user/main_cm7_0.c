@@ -155,7 +155,7 @@ volatile uint8 pit_state = 0;
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =============================================
 // PID控制中间变量结束
 // ===============================================
@@ -421,63 +421,16 @@ vision_detected_marker = 0;//雷区调用,测试用
     {
         // 菜单处理
         #if DEBUG_DISPLAY
-        Menu_ShowStatic();    // 静态显示
-        Menu_ShowDynamic();   // 动态显示
+
         #endif
         // 此处编写需要循环执行的代码
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
-        if(pit_state == 1)
+        if(pit_state == 1)//10mswifi，100ms屏幕刷新
         {
+            // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
             pit_state = 0; // 清除标志   
-            
-            //下面撰写的是50ms执行一次的代码
-
-            // --- 屏幕刷新逻辑 (降频处理) ---
-            display_count++;
-            if(display_count >= 2) // 2* 50 ms = 100ms 刷新一次屏幕
-            {
-                display_count = 0;
-                // 在这里获取舵机角度，而不是在显示时获取
-                //float current_angles[4];
-                //servo_get_current_angles(current_angles);
-                // 获取电机速度数据
-                //float motor_speeds[2];
-                //small_driver_get_speed();
-                //motor_speeds[0] = motor_value.receive_left_speed_data;
-                //motor_speeds[1] = motor_value.receive_right_speed_data;
-
-                // gpio_toggle_level(LED1); // LED闪烁指示系统正在运行
-                
-                #if DEBUG_DISPLAY
-                    // 显示 Pitch (俯仰角)
-                    // // 参数：X坐标, Y坐标, 浮点数值, 整数位宽, 小数位数
-                    // ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
-                    
-                    // // 显示 Roll (横滚角)
-                    // ips200_show_float(60, 50, euler_angle.roll, 3, 2);
-                    
-                    // // 显示 Yaw (偏航角)
-                    // ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
-
-                    // // 显示已获取的舵机角度
-                    // ips200_show_float(25, 135, current_angles[0], 3, 1);
-                    // ips200_show_float(25, 150, current_angles[1], 3, 1);
-                    // ips200_show_float(25, 165, current_angles[2], 3, 1);
-                    // ips200_show_float(25, 180, current_angles[3], 3, 1);
-
-                    // // 显示电机速度
-                    // ips200_show_float(25, 215, motor_speeds[0], 5, 1); 
-                    // ips200_show_float(105, 215, motor_speeds[1], 5, 1);  
-                    // //显示角速度环pid输出
-                    //  ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
-                    //  ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
-                    // //显示g_motor_enable状态
-                    //  ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
-                #endif
-                
-                // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
-                #if WIFI_USE
-                //wifi_protocol_send_data();//自定义wifi协议
+            #if WIFI_USE
+                wifi_protocol_send_data();//自定义wifi协议
 
                 // 逐飞助手示波器发送代码        
                 // 1. 填充速度数据 (通道 0-2)姿态角    角速度环输出，角速度，左右轮，角度环输出，舵机速度环输出，
@@ -489,46 +442,57 @@ vision_detected_marker = 0;//雷区调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_turn_angle.output;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
-                                    seekfree_assistant_oscilloscope_data.data[0] = (float)uart_receiver.channel[0];
-                seekfree_assistant_oscilloscope_data.data[1] =(float)uart_receiver.channel[1];
-                seekfree_assistant_oscilloscope_data.data[2] = (float)uart_receiver.channel[2];
-                seekfree_assistant_oscilloscope_data.data[3] = (float)uart_receiver.channel[3];
-                seekfree_assistant_oscilloscope_data.data[4] =(float)uart_receiver.channel[4];
-                seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
-                                seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
-                seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
+                //                     seekfree_assistant_oscilloscope_data.data[0] = (float)uart_receiver.channel[0];
+                // seekfree_assistant_oscilloscope_data.data[1] =(float)uart_receiver.channel[1];
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)uart_receiver.channel[2];
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)uart_receiver.channel[3];
+                // seekfree_assistant_oscilloscope_data.data[4] =(float)uart_receiver.channel[4];
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
+                //                 seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
+                // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
 
-                    // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
-                    //seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
+                //    // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
+                //     seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
 
-                    // 通道1,2：gnss纬度，【注意】这个是double型数据，示波器传的是float型数据
+                //     //通道1,2：gnss纬度，【注意】这个是double型数据，示波器传的是float型数据
+                //     seekfree_assistant_oscilloscope_data.data[1] = (float)gnss.latitude;
 
-                    // 通道3,4：gnss经度
+                //     //通道3,4：gnss经度
 
-                    // 通道3：gnss方向+使用卫星数*10000
-                    //seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
+                //     //通道3：gnss方向+使用卫星数*10000
+                //     seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
 
-                    // 通道5：nav x
-                    //seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.x;
+                //     //通道5：nav x
+                //     seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.x;
 
-                    //通道6：nav y
-                    //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.y;
+                //     //通道6：nav y
+                //     seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.y;
 
-                    //通道6：nav relative_yaw
-                    //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
+                //     //通道6：nav relative_yaw
+                //     //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
 
-                    //通道7：系统毫秒时间戳
-                    //seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
+                //     //通道7：系统毫秒时间戳
+                //     seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
 
-                    // 4. 设置本次发送的通道数量 (一共8个数据)
-                    seekfree_assistant_oscilloscope_data.channel_num = 8;
+                //     // 4. 设置本次发送的通道数量 (一共8个数据)
+                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                    // 5. 调用发送函数
-                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                //     // 5. 调用发送函数
+                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // 用于上位机向小车发送pid信息
-                wifi_update_pid_params(); 
+                // // 用于上位机向小车发送pid信息
+                // wifi_update_pid_params(); 
                 #endif
+            //下面撰写的是100ms执行一次的代码
+            // --- 屏幕刷新逻辑 (降频处理) ---
+            display_count++;
+            if(display_count >= 10) // 10* 10 ms = 100ms 刷新一次屏幕
+            {
+                display_count = 0;    
+                #if DEBUG_DISPLAY
+                    Menu_ShowStatic();    // 静态显示
+                    Menu_ShowDynamic();   // 动态显示
+                #endif    
             }
         }
 
