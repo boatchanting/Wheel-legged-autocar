@@ -103,7 +103,7 @@ static void Menu_ShowSubjectScreen(void)
     ips200_show_string(0, 80, "Subject 3");
       // 新增：第4个选项 推车模式
     ips200_set_color((subject == 4) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0, 100, "4: Push Mode"); 
+    ips200_show_string(0, 100, "Push Mode"); 
     
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     ips200_draw_line(10, 120, 230, 120, RGB565_RED);
@@ -367,9 +367,10 @@ void Menu_ShowDynamic(void)
 }
 
 // ==================== 按键处理（完全按照您的设计） ====================
+// ==================== 按键处理（状态机重写版） ====================
 void Menu_HandleKey(void)
 {
-    // 进入菜单：任意键短按
+    // 1. 在主界面：任意键进入菜单
     if (current_state == MENU_STATE_MAIN)
     {
         if (key_get_state(KEY_1) == KEY_SHORT_PRESS ||
@@ -381,16 +382,12 @@ void Menu_HandleKey(void)
             menu_index = MENU_STATE_SUBJECT;
             menu_values[menu_index] = 1;
             need_redraw = 1;
-            
-            key_clear_state(KEY_1);
-            key_clear_state(KEY_2);
-            key_clear_state(KEY_3);
-            key_clear_state(KEY_4);
+            key_clear_state(KEY_1); key_clear_state(KEY_2); key_clear_state(KEY_3); key_clear_state(KEY_4);
         }
         return;
     }
     
-    // 完成界面：可以按任意键立即返回
+    // 2. 在完成界面：任意键返回主界面
     if (current_state == MENU_STATE_ACTION_COMPLETE)
     {
         if (key_get_state(KEY_1) == KEY_SHORT_PRESS ||
@@ -401,121 +398,118 @@ void Menu_HandleKey(void)
             current_state = MENU_STATE_MAIN;
             menu_index = MENU_STATE_SUBJECT;
             need_redraw = 1;
-            
-            key_clear_state(KEY_1);
-            key_clear_state(KEY_2);
-            key_clear_state(KEY_3);
-            key_clear_state(KEY_4);
+            key_clear_state(KEY_1); key_clear_state(KEY_2); key_clear_state(KEY_3); key_clear_state(KEY_4);
         }
         return;
     }
     
-    // 左键：返回上一步
+    // ==========================================================
+    // 3. 左键 (KEY_2)：返回 / 锁住
+    // ==========================================================
     if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
     {
-        if (current_state == MENU_STATE_ACTION_CONFIRM)
+        switch (current_state)
         {
-            // 从确认界面返回选择界面
-            current_state = MENU_STATE_ACTION_SELECT;
-            menu_index = current_state;
+            case MENU_STATE_SUBJECT:
+                current_state = MENU_STATE_MAIN; // 退回主界面
+                break;
+                
+            case MENU_STATE_CALIBRATION:
+                current_state = MENU_STATE_SUBJECT; // 退回科目选择
+                break;
+                
+            case MENU_STATE_ACTION_SELECT:
+                current_state = MENU_STATE_CALIBRATION; // 退回标定选择
+                break;
+                
+            case MENU_STATE_ACTION_CONFIRM:
+                current_state = MENU_STATE_ACTION_SELECT; // 退回动作选择
+                break;
+                
+            case MENU_STATE_ACTION_RUNNING:
+                // 【核心退出逻辑：如果是推车模式，直接退回科目选择并锁死！】
+                if (menu_values[MENU_STATE_SUBJECT] == 4) {
+                    current_state = MENU_STATE_SUBJECT; 
+                    g_is_push_mode = 0; // 强行清0，车轮瞬间变硬锁死！
+                } else {
+                    current_state = MENU_STATE_ACTION_CONFIRM; // 普通模式退回确认界面
+                }
+                break;
+                
+            default:
+                break;
         }
-        else if (current_state == MENU_STATE_ACTION_RUNNING)
-        {
-            // 新增：如果是推车模式，按左键直接退回科目选择界面
-           if (menu_values[MENU_STATE_SUBJECT] == 4) {
-                current_state = MENU_STATE_SUBJECT; // 直接退回选择科目界面
-                menu_index = current_state;
-                g_is_push_mode = 0; // 【关键】按下左键的瞬间强制清零标志位，立刻锁住车轮！
-            } else {
-                current_state = MENU_STATE_ACTION_CONFIRM; // 普通模式退回确认界面
-                menu_index = current_state;
-            }
-        }
-        else if (current_state > MENU_STATE_SUBJECT)
-        {
-            // 普通返回
-            current_state--;
-            menu_index = current_state;
-        }
-        else if (current_state == MENU_STATE_SUBJECT)
-        {
-            // 返回到主界面
-            current_state = MENU_STATE_MAIN;
-            menu_index = MENU_STATE_SUBJECT;
-        }
-        
+        menu_index = current_state;
         need_redraw = 1;
         key_clear_state(KEY_2);
     }
-    // 右键：前进
+    
+    // ==========================================================
+    // 4. 右键 (KEY_4)：前进 / 开启推车模式
+    // ==========================================================
     else if (key_get_state(KEY_4) == KEY_SHORT_PRESS)
     {
-        // ACTION_SELECT后的多步骤流程
-        if (current_state == MENU_STATE_ACTION_SELECT && menu_values[MENU_STATE_SUBJECT] == 4)
+        switch (current_state)
         {
-            // 第一步：进入确认界面（显示未发车）
-            current_state = MENU_STATE_ACTION_RUNNING;
-            menu_index = current_state;
+            case MENU_STATE_SUBJECT:
+                // 【核心跳转逻辑：如果选了4，直接飞越到运行界面！】
+                if (menu_values[MENU_STATE_SUBJECT] == 4) {
+                    current_state = MENU_STATE_ACTION_RUNNING; 
+                } else {
+                    current_state = MENU_STATE_CALIBRATION; // 选1,2,3则正常进入标定选择
+                }
+                
+                menu_index = current_state;
+                if (menu_values[menu_index] == 0) menu_values[menu_index] = 1;
+                break;
+                
+            case MENU_STATE_CALIBRATION:
+                current_state = MENU_STATE_ACTION_SELECT;
+                menu_index = current_state;
+                if (menu_values[menu_index] == 0) menu_values[menu_index] = 1;
+                break;
+                
+            case MENU_STATE_ACTION_SELECT:
+                current_state = MENU_STATE_ACTION_CONFIRM;
+                menu_index = current_state;
+                break;
+                
+            case MENU_STATE_ACTION_CONFIRM:
+                current_state = MENU_STATE_ACTION_RUNNING;
+                menu_index = current_state;
+                break;
+                
+            case MENU_STATE_ACTION_RUNNING:
+                current_state = MENU_STATE_ACTION_COMPLETE; // 运行中按右键，进入完成界面（自动锁车）
+                menu_index = current_state;
+                break;
+                
+            default:
+                break;
         }
-        else if (current_state == MENU_STATE_ACTION_CONFIRM)
-        {
-            // 第二步：进入运行界面（显示发车成功）
-            current_state = MENU_STATE_ACTION_RUNNING;
-            menu_index = current_state;
-        }
-        else if (current_state == MENU_STATE_ACTION_RUNNING)
-        {
-            // 第三步：进入完成界面
-            current_state = MENU_STATE_ACTION_COMPLETE;
-            menu_index = current_state;
-        }
-        else if (current_state < MENU_STATE_ACTION_SELECT)
-        {
-            // 普通前进
-            current_state++;
-            menu_index = current_state;
-            
-            // 设置默认值
-            if (menu_values[menu_index] == 0)
-            {
-                menu_values[menu_index] = 1;
-            }
-        }
-        
         need_redraw = 1;
         key_clear_state(KEY_4);
     }
-    // 上下键调整值（只在ACTION_SELECT之前有效）
-    else if (key_get_state(KEY_1) == KEY_SHORT_PRESS && 
-             current_state <= MENU_STATE_ACTION_SELECT)
+    
+    // ==========================================================
+    // 5. 上下键 (KEY_1 / KEY_3)：调整数值
+    // ==========================================================
+    else if (key_get_state(KEY_1) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
     {
         if (current_state != MENU_STATE_MAIN)
         {
-            if (menu_values[menu_index] > 1)
-            {
-                menu_values[menu_index]--;
-            }
-            else
-            {
-                menu_values[menu_index] = menu_max_values[menu_index];
-            }
+            if (menu_values[menu_index] > 1) { menu_values[menu_index]--; }
+            else { menu_values[menu_index] = menu_max_values[menu_index]; }
             need_redraw = 1;
         }
         key_clear_state(KEY_1);
     }
-    else if (key_get_state(KEY_3) == KEY_SHORT_PRESS && 
-             current_state <= MENU_STATE_ACTION_SELECT)
+    else if (key_get_state(KEY_3) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
     {
         if (current_state != MENU_STATE_MAIN)
         {
-            if (menu_values[menu_index] < menu_max_values[menu_index])
-            {
-                menu_values[menu_index]++;
-            }
-            else
-            {
-                menu_values[menu_index] = 1;
-            }
+            if (menu_values[menu_index] < menu_max_values[menu_index]) { menu_values[menu_index]++; }
+            else { menu_values[menu_index] = 1; }
             need_redraw = 1;
         }
         key_clear_state(KEY_3);
