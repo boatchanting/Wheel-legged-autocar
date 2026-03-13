@@ -112,75 +112,93 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
     // ==========================================================
-    if (loop_counter % 20 == 0 && g_yaw_initialized)
-    {
-         // 2.1 获取编码器速度
-        //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
-        float left_speed = (float)motor_value.receive_left_speed_data;
-        float right_speed = (float)motor_value.receive_right_speed_data;
-        current_actual_speed = 0.5f * (right_speed - left_speed);
+    if(g_is_push_mode==0)
+    {  
+        pid_servo_speed.kp = SERVO_SPEED_KP;
+        pid_servo_speed.ki = SERVO_SPEED_KI;
+        pid_servo_speed.kd = SERVO_SPEED_KD;
+
+        if (loop_counter % 20 == 0 && g_yaw_initialized)  // 20ms周期，且偏航角已初始化，且不在推车模式
+        {
+            // 2.1 获取编码器速度
+            //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
+            float left_speed = (float)motor_value.receive_left_speed_data;
+            float right_speed = (float)motor_value.receive_right_speed_data;
+            current_actual_speed = 0.5f * (right_speed - left_speed);
 
 
-        // 2.3 计算目标速度调整分量
-        float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
-        g_target_pwm_speed_adj = (int16)duty_adjustment;
+            // 2.3 计算目标速度调整分量
+            float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
+            g_target_pwm_speed_adj = (int16)duty_adjustment;
+        }
     }
+    else if(g_is_push_mode==1)
+    {    
+        pid_servo_speed.kp = 0;
+        pid_servo_speed.ki = 0;
+        pid_servo_speed.kd = 0;
 
+    }
     // ==========================================================
     // 步骤 2: 转向角度环 (6ms) - 外环
     // ==========================================================
-    if (loop_counter % 6 == 0)  // 6ms周期
-    {
-        // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
-        // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
-        // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
-         // 只有在偏航角成功初始化后，才执行航向保持控制
-         // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
-        if (g_yaw_initialized && Minefield_Is_Active() == 0)
+        if (loop_counter % 6 == 0)  // 6ms周期
         {
-            // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
-            float yaw_error = err_degree;
-            //yaw_error =  g_initial_yaw-euler_angle.yaw ; // 调节pid转向角度环时使用【调试pid打开】
-            // 2. [关键] 处理角度“卷绕”问题 (Wraparound)
-            //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
-            //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
-            //    我们需要将误差归一化到 -180 ~ +180 度之间。
-            yaw_error = fmod(yaw_error, 360.0f);//先对yaw_error取模，确保在-360到360之间
-            if (yaw_error > 180.0f)
+            // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
+            // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
+            // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
+             // 只有在偏航角成功初始化后，才执行航向保持控制
+            // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
+            if (g_yaw_initialized && Minefield_Is_Active() == 0)
             {
-                yaw_error -= 360.0f; // 例如: 358 -> -2
-            }
-            else if (yaw_error < -180.0f)
-            {
-                yaw_error += 360.0f; // 例如: -358 -> 2
-            }
-            
-            // ============= 输入误差限幅，这个防止视觉或者gps给的参数一下过大导致小车疯狂旋转，优化方案是如果大角度可以关角度环转一下，但是先这么用，后续可以优化【优化点】 ==================
-            // 设定一个最大误差阈值，例如 30度 或 45度
-            // 如果误差太大，就骗PID说误差只有这么大，防止输出饱和
-            float max_error_limit = 45.0f; 
+                // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
+                
+                
+                if(g_is_push_mode==1)
+                {
+                    g_initial_yaw = euler_angle.yaw; // 改变目标航向角，单位：度
+                }
+                float yaw_error = err_degree;
+                //yaw_error =  g_initial_yaw-euler_angle.yaw ; // 调节pid转向角度环时使用【调试pid打开】
+                // 2. [关键] 处理角度“卷绕”问题 (Wraparound)
+                //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
+                //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
+                //    我们需要将误差归一化到 -180 ~ +180 度之间。
+                yaw_error = fmod(yaw_error, 360.0f);//先对yaw_error取模，确保在-360到360之间
+                if (yaw_error > 180.0f)
+                {
+                    yaw_error -= 360.0f; // 例如: 358 -> -2
+                }
+                else if (yaw_error < -180.0f)
+                {
+                    yaw_error += 360.0f; // 例如: -358 -> 2
+                }
+                
+                // ============= 输入误差限幅，这个防止视觉或者gps给的参数一下过大导致小车疯狂旋转，优化方案是如果大角度可以关角度环转一下，但是先这么用，后续可以优化【优化点】 ==================
+                // 设定一个最大误差阈值，例如 30度 或 45度
+                // 如果误差太大，就骗PID说误差只有这么大，防止输出饱和
+                float max_error_limit = 45.0f; 
 
-            if (yaw_error > max_error_limit)
-            {
-                yaw_error = max_error_limit;
-            }
-            else if (yaw_error < -max_error_limit)
-            {
-                yaw_error = -max_error_limit;
-            }
+                if (yaw_error > max_error_limit)
+                {
+                    yaw_error = max_error_limit;
+                }
+                else if (yaw_error < -max_error_limit)
+                {
+                    yaw_error = -max_error_limit;
+                }
 
-            // 4. 将计算出的精确航向误差送入PID控制器
-            //    控制器的目标就是将这个 yaw_error 减小到0
-            turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
+                // 4. 将计算出的精确航向误差送入PID控制器
+                //    控制器的目标就是将这个 yaw_error 减小到0
+                turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
+            }
+            else
+            {
+                //1.角度未初始化状态下，外环不输出
+                //2.在雷区旋转模式下，切断外环对内环的控制
+                turn_angle_loop_out = 0.0f; 
+            }
         }
-        else
-        {
-            //1.角度未初始化状态下，外环不输出
-            //2.在雷区旋转模式下，切断外环对内环的控制
-            turn_angle_loop_out = 0.0f; 
-        }
-    }
-
     // ==========================================================
     // 步骤 3: 平衡角度环 (5ms 跑一次)
     // ==========================================================

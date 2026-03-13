@@ -344,15 +344,6 @@ gnss_init(TAU1201);//gnss导航初始化
     disp_y += 16;
 #endif
 
-//按钮初始化
-// P20_0: 开始录制
-//exti_init(P20_0, EXTI_TRIGGER_RISING); 
-// P20_1: 停止录制
-//exti_init(P20_1, EXTI_TRIGGER_RISING); 
-// P20_2: 开始复现
-//exti_init(P20_2, EXTI_TRIGGER_RISING);
-// P20_3: 停止复现
-//exti_init(P20_3, EXTI_TRIGGER_RISING);
 
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
@@ -419,10 +410,6 @@ vision_detected_marker = 0;//雷区调用,测试用
 
     while(true)
     {
-        // 菜单处理
-        #if DEBUG_DISPLAY
-
-        #endif
         // 此处编写需要循环执行的代码
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
         if(pit_state == 1)//10mswifi，100ms屏幕刷新
