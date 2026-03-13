@@ -130,6 +130,48 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
 // 新增：用于滤波的历史状态变量 (限制在当前文件内可见)
 static float prev_err_degree = 0.0f;
 static float prev_speed_set = 0.0f;
+
+// ========================= 新增/调整的控制参数 =========================
+#define PP_K_V               1.2f    // 前瞻系数：速度越大看越远 (单位: s)
+#define PP_L_MIN             150.0f  // 最小前瞻距离 (mm)，保证弯道精度
+#define PP_L_MAX             800.0f  // 最大前瞻距离 (mm)，保证直道平滑
+#define CURVE_REDUCE_GAIN    15.0f   // 弯道减速增益
+#define ANGLE_STOP_LIMIT     60.0f   // 航向偏差超过此值才原地旋转
+#define ARRIVE_LIMIT_NORMAL  40.0f   // 普通点判定范围
+#define ARRIVE_LIMIT_SPECIAL 25.0f   // 特殊点/弯道判定范围 (25mm)
+
+// ========================= 辅助计算函数 =========================
+
+// 获取两点间距离
+static float GetDist(float x1, float y1, float x2, float y2) {
+    return sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+}
+
+/**
+ * @brief 计算前方路径的平均曲率（预计算）
+ * @param start_idx 当前目标点索引
+ * @return 预测的弯道激烈程度 (0-1, 0为直道)
+ */
+static float PredictCurvature(uint16 start_idx) {
+    if (start_idx + 2 >= nav_ram_data.point_count) return 0.0f;
+    
+    // 取未来三个点计算夹角
+    float x1 = nav_ram_data.points[start_idx].x;
+    float y1 = nav_ram_data.points[start_idx].y;
+    float x2 = nav_ram_data.points[start_idx + 1].x;
+    float y2 = nav_ram_data.points[start_idx + 1].y;
+    float x3 = nav_ram_data.points[start_idx + 2].x;
+    float y3 = nav_ram_data.points[start_idx + 2].y;
+
+    float angle1 = atan2f(y2 - y1, x2 - x1);
+    float angle2 = atan2f(y3 - y2, x3 - x2);
+    float diff = fabsf(NormalizeAngle((angle2 - angle1) * 57.29578f));
+    
+    return fminf(diff / 45.0f, 1.0f); // 45度以上视为急弯
+}
+
+// ========================= 核心逻辑修改 =========================
+
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) return;
@@ -142,100 +184,129 @@ void NavReplay_Process(void)
     }
 
     // ==========================================================
-    // 1. 定位：找到路径上离小车最近的点作为“基准点”
-    // 这是所有计算的起点，确保小车始终与路径关联，不会“跟丢”
+    // 1. 寻找基准点（最接近当前位置的点）
     // ==========================================================
-    int base_idx = Find_Closest_Point_Index(g_target_idx, 15);
-    g_target_idx = base_idx; // 将全局索引更新到我们实际在的位置
+    int base_idx = Find_Closest_Point_Index(g_target_idx, 20);
+    g_target_idx = base_idx;
 
     // ==========================================================
-    // 2. 动态参数计算 (核心稳定策略)
+    // 2. 动态计算前瞻距离 (Lookahead Distance)
     // ==========================================================
-    
-    // a. 动态前瞻距离 (Ld) - 【关键修复】
-    //    核心思想：引入一个足够大的基础前瞻距离，确保在任何速度下，
-    //    小车都不会因为看得太近而剧烈转向。
-    float Ld_base = 250.0f;              // 【可调参数】基础前瞻距离 (mm)，这是低速稳定性的保证！
-    float Ld_dynamic_gain = 300.0f;      // 【可调参数】速度对前瞻距离的增益
-    
-    float current_speed_k = fabsf(prev_speed_set) / fabsf(NAV_SPEED_FAST); // 当前速度百分比 (0~1)
-    float lookahead_dist = Ld_base + Ld_dynamic_gain * current_speed_k;
-
-    // b. 预判前方曲率，用于动态减速
-    //    注意：这里的曲率判断仅用于降速，不再影响前瞻距离，避免引入不稳定性
-    float curve_factor = Calculate_Upcoming_Curve_Factor(base_idx, 400.0f); // 预判前方400mm
-
-    // c. 计算目标速度 (只受曲率和终点影响)
-    float raw_target_speed;
-    if (curve_factor > 0.15f) { // 仅在明显弯道才减速
-        // 速度 = 低速 + (高速-低速) * (1-曲率)，弯道越急越慢
-        raw_target_speed = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * (1.0f - curve_factor);
-    } else {
-        raw_target_speed = NAV_SPEED_FAST; // 直道全速
+    // 注意：由于你的直道点距高达 3m，如果前瞻距离小于 3m，小车在直道上会找不到点
+    // 我们将前瞻距离设定为：max(当前点距的1.2倍, 速度动态值)
+    float current_point_spacing = 0.0f;
+    if (base_idx < nav_ram_data.point_count - 1) {
+        current_point_spacing = CalcDistance(nav_ram_data.points[base_idx].x, nav_ram_data.points[base_idx].y, 
+                                             nav_ram_data.points[base_idx+1].x, nav_ram_data.points[base_idx+1].y);
     }
 
-    // d. 预判前方特殊点/终点，强制减速
-    float dist_to_stop = 9999.0f;
-    for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 10; i++) {
-        if (nav_ram_data.points[i].point_type != NAV_POINT_PATH || i == nav_ram_data.point_count - 1) {
-            // 计算到路径上该点的实际距离
-            float dist_along_path = 0;
-            for(int j = base_idx; j < i; ++j){
-                dist_along_path += CalcDistance(nav_ram_data.points[j].x, nav_ram_data.points[j].y, 
-                                                nav_ram_data.points[j+1].x, nav_ram_data.points[j+1].y);
-            }
-            dist_to_stop = dist_along_path;
+    float Ld_min = current_point_spacing * 1.2f; // 保证至少能看到下一个点
+    if (Ld_min < 300.0f) Ld_min = 300.0f;        // 弯道基础前瞻 0.3m
+    
+    float Ld_speed_gain = 0.5f; // 速度增益
+    float lookahead_dist = Ld_min + (fabsf(prev_speed_set) * Ld_speed_gain);
+
+    // ==========================================================
+    // 3. 寻找前瞻点 (在路径线段上插值，解决跳变问题)
+    // ==========================================================
+    float target_x = nav_ram_data.points[base_idx].x;
+    float target_y = nav_ram_data.points[base_idx].y;
+    
+    for (int i = base_idx; i < nav_ram_data.point_count - 1; i++) {
+        float d = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i+1].x, nav_ram_data.points[i+1].y);
+        if (d >= lookahead_dist) {
+            // 在点 i 和点 i+1 之间的线段上进行线性插值，找到精准的前瞻位置
+            float seg_dist = CalcDistance(nav_ram_data.points[i].x, nav_ram_data.points[i].y, 
+                                          nav_ram_data.points[i+1].x, nav_ram_data.points[i+1].y);
+            float ratio = (lookahead_dist - CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y)) / seg_dist;
+            if (ratio < 0) ratio = 0;
+            if (ratio > 1) ratio = 1;
+            
+            target_x = nav_ram_data.points[i].x + ratio * (nav_ram_data.points[i+1].x - nav_ram_data.points[i].x);
+            target_y = nav_ram_data.points[i].y + ratio * (nav_ram_data.points[i+1].y - nav_ram_data.points[i].y);
             break;
+        } else {
+            // 如果还没找到，默认暂时瞄准下一个点
+            target_x = nav_ram_data.points[i+1].x;
+            target_y = nav_ram_data.points[i+1].y;
         }
-    }
-    if (dist_to_stop <= NAV_DIST_FAR) {
-        if (dist_to_stop <= NAV_DIST_NEAR) raw_target_speed = NAV_SPEED_SLOW;
-        else raw_target_speed = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ((dist_to_stop - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR));
+        // 特殊点截断：不要看穿特殊点
+        if (nav_ram_data.points[i+1].point_type != NAV_POINT_PATH) break;
     }
 
     // ==========================================================
-    // 3. Pure Pursuit 核心计算：寻找前瞻点并计算转向角
+    // 4. 计算转向角 (raw_err_degree)
     // ==========================================================
-    int lookahead_idx = base_idx;
-    for (int i = base_idx; i < nav_ram_data.point_count; i++) {
-        float d = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
-        lookahead_idx = i;
-        if (d >= lookahead_dist) break;
-    }
-
-    float lx = nav_ram_data.points[lookahead_idx].x;
-    float ly = nav_ram_data.points[lookahead_idx].y;
-    // 使用你最初验证过的、符合你的坐标系的atan2计算方式
-    float target_yaw = -atan2f(ly - inertial_nav.y, -(lx - inertial_nav.x)) * 57.29578f; 
+    float dx = target_x - inertial_nav.x;
+    float dy = target_y - inertial_nav.y;
+    // 使用符合你定义的坐标系计算
+    float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
     float raw_err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
     // ==========================================================
-    // 4. 滤波与输出 (平滑指令，消除电机抖动)
+    // 5. 速度规划 (预测性降速)
     // ==========================================================
-    float max_angle_change = 20.0f; 
-    float delta_err = raw_err_degree - prev_err_degree;
-    if (delta_err > max_angle_change) raw_err_degree = prev_err_degree + max_angle_change;
-    else if (delta_err < -max_angle_change) raw_err_degree = prev_err_degree - max_angle_change;
+    // 预判前方曲率
+    float curve_factor = Calculate_Upcoming_Curve_Factor(base_idx, 600.0f);
     
-    // 采用稍慢的滤波，给系统更多稳定时间
-    float alpha_angle = 0.5f;
-    float alpha_speed = 0.3f;
-    err_degree = (alpha_angle * raw_err_degree) + ((1.0f - alpha_angle) * prev_err_degree);
-    target_speed_set = (alpha_speed * raw_target_speed) + ((1.0f - alpha_speed) * prev_speed_set);
+    // 检查停车距离
+    float dist_to_stop = 9999.0f;
+    int stop_idx = -1;
+    for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 10; i++) {
+        if (nav_ram_data.points[i].point_type != NAV_POINT_PATH || i == nav_ram_data.point_count - 1) {
+            dist_to_stop = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
+            stop_idx = i;
+            break;
+        }
+    }
+
+    float raw_target_speed = NAV_SPEED_FAST;
+    
+    if (dist_to_stop < NAV_DIST_FAR) {
+        // 临近停车点：强制线性减速
+        if (dist_to_stop <= NAV_DIST_ARRIVE) raw_target_speed = 0;
+        else if (dist_to_stop <= NAV_DIST_NEAR) raw_target_speed = NAV_SPEED_SLOW * (dist_to_stop / NAV_DIST_NEAR);
+        else {
+            float ratio = (dist_to_stop - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
+            raw_target_speed = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
+        }
+    } else {
+        // 正常行驶：根据曲率减速，但绝不低于慢速设定
+        raw_target_speed = NAV_SPEED_FAST - (NAV_SPEED_FAST - NAV_SPEED_SLOW) * curve_factor;
+        // 修正：如果转角过大，也要强制降速（防止高速侧翻）
+        float angle_penalty = fabsf(raw_err_degree) / 45.0f;
+        if (angle_penalty > 1.0f) angle_penalty = 1.0f;
+        raw_target_speed *= (1.0f - 0.3f * angle_penalty); 
+    }
+
+    // ==========================================================
+    // 6. 双重滤波输出 (解决抖动的终极防线)
+    // ==========================================================
+    // A. 限幅：防止角度指令突变
+    float max_ang_step = 15.0f; 
+    float ang_diff = raw_err_degree - prev_err_degree;
+    if (ang_diff > max_ang_step) raw_err_degree = prev_err_degree + max_ang_step;
+    else if (ang_diff < -max_ang_step) raw_err_degree = prev_err_degree - max_ang_step;
+
+    // B. 低通滤波：揉平指令
+    float alpha_ang = 0.4f;
+    float alpha_spd = 0.3f;
+    err_degree = (alpha_ang * raw_err_degree) + ((1.0f - alpha_ang) * prev_err_degree);
+    target_speed_set = (alpha_spd * raw_target_speed) + ((1.0f - alpha_spd) * prev_speed_set);
 
     prev_err_degree = err_degree;
     prev_speed_set = target_speed_set;
 
     // ==========================================================
-    // 5. 特殊点触发逻辑
+    // 7. 特殊点到达判定
     // ==========================================================
-    float dist_to_base_point = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[base_idx].x, nav_ram_data.points[base_idx].y);
-    g_current_point_type = nav_ram_data.points[base_idx].point_type;
-
-    if (g_current_point_type != NAV_POINT_PATH && dist_to_base_point < NAV_DIST_ARRIVE) {
-        target_speed_set = NAV_SPEED_STOP;
-        prev_speed_set = NAV_SPEED_STOP;
-        g_special_action_trigger = 1;
+    if (stop_idx != -1 && dist_to_stop < NAV_DIST_ARRIVE) {
+        if (nav_ram_data.points[stop_idx].point_type != NAV_POINT_PATH) {
+            target_speed_set = 0;
+            g_special_action_trigger = 1;
+        } else if (stop_idx == nav_ram_data.point_count - 1) {
+            g_replay_state = REPLAY_FINISHED;
+        }
     }
 }
 
