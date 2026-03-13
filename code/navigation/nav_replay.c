@@ -131,15 +131,6 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
 static float prev_err_degree = 0.0f;
 static float prev_speed_set = 0.0f;
 
-// ========================= 新增/调整的控制参数 =========================
-#define PP_K_V               1.2f    // 前瞻系数：速度越大看越远 (单位: s)
-#define PP_L_MIN             150.0f  // 最小前瞻距离 (mm)，保证弯道精度
-#define PP_L_MAX             800.0f  // 最大前瞻距离 (mm)，保证直道平滑
-#define CURVE_REDUCE_GAIN    15.0f   // 弯道减速增益
-#define ANGLE_STOP_LIMIT     60.0f   // 航向偏差超过此值才原地旋转
-#define ARRIVE_LIMIT_NORMAL  40.0f   // 普通点判定范围
-#define ARRIVE_LIMIT_SPECIAL 25.0f   // 特殊点/弯道判定范围 (25mm)
-
 // ========================= 辅助计算函数 =========================
 
 // 获取两点间距离
@@ -170,44 +161,59 @@ static float PredictCurvature(uint16 start_idx) {
     return fminf(diff / 45.0f, 1.0f); // 45度以上视为急弯
 }
 
-// ========================= 核心逻辑修改 =========================
+
+// =================================================================
+// 【性能调优宏定义区】 - 修改此处参数即可改变行驶风格
+// =================================================================
+
+// --- 1. 纯追踪 (Pure Pursuit) 导航参数 ---
+#define PP_LD_MIN_CURVE        400.0f   // 弯道最小前瞻 (mm)。越小越贴线，但容易抖动。要求精度25mm建议不低于300。
+#define PP_LD_MIN_STRAIGHT     1.1f     // 直道前瞻倍率。针对3m大点距，建议设为当前点距的1.1-1.5倍。
+#define PP_LD_SPEED_GAIN       0.5f     // 速度增益系数。Ld = Ld_min + Speed * Gain。高速时看的更远。
+#define CURVE_PREVIEW_DIST     600.0f   // 曲率预判距离 (mm)。探测多远处的弯道，决定提早减速的时机。
+
+// --- 2. 速度规划 (Speed Planning) 参数 ---
+#define SPD_CURVE_DEADZONE     0.2f     // 曲率感应死区 (0-1)。低于此值的弯道视为直道，不减速，释放速度。
+#define SPD_CURVE_EXPONENT     2.0f     // 曲率减速指数。1.0为线性，2.0为平方律。越大则轻微弯道速度越快。
+#define SPD_ANGLE_PENALTY      0.2f     // 转向角度惩罚权重 (0-1)。值越小，纠偏时减速越少，动力更足。
+#define SPD_ANGLE_TOLERANCE    60.0f    // 转向角度容忍门槛 (度)。角度偏差在此范围内不触发剧烈减速。
+
+// --- 3. 丝滑滤波 (Smoothness) 参数 ---
+#define FILTER_ALPHA_ANGLE     0.45f    // 角度滤波系数 (0-1)。值越大越跟手，值越小越丝滑。
+#define FILTER_ALPHA_SPEED     0.80f    // 速度滤波系数 (0-1)。值越大提速越猛，值越小加速越柔和。
+#define SLEW_RATE_ANGLE        25.0f    // 单次周期最大转角变化 (度)。防止电机/舵机瞬间猛打。
 
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) return;
 
-    // 1. 终点检查
     if (g_target_idx >= nav_ram_data.point_count) {
         g_replay_state = REPLAY_FINISHED;
-        target_speed_set = 0;
-        err_degree = 0;
-        return;
+        target_speed_set = 0; err_degree = 0; return;
     }
 
-    // 2. 基准定位
+    // 1. 定位当前基准
     int base_idx = Find_Closest_Point_Index(g_target_idx, 20);
     g_target_idx = base_idx;
 
-    // 3. 动态前瞻距离计算 (Ld)
-    // 关键：针对3m点距，前瞻必须能跨越当前线段
+    // 2. 动态前瞻距离计算
     float seg_dist = 0;
     if (base_idx < nav_ram_data.point_count - 1) {
         seg_dist = CalcDistance(nav_ram_data.points[base_idx].x, nav_ram_data.points[base_idx].y, 
                                 nav_ram_data.points[base_idx+1].x, nav_ram_data.points[base_idx+1].y);
     }
-    float Ld_min = (seg_dist < 400.0f) ? 400.0f : seg_dist * 1.1f; // 弯道保底0.4m，直道保底1.1倍点距
-    float Ld_speed_gain = 0.4f; // 随速度增加的前瞻增益
-    float lookahead_dist = Ld_min + fabsf(prev_speed_set) * Ld_speed_gain;
+    // 自动适应大跨度点距
+    float Ld_min = (seg_dist < PP_LD_MIN_CURVE) ? PP_LD_MIN_CURVE : seg_dist * PP_LD_MIN_STRAIGHT;
+    float lookahead_dist = Ld_min + fabsf(prev_speed_set) * PP_LD_SPEED_GAIN;
 
-    // 4. 寻找插值前瞻点 (解决打点不均匀带来的跳变)
+    // 3. 线段插值前瞻点
     float tx = nav_ram_data.points[base_idx].x;
     float ty = nav_ram_data.points[base_idx].y;
     for (int i = base_idx; i < nav_ram_data.point_count - 1; i++) {
-        float d_node = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i+1].x, nav_ram_data.points[i+1].y);
-        if (d_node >= lookahead_dist) {
-            float d_curr = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
-            float step = CalcDistance(nav_ram_data.points[i].x, nav_ram_data.points[i].y, nav_ram_data.points[i+1].x, nav_ram_data.points[i+1].y);
-            float ratio = (lookahead_dist - d_curr) / step;
+        float d_next_node = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i+1].x, nav_ram_data.points[i+1].y);
+        if (d_next_node >= lookahead_dist) {
+            float d_curr_node = CalcDistance(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
+            float ratio = (lookahead_dist - d_curr_node) / CalcDistance(nav_ram_data.points[i].x, nav_ram_data.points[i].y, nav_ram_data.points[i+1].x, nav_ram_data.points[i+1].y);
             if (ratio < 0) ratio = 0; if (ratio > 1) ratio = 1;
             tx = nav_ram_data.points[i].x + ratio * (nav_ram_data.points[i+1].x - nav_ram_data.points[i].x);
             ty = nav_ram_data.points[i].y + ratio * (nav_ram_data.points[i+1].y - nav_ram_data.points[i].y);
@@ -217,12 +223,19 @@ void NavReplay_Process(void)
         if (nav_ram_data.points[i+1].point_type != NAV_POINT_PATH) break;
     }
 
-    // 5. 计算方向偏差
+    // 4. 计算期望偏航角
     float target_yaw = -atan2f(ty - inertial_nav.y, -(tx - inertial_nav.x)) * 57.29578f;
     float raw_err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
-    // 6. 速度规划
-    float curve_f = Calculate_Upcoming_Curve_Factor(base_idx, 600.0f);
+    // 5. 高动力速度规划
+    float curve_f = Calculate_Upcoming_Curve_Factor(base_idx, CURVE_PREVIEW_DIST);
+    
+    // 曲率死区与指数映射处理 (释放中低曲率下的速度)
+    if (curve_f < SPD_CURVE_DEADZONE) curve_f = 0.0f;
+    else curve_f = (curve_f - SPD_CURVE_DEADZONE) / (1.0f - SPD_CURVE_DEADZONE);
+    curve_f = powf(curve_f, SPD_CURVE_EXPONENT);
+
+    // 停车与特殊点搜索
     float dist_stop = 9999.0f;
     int stop_idx = -1;
     for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 10; i++) {
@@ -233,33 +246,34 @@ void NavReplay_Process(void)
     }
 
     float raw_spd = 0;
-    if (dist_stop < NAV_DIST_FAR) { // 终端减速模式
+    if (dist_stop < NAV_DIST_FAR) { 
+        // 减速区域 (线性刹车保稳定)
         if (dist_stop <= NAV_DIST_ARRIVE) raw_spd = 0;
         else if (dist_stop <= NAV_DIST_NEAR) raw_spd = NAV_SPEED_SLOW * (dist_stop / NAV_DIST_NEAR);
         else raw_spd = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ((dist_stop - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR));
-    } else { // 巡航模式
+    } else {
+        // 巡航区域 (高动力逻辑)
         raw_spd = NAV_SPEED_FAST - (NAV_SPEED_FAST - NAV_SPEED_SLOW) * curve_f;
-        // 角度过大惩罚减速，防止震荡
-        float ang_p = fabsf(raw_err_degree) / 40.0f;
+        // 角度惩罚优化
+        float ang_p = fabsf(raw_err_degree) / SPD_ANGLE_TOLERANCE;
         if (ang_p > 1.0f) ang_p = 1.0f;
-        raw_spd *= (1.0f - 0.4f * ang_p); 
+        raw_spd *= (1.0f - SPD_ANGLE_PENALTY * ang_p);
     }
 
-    // 7. 丝滑滤波输出
-    // 限幅滤波
-    float max_step = 15.0f;
+    // 6. 丝滑滤波与输出
+    // 角度限幅
     float diff = raw_err_degree - prev_err_degree;
-    if (diff > max_step) raw_err_degree = prev_err_degree + max_step;
-    else if (diff < -max_step) raw_err_degree = prev_err_degree - max_step;
+    if (diff > SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree + SLEW_RATE_ANGLE;
+    else if (diff < -SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree - SLEW_RATE_ANGLE;
+
     // 低通滤波
-    float a_ang = 0.45f, a_spd = 0.35f;
-    err_degree = a_ang * raw_err_degree + (1.0f - a_ang) * prev_err_degree;
-    target_speed_set = a_spd * raw_spd + (1.0f - a_spd) * prev_speed_set;
+    err_degree = FILTER_ALPHA_ANGLE * raw_err_degree + (1.0f - FILTER_ALPHA_ANGLE) * prev_err_degree;
+    target_speed_set = FILTER_ALPHA_SPEED * raw_spd + (1.0f - FILTER_ALPHA_SPEED) * prev_speed_set;
 
     prev_err_degree = err_degree;
     prev_speed_set = target_speed_set;
 
-    // 8. 到达判定
+    // 7. 特殊点及终点触发
     if (stop_idx != -1 && dist_stop < NAV_DIST_ARRIVE) {
         if (nav_ram_data.points[stop_idx].point_type != NAV_POINT_PATH) {
             target_speed_set = 0; g_special_action_trigger = 1;
