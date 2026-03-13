@@ -63,18 +63,14 @@ void NavReplay_Stop(void)
 }
 
 // ========================= 曲率预判辅助函数 =========================
-// 往前扫描路径，计算未来一段距离内的弯曲程度 (返回 0.0~1.0 的系数)
-// 0.0 代表前方是大直道，1.0 代表前方有急弯/发卡弯
 static float Calculate_Upcoming_Curve_Factor(int start_idx, int total_points, float current_x, float current_y)
 {
     float accumulated_dist = 0.0f;
-    float preview_distance = 600.0f; // 往前看 60 厘米 (约涵盖 3 个弯道点或 1 个直道点)
+    float preview_distance = 600.0f; 
     int far_idx = start_idx;
 
-    // 1. 寻找前方 60cm 处的那个点
     for (int i = start_idx; i < total_points; i++)
     {
-        // 如果遇到特殊点，必须把它当作“急需处理的情况”
         if (nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
             far_idx = i;
             break; 
@@ -86,54 +82,43 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, int total_points, fl
         }
     }
 
-    // 如果终点就在眼前，直接返回 0 让底层停车逻辑接管
     if (far_idx <= start_idx + 1) return 0.0f;
 
-    // 2. 计算航向角的差值 (当前走向 vs 远方走向)
-    // 向量1：当前位置 -> 目标点 (近处走向)
     float dx_near = nav_ram_data.points[start_idx].x - current_x;
     float dy_near = nav_ram_data.points[start_idx].y - current_y;
     float angle_near = -atan2f(dy_near, -dx_near) * 57.29578f;
 
-    // 向量2：目标点 -> 远方预览点 (远处走向)
     float dx_far = nav_ram_data.points[far_idx].x - nav_ram_data.points[start_idx].x;
     float dy_far = nav_ram_data.points[far_idx].y - nav_ram_data.points[start_idx].y;
     float angle_far = -atan2f(dy_far, -dx_far) * 57.29578f;
 
-    // 3. 计算前方路径的偏角
     float angle_diff = fabsf(NormalizeAngle(angle_far - angle_near));
 
-    // 4. 将偏角映射为 0.0 ~ 1.0 的曲率系数 (假设 >60度 就算满格急弯)
     float curve_factor = angle_diff / 60.0f;
     if (curve_factor > 1.0f) curve_factor = 1.0f;
 
     return curve_factor;
 }
 
+// ========================= 核心控制主函数 =========================
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) return;
 
-    // === 核心杀手锏：静态变量记录上一次的状态，用于低通滤波平滑输出 ===
     static float prev_err_degree = 0.0f;
     static float prev_speed_set = 0.0f;
 
-    // 如果刚起步，初始化滤波器
     if (g_target_idx == 0 && target_speed_set == 0.0f) {
         prev_err_degree = 0.0f;
         prev_speed_set = 0.0f;
     }
 
-    // 1. 检查是否跑完全部点位
     if (g_target_idx >= nav_ram_data.point_count)
     {
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_SPEED_STOP;
         err_degree = 0.0f;
         prev_err_degree = 0.0f;
-        #if DEBUG_LOG_ENABLE
-        printf("[Nav] Replay Finished.\r\n");
-        #endif
         return;
     }
 
@@ -147,7 +132,7 @@ void NavReplay_Process(void)
                                         nav_ram_data.points[g_target_idx].y);
 
     // =================================================================
-    // 步骤 A：航点更新逻辑 (调整切点时机，防止死磕某一个点)
+    // 步骤 A：航点推进逻辑 —— 加入【绝不回头】防抽搐机制
     // =================================================================
     if (g_current_point_type != NAV_POINT_PATH || g_target_idx == nav_ram_data.point_count - 1)
     {
@@ -165,35 +150,37 @@ void NavReplay_Process(void)
     }
     else
     {
-        if (g_target_idx < nav_ram_data.point_count - 1)
+        // 计算当前目标点相对车头的偏角
+        float dx_tgt = nav_ram_data.points[g_target_idx].x - curr_x;
+        float dy_tgt = nav_ram_data.points[g_target_idx].y - curr_y;
+        float angle_tgt = -atan2f(dy_tgt, -dx_tgt) * 57.29578f;
+        float err_tgt = fabsf(NormalizeAngle(angle_tgt - curr_yaw));
+
+        // 【致命 Bug 修复】：如果距离小于 150mm，
+        // 或者：该点已经被我们甩在身后 (偏角 > 90度) 且距离小于 500mm (说明是刚错过的近点)
+        // 必须果断抛弃它！绝不能掉头回去找点！
+        if (dist_to_target <= 150.0f || (err_tgt > 90.0f && dist_to_target < 500.0f)) 
         {
-            float dist_to_next = CalcDistance(curr_x, curr_y, 
-                                              nav_ram_data.points[g_target_idx+1].x, 
-                                              nav_ram_data.points[g_target_idx+1].y);
-            
-            // 【调参1】：增大航点切换半径 (从150改到了250)。
-            // 弯道点相距200mm，当离当前点250mm时(说明快到了)或者离下个点更近时，果断抛弃当前点看下一个。
-            if (dist_to_target <= 250.0f || dist_to_next < dist_to_target)
-            {
-                g_target_idx++;
-                return; 
-            }
+            g_target_idx++;
+            return; 
         }
     }
 
     // =================================================================
-    // 步骤 B：动态前瞻 Pure Pursuit 核心算法
+    // 步骤 B：曲率预判 与 动态前瞻
     // =================================================================
-    float current_abs_speed = fabsf(prev_speed_set); // 用平滑后的上一周期速度来算前瞻
-    
-    // 【调参2】：拉长前瞻距离 Ld (这是解决画龙的核心)
-    // 基础前瞻从 150 提升到 250(弯道)，最大前瞻提升到 550(直道)。
-    // 这样在弯道时，车头永远看向前方 1~2 个点，而不是脚底下的点。
-    float Ld = 250.0f + (current_abs_speed / fabsf(NAV_SPEED_FAST)) * 300.0f;
+    float curve_factor = Calculate_Upcoming_Curve_Factor(g_target_idx, nav_ram_data.point_count, curr_x, curr_y);
 
-    int lookahead_idx = g_target_idx;
-    float lookahead_x = nav_ram_data.points[lookahead_idx].x;
-    float lookahead_y = nav_ram_data.points[lookahead_idx].y;
+    // 稍微放大直道前瞻，缩小弯道前瞻，让小车出弯更果断
+    float Ld_straight = 600.0f; 
+    float Ld_curve    = 200.0f; 
+    float Ld = Ld_straight - (Ld_straight - Ld_curve) * curve_factor;
+
+    // =================================================================
+    // 步骤 C：搜寻前瞻“胡萝卜”点
+    // =================================================================
+    float lookahead_x = nav_ram_data.points[g_target_idx].x;
+    float lookahead_y = nav_ram_data.points[g_target_idx].y;
 
     for (int i = g_target_idx; i < nav_ram_data.point_count; i++)
     {
@@ -205,16 +192,14 @@ void NavReplay_Process(void)
         if (d >= Ld) break; 
     }
 
-    // 计算原始期望角度误差
     float dx = lookahead_x - curr_x;
     float dy = lookahead_y - curr_y;
     float target_yaw = -atan2f(dy, -dx) * 57.29578f;
     float raw_err_degree = NormalizeAngle(target_yaw - curr_yaw);
 
     // =================================================================
-    // 步骤 C：根据前瞻曲率动态控速
+    // 步骤 D：速度控制 (基于前瞻曲率)
     // =================================================================
-    float abs_err = fabsf(raw_err_degree);
     float raw_target_speed = NAV_SPEED_FAST; 
 
     if (g_current_point_type != NAV_POINT_PATH || g_target_idx == nav_ram_data.point_count - 1)
@@ -228,34 +213,34 @@ void NavReplay_Process(void)
             raw_target_speed = NAV_SPEED_STOP;
         }
     }
-
-    // 弯道柔和减速 (放宽角度限制，防止刹车感)
-    if (abs_err > 45.0f) 
+    else 
     {
-        raw_target_speed = NAV_SPEED_SLOW;
-    } 
-    else if (abs_err > NAV_YAW_TOLERANCE) 
-    {
-        float turn_ratio = abs_err / 45.0f;
-        raw_target_speed = NAV_SPEED_FAST - (NAV_SPEED_FAST - NAV_SPEED_SLOW) * turn_ratio;
-    } 
+        raw_target_speed = NAV_SPEED_FAST - (NAV_SPEED_FAST - NAV_SPEED_SLOW) * curve_factor;
+    }
 
     // =================================================================
-    // 步骤 D：一阶低通滤波 (消除机械震荡的最终防线)
+    // 步骤 E：双重滤波（跳变限幅 + 低通平滑）解决抖动
     // =================================================================
-    // 【调参3】：滤波系数 Alpha (0.0 ~ 1.0)
-    // Alpha = 0.4 意味着：本次输出 = 40%的新计算值 + 60%的上一周期老值。
-    // 这就像给电机的指令加了“弹簧”，点位切变引起的瞬间角度跳变会被圆滑过渡掉。
-    float alpha = 0.4f; 
+    
+    // 1. 角度跳变限幅 (Slew Rate Limit)：即使目标点瞬间从左变右，车轮也不准猛打
+    // 防止因找点引起的原始角度瞬间跳变导致电机抽搐
+    float max_angle_change_per_cycle = 15.0f; // 每次周期最多允许变化 15 度
+    float delta_err = raw_err_degree - prev_err_degree;
+    if (delta_err > max_angle_change_per_cycle) {
+        raw_err_degree = prev_err_degree + max_angle_change_per_cycle;
+    } else if (delta_err < -max_angle_change_per_cycle) {
+        raw_err_degree = prev_err_degree - max_angle_change_per_cycle;
+    }
+
+    // 2. 一阶低通平滑
+    float alpha = 0.3f; 
     
     err_degree = (alpha * raw_err_degree) + ((1.0f - alpha) * prev_err_degree);
     target_speed_set = (alpha * raw_target_speed) + ((1.0f - alpha) * prev_speed_set);
 
-    // 更新历史值
     prev_err_degree = err_degree;
     prev_speed_set = target_speed_set;
 }
-
 /*这里注释了，保存的是原有的到一个点停一次的控制逻辑，仅仅能实现最基本的到达，但它的控制距离是精准的，逻辑是完备的，后面所有的代码都在其基础上进行优化和尝试
 void NavReplay_Process(void)
 {
