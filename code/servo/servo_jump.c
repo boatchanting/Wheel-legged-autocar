@@ -1,23 +1,80 @@
 #include "servo_jump.h"
-
+#include "servo_executor.h"
 // 状态变量
 uint8_t jump_flag = 0;
 uint32_t jump_start_time = 0;
 volatile JumpPhase g_current_jump_phase = JUMP_PHASE_NONE; // 初始化为 NONE
+JumpType_e g_current_jump_type = JUMP_TYPE_NORMAL;
+JumpProfile_t g_jump_profile; // 当前正在执行的跳跃参数
 bool vision_detected_jump_point = false;//跳跃测试用
 // 引用外部变量 (来自servo.c)
 extern volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
 extern float servo_height; 
 extern int16 pwm_high; // 查表后的高度duty基准
-
-// 初始化
-void jump_module_init(void)
+// 动量轮私有变量
+float g_air_kp;
+float g_air_kd;
+float g_air_target_pitch;
+// ===================== 参数加载器 =====================
+uint32_t time_elapsed1, time_elapsed2, time_elapsed3, time_elapsed4=0; // 距离起跳的时间 (ms)
+/**
+ * @brief 根据跳跃类型加载对应的动作参数
+ * @param type 跳跃类型
+ * @param current_height 起跳时的当前身高，用于平地跳恢复身高
+ */
+static void load_jump_profile(JumpType_e type, float current_height)
 {
-    jump_flag = 0;
+    switch(type) {
+        case JUMP_TYPE_HURDLE: // 【跨杆模式】
+            g_jump_profile.t_launch = 100;
+            g_jump_profile.t_flight = 320; // 跨杆需要更长的滞空收腿时间
+            g_jump_profile.t_landing = 350;
+            g_jump_profile.t_recovery = 420;
+            
+            g_jump_profile.offset_launch = 3000;  // 极限发力
+            g_jump_profile.offset_flight = -3000; // 【防挂杆】极限收腿
+            g_jump_profile.offset_land = 1000;           
+            g_jump_profile.air_target_pitch = -1.0f; // 空中保持绝对水平
+            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            break;
+            
+        case JUMP_TYPE_STEP_UP: // 【上台阶模式】
+            g_jump_profile.t_launch = 110; 
+            g_jump_profile.t_flight = 220; // 【高度截断】台阶高，提前触地，腾空时间缩短
+            g_jump_profile.t_landing = 250;
+            g_jump_profile.t_recovery = 330;
+            g_jump_profile.offset_launch = 3000;  // 更强发力获取高度
+            g_jump_profile.offset_flight = -1500; // 适度收腿即可
+            g_jump_profile.offset_land = 1000;
+            g_jump_profile.air_target_pitch = -1.0f;
+            g_jump_profile.post_jump_height = current_height;  // 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
+            break;
+            
+        case JUMP_TYPE_NORMAL: // 【普通平地跳】
+        default:
+            g_jump_profile.t_launch = 100;
+            g_jump_profile.t_flight = 200;
+            g_jump_profile.t_landing = 220;
+            g_jump_profile.t_recovery = 280;
+            g_jump_profile.offset_launch = 2700; 
+            g_jump_profile.offset_flight = -1500;
+            g_jump_profile.offset_land = 1700;
+            g_jump_profile.air_target_pitch = -1.0f; // 默认轻微低头
+            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            break;
+    }
+    
+    // 同步更新动量轮的控制目标
+    g_air_target_pitch = g_jump_profile.air_target_pitch;
 }
 
 // 触发逻辑：记录当前时间
 void jump_trigger(void)
+{
+    jump_trigger_with_type(JUMP_TYPE_NORMAL);
+}
+
+void jump_trigger_with_type(JumpType_e type)
 {
     if(jump_flag == 0)
     {
@@ -46,114 +103,6 @@ static int32 get_joint_target(int32 base_90, int8_t dir, int32 height_duty, int3
 }
 
 /**
- * @brief 跳跃执行器 (需在定时器或主循环中调用)
- */
-void servo_jump_executor(void)
-{
-    int32 target_lf, target_rf, target_rr, target_lr;
-    int32 dynamic_slope_limit; // 动态斜率限制 (决定电机响应速度)
-    
-    // 1. 计算当前时刻 (ms)
-    uint32_t time_elapsed = loop_counter - jump_start_time;
-
-    // 2. 获取基础身高分量
-    high_control_table(servo_height); 
-    int32 h_duty = (pwm_high == 10000) ? 0 : pwm_high;
-
-    // ===================== 时序状态机 =====================
-    
-    // --- 阶段 A: 爆发起跳 (0 - 100ms) ---
-    if (time_elapsed <= 100)
-    {
-        // 动作：全力伸腿
-        // 限幅：极大值 (10000)，相当于无视斜率限制，电机全速动作
-        g_current_jump_phase = JUMP_PHASE_LAUNCH; // 更新阶段
-        dynamic_slope_limit = 10000; 
-        
-        target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, JUMP_OFFSET_LAUNCH);
-        target_rf = get_joint_target(SERVO_MOTOR_PWM2_90, SERVO_MOTOR_PWM2_DIR, h_duty, JUMP_OFFSET_LAUNCH);
-        target_rr = get_joint_target(SERVO_MOTOR_PWM3_90, SERVO_MOTOR_PWM3_DIR, h_duty, JUMP_OFFSET_LAUNCH);
-        target_lr = get_joint_target(SERVO_MOTOR_PWM4_90, SERVO_MOTOR_PWM4_DIR, h_duty, JUMP_OFFSET_LAUNCH);
-    }
-    // --- 阶段 B: 空中收腿 (100 - 280ms) ---
-    else if (time_elapsed <= 280)
-    {
-        // 动作：快速收缩
-        g_current_jump_phase = JUMP_PHASE_FLIGHT;
-        dynamic_slope_limit = 10000;
-        
-        target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, JUMP_OFFSET_FLIGHT);
-        target_rf = get_joint_target(SERVO_MOTOR_PWM2_90, SERVO_MOTOR_PWM2_DIR, h_duty, JUMP_OFFSET_FLIGHT);
-        target_rr = get_joint_target(SERVO_MOTOR_PWM3_90, SERVO_MOTOR_PWM3_DIR, h_duty, JUMP_OFFSET_FLIGHT);
-        target_lr = get_joint_target(SERVO_MOTOR_PWM4_90, SERVO_MOTOR_PWM4_DIR, h_duty, JUMP_OFFSET_FLIGHT);
-    }
-    // --- 阶段 C: 落地准备 (280 - 300ms) ---
-    else if (time_elapsed <= 300)
-    {
-        // 动作：伸腿准备触地
-        g_current_jump_phase = JUMP_PHASE_LANDING;
-        dynamic_slope_limit = 10000;
-        
-        target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, JUMP_OFFSET_LAND);
-        target_rf = get_joint_target(SERVO_MOTOR_PWM2_90, SERVO_MOTOR_PWM2_DIR, h_duty, JUMP_OFFSET_LAND);
-        target_rr = get_joint_target(SERVO_MOTOR_PWM3_90, SERVO_MOTOR_PWM3_DIR, h_duty, JUMP_OFFSET_LAND);
-        target_lr = get_joint_target(SERVO_MOTOR_PWM4_90, SERVO_MOTOR_PWM4_DIR, h_duty, JUMP_OFFSET_LAND);
-    }
-    // --- 阶段 D: 缓冲恢复 (300 - 360ms) ---
-    else if (time_elapsed <= 360)
-    {
-        // 动作：恢复到正常身高 (Offset = 0)
-        // 限幅：【关键】设为 20 左右，模拟弹簧阻尼
-        // 这会让腿“慢慢”缩回到正常高度，消化地面的冲击力
-        g_current_jump_phase = JUMP_PHASE_RECOVERY;
-        dynamic_slope_limit = 20; 
-        
-        target_lf = get_joint_target(SERVO_MOTOR_PWM1_90, SERVO_MOTOR_PWM1_DIR, h_duty, 0);
-        target_rf = get_joint_target(SERVO_MOTOR_PWM2_90, SERVO_MOTOR_PWM2_DIR, h_duty, 0);
-        target_rr = get_joint_target(SERVO_MOTOR_PWM3_90, SERVO_MOTOR_PWM3_DIR, h_duty, 0);
-        target_lr = get_joint_target(SERVO_MOTOR_PWM4_90, SERVO_MOTOR_PWM4_DIR, h_duty, 0);
-    }
-    // --- 阶段 E: 结束 ---
-    else
-    {
-        jump_flag = 0; // 动作完成，交还控制权
-        g_current_jump_phase = JUMP_PHASE_NONE;
-        return;
-    }
-
-    // ===================== 输出与安全限幅 =====================
-    
-    // 1. 应用斜率限制 (Slope Limit)
-    // 这一步决定了电机是从“当前位置”瞬移到“目标位置”，还是平滑过渡
-    PWM_CH1_LAST += Float_Constrain(target_lf - PWM_CH1_LAST, -dynamic_slope_limit, dynamic_slope_limit);
-    PWM_CH2_LAST += Float_Constrain(target_rf - PWM_CH2_LAST, -dynamic_slope_limit, dynamic_slope_limit);
-    PWM_CH3_LAST += Float_Constrain(target_rr - PWM_CH3_LAST, -dynamic_slope_limit, dynamic_slope_limit);
-    PWM_CH4_LAST += Float_Constrain(target_lr - PWM_CH4_LAST, -dynamic_slope_limit, dynamic_slope_limit);
-
-    // 2. 硬件绝对安全限幅 (Hardware Clamp)
-    // 确保无论怎么算，都不会烧坏舵机
-    uint32 final_lf = (uint32)Float_Constrain(PWM_CH1_LAST, LF_LIMIT_DUTY_MIN, LF_LIMIT_DUTY_MAX);
-    uint32 final_rf = (uint32)Float_Constrain(PWM_CH2_LAST, RF_LIMIT_DUTY_MIN, RF_LIMIT_DUTY_MAX);
-    uint32 final_rr = (uint32)Float_Constrain(PWM_CH3_LAST, RR_LIMIT_DUTY_MIN, RR_LIMIT_DUTY_MAX);
-    uint32 final_lr = (uint32)Float_Constrain(PWM_CH4_LAST, LR_LIMIT_DUTY_MIN, LR_LIMIT_DUTY_MAX);
-
-    // 3. 写入寄存器
-    pwm_set_duty(SERVO_MOTOR_PWM1, final_lf);
-    pwm_set_duty(SERVO_MOTOR_PWM2, final_rf);
-    pwm_set_duty(SERVO_MOTOR_PWM3, final_rr);
-    pwm_set_duty(SERVO_MOTOR_PWM4, final_lr);
-
-    // 4. 更新角度数组 (用于Debug显示)
-    uint16_t current_duties[4] = {(uint16_t)final_lf, (uint16_t)final_rf, (uint16_t)final_rr, (uint16_t)final_lr};
-    update_all_servo_angles(current_duties);
-}
-
-//动量轮实现私有变量
-static float g_air_kp;
-static float g_air_kd;
-static float g_air_target_pitch;
-
-/**
  * @brief 初始化空中姿态控制参数
  */
 void Momentum_Wheel_Control_Init(void)
@@ -161,6 +110,9 @@ void Momentum_Wheel_Control_Init(void)
     g_air_kp = 60.0f;  // 空中姿态P，需要非常激进
     g_air_kd = 8.0f;   // 空中姿态D，抑制空中翻转速度
     g_air_target_pitch = -1.0f; // 空中目标角度(度)，轻微后仰
+    // 加载当前跳跃类型的时序和参数
+    g_current_jump_type = JUMP_TYPE_NORMAL;//这里面可以选择不同的跳跃类型，测试时先用普通跳
+    load_jump_profile(g_current_jump_type, servo_height);//【优化点】加载初始化跳跃姿态控制参数
 }
 
 /**
