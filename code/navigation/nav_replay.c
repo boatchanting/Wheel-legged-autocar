@@ -68,6 +68,7 @@ void NavReplay_Stop(void)
  * @param search_range 向前搜索的点数范围
  * @return 找到的最近点的索引
  */
+/*
 static int Find_Closest_Point_Index(int start_idx, int search_range)
 {
     int closest_idx = start_idx;
@@ -87,13 +88,14 @@ static int Find_Closest_Point_Index(int start_idx, int search_range)
     }
     return closest_idx;
 }
-
+ */
 /**
  * @brief 预判前方路径的弯曲程度 (核心预判函数)
  * @param start_idx 当前基准点索引
  * @param preview_dist 预判距离 (mm)
  * @return 曲率因子 (0.0 for straight, 1.0 for sharp curve)
  */
+/*
 static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
 {
     if (start_idx >= nav_ram_data.point_count - 2) return 0.0f;
@@ -130,41 +132,12 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
 // 新增：用于滤波的历史状态变量 (限制在当前文件内可见)
 static float prev_err_degree = 0.0f;
 static float prev_speed_set = 0.0f;
-
-// ========================= 辅助计算函数 =========================
-
-// 获取两点间距离
-static float GetDist(float x1, float y1, float x2, float y2) {
-    return sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
-}
-
-/**
- * @brief 计算前方路径的平均曲率（预计算）
- * @param start_idx 当前目标点索引
- * @return 预测的弯道激烈程度 (0-1, 0为直道)
- */
-static float PredictCurvature(uint16 start_idx) {
-    if (start_idx + 2 >= nav_ram_data.point_count) return 0.0f;
-    
-    // 取未来三个点计算夹角
-    float x1 = nav_ram_data.points[start_idx].x;
-    float y1 = nav_ram_data.points[start_idx].y;
-    float x2 = nav_ram_data.points[start_idx + 1].x;
-    float y2 = nav_ram_data.points[start_idx + 1].y;
-    float x3 = nav_ram_data.points[start_idx + 2].x;
-    float y3 = nav_ram_data.points[start_idx + 2].y;
-
-    float angle1 = atan2f(y2 - y1, x2 - x1);
-    float angle2 = atan2f(y3 - y2, x3 - x2);
-    float diff = fabsf(NormalizeAngle((angle2 - angle1) * 57.29578f));
-    
-    return fminf(diff / 45.0f, 1.0f); // 45度以上视为急弯
-}
-
+*/
 
 // =================================================================
 // 【性能调优宏定义区】 - 修改此处参数即可改变行驶风格
 // =================================================================
+/*这里注释了，保存的是pure pursuit算法的控制逻辑，逻辑是完备的，测试了科目一的逻辑,需要将上面的辅助函数开启，需要将参数修改到.h文件中，并且针对不同车辆配置进行调参【优化点】
 
 // --- 1. 纯追踪 (Pure Pursuit) 导航参数 ---
 #define PP_LD_MIN_CURVE        400.0f   // 弯道最小前瞻 (mm)。越小越贴线，但容易抖动。要求精度25mm建议不低于300。
@@ -282,8 +255,9 @@ void NavReplay_Process(void)
         }
     }
 }
+*/
 
-/*这里注释了，保存的是原有的到一个点停一次的控制逻辑，仅仅能实现最基本的到达，但它的控制距离是精准的，逻辑是完备的，后面所有的代码都在其基础上进行优化和尝试
+/*这里注释了，保存的是原有的到一个点停一次的控制逻辑，仅仅能实现最基本的到达，但它的控制距离是精准的，逻辑是完备的，后面所有的代码都在其基础上进行优化和尝试*/
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) return;
@@ -373,7 +347,7 @@ void NavReplay_Process(void)
         }
     }
 }
-*/
+
 // 【使用说明】
 //  // 惯导复现控制循环 (建议放在 20ms 定时器中)
 //         // if (timer_20ms_flag) {
