@@ -35,6 +35,7 @@
 int flash_write = 0;      // flash写使能标志位
 int flash_write_flag = 0; // flash写标志位
 #include "wifi.h"
+#include "zf_common_headfile.h"
 
 // 只有X边界
 uint8 xy_x1_boundary[BOUNDARY_NUM], xy_x2_boundary[BOUNDARY_NUM], xy_x3_boundary[BOUNDARY_NUM];
@@ -227,15 +228,15 @@ void wifi_update_pid_params(void)
                 // 参数 0: 角速度环 Kp (pid_gyro.kp)
                 // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
                 //参数 0: 期望速度 (target_speed_set) 目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
-                case 0: target_speed_set = seekfree_assistant_parameter[i]; break;
+                case 0: g_jump_profile.t_launch =  (uint32_t)seekfree_assistant_parameter[i]; break;
                 // 参数 1: 角度环Kp
-                case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
+                case 1:g_jump_profile.t_flight   = (uint32_t)seekfree_assistant_parameter[i]; break;
                 // 参数 2: 角度环kd
-                case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
-                // 参数 3: 舵机速度控制环kp
-                case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
+                case 2:g_jump_profile.t_landing  = (uint32_t)seekfree_assistant_parameter[i]; break;
+                    // 参数 3: 舵机速度控制环kp
+                    case 3:   g_jump_profile.t_recovery  = (uint32_t)seekfree_assistant_parameter[i]; break;
                 // 参数 4: 舵机速度控制环ki
-                case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
+                case 4:g_jump_profile.offset_launch = (int32_t)seekfree_assistant_parameter[i]; break;
                 // 参数 5: 是否存储数据到 Flash 
                 // case 5: flash_write = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; 
                 //         if (flash_write_flag == 0&& flash_write == 1)
@@ -253,13 +254,13 @@ void wifi_update_pid_params(void)
                 // 参数5: 转向角速度环kp
                 // case 5: pid_turn_gyro.kp = seekfree_assistant_parameter[i]; break;
                 // 参数5 :vision_detected_jump_point,跳跃测试
-                case 5: vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                case 5:  g_jump_profile.offset_flight = (int32_t)seekfree_assistant_parameter[i]; break;
                 // 参数6: 转向角速度环kd
                 // case 6: pid_turn_gyro.kd = seekfree_assistant_parameter[i]; break;
                 // 参数6:  vision_detected_marker = 0/1;//雷区调用,测试用
-                case 6: vision_detected_marker = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                case 6: g_jump_profile.offset_land  = (int32_t)seekfree_assistant_parameter[i]; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
-                case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                case 7:vision_detected_jump_point= (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;
             }
         }
