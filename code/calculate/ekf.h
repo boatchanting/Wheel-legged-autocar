@@ -22,7 +22,7 @@ void record_initial_yaw_task(uint32_t current_tick);
 
 
 // 加速度静态偏移量变量
-extern float imu660ra_acc_x_AND;//暂时未使用
+extern float imu660ra_acc_x_AND;//【优化点】暂时未使用
 extern float imu660ra_acc_y_AND;//暂时未使用
 extern float imu660ra_acc_z_AND;//暂时未使用
 extern  volatile float g_initial_yaw;         // 存储记录下来的初始偏航角
