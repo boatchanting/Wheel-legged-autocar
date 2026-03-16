@@ -34,6 +34,21 @@
     #define IMU_ACC_X_LP          imu660rb_acc_x_l
     #define IMU_ACC_Y_LP          imu660rb_acc_y_l
     #define IMU_ACC_Z_LP          imu660rb_acc_z_l
+#elif IMU_CATEGORY == 3  // IMU963RA
+    #define IMU_GET_GYRO()        imu963ra_get_gyro()
+    #define IMU_GET_ACC()         imu963ra_get_acc()
+    #define IMU_GYRO_X            imu963ra_gyro_x
+    #define IMU_GYRO_Y            imu963ra_gyro_y
+    #define IMU_GYRO_Z            imu963ra_gyro_z
+    #define IMU_ACC_X             imu963ra_acc_x
+    #define IMU_ACC_Y             imu963ra_acc_y
+    #define IMU_ACC_Z             imu963ra_acc_z
+    #define IMU_ACC_X_OFFSET      imu963ra_acc_x_AND
+    #define IMU_ACC_Y_OFFSET      imu963ra_acc_y_AND
+    #define IMU_ACC_Z_OFFSET      imu963ra_acc_z_AND //这里暂时未使用，所以先这样命名【优化点】
+    #define IMU_ACC_X_LP          imu963ra_acc_x_l
+    #define IMU_ACC_Y_LP          imu963ra_acc_y_l
+    #define IMU_ACC_Z_LP          imu963ra_acc_z_l
 #else
     #error "Unsupported IMU_CATEGORY value"
 #endif
@@ -112,9 +127,9 @@ static inline void quaternion_to_euler(void)
 }
 
 // IMU加速度计低通滤波变量
-static int16 imu660ra_acc_x_l = 0;
-static int16 imu660ra_acc_y_l = 0;
-static int16 imu660ra_acc_z_l = 0;
+static int16 IMU_ACC_X_LP = 0;
+static int16 IMU_ACC_Y_LP = 0;
+static int16 IMU_ACC_Z_LP = 0;
 
 // --- 静态偏移量变量 ---
 static float gyro_offset_x = 0.0f;
@@ -126,7 +141,7 @@ static float acc_offset_y = 0.0f;
 static float acc_offset_z = 0.0f;
 // --- 死区阈值 (根据传感器噪声调整) ---
 #define GYRO_DEAD_ZONE 8.0f 
-float imu660ra_acc_x_AND=0.0f;
+float imu660ra_acc_x_AND=0.0f;//这里暂时未使用，所以先这样命名【优化点】下面几行也要改掉
 float imu660ra_acc_y_AND=0.0f;
 float imu660ra_acc_z_AND=0.0f;
  
@@ -169,7 +184,7 @@ void IMU_Calibrate_All_Gyro(void)
     acc_offset_x = sum_x_a / sample_count;
     acc_offset_y = sum_y_a / sample_count;
     acc_offset_z = sum_z_a / sample_count;
-    imu660ra_acc_x_AND=acc_offset_x;
+    imu660ra_acc_x_AND=acc_offset_x;//【优化点】暂时未使用，这三行都是
     imu660ra_acc_y_AND=acc_offset_y;
     imu660ra_acc_z_AND=acc_offset_z;
 }
@@ -180,14 +195,14 @@ void IMU_Calibrate_All_Gyro(void)
 void imu_get_values(void)
 {
     // 1. 获取原始数据
-    imu660ra_get_gyro();
-    imu660ra_get_acc();
+    IMU_GET_GYRO();
+    IMU_GET_ACC();
 
     // 2. 减去零偏 (这里是报错的地方，已修正为新变量名)
     // 之前报错是因为写成了 gyro_z_offset
-    float gx_temp = (float)imu660ra_gyro_x - gyro_offset_x; 
-    float gy_temp = (float)imu660ra_gyro_y - gyro_offset_y;
-    float gz_temp = (float)imu660ra_gyro_z - gyro_offset_z; 
+    float gx_temp = (float)IMU_GYRO_X - gyro_offset_x; 
+    float gy_temp = (float)IMU_GYRO_Y - gyro_offset_y;
+    float gz_temp = (float)IMU_GYRO_Z - gyro_offset_z; 
     #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
     gx_temp =(float)-gx_temp;
     gz_temp =(float)-gz_temp;
@@ -203,13 +218,13 @@ void imu_get_values(void)
     imu_data.gyro_z = gz_temp * PI / 180 / 16.384f;
 
     // --- 加速度计部分保持不变 ---
-    imu_data.acc_x = K * imu660ra_acc_x + (1 - K) * imu660ra_acc_x_l;
-    imu_data.acc_y = K * imu660ra_acc_y + (1 - K) * imu660ra_acc_y_l;
-    imu_data.acc_z = K * imu660ra_acc_z + (1 - K) * imu660ra_acc_z_l;
+    imu_data.acc_x = K * IMU_ACC_X + (1 - K) * IMU_ACC_X_LP;
+    imu_data.acc_y = K * IMU_ACC_Y + (1 - K) * IMU_ACC_Y_LP;
+    imu_data.acc_z = K * IMU_ACC_Z + (1 - K) * IMU_ACC_Z_LP;
 
-    imu660ra_acc_x_l = (int16)imu_data.acc_x;
-    imu660ra_acc_y_l = (int16)imu_data.acc_y;
-    imu660ra_acc_z_l = (int16)imu_data.acc_z;
+    IMU_ACC_X_LP = (int16)imu_data.acc_x;
+    IMU_ACC_Y_LP = (int16)imu_data.acc_y;
+    IMU_ACC_Z_LP = (int16)imu_data.acc_z;
     #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
     imu_data.acc_x =(float)-imu_data.acc_x;
     imu_data.acc_z =(float)-imu_data.acc_z;
