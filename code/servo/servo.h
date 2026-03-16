@@ -53,6 +53,24 @@
 #define SERVO_MOTOR_PWM3_DIR            (1)      // 右后 RR ++
 #define SERVO_MOTOR_PWM4_DIR            (-1)      // 左后 LR --
 #endif
+#if CAR_SELECT == 3 // 3代表 【2026/3/16带壳新车】 对应板子 【2026/02/15 锦鲤队】
+// *************************** 【2026/3/16带壳新车】硬件引脚定义开始 ***************************
+#define SERVO_MOTOR_PWM1            (TCPWM_CH29_P22_5)     // 左前 LF
+#define SERVO_MOTOR_PWM2            (TCPWM_CH28_P22_6)      // 右前 RF
+#define SERVO_MOTOR_PWM3            (TCPWM_CH30_P22_4)       // 右后 RR
+#define SERVO_MOTOR_PWM4            (TCPWM_CH31_P22_3)      // 左后 LR
+// *************************** 【2026/1/31新车】硬件引脚定义结束***************************
+// ===================== 舵机平腿(90度)占空比定义 (Duty级)【2026/1/31新车】 =====================
+#define SERVO_MOTOR_PWM1_90            (4550)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_90            (4700)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_90            (4600)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_90            (4600)      // 左后 LR --
+// ===================== 舵机极性定义 (向下伸腿为正) 【2026/1/31新车】=====================
+#define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_DIR            (-1)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_DIR            (1)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_DIR            (-1)      // 左后 LR --
+#endif
 
 
 

@@ -192,6 +192,9 @@ void imu_get_values(void)
     gx_temp =(float)-gx_temp;
     gz_temp =(float)-gz_temp;
     #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==3  // 3车ra，可能不是ra，后面再改
+    //这里做轴转换
+    #endif
     // 3. 死区处理
     if (fabs(gx_temp) < GYRO_DEAD_ZONE) gx_temp = 0.0f;
     if (fabs(gy_temp) < GYRO_DEAD_ZONE) gy_temp = 0.0f;
@@ -213,6 +216,9 @@ void imu_get_values(void)
     #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
     imu_data.acc_x =(float)-imu_data.acc_x;
     imu_data.acc_z =(float)-imu_data.acc_z;
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==3  // 3车ra，可能不是ra，后面再改
+    //这里做轴转换
     #endif
 }
 
