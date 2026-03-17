@@ -116,6 +116,7 @@ static inline void quaternion_to_euler(void)
     float q2 = (exf_x.data[2][0]);
     float q3 = (exf_x.data[3][0]);
 
+    #if IMU_CATEGORY == 1//imu660ra
     // 计算翻滚角(roll)
     euler_angle.roll = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;                                  // pitch
     // 计算俯仰角(pitch)
@@ -124,6 +125,17 @@ static inline void quaternion_to_euler(void)
     // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;//我们的板子1
     // 计算偏航角(yaw)
     euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD;    // yaw
+    #endif
+    #if IMU_CATEGORY == 3//imu963ra //这里面根据实际测试使用了面向结果编程，imu换轴的时候使用转轴公式，或者根据上位机波形来判断一下
+    // 计算翻滚角(roll)
+    euler_angle.roll = atan2( -2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1 ) * DEG_TO_RAD;                                // pitch
+    // 计算俯仰角(pitch)
+    // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;   // roll原来的
+    euler_angle.pitch = -asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;   //改为0度为平衡状态的pitch，学习板
+    // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;//我们的板子1
+    // 计算偏航角(yaw)
+    euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD -90;    // yaw
+    #endif
 }
 
 // IMU加速度计低通滤波变量
@@ -213,9 +225,17 @@ void imu_get_values(void)
     if (fabs(gz_temp) < GYRO_DEAD_ZONE) gz_temp = 0.0f;
 
     // 4. 单位转换 (使用修正后的 temp 变量)
+    #if IMU_CATEGORY == 1//660ra
     imu_data.gyro_x = gx_temp * PI / 180 / 16.384f;
     imu_data.gyro_y = gy_temp * PI / 180 / 16.384f;
     imu_data.gyro_z = gz_temp * PI / 180 / 16.384f;
+    #endif
+    #if IMU_CATEGORY == 3//963ra
+    imu_data.gyro_x = gx_temp * PI / 180 / 14.3f;
+    imu_data.gyro_y = gy_temp * PI / 180 / 14.3f;
+    imu_data.gyro_z = gz_temp * PI / 180 / 14.3f;
+    #endif
+
 
     // --- 加速度计部分保持不变 ---
     imu_data.acc_x = K * IMU_ACC_X + (1 - K) * IMU_ACC_X_LP;
