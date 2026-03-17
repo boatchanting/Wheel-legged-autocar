@@ -228,6 +228,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
         #endif
+        #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
+        int16_t raw_gyro_z = imu963ra_gyro_z;  //根据实际安装方向调整符号
+        #endif
 
         // Z轴(yaw)处理：用于转向角速度环
         float gyro_z_val = (float)raw_gyro_z;
@@ -265,6 +268,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     //陀螺仪数据获取已经在中断函数最前面的地方获取完成
     #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
     int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
+    #endif
+    #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
+    int16 raw_gyro_y = -imu963ra_gyro_y; // 根据实际安装方向调整符号
     #endif
     
     // 5.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
