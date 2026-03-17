@@ -1,5 +1,4 @@
 #include "ekf.h"
-#include "../config/sys_options.h"
 
 // ========================================================================
 // IMU 硬件抽象层：根据 IMU_CATEGORY 统一访问接口
@@ -135,6 +134,7 @@ static inline void quaternion_to_euler(void)
     // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;//我们的板子1
     // 计算偏航角(yaw)
     euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD -90;    // yaw
+    //if(euler_angle.yaw   < -180.0f) euler_angle.yaw  += 360.0f;
     #endif
 }
 
@@ -423,3 +423,42 @@ void record_initial_yaw_task(uint32_t current_tick)
     }
 }
 // ======================== 偏航角零点初始化模块实现结束 ==================
+
+
+#if IMU_CATEGORY == 3  // IMU963RA的磁力计模块
+//【优化点】在嵌入式中，建议使用 sinf, cosf, atan2f（带f后缀的），它们是针对 float 类型的，效率更高。
+volatile float heading = 0.0f;
+void EKF_Update_Heading(void)
+{
+    // 1. 获取物理值 (局部变量可以在函数内直接初始化)
+    imu963ra_get_mag();
+    float m_x = imu963ra_mag_transition(imu963ra_mag_x);
+    float m_y = imu963ra_mag_transition(imu963ra_mag_y);
+    float m_z = imu963ra_mag_transition(imu963ra_mag_z);
+
+    // 2. 弧度转换 (假设 euler_angle 是全局结构体)
+    float roll_rad  = euler_angle.roll * (3.14159265f / 180.0f);//【优化点】改为pi
+    float pitch_rad = euler_angle.pitch * (3.14159265f / 180.0f);
+
+    // 3. 倾角补偿计算
+    // 注意：这里的公式需放在函数体内
+    //mag_x_h = m_x * cosf(pitch_rad) + m_z * sinf(pitch_rad);
+    //mag_y_h = m_x * sinf(roll_rad) * sinf(pitch_rad) + m_y * cosf(roll_rad) - m_z * sinf(roll_rad) * cosf(pitch_rad);
+
+    // 4. 计算航向
+    //float temp_heading = atan2f(mag_y_h, mag_x_h) * (180.0f / 3.14159265f);
+    float temp_heading = atan2f(m_x * cosf(pitch_rad) + m_z * sinf(pitch_rad), m_x * sinf(roll_rad) * sinf(pitch_rad) + m_y * cosf(roll_rad) - m_z * sinf(roll_rad) * cosf(pitch_rad)) * (180.0f / 3.14159265f);
+
+    // 5. 磁偏角修正及范围归一化
+    temp_heading += -5.5f; // 这里的 -5.5 替换为你当地的磁偏角，上海是 -5.5 度
+
+    if (temp_heading < 0.0f) {
+        temp_heading += 360.0f;
+    } else if (temp_heading >= 360.0f) {
+        temp_heading -= 360.0f;
+    }
+
+    // 6. 赋值给全局变量
+    heading = temp_heading;
+}
+#endif

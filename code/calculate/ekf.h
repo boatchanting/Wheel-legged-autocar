@@ -1,6 +1,7 @@
 #ifndef CODE_EKF_H_
 #define CODE_EKF_H_
 #include "zf_common_headfile.h"
+#include "../config/sys_options.h"
 // 角度转弧度转换系数 (180/π)
 #define DEG_TO_RAD      (57.295779513082320876798154814105f)
 // 采样时间间隔 (秒)
@@ -67,5 +68,9 @@ void EKF_Init(void);
  */
 void EKF_UpData(void);
 
+#if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
+extern volatile float heading;
+void EKF_Update_Heading(void);
+#endif
 
 #endif /* CODE_EKF_H_ */
