@@ -26,56 +26,50 @@ static void Menu_ClearScreen(void)
 {
     ips200_clear();
 }
-
+static void State_Static_Screen(void)
+{
+     // 基本UI框架
+    ips200_show_string(0,15*4, "Pitch:");
+    ips200_show_string(0,15*5, "Roll :");
+    ips200_show_string(0,15*6, "Yaw  :");
+    ips200_show_string(0,15*7, "State:"); 
+    ips200_show_string(0, 15*8, "RF:");
+    ips200_show_string(0, 15*9, "RR:");
+    ips200_show_string(0, 15*10, "LF:");
+    ips200_show_string(0, 15*11, "LR:");
+    ips200_show_string(0, 15*12, "Motor Speed:");
+    ips200_show_string(0, 15*13, "L:");
+    ips200_show_string(100, 15*13, "R:");
+    ips200_show_string(0, 15*15, "g_motor_enable");
+}
+static void State_Dynamic_Screen(void)
+{
+     // 显示动态数据（和主界面一样）
+    ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
+    ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
+    ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
+    ips200_show_float(60,15*7, gnss.state, 3, 2);ips200_show_uint(80,15*7,gnss.satellite_used,5);
+    ips200_show_float(25, 15*8, current_angles[0], 3, 1);
+    ips200_show_float(25, 15*9, current_angles[1], 3, 1);
+    ips200_show_float(25, 15*10, current_angles[2], 3, 1);
+    ips200_show_float(25, 15*11, current_angles[3], 3, 1);
+    ips200_show_float(25, 15*13, motor_speeds[0], 5, 1);
+    ips200_show_float(125, 15*13, motor_speeds[1], 5, 1);
+    ips200_show_string(155, 15*15, g_motor_enable ? "Yes" : "No");
+    
+}
 static void Menu_ShowMainScreen(void)
 {
     Menu_ClearScreen();
     if(current_state == MENU_STATE_MAIN)
     {
-    // 基本UI框架
-    ips200_show_string(0,15*4, "Pitch:");
-    ips200_show_string(0,15*5, "Roll :");
-    ips200_show_string(0,15*6, "Yaw  :");
-    // ips200宽240，高320，一个字符宽10，高14
-    //字符部分
-    // ips200_show_string(0,15*0, "Time:");
-    // ips200_show_string(0,15*1, "HMS:");
-   //ips200_show_string(90,15*2, "Lat:");
-
-    // ips200_show_string(0,15*3, "Lon:"); 
-    // ips200_show_string(0,15*4, "Spd:");
-    // ips200_show_string(0,15*5, "Dir:"); 
-    // ips200_show_string(0,15*6, "Sat:");
-    // ips200_show_string(0,15*7, "Height:");
-    //ips200_show_string(0, 100,"Freq : 20Hz");
-    ips200_show_string(0,15*7, "State:"); 
-    ips200_show_string(0, 120, "Servo Angles:");
-    ips200_show_string(0, 135, "RF:");
-    ips200_show_string(0, 150, "RR:");
-    ips200_show_string(0, 165, "LF:");
-    ips200_show_string(0, 180, "LR:");
-    ips200_show_string(0, 200, "Motor Speed:");
-    ips200_show_string(0, 215, "L:");
-    ips200_show_string(100, 215, "R:");
-    ips200_show_string(0, 260, "g_motor_enable");
+    State_Static_Screen();
     // 提示信息
-    ips200_show_string(0, 280, "Press any key to menu");
+    ips200_show_string(0, 15*16, "Press any key to menu");
     }
     else
     {
-    ips200_show_string(0,15*4, "Pitch:");
-    ips200_show_string(0,15*5, "Roll :");
-    ips200_show_string(0,15*6, "Yaw  :");
-    ips200_show_string(0,15*7, "State:"); 
-    ips200_show_string(0, 120, "Servo Angles:");
-    ips200_show_string(0, 135, "RF:");
-    ips200_show_string(0, 150, "RR:");
-    ips200_show_string(0, 165, "LF:");
-    ips200_show_string(0, 180, "LR:");
-    ips200_show_string(0, 200, "Motor Speed:");
-    ips200_show_string(0, 215, "L:");
-    ips200_show_string(100, 215, "R:");
-    ips200_show_string(0, 260, "g_motor_enable");
+    State_Static_Screen();
     }
 }
 
@@ -150,28 +144,13 @@ static void Menu_ShowActionConfirmScreen(void)
     } else {
         ips200_show_string(80, 0, (action == 1) ? "Recording..." : "Starting...");
     }
-    ips200_draw_line(10, 20, 230, 20, RGB565_RED);
-    
-    // 显示动态数据（和主界面一样）
-    ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
-    ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
-    ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
-    
-    ips200_show_float(25, 135, current_angles[0], 3, 1);
-    ips200_show_float(25, 150, current_angles[1], 3, 1);
-    ips200_show_float(25, 165, current_angles[2], 3, 1);
-    ips200_show_float(25, 180, current_angles[3], 3, 1);
-    
-    ips200_show_float(25, 215, motor_speeds[0], 5, 1);
-    ips200_show_float(125, 215, motor_speeds[1], 5, 1);
-    ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
-    
+   
     // 下面打印"未发车"
     ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
     if (subject == 4) {
-        ips200_show_string(0, 280, "Pushing Phase Active"); // 显示为推车阶段
+        ips200_show_string(0, 15*16, "Pushing Phase Active"); // 显示为推车阶段
     } else {
-        ips200_show_string(0, 280, "Not Started          ");
+        ips200_show_string(0, 15*16, "Not Started          ");
     }
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
 }
@@ -189,25 +168,13 @@ static void Menu_ShowActionRunningScreen(void)
     }
     ips200_draw_line(10, 20, 230, 20, RGB565_BLUE);
     
-    ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
-    ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
-    ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
-    
-    ips200_show_float(25, 135, current_angles[0], 3, 1);
-    ips200_show_float(25, 150, current_angles[1], 3, 1);
-    ips200_show_float(25, 165, current_angles[2], 3, 1);
-    ips200_show_float(25, 180, current_angles[3], 3, 1);
-    
-    ips200_show_float(25, 215, motor_speeds[0], 5, 1);
-    ips200_show_float(125, 215, motor_speeds[1], 5, 1);
-    ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
-    
+    State_Dynamic_Screen(void);// 显示动态数据（和主界面一样）
     // 下面打印"发车成功"
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     if (subject == 4) {
-        ips200_show_string(0, 280, "Pushing Phase Active"); // 显示为推车阶段
+        ips200_show_string(0, 15*16, "Pushing Phase Active"); // 显示为推车阶段
     } else {
-        ips200_show_string(0, 280, "Started Successfully");
+        ips200_show_string(0, 15*16, "Started Successfully");
     }
 }
 
@@ -220,17 +187,17 @@ static void Menu_ShowActionCompleteScreen(void)
     
     if (subject == 4)
     {
-        ips200_show_string(0, 10, "Push Mode Ended");
+        ips200_show_string(0, 15*1, "Push Mode Ended");
         ips200_show_string(0,15*2, "System returned");
     }
     else if (action == 1)  // Record
     {
-        ips200_show_string(0, 10, "Record Complete");
+        ips200_show_string(0, 15*1, "Record Complete");
         ips200_show_string(0,15*2, "Data saved successfully");
     }
     else if (action == 2)  // Start
     {
-        ips200_show_string(0, 10, "Start Complete");
+        ips200_show_string(0, 15*1, "Start Complete");
         ips200_show_string(0,15*2, "System paused");
     }
      ips200_show_string(0,15*3, "Press any key to return");
@@ -342,21 +309,7 @@ void Menu_ShowDynamic(void)
     // 在主界面显示动态数据
     else if (current_state == MENU_STATE_MAIN)
     {
-        ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
-        ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
-        ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
-        //ips200_show_uint(50,15*2, gnss.state,5); 
-        //ips200_show_uint(40,15*6,gnss.satellite_used,5);
-
-
-        ips200_show_float(25, 135, current_angles[0], 3, 1);
-        ips200_show_float(25, 150, current_angles[1], 3, 1);
-        ips200_show_float(25, 165, current_angles[2], 3, 1);
-        ips200_show_float(25, 180, current_angles[3], 3, 1);
-        
-        ips200_show_float(25, 215, motor_speeds[0], 5, 1);
-        ips200_show_float(125, 215, motor_speeds[1], 5, 1);
-        ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
+        State_Dynamic_Screen();
     }
 }
 
