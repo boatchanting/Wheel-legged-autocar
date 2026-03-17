@@ -168,7 +168,7 @@ static void Menu_ShowActionRunningScreen(void)
     }
     ips200_draw_line(10, 20, 230, 20, RGB565_BLUE);
     
-    State_Dynamic_Screen(void);// 显示动态数据（和主界面一样）
+    State_Dynamic_Screen();// 显示动态数据（和主界面一样）
     // 下面打印"发车成功"
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     if (subject == 4) {
