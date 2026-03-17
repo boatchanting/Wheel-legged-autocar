@@ -225,24 +225,24 @@ void wifi_update_pid_params(void)
             // 这个映射关系需要在逐飞助手软件上对应设置
             switch(i)
             {
-                ////【调节直立环】
-                // // 参数 0: 角速度环 Kp (pid_gyro.kp)
-                // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
-                // // 参数 1: 角度环Kp
-                // case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
-                // // 参数 2: 角度环kd
-                // case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
-                // // 参数 3: 舵机速度环kp 
-                // case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
-                // // 参数 4: 舵机速度环ki 
-                // case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
-                // // 参数 5: 跳跃 
-                // case 5: vision_detected_jump_point = seekfree_assistant_parameter[i]; break;
-                // // 参数 6: 机械零点
-                // case 6:pid_angle.compensation = seekfree_assistant_parameter[i]; break;
-                // // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
-                // case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
-                // default: break;
+                //【调节直立环】
+                // 参数 0: 角速度环 Kp (pid_gyro.kp)
+                case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
+                // 参数 1: 角度环Kp
+                case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
+                // 参数 2: 角度环kd
+                case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
+                // 参数 3: 舵机速度环kp 
+                case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
+                // 参数 4: 舵机速度环ki 
+                case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
+                // 参数 5: 跳跃 
+                case 5: vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // 参数 6: 机械零点
+                case 6:pid_angle.compensation = seekfree_assistant_parameter[i]; break;
+                // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
+                case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                default: break;
                                 
                 ////【调节转向环】
                 // // 参数 0: 转向角速度环 Kp 
@@ -256,9 +256,9 @@ void wifi_update_pid_params(void)
                 // // 参数 4: 
                 // case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
                 // // 参数 5: 跳跃 
-                // case 5: vision_detected_jump_point = seekfree_assistant_parameter[i]; break;
+                // case 5: vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 // // 参数 6: 旋转
-                // case 6:vision_detected_marker = seekfree_assistant_parameter[i]; break;
+                // case 6:vision_detected_marker = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 // // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
                 // case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 // default: break;
