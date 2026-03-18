@@ -208,6 +208,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     {
         // 运行姿态解算 (EKF / 互补滤波)
         EKF_UpData(); 
+        #if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
+        EKF_Update_Heading();//磁力计北更新
+        #endif
         record_initial_yaw_task(loop_counter);//初始化偏航角，里面的代码只会在初始化的时候被调用一次，记录初始的偏航角
         now_angle = euler_angle.pitch; // 获取解算后的角度 (单位：度)
 
