@@ -71,6 +71,11 @@ void EKF_UpData(void);
 #if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
 extern volatile float heading;
 void EKF_Update_Heading(void);
+void mag_calibrate(float raw_x, float raw_y, float raw_z, float *mag_x, float *mag_y, float *mag_z);
+// 声明校准后的磁力计全局变量，允许其他文件访问
+extern float mag_x;
+extern float mag_y;
+extern float mag_z;
 #endif
 
 #endif /* CODE_EKF_H_ */

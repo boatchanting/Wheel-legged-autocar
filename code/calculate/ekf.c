@@ -428,26 +428,80 @@ void record_initial_yaw_task(uint32_t current_tick)
 #if IMU_CATEGORY == 3  // IMU963RA的磁力计模块
 //【优化点】在嵌入式中，建议使用 sinf, cosf, atan2f（带f后缀的），它们是针对 float 类型的，效率更高。
 volatile float heading = 0.0f;
+float mag_x = 0.0f;
+float mag_y = 0.0f;
+float mag_z = 0.0f;
+// =========================================================================
+// 2. 磁力计校准参数 (常量定义在函数外部)
+// =========================================================================
+// 硬铁偏移 (需要从原始读数中减去)
+const float MAG_OFFSET_X = -121.66f;
+const float MAG_OFFSET_Y = -73.95f;
+const float MAG_OFFSET_Z = 145.40f;
+
+// 软铁校正矩阵
+const float MAG_SOFT_IRON[3][3] = {
+    {0.995100f, 0.005642f, 0.009313f},
+    {0.005642f, 0.983695f, 0.005461f},
+    {0.009313f, 0.005461f, 1.021205f}
+};
+
+// =========================================================================
+// 3. 磁力计校准函数
+// =========================================================================
+void mag_calibrate(float raw_x, float raw_y, float raw_z, float *mag_x, float *mag_y, float *mag_z)
+{
+    // 1. 减去硬铁偏移
+    float x = raw_x - MAG_OFFSET_X;
+    float y = raw_y - MAG_OFFSET_Y;
+    float z = raw_z - MAG_OFFSET_Z;
+    
+    // 2. 应用软铁校正矩阵
+    *mag_x = MAG_SOFT_IRON[0][0] * x + MAG_SOFT_IRON[0][1] * y + MAG_SOFT_IRON[0][2] * z;
+    *mag_y = MAG_SOFT_IRON[1][0] * x + MAG_SOFT_IRON[1][1] * y + MAG_SOFT_IRON[1][2] * z;
+    *mag_z = MAG_SOFT_IRON[2][0] * x + MAG_SOFT_IRON[2][1] * y + MAG_SOFT_IRON[2][2] * z;
+}
 void EKF_Update_Heading(void)
 {
     // 1. 获取物理值 (局部变量可以在函数内直接初始化)
     imu963ra_get_mag();
-    float m_x = imu963ra_mag_transition(imu963ra_mag_x);
-    float m_y = imu963ra_mag_transition(imu963ra_mag_y);
-    float m_z = imu963ra_mag_transition(imu963ra_mag_z);
+    // ---------------------------------------------------------
+    // 步骤1：获取磁力计原始数据，并进行校准
+    // ---------------------------------------------------------
+    mag_calibrate((float)imu963ra_mag_x, 
+                  (float)imu963ra_mag_y, 
+                  (float)imu963ra_mag_z, 
+                  &mag_x, &mag_y, &mag_z);
 
-    // 2. 弧度转换 (假设 euler_angle 是全局结构体)
-    float roll_rad  = euler_angle.roll * (3.14159265f / 180.0f);//【优化点】改为pi
-    float pitch_rad = euler_angle.pitch * (3.14159265f / 180.0f);
+    // ---------------------------------------------------------
+    // 步骤2：将校准后的原始数据转换为物理单位 (高斯)
+    // 注意：这里复用了头文件中的转换宏，传入的是校准后的变量
+    // ---------------------------------------------------------
+    float m_x = imu963ra_mag_transition(mag_x);
+    float m_y = imu963ra_mag_transition(mag_y);
+    float m_z = imu963ra_mag_transition(mag_z);
 
-    // 3. 倾角补偿计算
-    // 注意：这里的公式需放在函数体内
-    //mag_x_h = m_x * cosf(pitch_rad) + m_z * sinf(pitch_rad);
-    //mag_y_h = m_x * sinf(roll_rad) * sinf(pitch_rad) + m_y * cosf(roll_rad) - m_z * sinf(roll_rad) * cosf(pitch_rad);
+    // ---------------------------------------------------------
+    // 步骤3：提取欧拉角并转换为弧度制
+    // ---------------------------------------------------------
+    // 【重要提示】：
+    // 标准航空坐标系中，Pitch 是“车头向上为正”。
+    // 而你的定义是“车头向下倒为正”。因此，为了匹配标准的倾角补偿公式，
+    // 我们在这里加上负号 (-euler_angle.pitch) 将其翻转。
+    // 如果实际测试时发现车头上下俯仰时航向乱飘，可以尝试去掉这个负号。
+    float roll_rad  = euler_angle.roll  * (3.14159265f / 180.0f);
+    float pitch_rad = -euler_angle.pitch * (3.14159265f / 180.0f);
 
-    // 4. 计算航向
-    //float temp_heading = atan2f(mag_y_h, mag_x_h) * (180.0f / 3.14159265f);
-    float temp_heading = atan2f(m_x * cosf(pitch_rad) + m_z * sinf(pitch_rad), m_x * sinf(roll_rad) * sinf(pitch_rad) + m_y * cosf(roll_rad) - m_z * sinf(roll_rad) * cosf(pitch_rad)) * (180.0f / 3.14159265f);
+    // ---------------------------------------------------------
+    // 步骤4：倾角补偿计算 (保留中间变量，防止写反，不损耗算力！)
+    // ---------------------------------------------------------
+    float mag_x_h = m_x * cosf(pitch_rad) + m_z * sinf(pitch_rad);
+    float mag_y_h = m_x * sinf(roll_rad) * sinf(pitch_rad) + m_y * cosf(roll_rad) - m_z * sinf(roll_rad) * cosf(pitch_rad);
+
+    // ---------------------------------------------------------
+    // 步骤5：计算航向 (注意：atan2f 必须是 Y 在前，X 在后)
+    // ---------------------------------------------------------
+    float temp_heading = atan2f(mag_y_h, mag_x_h) * (180.0f / 3.14159265f);
 
     // 5. 磁偏角修正及范围归一化
     temp_heading += -5.5f; // 这里的 -5.5 替换为你当地的磁偏角，上海是 -5.5 度
