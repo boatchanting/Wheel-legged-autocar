@@ -504,7 +504,7 @@ void EKF_Update_Heading(void)
     float temp_heading = atan2f(mag_y_h, mag_x_h) * (180.0f / 3.14159265f);
 
     // 5. 磁偏角修正及范围归一化
-    temp_heading += -5.5f; // 这里的 -5.5 替换为你当地的磁偏角，上海是 -5.5 度
+    temp_heading += -5.5f; // 这里的 -5.5 替换为你当地的磁偏角，上海是 -5.5 度【优化点】写在头文件里面，最好应该写在config里面，这样换地方了要注意
 
     if (temp_heading < 0.0f) {
         temp_heading += 360.0f;
