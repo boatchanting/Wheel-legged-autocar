@@ -424,7 +424,7 @@ vision_detected_marker = 0;//雷区调用,测试用
             // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
             pit_state = 0; // 清除标志   
             #if WIFI_USE
-                wifi_protocol_send_data();//自定义wifi协议
+                //wifi_protocol_send_data();//自定义wifi协议
 
                 // 逐飞助手示波器发送代码        
                 // 1. 填充速度数据 (通道 0-2)姿态角    角速度环输出，角速度，左右轮，角度环输出，舵机速度环输出，
@@ -499,11 +499,11 @@ vision_detected_marker = 0;//雷区调用,测试用
         //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
         // }
 
+        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
         // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
         {
             mt9v03x_finish_flag = 0;
-        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
             // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
@@ -513,8 +513,8 @@ vision_detected_marker = 0;//雷区调用,测试用
             // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
             // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节
             // wifi_spi_udp_send_now();
-        #endif
         }
+        #endif
 
         // if (vision_detected_marker == 1) {
         //     minefield_flag = 1; // 触发旋转

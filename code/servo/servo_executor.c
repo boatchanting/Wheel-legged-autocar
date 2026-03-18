@@ -6,7 +6,7 @@ volatile int16 g_target_pwm_angle_adj = 0;
 
 // --- 执行器的内部状态变量 (static封装) ---
 volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
-
+int32 current_duty_lf, current_duty_rf, current_duty_rr, current_duty_lr; // 当前实际占空比 (用于斜率限制计算)
 /**
  * @brief 初始化舵机执行器的内部状态
  */
@@ -81,10 +81,10 @@ void servo_executor_update(void)
 
     // 4. 【核心】使用斜率限制，平滑地趋近目标值
     // 公式: new = last + limit(target - last, -dec, +acc)
-    int32 current_duty_lf = PWM_CH1_LAST + (int32)Float_Constrain(target_final_duty_lf - PWM_CH1_LAST, -dec_limit, acc_limit);
-    int32 current_duty_rf = PWM_CH2_LAST + (int32)Float_Constrain(target_final_duty_rf - PWM_CH2_LAST, -dec_limit, acc_limit);
-    int32 current_duty_rr = PWM_CH3_LAST + (int32)Float_Constrain(target_final_duty_rr - PWM_CH3_LAST, -dec_limit, acc_limit);
-    int32 current_duty_lr = PWM_CH4_LAST + (int32)Float_Constrain(target_final_duty_lr - PWM_CH4_LAST, -dec_limit, acc_limit);
+    current_duty_lf = PWM_CH1_LAST + (int32)Float_Constrain(target_final_duty_lf - PWM_CH1_LAST, -dec_limit, acc_limit);
+    current_duty_rf = PWM_CH2_LAST + (int32)Float_Constrain(target_final_duty_rf - PWM_CH2_LAST, -dec_limit, acc_limit);
+    current_duty_rr = PWM_CH3_LAST + (int32)Float_Constrain(target_final_duty_rr - PWM_CH3_LAST, -dec_limit, acc_limit);
+    current_duty_lr = PWM_CH4_LAST + (int32)Float_Constrain(target_final_duty_lr - PWM_CH4_LAST, -dec_limit, acc_limit);
 
 
     // 5. 更新内部状态，为下一次计算做准备

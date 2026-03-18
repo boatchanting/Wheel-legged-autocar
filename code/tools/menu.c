@@ -21,9 +21,6 @@ uint8_t need_redraw = 1;
 float motor_speeds[2] = {0.0f, 0.0f};
 float current_angles[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
-// 动作步骤计数器
-//static uint8_t //action_step = 0;
-
 // ==================== 辅助函数 ====================
 static void Menu_ClearScreen(void)
 {
@@ -36,20 +33,22 @@ static void Menu_ShowMainScreen(void)
     if(current_state == MENU_STATE_MAIN)
     {
     // 基本UI框架
-    ips200_show_string(0,15*0, "Pitch:");
-    ips200_show_string(0,15*1, "Roll :");
-    ips200_show_string(0,15*2, "Yaw  :");
+    ips200_show_string(0,15*4, "Pitch:");
+    ips200_show_string(0,15*5, "Roll :");
+    ips200_show_string(0,15*6, "Yaw  :");
     // ips200宽240，高320，一个字符宽10，高14
     //字符部分
     // ips200_show_string(0,15*0, "Time:");
     // ips200_show_string(0,15*1, "HMS:");
-    // ips200_show_string(0,15*2, "State:"); ips200_show_string(90,15*2, "Lat:");
+   //ips200_show_string(90,15*2, "Lat:");
+
     // ips200_show_string(0,15*3, "Lon:"); 
-    ips200_show_string(0,15*4, "Spd:");
-    ips200_show_string(0,15*5, "Dir:"); 
-    ips200_show_string(0,15*6, "Sat:");
-    ips200_show_string(0,15*7, "Height:");
+    // ips200_show_string(0,15*4, "Spd:");
+    // ips200_show_string(0,15*5, "Dir:"); 
+    // ips200_show_string(0,15*6, "Sat:");
+    // ips200_show_string(0,15*7, "Height:");
     //ips200_show_string(0, 100,"Freq : 20Hz");
+    ips200_show_string(0,15*7, "State:"); 
     ips200_show_string(0, 120, "Servo Angles:");
     ips200_show_string(0, 135, "RF:");
     ips200_show_string(0, 150, "RR:");
@@ -58,8 +57,6 @@ static void Menu_ShowMainScreen(void)
     ips200_show_string(0, 200, "Motor Speed:");
     ips200_show_string(0, 215, "L:");
     ips200_show_string(100, 215, "R:");
-    // ips200_show_string(0, 230, "gyro.kp");
-    // ips200_show_string(0, 245, "gyro.kd");
     ips200_show_string(0, 260, "g_motor_enable");
     // 提示信息
     ips200_show_string(0, 280, "Press any key to menu");
@@ -69,7 +66,7 @@ static void Menu_ShowMainScreen(void)
     ips200_show_string(0,15*4, "Pitch:");
     ips200_show_string(0,15*5, "Roll :");
     ips200_show_string(0,15*6, "Yaw  :");
-    //ips200_show_string(0, 100,"Freq : 20Hz");
+    ips200_show_string(0,15*7, "State:"); 
     ips200_show_string(0, 120, "Servo Angles:");
     ips200_show_string(0, 135, "RF:");
     ips200_show_string(0, 150, "RR:");
@@ -78,10 +75,7 @@ static void Menu_ShowMainScreen(void)
     ips200_show_string(0, 200, "Motor Speed:");
     ips200_show_string(0, 215, "L:");
     ips200_show_string(100, 215, "R:");
-    // ips200_show_string(0, 230, "gyro.kp");
-    // ips200_show_string(0, 245, "gyro.kd");
     ips200_show_string(0, 260, "g_motor_enable");
-    
     }
 }
 
@@ -289,7 +283,7 @@ void Menu_ShowStatic(void)
                 g_load_flash_request = 1;      // 请求读取测试
                 g_save_flash_request = 0;     // 清除保存请求
                 g_nav_recording = 0;          // 确保停止录制
-            }
+                }
             }
             Menu_ShowMainScreen(); // 先显示主界面框架
             break;
