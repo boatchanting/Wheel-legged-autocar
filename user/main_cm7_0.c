@@ -74,7 +74,7 @@ extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =================================================================================
 
 // =================================================================================
@@ -199,6 +199,7 @@ while(1)//检测imu660ra是否初始化成功
     }
     #endif
     gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭 初始化出错这个灯会闪的很慢
+    break;
 }
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "IMU Init OK");
@@ -317,7 +318,7 @@ vision_detected_marker = 0;//雷区调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)uart_receiver.channel[3];
                 // seekfree_assistant_oscilloscope_data.data[4] =(float)uart_receiver.channel[4];
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
-                //                 seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
+                //                 seekfree_assistant_oscilloscope_data.data[6] = robot_ctrl.target_speedf;//(float)uart_receiver.channel[6];
                 // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
 
                 //    // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
