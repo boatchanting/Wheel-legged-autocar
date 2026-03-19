@@ -36,8 +36,7 @@
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "config/config.h"//【提醒】配置请在这里修改
 
-// ******************************* 代码区域 *******************************
-// uart配置
+// **************************** uart配置区域 **************************** 
 #define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0
 #define UART_BAUDRATE           (DEBUG_UART_BAUDRATE)                           // 默认 115200
 #define UART_TX_PIN             (DEBUG_UART_TX_PIN  )                           // 默认 UART0_TX_P00_1
@@ -47,58 +46,46 @@ uint8 fifo_get_data[64];                                                        
 uint8  get_data = 0;                                                            // 接收数据变量
 uint32 fifo_data_count = 0;                                                     // fifo 数据个数
 fifo_struct uart_data_fifo;
-// uart配置结束
-// **************************** 代码区域 ****************************
-// 无刷电机配置
+// **************************** 无刷电机配置区域 **************************** 
 #define MAX_DUTY            (30 )                                               // 最大 MAX_DUTY% 占空比
 int8 duty = 0;
 bool dir = true;
-//无刷电机配置结束
 // **************************** ips200屏幕配置区域 ****************************                                    
-#define IPS200_TYPE     (IPS200_TYPE_SPI)   // 八位并口两寸屏 这里宏定义填写 IPS200_TYPE_PARALLEL8  定义屏幕接口类型                                                                  // SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
-// ips200屏幕配置结束
-// **************************** 代码区域 ****************************
+#define IPS200_TYPE     (IPS200_TYPE_SPI)   // 八位并口两寸屏 这里宏定义填写 IPS200_TYPE_PARALLEL8  定义屏幕接口类型    
+// SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
+// **************************** LED配置区域 ****************************
 #define LED1                    (P19_0)                                         // SPI 串口 SPI 两寸屏 这里宏定义填写 IPS200_TYPE_SPI
+
+//  **************************** 中断配置区域 ****************************
+#define PIT_NUM         (PIT_CH0) // 使用定时器通道0       用于平衡控制，1ms
+#define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1     用于遥控器，10ms
+#define PIT_NUM_10         (PIT_CH10) // 使用定时器通道10  用于遥控器，10ms
+volatile uint8 pit_state = 0;  //通道0中断标志位
+uint8 pit_state_1 = 0;//通道1中断标志位
+
 
 // *************************** EKF中断声明 ***************************
 extern void IMU_Calibrate_All_Gyro(void); // 校准陀螺仪声明
 extern void EKF_Init(void);
 extern void EKF_UpData(void);
 extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
-volatile uint8 pit_state = 0;
-// --- EKF宏定义 ---
-#define PIT_NUM         (PIT_CH0) // 使用定时器通道0
-#define PIT_NUM_10         (PIT_CH10) // 使用定时器通道0  
 // =================================================================================
 // PID控制中间变量开始
-// =================================================================================
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
 int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
-// =============================================
-// PID控制中间变量结束
-// ===============================================
+// =================================================================================
 
-#define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1
-uint8 pit_state_1 = 0;
-// #define PIT_NUM_2         (PIT_CH2) // 使用定时器通道2
-// uint8 pit_state_2 = 0;
-//按钮，暂时用于惯性导航，后面需要更改
-#define EXTI_PORT20_0              (P20_0) // 外部中断端口定义,用于惯性导航录制
-#define EXTI_PORT20_1              (P20_1) // 外部中断端口定义,用于惯性导航停止录制,停止录制即开启ram转flash的数据压缩储存
-
-
-// ==========================================
+// =================================================================================
 // 导航记录控制标志位
-// ==========================================
 volatile uint8_t g_nav_recording = 0;       // 1: 正在记录 RAM, 0: 停止记录
 volatile uint8_t g_nav_start_recording = 0;  // 1: 请求开始录制，创建内存区
 volatile uint8_t g_save_flash_request = 0;  // 1: 请求将 RAM 数据存入 Flash
 volatile uint8_t g_load_flash_request = 0;      // 1: 请求从 Flash 加载数据
 volatile uint8_t g_replay_start_request = 0;
 volatile uint8_t g_replay_stop_request = 0;
-
+// =================================================================================
 int main(void)
 {
     clock_init(SYSTEM_CLOCK_250M); 	// 时钟配置及系统初始化<务必保留>
