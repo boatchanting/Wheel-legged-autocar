@@ -8,7 +8,7 @@
 // --- 摇杆中值 ---
 #define RC_CH1_MID      1088    // 转向中值
 #define RC_CH2_MID      976     // 油门中值
-#define RC_DEADZONE     50      // 摇杆死区 (防止抖动漂移)
+#define RC_DEADZONE     30      // 摇杆死区 (防止抖动漂移)
 
 // --- 开关阈值 ---
 #define RC_SW_THRESHOLD 1000    // 二态开关判定阈值
@@ -26,6 +26,10 @@
 // 积分限幅
 #define MAX_STEER_ANGLE 45.0f   // 最大转向角度 (例如 +/- 45度)
 #define MAX_SPEED_VAL   500.0f  // 最大速度目标值 (对应 target_speed_set)
+
+#define SPEED_DECEL_RATIO    0.99f  // 百分比减速，实际没那么快
+#define SPEED_STOP_THRESHOLD  1.0f// 速度归零阈值：当目标速度削弱到这个绝对值以下时，直接归 0 且锁定
+static uint8 throttle_locked = 0; // 油门锁标记：0=正常接受指令, 1=锁定(需等摇杆回中)
 
 // ==========================================
 // 2. 全局变量定义
@@ -130,30 +134,61 @@ void Remote_Control_Process(void)
     // --------------------------------------------------------
     // Step 5: 处理刹车/油门/急停 (CH5 & CH2)
     // --------------------------------------------------------
-    if (ch5_brake > RC_SW_THRESHOLD)//可能需要改为跳变
+
+    if (ch5_brake > RC_SW_THRESHOLD)// 开关刹车
     {
         robot_ctrl.target_speed = 0.0f; // 刹车清零
+        throttle_locked = 1;            // 建议：拨下刹车后也锁定油门，防止松开刹车瞬间车子暴冲，必须重新回中
     }
     else
     {
         int16 diff_speed = ch2_thro - RC_CH2_MID;
         
-        if (abs(diff_speed) > RC_DEADZONE) 
+        // 【情况 A】摇杆在死区内 (回中)
+        if (abs(diff_speed) <= RC_DEADZONE) 
         {
-            float current_k_spd = K_SPEED_INC;
-            
-            // 积分计算
-            robot_ctrl.target_speed += (float)diff_speed * current_k_spd;
-            
-            // 速度限幅逻辑
-            if (robot_ctrl.target_speed > MAX_SPEED_VAL) 
-                robot_ctrl.target_speed = MAX_SPEED_VAL;
-            
-            if (robot_ctrl.target_speed < -MAX_SPEED_VAL) 
-                robot_ctrl.target_speed = -MAX_SPEED_VAL;
+            throttle_locked = 0; // 摇杆已回中，解除油门锁定
         }
+        // 【情况 B】摇杆在死区外，且未被锁定
+        else if (throttle_locked == 0) 
+        {
+            // 判断当前属于【反向减速削弱】还是【同向加速/起步】
+            // 逻辑: (速度为正且摇杆往后拉) 或者 (速度为负且摇杆往前推)
+            if ((robot_ctrl.target_speed > 0.0f && diff_speed < 0) || 
+                (robot_ctrl.target_speed < 0.0f && diff_speed > 0))
+            {
+                if(diff_speed >650|| diff_speed < -650)//如果摇杆反向的幅度很大，说明用户是想急停或者急刹，这时候可以更激烈一点削弱
+                {
+                    robot_ctrl.target_speed *= SPEED_DECEL_RATIO-(ABS(diff_speed)-650) * 0.0002f-0.065; // 激烈削弱
+                }
+                else
+                {
+                    robot_ctrl.target_speed *= SPEED_DECEL_RATIO-ABS(diff_speed) * 0.0001f; // 正常削弱
+                }
+                
+                // 2. 判断是否小于归零阈值
+                if (robot_ctrl.target_speed > -SPEED_STOP_THRESHOLD && 
+                    robot_ctrl.target_speed <  SPEED_STOP_THRESHOLD) 
+                {
+                    robot_ctrl.target_speed = 0.0f; // 直接归零
+                    throttle_locked = 1;            // 触发锁定，不再接受加减速
+                }
+            }
+            else
+            {
+                // 3. 正常加速逻辑 (同向，或是从 0 开始起步)
+                robot_ctrl.target_speed += (float)diff_speed * K_SPEED_INC;
+                
+                // 速度限幅逻辑
+                if (robot_ctrl.target_speed > MAX_SPEED_VAL) 
+                    robot_ctrl.target_speed = MAX_SPEED_VAL;
+                else if (robot_ctrl.target_speed < -MAX_SPEED_VAL) 
+                    robot_ctrl.target_speed = -MAX_SPEED_VAL;
+            }
+        }
+        // 【情况 C】摇杆在死区外，但 throttle_locked == 1 (已锁定)
+        // 此时什么都不做，保持 target_speed = 0，强制要求用户松开摇杆
     }
-
     // --------------------------------------------------------
     // Step 6: 处理打点 (CH3 状态跳变检测)利用CH4和CH5的状态判断属于与哪一个type的打点，ch4为三态开关，ch5为两态开关
     // --------------------------------------------------------
