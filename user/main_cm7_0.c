@@ -191,15 +191,20 @@ while(1)//检测imu660ra是否初始化成功
     {
         printf("\r\n imu660ra init error.");                                 // imu660ra 初始化失败
     }
+    else{
+        break;
+    }   
     #endif
     #if IMU_CATEGORY == 3
     if(imu963ra_init())
     {
         printf("\r\n imu963ra init error.");                                 // imu963ra 初始化失败
     }
+    else{
+        break;
+    }
     #endif
     gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭 初始化出错这个灯会闪的很慢
-    break;
 }
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "IMU Init OK");
