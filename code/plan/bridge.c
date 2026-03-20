@@ -273,6 +273,6 @@ void Bridge_Test_Smooth_PID(void) {
     Smooth_Height_Control(target_h, 0.2f); 
     
     // 测试时，强制关闭底层的 Roll 自适应平衡，避免干扰纯直立 PID 的整定
-    roll_balance_enable = 0;
+    //roll_balance_enable = 0;
 
 }

@@ -19,6 +19,7 @@
 // 这些变量由外部定义 (通常在 control.c 或 main.c)，此处引用
 extern volatile float target_speed_set;
 extern volatile float err_degree;
+extern volatile float roll_degree;
 
 // ========================= 模块状态变量 =========================
 typedef enum

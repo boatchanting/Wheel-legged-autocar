@@ -58,6 +58,7 @@ volatile struct {
 # define OUR_PWM_MAX_LIMIT 5000.0f // 最大PWM值（根据实际情况调整）
 
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
+volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
 // **************************** PIT中断函数 ****************************
@@ -302,7 +303,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
     // 6.rolling平衡环(5ms一次)
     if (loop_counter % 5 == 0){
-        Roll_Balance_Control(euler_angle.roll);
+        Roll_Balance_Control(euler_angle.roll, roll_degree);
     }
 
 
