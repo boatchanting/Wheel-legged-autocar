@@ -80,8 +80,14 @@ const matrix_type r[3][3] = {{10000, 0, 0}, {0, 10000, 0}, {0, 0, 10000}};
 const matrix_type p[4][4] = {{1000000, 0, 0, 0}, {0, 1000000, 0, 0}, {0, 0, 1000000, 0}, {0, 0, 0, 1000000}};
 // 初始四元数 [1, 0, 0, 0]
 //const matrix_type ekf[4] = {1, 0, 0, 0};//原先代码中的值
+#if IMU_CATEGORY == 1//imu660ra
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};//学习板小车使用的
 // 静态矩阵变量
+#endif
+#if IMU_CATEGORY == 3//imu963ra
+const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
+// 静态矩阵变量
+#endif
 static matrix_t Q;  // 过程噪声协方差矩阵
 static matrix_t R;  // 测量噪声协方差矩阵
 static matrix_t P;  // 协方差矩阵
@@ -133,7 +139,7 @@ static inline void quaternion_to_euler(void)
     euler_angle.pitch = -asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;   //改为0度为平衡状态的pitch，学习板
     // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;//我们的板子1
     // 计算偏航角(yaw)
-    euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD -90;    // yaw
+    euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD-90;    // yaw
     //if(euler_angle.yaw   < -180.0f) euler_angle.yaw  += 360.0f;
     #endif
 }
