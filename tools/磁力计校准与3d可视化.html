@@ -1,0 +1,1498 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁力计校准工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0e14;
+            --bg-secondary: #111820;
+            --fg: #e8eaed;
+            --muted: #6b7280;
+            --accent: #00d4aa;
+            --accent-dim: rgba(0, 212, 170, 0.15);
+            --card: rgba(17, 24, 32, 0.85);
+            --border: rgba(255, 255, 255, 0.08);
+            --error: #ff6b6b;
+            --warning: #ffd93d;
+            --success: #00d4aa;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        .font-mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .bg-pattern {
+            position: fixed;
+            inset: 0;
+            background: 
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 212, 170, 0.08) 0%, transparent 60%),
+                radial-gradient(ellipse 60% 40% at 80% 100%, rgba(0, 100, 200, 0.05) 0%, transparent 50%),
+                linear-gradient(180deg, var(--bg) 0%, #0d1219 100%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .grid-overlay {
+            position: fixed;
+            inset: 0;
+            background-image: 
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 60px 60px;
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 16px;
+            transition: all 0.3s ease;
+            background: var(--card);
+            backdrop-filter: blur(20px);
+        }
+
+        .upload-zone:hover,
+        .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+        }
+
+        .upload-zone.drag-over {
+            transform: scale(1.02);
+        }
+
+        .glass-card {
+            background: var(--card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+        }
+
+        #canvas3d {
+            border-radius: 12px;
+            background: rgba(0,0,0,0.3);
+            cursor: grab;
+        }
+
+        #canvas3d:active {
+            cursor: grabbing;
+        }
+
+        .stat-value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+
+        .code-block {
+            background: rgba(0,0,0,0.4);
+            border-radius: 8px;
+            padding: 16px;
+            overflow-x: auto;
+            position: relative;
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(0, 212, 170, 0.2);
+            border: none;
+            padding: 6px 10px;
+            border-radius: 6px;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+        }
+
+        .copy-btn:hover {
+            background: rgba(0, 212, 170, 0.4);
+        }
+
+        .quality-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .quality-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease, background 0.3s ease;
+        }
+
+        .coverage-grid {
+            display: grid;
+            grid-template-columns: repeat(12, 1fr);
+            gap: 2px;
+        }
+
+        .coverage-cell {
+            aspect-ratio: 1;
+            border-radius: 2px;
+            transition: all 0.2s;
+        }
+
+        .coverage-cell.empty {
+            background: rgba(255,255,255,0.05);
+        }
+
+        .coverage-cell.partial {
+            background: rgba(0, 212, 170, 0.3);
+        }
+
+        .coverage-cell.full {
+            background: rgba(0, 212, 170, 0.8);
+        }
+
+        .quality-metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+            margin-bottom: 8px;
+        }
+
+        .metric-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .metric-indicator.good { background: #00d4aa; }
+        .metric-indicator.warn { background: #ffd93d; }
+        .metric-indicator.bad { background: #ff6b6b; }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .animate-in {
+            animation: fadeInUp 0.6s ease forwards;
+        }
+
+        .stagger-1 { animation-delay: 0.1s; opacity: 0; }
+        .stagger-2 { animation-delay: 0.2s; opacity: 0; }
+        .stagger-3 { animation-delay: 0.3s; opacity: 0; }
+        .stagger-4 { animation-delay: 0.4s; opacity: 0; }
+
+        @media (prefers-reduced-motion: reduce) {
+            .animate-in {
+                animation: none;
+                opacity: 1;
+            }
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: var(--bg-secondary);
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255,255,255,0.2);
+        }
+
+        .tip-card {
+            background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 100, 200, 0.05) 100%);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .axis-diagram {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            text-align: center;
+        }
+
+        .axis-cell {
+            padding: 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+    <div class="grid-overlay"></div>
+
+    <div class="max-w-7xl mx-auto px-4 py-8">
+        <header class="text-center mb-10 animate-in stagger-1">
+            <h1 class="text-4xl md:text-5xl font-bold mb-3 tracking-tight">
+                磁力计校准工具
+            </h1>
+            <p class="text-lg text-gray-400 max-w-2xl mx-auto">
+                椭球拟合算法 / 硬铁软铁补偿 / 三维可视化 / 数据质量评估
+            </p>
+        </header>
+
+        <section class="mb-8 animate-in stagger-2">
+            <div 
+                id="dropZone" 
+                class="upload-zone p-8 text-center cursor-pointer"
+                onclick="document.getElementById('fileInput').click()"
+            >
+                <input type="file" id="fileInput" accept=".txt,.data,.json" class="hidden">
+                <div class="mb-4">
+                    <svg class="w-16 h-16 mx-auto text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                    </svg>
+                </div>
+                <p class="text-xl font-medium mb-2">拖拽文件到此处或点击上传</p>
+                <p class="text-sm text-gray-500">支持逐飞示波器导出的 JSON 格式数据</p>
+            </div>
+        </section>
+
+        <!-- 采样指南 -->
+        <section class="mb-8 animate-in stagger-2">
+            <div class="tip-card">
+                <h3 class="font-semibold mb-3 flex items-center gap-2">
+                    <svg class="w-5 h-5 text-cyan-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                    </svg>
+                    如何采集高质量校准数据
+                </h3>
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <p class="text-sm text-gray-300 mb-3">
+                            <strong class="text-white">关键原则：</strong>让设备在三维空间中画出一个完整的球面
+                        </p>
+                        <ul class="text-sm text-gray-400 space-y-2">
+                            <li class="flex items-start gap-2">
+                                <span class="text-green-400 mt-0.5">1.</span>
+                                <span><strong class="text-gray-200">绕X轴旋转</strong>：设备侧翻，像翻书一样转一整圈</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <span class="text-green-400 mt-0.5">2.</span>
+                                <span><strong class="text-gray-200">绕Y轴旋转</strong>：设备前后翻转，像翻跟头一样</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <span class="text-green-400 mt-0.5">3.</span>
+                                <span><strong class="text-gray-200">绕Z轴旋转</strong>：设备平放在桌上转圈</span>
+                            </li>
+                            <li class="flex items-start gap-2">
+                                <span class="text-green-400 mt-0.5">4.</span>
+                                <span><strong class="text-gray-200">8字形运动</strong>：慢速画8字，覆盖更多方向</span>
+                            </li>
+                        </ul>
+                    </div>
+                    <div>
+                        <div class="axis-diagram">
+                            <div class="axis-cell">
+                                <div class="text-2xl mb-1 text-red-400">X</div>
+                                <div class="text-xs text-gray-500">侧翻旋转</div>
+                            </div>
+                            <div class="axis-cell">
+                                <div class="text-2xl mb-1 text-green-400">Y</div>
+                                <div class="text-xs text-gray-500">前后翻转</div>
+                            </div>
+                            <div class="axis-cell">
+                                <div class="text-2xl mb-1 text-blue-400">Z</div>
+                                <div class="text-xs text-gray-500">水平旋转</div>
+                            </div>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-3 text-center">
+                            每个轴至少转2-3圈，整个过程持续15-30秒
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <div id="resultsSection" class="hidden">
+            <!-- 数据质量总览 -->
+            <div class="glass-card p-6 mb-6 animate-in stagger-3">
+                <h2 class="text-xl font-semibold mb-4">数据质量评估</h2>
+                
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                    <!-- 总体评分 -->
+                    <div class="text-center p-4 bg-white/5 rounded-xl">
+                        <div id="overallGrade" class="text-5xl font-bold mb-2">--</div>
+                        <div class="stat-label">总体评级</div>
+                    </div>
+                    <!-- 覆盖度 -->
+                    <div class="p-4 bg-white/5 rounded-xl">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="stat-label">球面覆盖</span>
+                            <span id="coverageScore" class="font-mono text-sm">--%</span>
+                        </div>
+                        <div class="quality-bar">
+                            <div id="coverageBar" class="quality-fill bg-cyan-400" style="width: 0%"></div>
+                        </div>
+                        <p id="coverageHint" class="text-xs text-gray-500 mt-2">--</p>
+                    </div>
+                    <!-- 数据量 -->
+                    <div class="p-4 bg-white/5 rounded-xl">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="stat-label">数据量</span>
+                            <span id="dataScore" class="font-mono text-sm">--%</span>
+                        </div>
+                        <div class="quality-bar">
+                            <div id="dataBar" class="quality-fill bg-emerald-400" style="width: 0%"></div>
+                        </div>
+                        <p id="dataHint" class="text-xs text-gray-500 mt-2">--</p>
+                    </div>
+                    <!-- 球度改善 -->
+                    <div class="p-4 bg-white/5 rounded-xl">
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="stat-label">校准效果</span>
+                            <span id="sphericalScore" class="font-mono text-sm">--%</span>
+                        </div>
+                        <div class="quality-bar">
+                            <div id="sphericalBar" class="quality-fill bg-amber-400" style="width: 0%"></div>
+                        </div>
+                        <p id="sphericalHint" class="text-xs text-gray-500 mt-2">--</p>
+                    </div>
+                </div>
+
+                <!-- 覆盖热力图 -->
+                <div class="grid md:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-400 mb-3">球面覆盖热力图</h3>
+                        <p class="text-xs text-gray-500 mb-2">
+                            理想情况：所有格子都亮起（绿色=有数据，灰色=缺失）
+                        </p>
+                        <div id="coverageHeatmap" class="coverage-grid"></div>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-400 mb-3">质量指标详情</h3>
+                        <div id="metricsDetail">
+                            <!-- 动态填充 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 3D Visualization -->
+                <div class="lg:col-span-2 glass-card p-6 animate-in stagger-3">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-xl font-semibold">三维数据可视化</h2>
+                        <div class="flex gap-2">
+                            <button id="resetViewBtn" class="px-3 py-1.5 text-sm bg-white/5 hover:bg-white/10 rounded-lg transition">
+                                重置视角
+                            </button>
+                            <button id="toggleFitBtn" class="px-3 py-1.5 text-sm bg-white/5 hover:bg-white/10 rounded-lg transition">
+                                显示拟合椭球
+                            </button>
+                        </div>
+                    </div>
+                    <canvas id="canvas3d" width="700" height="450" class="w-full"></canvas>
+                    <div class="mt-4 flex flex-wrap gap-4 text-sm text-gray-400">
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded-full bg-cyan-400"></span> 数据点
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded-full bg-yellow-400"></span> 椭球中心
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <span class="w-3 h-3 rounded bg-emerald-400/50"></span> 拟合椭球
+                        </div>
+                        <div class="flex items-center gap-2 ml-auto">
+                            <span class="text-gray-500">鼠标拖拽旋转 / 滚轮缩放</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Statistics Panel -->
+                <div class="glass-card p-6 animate-in stagger-4">
+                    <h2 class="text-xl font-semibold mb-6">基础统计</h2>
+                    
+                    <div class="grid grid-cols-2 gap-4 mb-6">
+                        <div class="p-3 bg-white/5 rounded-lg">
+                            <div id="pointCount" class="stat-value font-mono text-cyan-400">--</div>
+                            <div class="stat-label mt-1">数据点数</div>
+                        </div>
+                        <div class="p-3 bg-white/5 rounded-lg">
+                            <div id="duration" class="stat-value font-mono text-cyan-400">--</div>
+                            <div class="stat-label mt-1">采样时长</div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3 mb-6">
+                        <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">数据范围</h3>
+                        <div class="grid grid-cols-3 gap-2 text-center font-mono text-sm">
+                            <div class="p-2 bg-red-500/10 rounded">
+                                <div id="rangeX" class="text-red-400">--</div>
+                                <div class="text-xs text-gray-500">X</div>
+                            </div>
+                            <div class="p-2 bg-green-500/10 rounded">
+                                <div id="rangeY" class="text-green-400">--</div>
+                                <div class="text-xs text-gray-500">Y</div>
+                            </div>
+                            <div class="p-2 bg-blue-500/10 rounded">
+                                <div id="rangeZ" class="text-blue-400">--</div>
+                                <div class="text-xs text-gray-500">Z</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="space-y-3">
+                        <h3 class="text-sm font-semibold text-gray-400 uppercase tracking-wider">椭球参数</h3>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">中心偏移模长</span>
+                                <span id="centerOffset" class="font-mono text-yellow-400">--</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">平均半径</span>
+                                <span id="avgRadius" class="font-mono">--</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-400">轴比 X:Y:Z</span>
+                                <span id="axisRatio" class="font-mono">--</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Calibration Results -->
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                <div class="glass-card p-6">
+                    <h2 class="text-xl font-semibold mb-4">硬铁偏移</h2>
+                    <p class="text-sm text-gray-400 mb-4">固定磁场偏移，需要从原始数据中减去</p>
+                    <div class="code-block relative">
+                        <button class="copy-btn" onclick="copyCode('hardIronCode')">复制</button>
+                        <pre id="hardIronCode" class="font-mono text-sm text-green-400"></pre>
+                    </div>
+                </div>
+
+                <div class="glass-card p-6">
+                    <h2 class="text-xl font-semibold mb-4">软铁校正矩阵</h2>
+                    <p class="text-sm text-gray-400 mb-4">软铁效应校正矩阵，补偿传感器轴间耦合</p>
+                    <div class="code-block relative">
+                        <button class="copy-btn" onclick="copyCode('softIronCode')">复制</button>
+                        <pre id="softIronCode" class="font-mono text-sm text-cyan-400"></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Complete Calibration Code -->
+            <div class="glass-card p-6 mt-6">
+                <h2 class="text-xl font-semibold mb-4">完整校准函数</h2>
+                <div class="code-block relative">
+                    <button class="copy-btn" onclick="copyCode('fullCode')">复制</button>
+                    <pre id="fullCode" class="font-mono text-sm overflow-x-auto"></pre>
+                </div>
+            </div>
+
+            <!-- Before/After Comparison -->
+            <div class="glass-card p-6 mt-6">
+                <h2 class="text-xl font-semibold mb-4">校准前后对比</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-400 mb-3">校准前：椭球分布</h3>
+                        <canvas id="beforeCanvas" width="350" height="280" class="w-full rounded-lg bg-black/30"></canvas>
+                        <p class="text-xs text-gray-500 mt-2">偏离球心、轴长不等</p>
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-semibold text-gray-400 mb-3">校准后：球形分布</h3>
+                        <canvas id="afterCanvas" width="350" height="280" class="w-full rounded-lg bg-black/30"></canvas>
+                        <p class="text-xs text-gray-500 mt-2">中心在原点、接近球体</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ============================================
+        // Global State
+        // ============================================
+        let magData = { x: [], y: [], z: [], t: [] };
+        let calibrationResult = null;
+        let showEllipsoid = true;
+        let coverageHeatmap = null;
+        
+        let rotationX = 0.5;
+        let rotationY = 0.3;
+        let zoom = 1;
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+
+        // ============================================
+        // File Upload Handling
+        // ============================================
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-over');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            const file = e.dataTransfer.files[0];
+            if (file) processFile(file);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) processFile(file);
+        });
+
+        function processFile(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const content = e.target.result;
+                    parseData(content);
+                    runCalibration();
+                    document.getElementById('resultsSection').classList.remove('hidden');
+                    initCanvas();
+                } catch (err) {
+                    alert('文件解析错误: ' + err.message);
+                    console.error(err);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // ============================================
+        // Data Parsing
+        // ============================================
+        function parseData(content) {
+            const data = JSON.parse(content);
+            
+            let chX = null, chY = null, chZ = null, chT = null;
+            
+            for (const channel of data) {
+                if (channel.Channel === 3) chX = channel.Points;
+                else if (channel.Channel === 4) chY = channel.Points;
+                else if (channel.Channel === 5) chZ = channel.Points;
+                else if (channel.Channel === 7) chT = channel.Points;
+            }
+
+            if (!chX || !chY || !chZ) {
+                throw new Error('未找到磁力计数据通道 (需要 Channel 3, 4, 5)');
+            }
+
+            magData.x = chX;
+            magData.y = chY;
+            magData.z = chZ;
+            magData.t = chT || chX.map((_, i) => i);
+
+            console.log(`解析成功: ${magData.x.length} 个数据点`);
+        }
+
+        // ============================================
+        // Ellipsoid Fitting Algorithm
+        // ============================================
+        function fitEllipsoid(points) {
+            const n = points.length;
+            if (n < 10) throw new Error('数据点不足，至少需要10个点');
+
+            const D = [];
+            for (let i = 0; i < n; i++) {
+                const [x, y, z] = points[i];
+                D.push([x*x, y*y, z*z, 2*x*y, 2*x*z, 2*y*z, 2*x, 2*y, 2*z, 1]);
+            }
+
+            const DT = transpose(D);
+            const DTxD = multiply(DT, D);
+            
+            let v = Array(10).fill(0).map(() => Math.random() - 0.5);
+            normalize(v);
+            
+            for (let iter = 0; iter < 100; iter++) {
+                const newV = solveLinearSystem(DTxD, v);
+                if (!newV) break;
+                normalize(newV);
+                v = newV;
+            }
+
+            const [a, b, c, f, g, h, p, q, r, d] = v;
+
+            const A = [
+                [a, f, g],
+                [f, b, h],
+                [g, h, c]
+            ];
+            
+            const centerVec = [-p, -q, -r];
+            const center = solveLinearSystem(A, centerVec);
+            
+            if (!center) {
+                return fitEllipsoidSimple(points);
+            }
+
+            const offset = d + a*center[0]*center[0] + b*center[1]*center[1] + c*center[2]*center[2]
+                         + 2*f*center[0]*center[1] + 2*g*center[0]*center[2] + 2*h*center[1]*center[2]
+                         + 2*p*center[0] + 2*q*center[1] + 2*r*center[2];
+            
+            if (offset >= 0) {
+                return fitEllipsoidSimple(points);
+            }
+
+            const A_mat = [
+                [a/(-offset), f/(-offset), g/(-offset)],
+                [f/(-offset), b/(-offset), h/(-offset)],
+                [g/(-offset), h/(-offset), c/(-offset)]
+            ];
+
+            const eigen = eigenDecomposition3x3(A_mat);
+            const softIron = computeSoftIronMatrix(eigen);
+
+            return {
+                center: center,
+                softIron: softIron,
+                eigenvalues: eigen.values,
+                eigenvectors: eigen.vectors,
+                scale: Math.sqrt(-offset),
+                rawParams: { a, b, c, f, g, h, p, q, r, d }
+            };
+        }
+
+        function fitEllipsoidSimple(points) {
+            const xs = points.map(p => p[0]);
+            const ys = points.map(p => p[1]);
+            const zs = points.map(p => p[2]);
+
+            const minX = Math.min(...xs), maxX = Math.max(...xs);
+            const minY = Math.min(...ys), maxY = Math.max(...ys);
+            const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+
+            const center = [
+                (minX + maxX) / 2,
+                (minY + maxY) / 2,
+                (minZ + maxZ) / 2
+            ];
+
+            const radiusX = (maxX - minX) / 2;
+            const radiusY = (maxY - minY) / 2;
+            const radiusZ = (maxZ - minZ) / 2;
+
+            const avgRadius = (radiusX + radiusY + radiusZ) / 3;
+
+            const softIron = [
+                [avgRadius / Math.max(1, radiusX), 0, 0],
+                [0, avgRadius / Math.max(1, radiusY), 0],
+                [0, 0, avgRadius / Math.max(1, radiusZ)]
+            ];
+
+            return {
+                center: center,
+                softIron: softIron,
+                eigenvalues: [1/(radiusX*radiusX+1), 1/(radiusY*radiusY+1), 1/(radiusZ*radiusZ+1)],
+                eigenvectors: [[1,0,0],[0,1,0],[0,0,1]],
+                scale: avgRadius,
+                isSimpleFit: true
+            };
+        }
+
+        function computeSoftIronMatrix(eigen) {
+            const lambda = eigen.values;
+            const R = eigen.vectors;
+
+            const scale = [
+                1 / Math.sqrt(Math.max(1e-10, Math.abs(lambda[0]))),
+                1 / Math.sqrt(Math.max(1e-10, Math.abs(lambda[1]))),
+                1 / Math.sqrt(Math.max(1e-10, Math.abs(lambda[2])))
+            ];
+
+            const avgScale = (scale[0] + scale[1] + scale[2]) / 3;
+            scale[0] /= avgScale;
+            scale[1] /= avgScale;
+            scale[2] /= avgScale;
+
+            const result = [[0,0,0],[0,0,0],[0,0,0]];
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    for (let k = 0; k < 3; k++) {
+                        result[i][j] += R[k][i] * scale[k] * R[k][j];
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        // ============================================
+        // Linear Algebra Helpers
+        // ============================================
+        function transpose(m) {
+            const rows = m.length;
+            const cols = m[0].length;
+            const result = [];
+            for (let j = 0; j < cols; j++) {
+                result[j] = [];
+                for (let i = 0; i < rows; i++) {
+                    result[j][i] = m[i][j];
+                }
+            }
+            return result;
+        }
+
+        function multiply(a, b) {
+            const rowsA = a.length;
+            const colsA = a[0].length;
+            const colsB = b[0].length;
+            const result = [];
+            for (let i = 0; i < rowsA; i++) {
+                result[i] = [];
+                for (let j = 0; j < colsB; j++) {
+                    let sum = 0;
+                    for (let k = 0; k < colsA; k++) {
+                        sum += a[i][k] * b[k][j];
+                    }
+                    result[i][j] = sum;
+                }
+            }
+            return result;
+        }
+
+        function normalize(v) {
+            let len = 0;
+            for (let i = 0; i < v.length; i++) len += v[i] * v[i];
+            len = Math.sqrt(len);
+            if (len > 1e-10) {
+                for (let i = 0; i < v.length; i++) v[i] /= len;
+            }
+        }
+
+        function solveLinearSystem(A, b) {
+            const n = A.length;
+            const m = A[0].length;
+            
+            const aug = [];
+            for (let i = 0; i < n; i++) {
+                aug[i] = [...A[i], b[i]];
+            }
+
+            for (let col = 0; col < Math.min(n, m); col++) {
+                let maxRow = col;
+                for (let row = col + 1; row < n; row++) {
+                    if (Math.abs(aug[row][col]) > Math.abs(aug[maxRow][col])) {
+                        maxRow = row;
+                    }
+                }
+                [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
+
+                if (Math.abs(aug[col][col]) < 1e-10) continue;
+
+                for (let row = col + 1; row < n; row++) {
+                    const factor = aug[row][col] / aug[col][col];
+                    for (let j = col; j <= m; j++) {
+                        aug[row][j] -= factor * aug[col][j];
+                    }
+                }
+            }
+
+            const x = Array(m).fill(0);
+            for (let i = Math.min(n, m) - 1; i >= 0; i--) {
+                let sum = aug[i][m];
+                for (let j = i + 1; j < m; j++) {
+                    sum -= aug[i][j] * x[j];
+                }
+                if (Math.abs(aug[i][i]) > 1e-10) {
+                    x[i] = sum / aug[i][i];
+                }
+            }
+
+            return x;
+        }
+
+        function eigenDecomposition3x3(A) {
+            let V = [
+                [1, 0, 0],
+                [0, 1, 0],
+                [0, 0, 1]
+            ];
+            let D = A.map(row => [...row]);
+
+            for (let iter = 0; iter < 50; iter++) {
+                let maxVal = 0;
+                let p = 0, q = 1;
+                for (let i = 0; i < 3; i++) {
+                    for (let j = i + 1; j < 3; j++) {
+                        if (Math.abs(D[i][j]) > maxVal) {
+                            maxVal = Math.abs(D[i][j]);
+                            p = i;
+                            q = j;
+                        }
+                    }
+                }
+
+                if (maxVal < 1e-10) break;
+
+                const theta = (D[q][q] - D[p][p]) / (2 * D[p][q]);
+                const t = Math.sign(theta) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+                const c = 1 / Math.sqrt(t * t + 1);
+                const s = t * c;
+
+                const givens = [
+                    [1, 0, 0],
+                    [0, 1, 0],
+                    [0, 0, 1]
+                ];
+                givens[p][p] = c;
+                givens[q][q] = c;
+                givens[p][q] = s;
+                givens[q][p] = -s;
+
+                const Dnew = [[0,0,0],[0,0,0],[0,0,0]];
+                for (let i = 0; i < 3; i++) {
+                    for (let j = 0; j < 3; j++) {
+                        for (let k = 0; k < 3; k++) {
+                            for (let l = 0; l < 3; l++) {
+                                Dnew[i][j] += givens[k][i] * D[k][l] * givens[l][j];
+                            }
+                        }
+                    }
+                }
+                D = Dnew;
+
+                const Vnew = [[0,0,0],[0,0,0],[0,0,0]];
+                for (let i = 0; i < 3; i++) {
+                    for (let j = 0; j < 3; j++) {
+                        for (let k = 0; k < 3; k++) {
+                            Vnew[i][j] += V[i][k] * givens[k][j];
+                        }
+                    }
+                }
+                V = Vnew;
+            }
+
+            return {
+                values: [D[0][0], D[1][1], D[2][2]],
+                vectors: V[0].map((_, i) => V.map(row => row[i]))
+            };
+        }
+
+        // ============================================
+        // Calibration Execution
+        // ============================================
+        function runCalibration() {
+            const points = [];
+            for (let i = 0; i < magData.x.length; i++) {
+                points.push([magData.x[i], magData.y[i], magData.z[i]]);
+            }
+
+            calibrationResult = fitEllipsoid(points);
+            const stats = calculateStatistics();
+            updateUI(stats);
+        }
+
+        function calculateStatistics() {
+            const n = magData.x.length;
+            const t = magData.t;
+            
+            const duration = t.length > 1 ? (t[t.length - 1] - t[0]) : 0;
+            
+            const minX = Math.min(...magData.x);
+            const maxX = Math.max(...magData.x);
+            const minY = Math.min(...magData.y);
+            const maxY = Math.max(...magData.y);
+            const minZ = Math.min(...magData.z);
+            const maxZ = Math.max(...magData.z);
+
+            const { center, softIron, eigenvalues } = calibrationResult;
+            
+            // 计算校正后的半径分布
+            let sumRadius = 0;
+            let sumRadiusSq = 0;
+            
+            for (let i = 0; i < n; i++) {
+                const dx = magData.x[i] - center[0];
+                const dy = magData.y[i] - center[1];
+                const dz = magData.z[i] - center[2];
+                
+                const cx = softIron[0][0]*dx + softIron[0][1]*dy + softIron[0][2]*dz;
+                const cy = softIron[1][0]*dx + softIron[1][1]*dy + softIron[1][2]*dz;
+                const cz = softIron[2][0]*dx + softIron[2][1]*dy + softIron[2][2]*dz;
+                
+                const r = Math.sqrt(cx*cx + cy*cy + cz*cz);
+                sumRadius += r;
+                sumRadiusSq += r * r;
+            }
+
+            const avgRadius = sumRadius / n;
+            const variance = sumRadiusSq / n - avgRadius * avgRadius;
+            const stdDev = Math.sqrt(Math.max(0, variance));
+            const sphericalError = (stdDev / Math.max(1e-10, avgRadius)) * 100;
+            const sphericalImprovement = Math.max(0, 100 - sphericalError);
+
+            const centerOffsetMag = Math.sqrt(center[0]*center[0] + center[1]*center[1] + center[2]*center[2]);
+
+            // 计算覆盖度
+            const coverage = calculateCoverage();
+
+            // 计算各轴半径比
+            const radiusX = (maxX - minX) / 2;
+            const radiusY = (maxY - minY) / 2;
+            const radiusZ = (maxZ - minZ) / 2;
+            const maxRadius = Math.max(radiusX, radiusY, radiusZ);
+            const minRadius = Math.min(radiusX, radiusY, radiusZ);
+            const axisRatio = maxRadius / Math.max(1, minRadius);
+
+            return {
+                pointCount: n,
+                duration: duration,
+                rangeX: maxX - minX,
+                rangeY: maxY - minY,
+                rangeZ: maxZ - minZ,
+                radiusX,
+                radiusY,
+                radiusZ,
+                sphericalError,
+                sphericalImprovement,
+                centerOffset: centerOffsetMag,
+                avgRadius,
+                axisRatio,
+                coverage: coverage.coverage,
+                coverageMap: coverage.map,
+                coverageBins: coverage.bins
+            };
+        }
+
+        function calculateCoverage() {
+            const { center } = calibrationResult;
+            const n = magData.x.length;
+            
+            const bins = 12;
+            const coverageMap = new Map();
+            
+            for (let i = 0; i < n; i++) {
+                const dx = magData.x[i] - center[0];
+                const dy = magData.y[i] - center[1];
+                const dz = magData.z[i] - center[2];
+                
+                const r = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                if (r < 1) continue;
+                
+                // 球面坐标系
+                const theta = Math.atan2(dy, dx);
+                const phi = Math.acos(Math.max(-1, Math.min(1, dz / r)));
+                
+                const thetaBin = Math.floor((theta + Math.PI) / (2 * Math.PI) * bins);
+                const phiBin = Math.floor(phi / Math.PI * bins);
+                
+                const key = `${thetaBin},${phiBin}`;
+                coverageMap.set(key, (coverageMap.get(key) || 0) + 1);
+            }
+            
+            return {
+                coverage: coverageMap.size / (bins * bins),
+                map: coverageMap,
+                bins: bins
+            };
+        }
+
+        // ============================================
+        // UI Update
+        // ============================================
+        function updateUI(stats) {
+            // 基础统计
+            document.getElementById('pointCount').textContent = stats.pointCount.toLocaleString();
+            document.getElementById('duration').textContent = stats.duration > 0 ? `${(stats.duration/1000).toFixed(1)}s` : '--';
+            
+            document.getElementById('rangeX').textContent = stats.rangeX.toFixed(1);
+            document.getElementById('rangeY').textContent = stats.rangeY.toFixed(1);
+            document.getElementById('rangeZ').textContent = stats.rangeZ.toFixed(1);
+            
+            document.getElementById('centerOffset').textContent = stats.centerOffset.toFixed(1);
+            document.getElementById('avgRadius').textContent = stats.avgRadius.toFixed(1);
+            document.getElementById('axisRatio').textContent = `${stats.radiusX.toFixed(0)} : ${stats.radiusY.toFixed(0)} : ${stats.radiusZ.toFixed(0)}`;
+
+            // 质量评估
+            updateQualityAssessment(stats);
+
+            // 校准参数
+            const { center, softIron } = calibrationResult;
+            
+            document.getElementById('hardIronCode').innerHTML = 
+`// 硬铁偏移
+float mag_offset_x = <span class="text-yellow-400">${center[0].toFixed(2)}f</span>;
+float mag_offset_y = <span class="text-yellow-400">${center[1].toFixed(2)}f</span>;
+float mag_offset_z = <span class="text-yellow-400">${center[2].toFixed(2)}f</span>;`;
+
+            document.getElementById('softIronCode').innerHTML = 
+`// 软铁校正矩阵
+float mag_soft_iron[3][3] = {
+    {<span class="text-green-400">${softIron[0][0].toFixed(6)}f</span>, ${softIron[0][1].toFixed(6)}f, ${softIron[0][2].toFixed(6)}f},
+    {${softIron[1][0].toFixed(6)}f, <span class="text-green-400">${softIron[1][1].toFixed(6)}f</span>, ${softIron[1][2].toFixed(6)}f},
+    {${softIron[2][0].toFixed(6)}f, ${softIron[2][1].toFixed(6)}f, <span class="text-green-400">${softIron[2][2].toFixed(6)}f</span>}
+};`;
+
+            generateFullCode(center, softIron);
+            renderCoverageHeatmap(stats);
+        }
+
+        function updateQualityAssessment(stats) {
+            // 评分计算
+            const coverageScore = stats.coverage * 100;
+            const dataScore = Math.min(100, stats.pointCount / 3000 * 100);
+            const sphericalScore = stats.sphericalImprovement;
+
+            // 总分
+            const overallScore = coverageScore * 0.5 + dataScore * 0.25 + sphericalScore * 0.25;
+
+            // 评级
+            let grade, gradeColor;
+            if (overallScore >= 80) { grade = 'A'; gradeColor = '#00d4aa'; }
+            else if (overallScore >= 60) { grade = 'B'; gradeColor = '#4ade80'; }
+            else if (overallScore >= 40) { grade = 'C'; gradeColor = '#ffd93d'; }
+            else if (overallScore >= 20) { grade = 'D'; gradeColor = '#fb923c'; }
+            else { grade = 'F'; gradeColor = '#ff6b6b'; }
+
+            const gradeEl = document.getElementById('overallGrade');
+            gradeEl.textContent = grade;
+            gradeEl.style.color = gradeColor;
+
+            // 覆盖度
+            document.getElementById('coverageScore').textContent = coverageScore.toFixed(0) + '%';
+            document.getElementById('coverageBar').style.width = coverageScore + '%';
+            
+            let coverageHint;
+            if (coverageScore >= 70) coverageHint = '覆盖良好';
+            else if (coverageScore >= 40) coverageHint = '建议增加更多方向';
+            else coverageHint = '覆盖不足，请重新采样';
+            document.getElementById('coverageHint').textContent = coverageHint;
+
+            // 数据量
+            document.getElementById('dataScore').textContent = dataScore.toFixed(0) + '%';
+            document.getElementById('dataBar').style.width = dataScore + '%';
+            
+            let dataHint;
+            if (stats.pointCount >= 3000) dataHint = '数据量充足';
+            else if (stats.pointCount >= 1000) dataHint = '数据量一般';
+            else dataHint = '数据量不足';
+            document.getElementById('dataHint').textContent = dataHint;
+
+            // 球度改善
+            document.getElementById('sphericalScore').textContent = sphericalScore.toFixed(0) + '%';
+            document.getElementById('sphericalBar').style.width = sphericalScore + '%';
+            
+            let sphericalHint;
+            if (sphericalScore >= 90) sphericalHint = '校准效果优秀';
+            else if (sphericalScore >= 70) sphericalHint = '校准效果良好';
+            else sphericalHint = '校准效果一般';
+            document.getElementById('sphericalHint').textContent = sphericalHint;
+
+            // 详细指标
+            const metricsDetail = document.getElementById('metricsDetail');
+            metricsDetail.innerHTML = `
+                <div class="quality-metric">
+                    <div class="flex items-center gap-3">
+                        <div class="metric-indicator ${coverageScore >= 60 ? 'good' : coverageScore >= 30 ? 'warn' : 'bad'}"></div>
+                        <div>
+                            <div class="text-sm">球面覆盖度</div>
+                            <div class="text-xs text-gray-500">${stats.coverageMap.size}/${stats.coverageBins * stats.coverageBins} 个区域有数据</div>
+                        </div>
+                    </div>
+                    <span class="font-mono">${coverageScore.toFixed(0)}%</span>
+                </div>
+                <div class="quality-metric">
+                    <div class="flex items-center gap-3">
+                        <div class="metric-indicator ${stats.pointCount >= 2000 ? 'good' : stats.pointCount >= 500 ? 'warn' : 'bad'}"></div>
+                        <div>
+                            <div class="text-sm">数据点数量</div>
+                            <div class="text-xs text-gray-500">推荐 ≥ 2000 个点</div>
+                        </div>
+                    </div>
+                    <span class="font-mono">${stats.pointCount.toLocaleString()}</span>
+                </div>
+                <div class="quality-metric">
+                    <div class="flex items-center gap-3">
+                        <div class="metric-indicator ${sphericalScore >= 80 ? 'good' : sphericalScore >= 60 ? 'warn' : 'bad'}"></div>
+                        <div>
+                            <div class="text-sm">球度误差</div>
+                            <div class="text-xs text-gray-500">校准后半径标准差</div>
+                        </div>
+                    </div>
+                    <span class="font-mono">${stats.sphericalError.toFixed(2)}%</span>
+                </div>
+                <div class="quality-metric">
+                    <div class="flex items-center gap-3">
+                        <div class="metric-indicator ${stats.axisRatio <= 1.5 ? 'good' : stats.axisRatio <= 2.5 ? 'warn' : 'bad'}"></div>
+                        <div>
+                            <div class="text-sm">椭球轴比</div>
+                            <div class="text-xs text-gray-500">最大/最小轴长比</div>
+                        </div>
+                    </div>
+                    <span class="font-mono">${stats.axisRatio.toFixed(2)}</span>
+                </div>
+            `;
+        }
+
+        function renderCoverageHeatmap(stats) {
+            const container = document.getElementById('coverageHeatmap');
+            const bins = stats.coverageBins;
+            const map = stats.coverageMap;
+            
+            let html = '';
+            for (let phiBin = 0; phiBin < bins; phiBin++) {
+                for (let thetaBin = 0; thetaBin < bins; thetaBin++) {
+                    const key = `${thetaBin},${phiBin}`;
+                    const count = map.get(key) || 0;
+                    let cssClass = 'empty';
+                    if (count > 50) cssClass = 'full';
+                    else if (count > 0) cssClass = 'partial';
+                    html += `<div class="coverage-cell ${cssClass}" title="θ=${thetaBin}, φ=${phiBin}, count=${count}"></div>`;
+                }
+            }
+            container.innerHTML = html;
+        }
+
+        function generateFullCode(center, softIron) {
+            const code = `// 磁力计校准参数 - 自动生成
+// 校准日期: ${new Date().toLocaleDateString()}
+
+// 硬铁偏移 (需要从原始读数中减去)
+const float MAG_OFFSET_X = ${center[0].toFixed(2)}f;
+const float MAG_OFFSET_Y = ${center[1].toFixed(2)}f;
+const float MAG_OFFSET_Z = ${center[2].toFixed(2)}f;
+
+// 软铁校正矩阵
+const float MAG_SOFT_IRON[3][3] = {
+    {${softIron[0][0].toFixed(6)}f, ${softIron[0][1].toFixed(6)}f, ${softIron[0][2].toFixed(6)}f},
+    {${softIron[1][0].toFixed(6)}f, ${softIron[1][1].toFixed(6)}f, ${softIron[1][2].toFixed(6)}f},
+    {${softIron[2][0].toFixed(6)}f, ${softIron[2][1].toFixed(6)}f, ${softIron[2][2].toFixed(6)}f}
+};
+
+// 校准函数
+void mag_calibrate(float raw_x, float raw_y, float raw_z, float *cal_x, float *cal_y, float *cal_z) {
+    // 1. 减去硬铁偏移
+    float x = raw_x - MAG_OFFSET_X;
+    float y = raw_y - MAG_OFFSET_Y;
+    float z = raw_z - MAG_OFFSET_Z;
+    
+    // 2. 应用软铁校正矩阵
+    *cal_x = MAG_SOFT_IRON[0][0] * x + MAG_SOFT_IRON[0][1] * y + MAG_SOFT_IRON[0][2] * z;
+    *cal_y = MAG_SOFT_IRON[1][0] * x + MAG_SOFT_IRON[1][1] * y + MAG_SOFT_IRON[1][2] * z;
+    *cal_z = MAG_SOFT_IRON[2][0] * x + MAG_SOFT_IRON[2][1] * y + MAG_SOFT_IRON[2][2] * z;
+}
+
+// 使用示例
+// float cal_x, cal_y, cal_z;
+// mag_calibrate(imu963ra_mag_x, imu963ra_mag_y, imu963ra_mag_z, &cal_x, &cal_y, &cal_z);`;
+
+            document.getElementById('fullCode').textContent = code;
+        }
+
+        function copyCode(elementId) {
+            const code = document.getElementById(elementId).textContent;
+            navigator.clipboard.writeText(code).then(() => {
+                const btn = document.querySelector(`[onclick="copyCode('${elementId}')"]`);
+                const originalText = btn.textContent;
+                btn.textContent = '已复制';
+                setTimeout(() => btn.textContent = originalText, 1500);
+            });
+        }
+
+        // ============================================
+        // 3D Visualization
+        // ============================================
+        function initCanvas() {
+            const canvas = document.getElementById('canvas3d');
+            
+            canvas.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+            });
+
+            canvas.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+                const dx = e.clientX - lastMouseX;
+                const dy = e.clientY - lastMouseY;
+                rotationY += dx * 0.01;
+                rotationX += dy * 0.01;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                render3D();
+            });
+
+            canvas.addEventListener('mouseup', () => isDragging = false);
+            canvas.addEventListener('mouseleave', () => isDragging = false);
+
+            canvas.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                zoom *= e.deltaY > 0 ? 1.1 : 0.9;
+                zoom = Math.max(0.2, Math.min(5, zoom));
+                render3D();
+            });
+
+            document.getElementById('resetViewBtn').addEventListener('click', () => {
+                rotationX = 0.5;
+                rotationY = 0.3;
+                zoom = 1;
+                render3D();
+            });
+
+            document.getElementById('toggleFitBtn').addEventListener('click', () => {
+                showEllipsoid = !showEllipsoid;
+                render3D();
+            });
+
+            render3D();
+            renderBeforeAfter();
+        }
+
+        function render3D() {
+            const canvas = document.getElementById('canvas3d');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+            ctx.fillRect(0, 0, w, h);
+
+            const allPoints = [...magData.x, ...magData.y, ...magData.z];
+            const maxVal = Math.max(...allPoints.map(Math.abs));
+            const scale = Math.min(w, h) * 0.35 * zoom / maxVal;
+
+            const cx = w / 2;
+            const cy = h / 2;
+
+            const cosX = Math.cos(rotationX);
+            const sinX = Math.sin(rotationX);
+            const cosY = Math.cos(rotationY);
+            const sinY = Math.sin(rotationY);
+
+            function project(x, y, z) {
+                const x1 = x * cosY - z * sinY;
+                const z1 = x * sinY + z * cosY;
+                const y2 = y * cosX - z1 * sinX;
+                const z2 = y * sinX + z1 * cosX;
+                return {
+                    x: cx + x1 * scale,
+                    y: cy - y2 * scale,
+                    z: z2
+                };
+            }
+
+            // 坐标轴
+            const axisLen = maxVal * 0.8;
+            const axes = [
+                { start: [-axisLen, 0, 0], end: [axisLen, 0, 0], color: 'rgba(255, 100, 100, 0.4)' },
+                { start: [0, -axisLen, 0], end: [0, axisLen, 0], color: 'rgba(100, 255, 100, 0.4)' },
+                { start: [0, 0, -axisLen], end: [0, 0, axisLen], color: 'rgba(100, 100, 255, 0.4)' }
+            ];
+
+            axes.forEach(axis => {
+                const p1 = project(...axis.start);
+                const p2 = project(...axis.end);
+                ctx.strokeStyle = axis.color;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            });
+
+            // 椭球
+            if (showEllipsoid && calibrationResult) {
+                drawEllipsoidWireframe(ctx, project, scale);
+            }
+
+            // 数据点
+            const step = Math.max(1, Math.floor(magData.x.length / 2000));
+            
+            for (let i = 0; i < magData.x.length; i += step) {
+                const p = project(magData.x[i], magData.y[i], magData.z[i]);
+                ctx.fillStyle = 'rgba(0, 212, 170, 0.6)';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+
+            // 中心点
+            if (calibrationResult) {
+                const centerP = project(...calibrationResult.center);
+                ctx.fillStyle = '#ffd93d';
+                ctx.beginPath();
+                ctx.arc(centerP.x, centerP.y, 6, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+            }
+        }
+
+        function drawEllipsoidWireframe(ctx, project, scale) {
+            const { center, eigenvalues, eigenvectors } = calibrationResult;
+            
+            const eps = 1e-10;
+            const a = 1 / Math.sqrt(Math.max(eps, Math.abs(eigenvalues[0])));
+            const b = 1 / Math.sqrt(Math.max(eps, Math.abs(eigenvalues[1])));
+            const c = 1 / Math.sqrt(Math.max(eps, Math.abs(eigenvalues[2])));
+            
+            const maxAxis = Math.max(a, b, c);
+            const na = a / maxAxis * 200;
+            const nb = b / maxAxis * 200;
+            const nc = c / maxAxis * 200;
+
+            ctx.strokeStyle = 'rgba(0, 212, 170, 0.25)';
+            ctx.lineWidth = 1;
+
+            for (let phi = 0; phi < Math.PI; phi += Math.PI / 6) {
+                ctx.beginPath();
+                let started = false;
+                for (let theta = 0; theta <= 2 * Math.PI; theta += 0.1) {
+                    const x = na * Math.sin(phi) * Math.cos(theta);
+                    const y = nb * Math.sin(phi) * Math.sin(theta);
+                    const z = nc * Math.cos(phi);
+                    
+                    const tx = eigenvectors[0][0]*x + eigenvectors[1][0]*y + eigenvectors[2][0]*z;
+                    const ty = eigenvectors[0][1]*x + eigenvectors[1][1]*y + eigenvectors[2][1]*z;
+                    const tz = eigenvectors[0][2]*x + eigenvectors[1][2]*y + eigenvectors[2][2]*z;
+                    
+                    const p = project(center[0] + tx, center[1] + ty, center[2] + tz);
+                    if (!started) {
+                        ctx.moveTo(p.x, p.y);
+                        started = true;
+                    } else {
+                        ctx.lineTo(p.x, p.y);
+                    }
+                }
+                ctx.stroke();
+            }
+
+            for (let theta = 0; theta < Math.PI; theta += Math.PI / 6) {
+                ctx.beginPath();
+                let started = false;
+                for (let phi = 0; phi <= 2 * Math.PI; phi += 0.1) {
+                    const x = na * Math.sin(phi) * Math.cos(theta);
+                    const y = nb * Math.sin(phi) * Math.sin(theta);
+                    const z = nc * Math.cos(phi);
+                    
+                    const tx = eigenvectors[0][0]*x + eigenvectors[1][0]*y + eigenvectors[2][0]*z;
+                    const ty = eigenvectors[0][1]*x + eigenvectors[1][1]*y + eigenvectors[2][1]*z;
+                    const tz = eigenvectors[0][2]*x + eigenvectors[1][2]*y + eigenvectors[2][2]*z;
+                    
+                    const p = project(center[0] + tx, center[1] + ty, center[2] + tz);
+                    if (!started) {
+                        ctx.moveTo(p.x, p.y);
+                        started = true;
+                    } else {
+                        ctx.lineTo(p.x, p.y);
+                    }
+                }
+                ctx.stroke();
+            }
+        }
+
+        function renderBeforeAfter() {
+            renderProjection('beforeCanvas', false);
+            renderProjection('afterCanvas', true);
+        }
+
+        function renderProjection(canvasId, calibrated) {
+            const canvas = document.getElementById(canvasId);
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, w, h);
+
+            const { center, softIron } = calibrationResult;
+
+            const points = [];
+            let maxVal = 0;
+
+            for (let i = 0; i < magData.x.length; i += Math.max(1, Math.floor(magData.x.length / 1000))) {
+                let x = magData.x[i];
+                let y = magData.y[i];
+                let z = magData.z[i];
+
+                if (calibrated) {
+                    const dx = x - center[0];
+                    const dy = y - center[1];
+                    const dz = z - center[2];
+                    x = softIron[0][0]*dx + softIron[0][1]*dy + softIron[0][2]*dz;
+                    y = softIron[1][0]*dx + softIron[1][1]*dy + softIron[1][2]*dz;
+                    z = softIron[2][0]*dx + softIron[2][1]*dy + softIron[2][2]*dz;
+                }
+
+                points.push({ x, y, z });
+                maxVal = Math.max(maxVal, Math.abs(x), Math.abs(y), Math.abs(z));
+            }
+
+            const scale = Math.min(w, h) * 0.4 / maxVal;
+            const cx = w / 2;
+            const cy = h / 2;
+
+            points.forEach(p => {
+                const px = cx + p.x * scale;
+                const py = cy - p.y * scale;
+                
+                const hue = calibrated ? 160 : 0;
+                const lightness = 50 + (p.z / maxVal) * 20;
+                
+                ctx.fillStyle = `hsla(${hue}, 70%, ${lightness}%, 0.6)`;
+                ctx.beginPath();
+                ctx.arc(px, py, 2, 0, Math.PI * 2);
+                ctx.fill();
+            });
+
+            ctx.strokeStyle = calibrated ? 'rgba(0, 212, 170, 0.3)' : 'rgba(255, 255, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.arc(cx, cy, maxVal * scale * 0.95, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+            ctx.font = '12px Space Grotesk';
+            ctx.fillText('X-Y 投影', 10, 20);
+        }
+    </script>
+</body>
+</html>
