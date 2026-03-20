@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>磁力计校准工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #0a0e14;
+            --bg-secondary: #111820;
+            --fg: #e8eaed;
+            --muted: #6b7280;
+            --accent: #00d4aa;
+            --accent-dim: rgba(0, 212, 170, 0.15);
+            --card: rgba(17, 24, 32, 0.85);
+            --border: rgba(255, 255, 255, 0.08);
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background: var(--bg);
+            color: var(--fg);
+            min-height: 100vh;
+        }
+        .font-mono { font-family: 'JetBrains Mono', monospace; }
+        
+        .bg-pattern {
+            position: fixed;
+            inset: 0;
+            background: 
+                radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 212, 170, 0.08) 0%, transparent 60%),
+                linear-gradient(180deg, var(--bg) 0%, #0d1219 100%);
+            pointer-events: none;
+            z-index: -1;
+        }
+        
+        .upload-zone {
+            border: 2px dashed var(--border);
+            border-radius: 16px;
+            transition: all 0.3s ease;
+            background: var(--card);
+            backdrop-filter: blur(20px);
+        }
+        .upload-zone:hover, .upload-zone.drag-over {
+            border-color: var(--accent);
+            background: var(--accent-dim);
+        }
+        
+        .glass-card {
+            background: var(--card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+        }
+        
+        #canvas3d {
+            border-radius: 12px;
+            background: rgba(0,0,0,0.3);
+            cursor: grab;
+        }
+        #canvas3d:active { cursor: grabbing; }
+        
+        .stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+        .stat-label {
+            font-size: 0.7rem;
+            color: var(--muted);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+        }
+        
+        .code-block {
+            background: rgba(0,0,0,0.4);
+            border-radius: 8px;
+            padding: 16px;
+            overflow-x: auto;
+            position: relative;
+        }
+        
+        .copy-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(0, 212, 170, 0.2);
+            border: none;
+            padding: 6px 10px;
+            border-radius: 6px;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 0.75rem;
+            transition: all 0.2s;
+        }
+        .copy-btn:hover { background: rgba(0, 212, 170, 0.4); }
+        
+        .quality-bar {
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        .quality-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.5s ease;
+        }
+        
+        .tab-btn {
+            padding: 10px 20px;
+            background: transparent;
+            border: none;
+            color: var(--muted);
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: all 0.2s;
+            border-bottom: 2px solid transparent;
+        }
+        .tab-btn:hover { color: var(--fg); }
+        .tab-btn.active {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+        
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        
+        .tip-card {
+            background: linear-gradient(135deg, rgba(0, 212, 170, 0.1) 0%, rgba(0, 100, 200, 0.05) 100%);
+            border: 1px solid rgba(0, 212, 170, 0.2);
+            border-radius: 12px;
+            padding: 16px;
+        }
+        
+        .warning-card {
+            background: linear-gradient(135deg, rgba(255, 217, 61, 0.1) 0%, rgba(255, 150, 50, 0.05) 100%);
+            border: 1px solid rgba(255, 217, 61, 0.3);
+            border-radius: 12px;
+            padding: 16px;
+        }
+
+        .error-toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(255, 107, 107, 0.9);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+        
+        @keyframes slideIn {
+            from { transform: translateY(100px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        
+        @keyframes fadeInUp {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .animate-in { animation: fadeInUp 0.6s ease forwards; }
+        .stagger-1 { animation-delay: 0.1s; opacity: 0; }
+        .stagger-2 { animation-delay: 0.2s; opacity: 0; }
+    </style>
+</head>
+<body>
+    <div class="bg-pattern"></div>
+
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <header class="text-center mb-8 animate-in stagger-1">
+            <h1 class="text-3xl md:text-4xl font-bold mb-2 tracking-tight">磁力计校准工具</h1>
+            <p class="text-gray-400">椭球拟合算法 / 硬铁软铁补偿</p>
+        </header>
+
+        <!-- 标签页 -->
+        <div class="flex justify-center mb-6 border-b border-white/10">
+            <button class="tab-btn active" data-tab="calibrate">校准模式</button>
+            <button class="tab-btn" data-tab="verify">验证模式</button>
+        </div>
+
+        <!-- 校准模式 -->
+        <div id="tab-calibrate" class="tab-content active">
+            <section class="mb-6 animate-in stagger-2">
+                <div class="tip-card mb-4">
+                    <p class="text-sm text-gray-300">
+                        <strong class="text-white">使用流程：</strong>
+                        上传原始数据 → 得到校准参数 → 写入C代码永久使用
+                    </p>
+                </div>
+                
+                <div id="dropZone" class="upload-zone p-8 text-center cursor-pointer">
+                    <input type="file" id="fileInput" accept=".txt,.data,.json" class="hidden">
+                    <div class="mb-3">
+                        <svg class="w-12 h-12 mx-auto text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"/>
+                        </svg>
+                    </div>
+                    <p class="text-lg font-medium mb-1">点击或拖拽上传文件</p>
+                    <p class="text-sm text-gray-500">支持逐飞示波器导出的 JSON 格式</p>
+                </div>
+            </section>
+
+            <div id="resultsSection" class="hidden space-y-6">
+                <!-- 数据质量 -->
+                <div class="glass-card p-5">
+                    <h2 class="text-lg font-semibold mb-4">数据质量评估</h2>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="text-center p-3 bg-white/5 rounded-lg">
+                            <div id="overallGrade" class="text-3xl font-bold mb-1">--</div>
+                            <div class="stat-label">评级</div>
+                        </div>
+                        <div class="p-3 bg-white/5 rounded-lg">
+                            <div class="stat-label mb-1">球面覆盖</div>
+                            <div id="coverageScore" class="font-mono text-sm mb-1">--%</div>
+                            <div class="quality-bar"><div id="coverageBar" class="quality-fill bg-cyan-400" style="width:0%"></div></div>
+                        </div>
+                        <div class="p-3 bg-white/5 rounded-lg">
+                            <div class="stat-label mb-1">数据量</div>
+                            <div id="dataScore" class="font-mono text-sm mb-1">--%</div>
+                            <div class="quality-bar"><div id="dataBar" class="quality-fill bg-emerald-400" style="width:0%"></div></div>
+                        </div>
+                        <div class="p-3 bg-white/5 rounded-lg">
+                            <div class="stat-label mb-1">校准效果</div>
+                            <div id="sphericalScore" class="font-mono text-sm mb-1">--%</div>
+                            <div class="quality-bar"><div id="sphericalBar" class="quality-fill bg-amber-400" style="width:0%"></div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 校准参数 -->
+                <div class="glass-card p-5">
+                    <h2 class="text-lg font-semibold mb-4">校准参数</h2>
+                    <div class="code-block relative">
+                        <button class="copy-btn" onclick="copyCode('fullCalibCode')">复制全部</button>
+                        <pre id="fullCalibCode" class="font-mono text-sm whitespace-pre-wrap"></pre>
+                    </div>
+                </div>
+
+                <!-- 可视化 -->
+                <div class="glass-card p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h2 class="text-lg font-semibold">数据分布</h2>
+                        <button id="toggleFitBtn" class="px-3 py-1 text-sm bg-white/5 hover:bg-white/10 rounded transition">
+                            显示椭球
+                        </button>
+                    </div>
+                    <canvas id="canvas3d" width="600" height="350" class="w-full"></canvas>
+                    <div class="grid grid-cols-2 gap-4 mt-4">
+                        <div>
+                            <p class="text-xs text-gray-500 mb-2">校准前</p>
+                            <canvas id="beforeCanvas" width="280" height="200" class="w-full rounded bg-black/30"></canvas>
+                        </div>
+                        <div>
+                            <p class="text-xs text-gray-500 mb-2">校准后</p>
+                            <canvas id="afterCanvas" width="280" height="200" class="w-full rounded bg-black/30"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 验证模式 -->
+        <div id="tab-verify" class="tab-content">
+            <section class="mb-6">
+                <div class="warning-card mb-4">
+                    <p class="text-sm text-gray-300">
+                        验证模式：上传<strong class="text-yellow-300">已校准</strong>的数据，检查校准效果
+                    </p>
+                </div>
+                
+                <div id="verifyDropZone" class="upload-zone p-8 text-center cursor-pointer mb-6">
+                    <input type="file" id="verifyFileInput" accept=".txt,.data,.json" class="hidden">
+                    <p class="text-lg font-medium mb-1">上传已校准的数据</p>
+                    <p class="text-sm text-gray-500">这是经过你的C代码处理后的数据</p>
+                </div>
+
+                <div id="verifyResults" class="hidden">
+                    <div class="glass-card p-5">
+                        <h2 class="text-lg font-semibold mb-4">验证结果</h2>
+                        <div id="verifyStatus" class="mb-4"></div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <canvas id="verifyCanvas" width="280" height="200" class="w-full rounded bg-black/30"></canvas>
+                            <div id="verifyMetrics" class="space-y-2"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <script>
+        // 全局状态 - 在DOM加载前初始化
+        let magData = { x: [], y: [], z: [], t: [] };
+        let calibrationResult = null;
+        let showEllipsoid = true;
+        let rotationX = 0.5, rotationY = 0.3, zoom = 1;
+        let isDragging = false, lastMouseX = 0, lastMouseY = 0;
+        let canvas3dInitialized = false;
+
+        // 工具函数
+        function showToast(message, isError = true) {
+            const existing = document.querySelector('.error-toast');
+            if (existing) existing.remove();
+            
+            const toast = document.createElement('div');
+            toast.className = 'error-toast';
+            toast.style.background = isError ? 'rgba(255, 107, 107, 0.9)' : 'rgba(0, 212, 170, 0.9)';
+            toast.textContent = message;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 4000);
+        }
+
+        // DOM 加载完成后绑定事件
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, initializing...');
+            
+            // 标签页切换
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+                    this.classList.add('active');
+                    document.getElementById('tab-' + this.dataset.tab).classList.add('active');
+                });
+            });
+
+            // 校准模式文件上传
+            const dropZone = document.getElementById('dropZone');
+            const fileInput = document.getElementById('fileInput');
+            
+            if (!dropZone || !fileInput) {
+                console.error('Drop zone or file input not found');
+                return;
+            }
+
+            dropZone.addEventListener('click', () => fileInput.click());
+            
+            dropZone.addEventListener('dragover', e => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+            
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+            
+            dropZone.addEventListener('drop', e => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+                const file = e.dataTransfer.files[0];
+                if (file) processFile(file);
+            });
+            
+            fileInput.addEventListener('change', e => {
+                const file = e.target.files[0];
+                if (file) processFile(file);
+            });
+
+            // 验证模式文件上传
+            const verifyDropZone = document.getElementById('verifyDropZone');
+            const verifyFileInput = document.getElementById('verifyFileInput');
+            
+            if (verifyDropZone && verifyFileInput) {
+                verifyDropZone.addEventListener('click', () => verifyFileInput.click());
+                
+                verifyDropZone.addEventListener('dragover', e => {
+                    e.preventDefault();
+                    verifyDropZone.classList.add('drag-over');
+                });
+                
+                verifyDropZone.addEventListener('dragleave', () => {
+                    verifyDropZone.classList.remove('drag-over');
+                });
+                
+                verifyDropZone.addEventListener('drop', e => {
+                    e.preventDefault();
+                    verifyDropZone.classList.remove('drag-over');
+                    const file = e.dataTransfer.files[0];
+                    if (file) verifyFile(file);
+                });
+                
+                verifyFileInput.addEventListener('change', e => {
+                    const file = e.target.files[0];
+                    if (file) verifyFile(file);
+                });
+            }
+
+            console.log('Event listeners initialized');
+        });
+
+        // 文件处理
+        function processFile(file) {
+            console.log('Processing file:', file.name);
+            
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    const content = e.target.result;
+                    console.log('File content length:', content.length);
+                    
+                    parseData(content);
+                    
+                    if (magData.x.length === 0) {
+                        throw new Error('未找到有效数据点');
+                    }
+                    
+                    console.log('Parsed data points:', magData.x.length);
+                    
+                    runCalibration();
+                    
+                    const resultsSection = document.getElementById('resultsSection');
+                    if (resultsSection) {
+                        resultsSection.classList.remove('hidden');
+                        initCanvas();
+                    }
+                    
+                    showToast('文件解析成功！', false);
+                    
+                } catch (err) {
+                    console.error('Parse error:', err);
+                    showToast('解析错误: ' + err.message);
+                }
+            };
+            
+            reader.onerror = () => {
+                showToast('文件读取失败');
+            };
+            
+            reader.readAsText(file);
+        }
+
+        function parseData(content) {
+            // 尝试解析JSON
+            let data;
+            try {
+                data = JSON.parse(content);
+            } catch (e) {
+                throw new Error('文件不是有效的JSON格式');
+            }
+
+            // 检查数据结构
+            if (!Array.isArray(data)) {
+                throw new Error('JSON格式错误：应为数组');
+            }
+
+            let chX = null, chY = null, chZ = null, chT = null;
+            
+            for (const channel of data) {
+                if (!channel || channel.Channel === undefined) continue;
+                
+                if (channel.Channel === 3) chX = channel.Points;
+                else if (channel.Channel === 4) chY = channel.Points;
+                else if (channel.Channel === 5) chZ = channel.Points;
+                else if (channel.Channel === 7) chT = channel.Points;
+            }
+
+            if (!chX || !chY || !chZ) {
+                throw new Error('未找到磁力计数据通道 (需要 Channel 3, 4, 5)');
+            }
+
+            if (!Array.isArray(chX) || !Array.isArray(chY) || !Array.isArray(chZ)) {
+                throw new Error('数据格式错误：Points应为数组');
+            }
+
+            magData.x = chX.filter(v => typeof v === 'number' && !isNaN(v));
+            magData.y = chY.filter(v => typeof v === 'number' && !isNaN(v));
+            magData.z = chZ.filter(v => typeof v === 'number' && !isNaN(v));
+            magData.t = chT || chX.map((_, i) => i);
+            
+            // 确保三个轴数据长度一致
+            const minLen = Math.min(magData.x.length, magData.y.length, magData.z.length);
+            magData.x = magData.x.slice(0, minLen);
+            magData.y = magData.y.slice(0, minLen);
+            magData.z = magData.z.slice(0, minLen);
+            magData.t = magData.t.slice(0, minLen);
+        }
+
+        // 椭球拟合算法
+        function fitEllipsoid(points) {
+            const n = points.length;
+            if (n < 10) throw new Error('数据点不足，至少需要10个点');
+
+            // 构建设计矩阵
+            const D = [];
+            for (let i = 0; i < n; i++) {
+                const [x, y, z] = points[i];
+                D.push([x*x, y*y, z*z, 2*x*y, 2*x*z, 2*y*z, 2*x, 2*y, 2*z, 1]);
+            }
+
+            // 求解最小特征向量
+            const DT = transpose(D);
+            const DTxD = multiply(DT, D);
+            
+            let v = Array(10).fill(0).map(() => Math.random() - 0.5);
+            normalize(v);
+            
+            for (let iter = 0; iter < 100; iter++) {
+                const newV = solveLinearSystem(DTxD, v);
+                if (!newV) break;
+                normalize(newV);
+                v = newV;
+            }
+
+            const [a, b, c, f, g, h, p, q, r, d] = v;
+            const A = [[a, f, g], [f, b, h], [g, h, c]];
+            const center = solveLinearSystem(A, [-p, -q, -r]);
+            
+            if (!center) {
+                return fitEllipsoidSimple(points);
+            }
+
+            const offset = d + a*center[0]**2 + b*center[1]**2 + c*center[2]**2
+                         + 2*f*center[0]*center[1] + 2*g*center[0]*center[2] + 2*h*center[1]*center[2]
+                         + 2*p*center[0] + 2*q*center[1] + 2*r*center[2];
+            
+            if (offset >= 0) {
+                return fitEllipsoidSimple(points);
+            }
+
+            const A_mat = [
+                [a/(-offset), f/(-offset), g/(-offset)],
+                [f/(-offset), b/(-offset), h/(-offset)],
+                [g/(-offset), h/(-offset), c/(-offset)]
+            ];
+
+            const eigen = eigenDecomposition3x3(A_mat);
+            const softIron = computeSoftIronMatrix(eigen);
+
+            return {
+                center,
+                softIron,
+                eigenvalues: eigen.values,
+                eigenvectors: eigen.vectors,
+                scale: Math.sqrt(-offset)
+            };
+        }
+
+        function fitEllipsoidSimple(points) {
+            const xs = points.map(p => p[0]);
+            const ys = points.map(p => p[1]);
+            const zs = points.map(p => p[2]);
+            
+            const minX = Math.min(...xs), maxX = Math.max(...xs);
+            const minY = Math.min(...ys), maxY = Math.max(...ys);
+            const minZ = Math.min(...zs), maxZ = Math.max(...zs);
+
+            const center = [(minX + maxX)/2, (minY + maxY)/2, (minZ + maxZ)/2];
+            const radiusX = Math.max(1, (maxX - minX)/2);
+            const radiusY = Math.max(1, (maxY - minY)/2);
+            const radiusZ = Math.max(1, (maxZ - minZ)/2);
+            const avgRadius = (radiusX + radiusY + radiusZ)/3;
+            
+            const softIron = [
+                [avgRadius/radiusX, 0, 0],
+                [0, avgRadius/radiusY, 0],
+                [0, 0, avgRadius/radiusZ]
+            ];
+
+            return {
+                center,
+                softIron,
+                eigenvalues: [1, 1, 1],
+                eigenvectors: [[1,0,0],[0,1,0],[0,0,1]],
+                scale: avgRadius
+            };
+        }
+
+        function computeSoftIronMatrix(eigen) {
+            const R = eigen.vectors;
+            const scale = eigen.values.map(v => 1/Math.sqrt(Math.max(1e-10, Math.abs(v))));
+            const avgScale = (scale[0] + scale[1] + scale[2])/3;
+            scale.forEach((_, i) => scale[i] /= avgScale);
+
+            const result = [[0,0,0],[0,0,0],[0,0,0]];
+            for (let i = 0; i < 3; i++) {
+                for (let j = 0; j < 3; j++) {
+                    for (let k = 0; k < 3; k++) {
+                        result[i][j] += R[k][i] * scale[k] * R[k][j];
+                    }
+                }
+            }
+            return result;
+        }
+
+        // 线性代数工具
+        function transpose(m) {
+            return m[0].map((_, j) => m.map(row => row[j]));
+        }
+
+        function multiply(a, b) {
+            return a.map((row, i) => b[0].map((_, j) => row.reduce((sum, _, k) => sum + a[i][k] * b[k][j], 0)));
+        }
+
+        function normalize(v) {
+            const len = Math.sqrt(v.reduce((s, x) => s + x*x, 0));
+            if (len > 1e-10) v.forEach((_, i) => v[i] /= len);
+        }
+
+        function solveLinearSystem(A, b) {
+            const n = A.length, m = A[0].length;
+            const aug = A.map((row, i) => [...row, b[i]]);
+            
+            for (let col = 0; col < Math.min(n, m); col++) {
+                let maxRow = col;
+                for (let row = col + 1; row < n; row++) {
+                    if (Math.abs(aug[row][col]) > Math.abs(aug[maxRow][col])) maxRow = row;
+                }
+                [aug[col], aug[maxRow]] = [aug[maxRow], aug[col]];
+                if (Math.abs(aug[col][col]) < 1e-10) continue;
+                
+                for (let row = col + 1; row < n; row++) {
+                    const factor = aug[row][col] / aug[col][col];
+                    for (let j = col; j <= m; j++) {
+                        aug[row][j] -= factor * aug[col][j];
+                    }
+                }
+            }
+            
+            const x = Array(m).fill(0);
+            for (let i = Math.min(n, m) - 1; i >= 0; i--) {
+                let sum = aug[i][m];
+                for (let j = i + 1; j < m; j++) sum -= aug[i][j] * x[j];
+                if (Math.abs(aug[i][i]) > 1e-10) x[i] = sum / aug[i][i];
+            }
+            return x;
+        }
+
+        function eigenDecomposition3x3(A) {
+            let V = [[1,0,0],[0,1,0],[0,0,1]];
+            let D = A.map(row => [...row]);
+
+            for (let iter = 0; iter < 50; iter++) {
+                let maxVal = 0, p = 0, q = 1;
+                for (let i = 0; i < 3; i++) {
+                    for (let j = i + 1; j < 3; j++) {
+                        if (Math.abs(D[i][j]) > maxVal) {
+                            maxVal = Math.abs(D[i][j]);
+                            p = i; q = j;
+                        }
+                    }
+                }
+                if (maxVal < 1e-10) break;
+
+                const theta = (D[q][q] - D[p][p]) / (2 * D[p][q]);
+                const t = Math.sign(theta) / (Math.abs(theta) + Math.sqrt(theta*theta + 1));
+                const c = 1/Math.sqrt(t*t + 1);
+                const s = t*c;
+
+                const G = [[1,0,0],[0,1,0],[0,0,1]];
+                G[p][p] = c; G[q][q] = c; G[p][q] = s; G[q][p] = -s;
+
+                const Dnew = [[0,0,0],[0,0,0],[0,0,0]];
+                const Vnew = [[0,0,0],[0,0,0],[0,0,0]];
+                
+                for (let i = 0; i < 3; i++) {
+                    for (let j = 0; j < 3; j++) {
+                        for (let k = 0; k < 3; k++) {
+                            for (let l = 0; l < 3; l++) {
+                                Dnew[i][j] += G[k][i] * D[k][l] * G[l][j];
+                            }
+                            Vnew[i][j] += V[i][k] * G[k][j];
+                        }
+                    }
+                }
+                D = Dnew;
+                V = Vnew;
+            }
+
+            return {
+                values: [D[0][0], D[1][1], D[2][2]],
+                vectors: V[0].map((_, i) => V.map(row => row[i]))
+            };
+        }
+
+        // 校准执行
+        function runCalibration() {
+            const points = magData.x.map((_, i) => [magData.x[i], magData.y[i], magData.z[i]]);
+            calibrationResult = fitEllipsoid(points);
+            updateCalibrationUI();
+        }
+
+        function updateCalibrationUI() {
+            if (!calibrationResult) return;
+            
+            const { center, softIron } = calibrationResult;
+            const n = magData.x.length;
+            
+            // 计算统计
+            let sumR = 0, sumR2 = 0;
+            const bins = 12;
+            const coverage = new Set();
+            
+            for (let i = 0; i < n; i++) {
+                const dx = magData.x[i] - center[0];
+                const dy = magData.y[i] - center[1];
+                const dz = magData.z[i] - center[2];
+                
+                const cx = softIron[0][0]*dx + softIron[0][1]*dy + softIron[0][2]*dz;
+                const cy = softIron[1][0]*dx + softIron[1][1]*dy + softIron[1][2]*dz;
+                const cz = softIron[2][0]*dx + softIron[2][1]*dy + softIron[2][2]*dz;
+                
+                const r = Math.sqrt(cx*cx + cy*cy + cz*cz);
+                sumR += r;
+                sumR2 += r*r;
+                
+                // Coverage
+                const rOrig = Math.sqrt(dx*dx + dy*dy + dz*dz);
+                if (rOrig > 1) {
+                    const theta = Math.floor((Math.atan2(dy, dx) + Math.PI) / (2*Math.PI) * bins);
+                    const phi = Math.floor(Math.acos(Math.max(-1, Math.min(1, dz/rOrig))) / Math.PI * bins);
+                    coverage.add(`${theta},${phi}`);
+                }
+            }
+            
+            const avgR = sumR / n;
+            const stdR = Math.sqrt(Math.max(0, sumR2/n - avgR*avgR));
+            const sphericalError = (stdR / Math.max(1e-10, avgR)) * 100;
+            const coverageRatio = coverage.size / (bins * bins);
+            const dataRatio = Math.min(1, n / 3000);
+            const sphericalImprovement = Math.max(0, 100 - sphericalError);
+            
+            // 计算总分
+            const overallScore = coverageRatio * 50 + dataRatio * 25 + sphericalImprovement * 0.25;
+            
+            let grade, gradeColor;
+            if (overallScore >= 80) { grade = 'A'; gradeColor = '#00d4aa'; }
+            else if (overallScore >= 60) { grade = 'B'; gradeColor = '#4ade80'; }
+            else if (overallScore >= 40) { grade = 'C'; gradeColor = '#ffd93d'; }
+            else { grade = 'D'; gradeColor = '#ff6b6b'; }
+            
+            // 更新UI
+            const gradeEl = document.getElementById('overallGrade');
+            if (gradeEl) {
+                gradeEl.textContent = grade;
+                gradeEl.style.color = gradeColor;
+            }
+            
+            const coverageScoreEl = document.getElementById('coverageScore');
+            const coverageBarEl = document.getElementById('coverageBar');
+            if (coverageScoreEl) coverageScoreEl.textContent = (coverageRatio * 100).toFixed(0) + '%';
+            if (coverageBarEl) coverageBarEl.style.width = (coverageRatio * 100) + '%';
+            
+            const dataScoreEl = document.getElementById('dataScore');
+            const dataBarEl = document.getElementById('dataBar');
+            if (dataScoreEl) dataScoreEl.textContent = (dataRatio * 100).toFixed(0) + '%';
+            if (dataBarEl) dataBarEl.style.width = (dataRatio * 100) + '%';
+            
+            const sphericalScoreEl = document.getElementById('sphericalScore');
+            const sphericalBarEl = document.getElementById('sphericalBar');
+            if (sphericalScoreEl) sphericalScoreEl.textContent = sphericalImprovement.toFixed(0) + '%';
+            if (sphericalBarEl) sphericalBarEl.style.width = sphericalImprovement + '%';
+
+            // 生成代码
+            generateCalibrationCode(center, softIron);
+        }
+
+        function generateCalibrationCode(center, softIron) {
+            const date = new Date().toLocaleDateString();
+            const code = `// 磁力计校准参数 - ${date}
+
+// 硬铁偏移：从原始读数中减去
+const float MAG_OFFSET_X = ${center[0].toFixed(2)}f;
+const float MAG_OFFSET_Y = ${center[1].toFixed(2)}f;
+const float MAG_OFFSET_Z = ${center[2].toFixed(2)}f;
+
+// 软铁校正矩阵
+const float MAG_SOFT_IRON[3][3] = {
+    {${softIron[0][0].toFixed(6)}f, ${softIron[0][1].toFixed(6)}f, ${softIron[0][2].toFixed(6)}f},
+    {${softIron[1][0].toFixed(6)}f, ${softIron[1][1].toFixed(6)}f, ${softIron[1][2].toFixed(6)}f},
+    {${softIron[2][0].toFixed(6)}f, ${softIron[2][1].toFixed(6)}f, ${softIron[2][2].toFixed(6)}f}
+};
+
+// 校准函数
+void mag_calibrate(float raw_x, float raw_y, float raw_z, 
+                   float *cal_x, float *cal_y, float *cal_z) {
+    float x = raw_x - MAG_OFFSET_X;
+    float y = raw_y - MAG_OFFSET_Y;
+    float z = raw_z - MAG_OFFSET_Z;
+    
+    *cal_x = MAG_SOFT_IRON[0][0]*x + MAG_SOFT_IRON[0][1]*y + MAG_SOFT_IRON[0][2]*z;
+    *cal_y = MAG_SOFT_IRON[1][0]*x + MAG_SOFT_IRON[1][1]*y + MAG_SOFT_IRON[1][2]*z;
+    *cal_z = MAG_SOFT_IRON[2][0]*x + MAG_SOFT_IRON[2][1]*y + MAG_SOFT_IRON[2][2]*z;
+}`;
+            
+            const codeEl = document.getElementById('fullCalibCode');
+            if (codeEl) codeEl.textContent = code;
+        }
+
+        function copyCode(elementId) {
+            const codeEl = document.getElementById(elementId);
+            if (!codeEl) return;
+            
+            navigator.clipboard.writeText(codeEl.textContent).then(() => {
+                showToast('已复制到剪贴板', false);
+            }).catch(() => {
+                showToast('复制失败');
+            });
+        }
+
+        // 验证模式
+        function verifyFile(file) {
+            const reader = new FileReader();
+            reader.onload = e => {
+                try {
+                    parseData(e.target.result);
+                    runVerification();
+                    const el = document.getElementById('verifyResults');
+                    if (el) el.classList.remove('hidden');
+                } catch (err) {
+                    showToast('解析错误: ' + err.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function runVerification() {
+            const n = magData.x.length;
+            const cx = magData.x.reduce((a,b) => a+b, 0) / n;
+            const cy = magData.y.reduce((a,b) => a+b, 0) / n;
+            const cz = magData.z.reduce((a,b) => a+b, 0) / n;
+            
+            let sumR = 0, sumR2 = 0;
+            for (let i = 0; i < n; i++) {
+                const r = Math.sqrt((magData.x[i]-cx)**2 + (magData.y[i]-cy)**2 + (magData.z[i]-cz)**2);
+                sumR += r;
+                sumR2 += r*r;
+            }
+            
+            const avgR = sumR / n;
+            const stdR = Math.sqrt(Math.max(0, sumR2/n - avgR*avgR));
+            const sphericalError = (stdR / avgR) * 100;
+            const centerOffset = Math.sqrt(cx*cx + cy*cy + cz*cz);
+            
+            const isGood = sphericalError < 10 && centerOffset < avgR * 0.1;
+            
+            const statusEl = document.getElementById('verifyStatus');
+            if (statusEl) {
+                if (isGood) {
+                    statusEl.innerHTML = '<div class="p-3 bg-green-500/10 border border-green-500/30 rounded text-green-400">校准效果良好！数据呈球形分布</div>';
+                } else {
+                    statusEl.innerHTML = '<div class="p-3 bg-yellow-500/10 border border-yellow-500/30 rounded text-yellow-400">校准效果一般，请检查参数应用方式</div>';
+                }
+            }
+
+            const metricsEl = document.getElementById('verifyMetrics');
+            if (metricsEl) {
+                metricsEl.innerHTML = `
+                    <div class="p-2 bg-white/5 rounded text-sm"><span class="text-gray-400">中心偏移：</span>${centerOffset.toFixed(1)}</div>
+                    <div class="p-2 bg-white/5 rounded text-sm"><span class="text-gray-400">球度误差：</span>${sphericalError.toFixed(2)}%</div>
+                    <div class="p-2 bg-white/5 rounded text-sm"><span class="text-gray-400">平均半径：</span>${avgR.toFixed(1)}</div>
+                `;
+            }
+
+            // 绘制验证图
+            const canvas = document.getElementById('verifyCanvas');
+            if (!canvas) return;
+            
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            
+            ctx.fillStyle = 'rgba(0,0,0,0.5)';
+            ctx.fillRect(0, 0, w, h);
+            
+            let maxVal = 0;
+            for (let i = 0; i < n; i++) {
+                maxVal = Math.max(maxVal, Math.abs(magData.x[i]), Math.abs(magData.y[i]));
+            }
+            
+            const scale = Math.min(w, h) * 0.4 / maxVal;
+            const centerX = w/2, centerY = h/2;
+            
+            for (let i = 0; i < n; i += Math.max(1, Math.floor(n/300))) {
+                const px = centerX + magData.x[i] * scale;
+                const py = centerY - magData.y[i] * scale;
+                ctx.fillStyle = 'rgba(0, 212, 170, 0.6)';
+                ctx.beginPath();
+                ctx.arc(px, py, 2, 0, Math.PI*2);
+                ctx.fill();
+            }
+        }
+
+        // Canvas 初始化
+        function initCanvas() {
+            if (canvas3dInitialized) return;
+            
+            const canvas = document.getElementById('canvas3d');
+            if (!canvas) return;
+            
+            canvas.addEventListener('mousedown', e => {
+                isDragging = true;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+            });
+
+            canvas.addEventListener('mousemove', e => {
+                if (!isDragging) return;
+                rotationY += (e.clientX - lastMouseX) * 0.01;
+                rotationX += (e.clientY - lastMouseY) * 0.01;
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+                render3D();
+            });
+
+            canvas.addEventListener('mouseup', () => isDragging = false);
+            canvas.addEventListener('mouseleave', () => isDragging = false);
+
+            canvas.addEventListener('wheel', e => {
+                e.preventDefault();
+                zoom *= e.deltaY > 0 ? 1.1 : 0.9;
+                zoom = Math.max(0.2, Math.min(5, zoom));
+                render3D();
+            });
+
+            const toggleBtn = document.getElementById('toggleFitBtn');
+            if (toggleBtn) {
+                toggleBtn.addEventListener('click', () => {
+                    showEllipsoid = !showEllipsoid;
+                    render3D();
+                });
+            }
+
+            canvas3dInitialized = true;
+            render3D();
+            renderBeforeAfter();
+        }
+
+        function render3D() {
+            const canvas = document.getElementById('canvas3d');
+            if (!canvas || !calibrationResult) return;
+            
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width, h = canvas.height;
+            
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.95)';
+            ctx.fillRect(0, 0, w, h);
+            
+            const maxVal = Math.max(
+                ...magData.x.map(Math.abs),
+                ...magData.y.map(Math.abs),
+                ...magData.z.map(Math.abs)
+            );
+            const scale = Math.min(w, h) * 0.35 * zoom / maxVal;
+            const cx = w/2, cy = h/2;
+            
+            const cosX = Math.cos(rotationX), sinX = Math.sin(rotationX);
+            const cosY = Math.cos(rotationY), sinY = Math.sin(rotationY);
+            
+            function project(x, y, z) {
+                const x1 = x*cosY - z*sinY;
+                const z1 = x*sinY + z*cosY;
+                const y2 = y*cosX - z1*sinX;
+                return { x: cx + x1*scale, y: cy - y2*scale };
+            }
+            
+            // 坐标轴
+            const axisLen = maxVal * 0.7;
+            const axes = [
+                { color: 'rgba(255,100,100,0.4', points: [[-axisLen,0,0], [axisLen,0,0]] },
+                { color: 'rgba(100,255,100,0.4', points: [[0,-axisLen,0], [0,axisLen,0]] },
+                { color: 'rgba(100,100,255,0.4', points: [[0,0,-axisLen], [0,0,axisLen]] }
+            ];
+            
+            axes.forEach(axis => {
+                const [s, e] = axis.points;
+                const p1 = project(...s), p2 = project(...e);
+                ctx.strokeStyle = axis.color;
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            });
+            
+            // 椭球
+            if (showEllipsoid && calibrationResult.eigenvalues) {
+                drawEllipsoid(ctx, project, scale);
+            }
+            
+            // 数据点
+            const step = Math.max(1, Math.floor(magData.x.length / 1500));
+            for (let i = 0; i < magData.x.length; i += step) {
+                const p = project(magData.x[i], magData.y[i], magData.z[i]);
+                ctx.fillStyle = 'rgba(0, 212, 170, 0.5)';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 2, 0, Math.PI*2);
+                ctx.fill();
+            }
+            
+            // 中心点
+            const centerP = project(...calibrationResult.center);
+            ctx.fillStyle = '#ffd93d';
+            ctx.beginPath();
+            ctx.arc(centerP.x, centerP.y, 5, 0, Math.PI*2);
+            ctx.fill();
+        }
+
+        function drawEllipsoid(ctx, project, scale) {
+            const { center, eigenvalues, eigenvectors } = calibrationResult;
+            const axes = eigenvalues.map(v => 1/Math.sqrt(Math.max(1e-10, Math.abs(v))));
+            const maxAxis = Math.max(...axes);
+            const normalized = axes.map(a => a/maxAxis * 180);
+            
+            ctx.strokeStyle = 'rgba(0, 212, 170, 0.2)';
+            ctx.lineWidth = 1;
+            
+            for (let phi = 0; phi < Math.PI; phi += Math.PI/5) {
+                ctx.beginPath();
+                for (let theta = 0; theta <= 2*Math.PI; theta += 0.15) {
+                    const x = normalized[0]*Math.sin(phi)*Math.cos(theta);
+                    const y = normalized[1]*Math.sin(phi)*Math.sin(theta);
+                    const z = normalized[2]*Math.cos(phi);
+                    
+                    const tx = eigenvectors[0][0]*x + eigenvectors[1][0]*y + eigenvectors[2][0]*z;
+                    const ty = eigenvectors[0][1]*x + eigenvectors[1][1]*y + eigenvectors[2][1]*z;
+                    const tz = eigenvectors[0][2]*x + eigenvectors[1][2]*y + eigenvectors[2][2]*z;
+                    
+                    const p = project(center[0]+tx, center[1]+ty, center[2]+tz);
+                    theta === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
+                }
+                ctx.stroke();
+            }
+        }
+
+        function renderBeforeAfter() {
+            if (!calibrationResult) return;
+            
+            const { center, softIron } = calibrationResult;
+            
+            ['beforeCanvas', 'afterCanvas'].forEach((id, idx) => {
+                const canvas = document.getElementById(id);
+                if (!canvas) return;
+                
+                const ctx = canvas.getContext('2d');
+                const w = canvas.width, h = canvas.height;
+                
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.fillRect(0, 0, w, h);
+                
+                let maxVal = 0;
+                const n = magData.x.length;
+                
+                for (let i = 0; i < n; i++) {
+                    let x = magData.x[i], y = magData.y[i];
+                    if (idx === 1) {
+                        const dx = x - center[0], dy = magData.y[i] - center[1], dz = magData.z[i] - center[2];
+                        x = softIron[0][0]*dx + softIron[0][1]*dy + softIron[0][2]*dz;
+                        y = softIron[1][0]*dx + softIron[1][1]*dy + softIron[1][2]*dz;
+                    }
+                    maxVal = Math.max(maxVal, Math.abs(x), Math.abs(y));
+                }
+                
+                const scale = Math.min(w, h) * 0.38 / maxVal;
+                const cx = w/2, cy = h/2;
+                
+                const step = Math.max(1, Math.floor(n/400));
+                for (let i = 0; i < n; i += step) {
+                    let x = magData.x[i], y = magData.y[i];
+                    if (idx === 1) {
+                        const dx = x - center[0], dy = magData.y[i] - center[1], dz = magData.z[i] - center[2];
+                        x = softIron[0][0]*dx + softIron[0][1]*dy + softIron[0][2]*dz;
+                        y = softIron[1][0]*dx + softIron[1][1]*dy + softIron[1][2]*dz;
+                    }
+                    
+                    ctx.fillStyle = idx === 0 ? 'rgba(255,100,100,0.5)' : 'rgba(0,212,170,0.6)';
+                    ctx.beginPath();
+                    ctx.arc(cx + x*scale, cy - y*scale, 2, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            });
+        }
+    </script>
+</body>
+</html>
