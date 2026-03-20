@@ -95,9 +95,9 @@ extern float current_actual_speed;
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
 //    策略：一边不动，一边缩短 (Drop-Leg Strategy)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      0.0f   // [响应力度] 决定对抗倾斜的猛烈程度
+#define ROLL_KP      40.0f   // [响应力度] 决定对抗倾斜的猛烈程度
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      0.0f    // [阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      6.0f    // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
 #define ROLL_MAX_O   1000.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
@@ -259,7 +259,7 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
 float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)(电机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
-float Roll_Balance_Control(float actual_roll);//横滚平衡环控制
+float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
 
 // 辅助宏：取绝对值
 #define MY_ABS(x) ((x) > 0 ? (x) : -(x))

@@ -602,7 +602,7 @@ float Gyro_Loop_Control(float angle_loop_output, float actual_gyro)
  * @return float 计算出的单侧缩短量 (PWM值, 总是 >= 0)
  * @note 此函数应在 5ms 定时器中调用
  */
-float Roll_Balance_Control(float actual_roll)
+float Roll_Balance_Control(float actual_roll,float target_roll)
 {
     // 0. 安全检查
     if (roll_balance_enable == 0) {
@@ -612,7 +612,7 @@ float Roll_Balance_Control(float actual_roll)
 
     // 1. 计算误差 (目标 - 实际)
     // 目标是 0 度
-    float error = 0.0f - actual_roll; 
+    float error = target_roll - actual_roll; 
 
     // 2. 计算 PD 输出 (标准 PID 公式)
     // 注意：这里计算的是一个“总矫正力”，正负代表方向
