@@ -82,20 +82,20 @@ static void PID_Dynamic_Update_By_Height(float current_height) {
 
     // 线性插值计算当前应该使用的 PID 参数
     // 角度环
-    pid_angle.kp = 20.0f + ratio * (ANG_KP_HIGH - 20.0f);
-    pid_angle.kd = 8.0f  + ratio * (ANG_KD_HIGH - 8.0f);
-    pid_angle.compensation = 4.1f + ratio * (ANG_MECH_ZERO_HIGH - 4.1f);
+    pid_angle.kp = ANG_KP + ratio * (ANG_KP_HIGH - ANG_KP);
+    pid_angle.kd = ANG_KD + ratio * (ANG_KD_HIGH - ANG_KD);
+    pid_angle.compensation = ANG_MECH_ZERO + ratio * (ANG_MECH_ZERO_HIGH - ANG_MECH_ZERO);
     
     // 角速度环
-    pid_gyro.kp = -18.0f + ratio * (GYR_KP_HIGH - (-18.0f));
+    pid_gyro.kp = GYR_KP + ratio * (GYR_KP_HIGH - GYR_KP);
 
     // 舵机速度环
-    pid_servo_speed.kp = -6.5f + ratio * (SERVO_SPEED_KP_HIGH - (-6.5f));
-    pid_servo_speed.ki = -0.03f + ratio * (SERVO_SPEED_KI_HIGH - (-0.03f));
+    pid_servo_speed.kp = SERVO_SPEED_KP + ratio * (SERVO_SPEED_KP_HIGH - SERVO_SPEED_KP);
+    pid_servo_speed.ki = SERVO_SPEED_KI + ratio * (SERVO_SPEED_KI_HIGH - SERVO_SPEED_KI);
 
     // 转向环
-    pid_turn_angle.kp = -12.0f + ratio * (TURN_ANG_KP_HIGH - (-12.0f));
-    pid_turn_gyro.kp  = -3.0f  + ratio * (TURN_GYR_KP_HIGH - (-3.0f));
+    pid_turn_angle.kp = TURN_ANG_KP + ratio * (TURN_ANG_KP_HIGH - TURN_ANG_KP);
+    pid_turn_gyro.kp  = TURN_GYR_KP + ratio * (TURN_GYR_KP_HIGH - TURN_GYR_KP);
 }
 
 /**
