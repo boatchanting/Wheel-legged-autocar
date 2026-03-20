@@ -9,6 +9,7 @@
 extern volatile int16 g_target_pwm_high;      // 目标高度分量
 extern volatile int16 g_target_pwm_speed_adj; // 目标速度调整分量
 extern volatile int16 g_target_pwm_angle_adj; // 目标转向/姿态调整分量
+extern volatile int16 g_target_pwm_roll_adj; // 目标横滚调整分量
 extern int32 current_duty_lf, current_duty_rf, current_duty_rr, current_duty_lr; // 当前实际占空比 (用于斜率限制计算)
 /**
  * @brief 初始化舵机执行器的内部状态

@@ -109,7 +109,10 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     if (loop_counter % 10 == 0) {  // 10ms 一次
         if(g_motor_enable){NavReplay_Process();} //复现控制
     }
-    
+
+    if (loop_counter % 20 == 0) {  // 20ms 一次
+        if(g_motor_enable){Bridge_Test_Smooth_PID();} //复现控制
+    };//【测试】抬高双腿
 
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
@@ -296,6 +299,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 参数2: now_gyro (当前实际角速度)
     // 返回: gyro_loop_out (最终PWM)
     gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
+
+    // 6.rolling平衡环(5ms一次)
+    if (loop_counter % 5 == 0){
+        Roll_Balance_Control(euler_angle.roll);
+    }
 
 
     // ==========================================================

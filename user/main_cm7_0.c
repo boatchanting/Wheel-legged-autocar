@@ -257,7 +257,16 @@ gnss_init(TAU1201);//gnss导航初始化
     disp_y += 16;
 #endif
 
-
+//按钮初始化
+// P20_0: 开始录制
+//exti_init(P20_0, EXTI_TRIGGER_RISING); 
+// P20_1: 停止录制
+//exti_init(P20_1, EXTI_TRIGGER_RISING); 
+// P20_2: 开始复现
+//exti_init(P20_2, EXTI_TRIGGER_RISING);
+// P20_3: 停止复现
+//exti_init(P20_3, EXTI_TRIGGER_RISING);
+Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
