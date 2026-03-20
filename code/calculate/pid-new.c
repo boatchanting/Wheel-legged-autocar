@@ -383,9 +383,10 @@ static float servo_speed_prelast = 0.0f;
  * @brief 舵机速度闭环控制器 (移植并使用 PID_Param_t 结构)
  * @param target_speed 目标速度
  * @param actual_speed 实际速度 (来自编码器)
+ * @param actual_angle 当前姿态角度 (来自IMU)
  * @return 姿态调整量 (例如，需要前倾/后仰的角度)
  */
-float Servo_Speed_Control(float target_speed, float actual_speed)
+float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle)
 {
     // 1. 输入滤波
     float speed_now = actual_speed * 0.6f + servo_speed_last * 0.3f + servo_speed_prelast * 0.1f;
@@ -414,7 +415,13 @@ float Servo_Speed_Control(float target_speed, float actual_speed)
 
     // 5. 位置式 PID 计算
     // 积分项 & 积分限幅
-    pid_servo_speed.error_integral += pid_servo_speed.error;
+    // 只有在接近机械零点的情况下，才使用积分项，修复起来的时候开始积分的问题
+    if (fabsf(actual_angle-ANG_MECH_ZERO) < 2.0f) {
+        pid_servo_speed.error_integral += pid_servo_speed.error;
+    }
+    else{
+        pid_servo_speed.error_integral = 0.0f;
+    }
     pid_servo_speed.error_integral = Float_Constrain(pid_servo_speed.error_integral, -pid_servo_speed.max_integral, pid_servo_speed.max_integral);
 
     // PID输出计算

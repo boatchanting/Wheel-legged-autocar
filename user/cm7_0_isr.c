@@ -130,7 +130,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 
             // 2.3 计算目标速度调整分量
-            float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
+            float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed,euler_angle.pitch);
             g_target_pwm_speed_adj = (int16)duty_adjustment;
         }
     }
