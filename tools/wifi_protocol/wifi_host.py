@@ -22,8 +22,9 @@ MAX_CHART_POINTS = 5000     # 前端图表保留的最大点数
 # 2. STRUCT_FMT 修正为 <IffffHBBBBBBHHHHHHddbbffBfBf
 #    差异在于：时间+状态共6个u8(BBBBBB)，整型经纬度共6个u16(HHHHHH)
 
+CMD_FIXED_PACKET = 0x01
+CMD_CUSTOM_PACKET = 0x11
 PAYLOAD_SIZE = 76
-FRAME_SIZE = PAYLOAD_SIZE + 6 
 
 # Python struct 格式化字符串 (严格对应 C 语言发送顺序)
 # < : 小端模式
@@ -69,6 +70,20 @@ FIELD_NAMES = [
     'sat_used', 'height'
 ]
 
+VALUE_FMT_MAP = {
+    0: ('<B', 1), 1: ('<b', 1), 2: ('<H', 2), 3: ('<h', 2),
+    4: ('<I', 4), 5: ('<i', 4), 6: ('<f', 4), 7: ('<d', 8)
+}
+
+CHANNEL_NAME_MAP = {
+    1: 'loop', 2: 'nav_x', 3: 'nav_y', 4: 'vx_body', 5: 'vy_body',
+    6: 'year', 7: 'month', 8: 'day', 9: 'hour', 10: 'minute', 11: 'second',
+    12: 'state', 13: 'lat_deg', 14: 'lat_cent', 15: 'lat_sec',
+    16: 'lon_deg', 17: 'lon_cent', 18: 'lon_sec', 19: 'latitude', 20: 'longitude',
+    21: 'ns', 22: 'ew', 23: 'speed', 24: 'direction', 25: 'ant_state',
+    26: 'ant_direction', 27: 'sat_used', 28: 'height'
+}
+
 # -------------------------------------------------------------------------
 # 全局数据存储
 # -------------------------------------------------------------------------
@@ -105,37 +120,30 @@ def tcp_server_thread():
                 
                 raw_buffer.extend(chunk)
                 
-                # 处理粘包
-                while len(raw_buffer) >= FRAME_SIZE:
+                # 处理粘包 + 变长帧
+                while True:
+                    if len(raw_buffer) < 6:
+                        break
                     # 1. 寻找帧头 0x5A 0xA5
                     if raw_buffer[0] != 0x5A or raw_buffer[1] != 0xA5:
                         del raw_buffer[0]
                         continue
-                    
-                    # 2. 检查长度 (当前 index 3 是长度)
-                    # 容错：如果 C 代码发送的长度和 Python 定义的不一致，打印警告但尝试解析
+
                     payload_len = raw_buffer[3]
-                    
-                    if payload_len != PAYLOAD_SIZE:
-                        # 如果长度不对，通常意味着协议版本不匹配，或者帧头找错了
-                        # 这里简单处理：如果长度偏差太大，丢弃；如果刚好是 68，继续
-                        # 为了调试，我们打印一下
-                        # print(f"Len mismatch: {payload_len} vs {PAYLOAD_SIZE}") 
-                        pass
+                    frame_size = payload_len + 6
+                    if len(raw_buffer) < frame_size:
+                        break
 
                     # 3. 校验和
-                    calc_sum = sum(raw_buffer[0 : FRAME_SIZE-2]) & 0xFF
-                    recv_sum = raw_buffer[FRAME_SIZE-2]
-                    
-                    if calc_sum == recv_sum and raw_buffer[FRAME_SIZE-1] == 0xED:
-                        # 提取 Payload
-                        # 注意：这里我们强制按照 Python 定义的 PAYLOAD_SIZE 读取
-                        # 如果 C 发送的长度字段是 69 但实际只有 68，这里可能会出问题
-                        # 但我们假设 C 代码也是正确的 68
-                        payload = raw_buffer[4 : 4+PAYLOAD_SIZE]
-                        parse_and_store(payload)
+                    frame = raw_buffer[:frame_size]
+                    calc_sum = sum(frame[0 : frame_size-2]) & 0xFF
+                    recv_sum = frame[frame_size-2]
+
+                    if calc_sum == recv_sum and frame[frame_size-1] == 0xED:
+                        payload = frame[4 : 4+payload_len]
+                        parse_and_store(frame[2], payload)
                         # 移除已处理的帧
-                        del raw_buffer[0:FRAME_SIZE]
+                        del raw_buffer[0:frame_size]
                     else:
                         # print("Checksum error")
                         del raw_buffer[0]
@@ -144,16 +152,41 @@ def tcp_server_thread():
             print(f"[TCP] Connection error: {e}")
             time.sleep(1)
 
-def parse_and_store(payload_bytes):
+def parse_and_store(cmd, payload_bytes):
     try:
-        unpacked = struct.unpack(STRUCT_FMT, payload_bytes)
-        
-        # 将解包的 tuple 转换为字典
-        data_dict = dict(zip(FIELD_NAMES, unpacked))
-        
-        # 拼接时间字符串
-        time_str = f"{data_dict['hour']:02d}:{data_dict['minute']:02d}:{data_dict['second']:02d}"
-        data_dict['time_str'] = time_str
+        if cmd == CMD_FIXED_PACKET:
+            unpacked = struct.unpack(STRUCT_FMT, payload_bytes)
+            data_dict = dict(zip(FIELD_NAMES, unpacked))
+            time_str = f"{data_dict['hour']:02d}:{data_dict['minute']:02d}:{data_dict['second']:02d}"
+            data_dict['time_str'] = time_str
+            data_dict['cmd'] = cmd
+            data_dict['profile_id'] = -1
+        elif cmd == CMD_CUSTOM_PACKET:
+            data_dict = {'cmd': cmd}
+            if len(payload_bytes) < 3:
+                return
+            data_dict['profile_id'] = payload_bytes[0]
+            data_dict['seq'] = payload_bytes[1]
+            ch_count = payload_bytes[2]
+            data_dict['ch_count'] = ch_count
+            pos = 3
+            parsed = 0
+            while pos + 2 <= len(payload_bytes) and parsed < ch_count:
+                ch_id = payload_bytes[pos]
+                val_type = payload_bytes[pos + 1]
+                pos += 2
+                fmt_info = VALUE_FMT_MAP.get(val_type)
+                if fmt_info is None:
+                    break
+                fmt, size = fmt_info
+                if pos + size > len(payload_bytes):
+                    break
+                value = struct.unpack(fmt, payload_bytes[pos:pos + size])[0]
+                pos += size
+                parsed += 1
+                data_dict[CHANNEL_NAME_MAP.get(ch_id, f'ch_{ch_id}')] = value
+        else:
+            return
 
         with data_lock:
             all_history_data.append(data_dict)
