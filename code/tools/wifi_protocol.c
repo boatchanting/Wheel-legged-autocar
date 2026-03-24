@@ -5,6 +5,7 @@
 // ---------------------------------------------------------
 static uint8_t tx_buf[WIFI_TX_BUFFER_SIZE];
 static uint16_t idx = 0; // 当前缓冲区的写入位置索引
+static uint8_t custom_seq = 0;
 
 // ---------------------------------------------------------
 // 辅助序列化函数 (确保小端模式传输，且无填充)
@@ -28,8 +29,13 @@ static void write_u16(uint16_t val) {
     }
 }
 
+// 写入 2 字节 (int16)
+static void write_i16(int16_t val) {
+    write_u16((uint16_t)val);
+}
+
 // 写入 4 字节 (uint32 或 float)
-static void write_u32_or_float(void *val_ptr) {
+static void write_u32_or_float(const void *val_ptr) {
     if (idx + 4 <= WIFI_TX_BUFFER_SIZE) {
         uint8_t *p = (uint8_t *)val_ptr;
         // ARM Cortex-M 通常是小端模式，直接拷贝即可
@@ -41,14 +47,261 @@ static void write_u32_or_float(void *val_ptr) {
     }
 }
 
+// 写入 4 字节 (int32)
+static void write_i32(int32_t val) {
+    write_u32_or_float(&val);
+}
+
 // 写入 8 字节 (double) - 关键函数
-static void write_double(double *val_ptr) {
+static void write_double(const double *val_ptr) {
     if (idx + 8 <= WIFI_TX_BUFFER_SIZE) {
         uint8_t *p = (uint8_t *)val_ptr;
         for (int i = 0; i < 8; i++) {
             tx_buf[idx++] = p[i];
         }
     }
+}
+
+static uint8_t wifi_type_size(wifi_value_type_t type) {
+    switch (type) {
+        case WIFI_VAL_U8:
+        case WIFI_VAL_I8:
+            return 1;
+        case WIFI_VAL_U16:
+        case WIFI_VAL_I16:
+            return 2;
+        case WIFI_VAL_U32:
+        case WIFI_VAL_I32:
+        case WIFI_VAL_FLOAT:
+            return 4;
+        case WIFI_VAL_DOUBLE:
+            return 8;
+        default:
+            return 0;
+    }
+}
+
+typedef struct {
+    uint8_t profile_id;
+    uint8_t channel_count;
+    wifi_channel_config_t channels[WIFI_CUSTOM_MAX_CHANNELS];
+} wifi_profile_runtime_t;
+
+static const wifi_channel_config_t profile_full_precision[] = {
+    {WIFI_CH_LOOP_COUNTER, WIFI_VAL_U32},
+    {WIFI_CH_NAV_X, WIFI_VAL_FLOAT},
+    {WIFI_CH_NAV_Y, WIFI_VAL_FLOAT},
+    {WIFI_CH_NAV_VX_BODY, WIFI_VAL_FLOAT},
+    {WIFI_CH_NAV_VY_BODY, WIFI_VAL_FLOAT},
+    {WIFI_CH_GNSS_YEAR, WIFI_VAL_U16},
+    {WIFI_CH_GNSS_MONTH, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_DAY, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_HOUR, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_MINUTE, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_SECOND, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_STATE, WIFI_VAL_U8},
+    {WIFI_CH_LAT_DOUBLE, WIFI_VAL_DOUBLE},
+    {WIFI_CH_LON_DOUBLE, WIFI_VAL_DOUBLE},
+    {WIFI_CH_SPEED, WIFI_VAL_FLOAT},
+    {WIFI_CH_DIRECTION, WIFI_VAL_FLOAT},
+    {WIFI_CH_SAT_USED, WIFI_VAL_U8},
+    {WIFI_CH_HEIGHT, WIFI_VAL_FLOAT},
+};
+
+static const wifi_channel_config_t profile_motion[] = {
+    {WIFI_CH_LOOP_COUNTER, WIFI_VAL_U32},
+    {WIFI_CH_NAV_X, WIFI_VAL_FLOAT},
+    {WIFI_CH_NAV_Y, WIFI_VAL_FLOAT},
+    {WIFI_CH_NAV_VX_BODY, WIFI_VAL_FLOAT},
+    {WIFI_CH_NAV_VY_BODY, WIFI_VAL_FLOAT},
+    {WIFI_CH_SPEED, WIFI_VAL_FLOAT},
+    {WIFI_CH_DIRECTION, WIFI_VAL_FLOAT},
+    {WIFI_CH_HEIGHT, WIFI_VAL_FLOAT},
+    {WIFI_CH_LAT_DOUBLE, WIFI_VAL_DOUBLE},
+    {WIFI_CH_LON_DOUBLE, WIFI_VAL_DOUBLE},
+};
+
+static const wifi_channel_config_t profile_gnss_diag[] = {
+    {WIFI_CH_GNSS_YEAR, WIFI_VAL_U16},
+    {WIFI_CH_GNSS_MONTH, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_DAY, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_HOUR, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_MINUTE, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_SECOND, WIFI_VAL_U8},
+    {WIFI_CH_GNSS_STATE, WIFI_VAL_U8},
+    {WIFI_CH_LAT_DEG, WIFI_VAL_U16},
+    {WIFI_CH_LAT_CENT, WIFI_VAL_U16},
+    {WIFI_CH_LAT_SEC, WIFI_VAL_U16},
+    {WIFI_CH_LON_DEG, WIFI_VAL_U16},
+    {WIFI_CH_LON_CENT, WIFI_VAL_U16},
+    {WIFI_CH_LON_SEC, WIFI_VAL_U16},
+    {WIFI_CH_LAT_DOUBLE, WIFI_VAL_DOUBLE},
+    {WIFI_CH_LON_DOUBLE, WIFI_VAL_DOUBLE},
+    {WIFI_CH_NS, WIFI_VAL_I8},
+    {WIFI_CH_EW, WIFI_VAL_I8},
+    {WIFI_CH_ANT_STATE, WIFI_VAL_U8},
+    {WIFI_CH_ANT_DIRECTION, WIFI_VAL_FLOAT},
+    {WIFI_CH_SAT_USED, WIFI_VAL_U8},
+};
+
+static wifi_profile_runtime_t active_profile = {
+    .profile_id = 0,
+    .channel_count = sizeof(profile_full_precision) / sizeof(profile_full_precision[0]),
+};
+static uint8_t profile_inited = 0;
+
+static void wifi_profile_copy(const wifi_channel_config_t *src, uint8_t count) {
+    if (count > WIFI_CUSTOM_MAX_CHANNELS) {
+        count = WIFI_CUSTOM_MAX_CHANNELS;
+    }
+    active_profile.channel_count = count;
+    for (uint8_t i = 0; i < count; i++) {
+        active_profile.channels[i] = src[i];
+    }
+}
+
+static void wifi_profile_ensure_init(void) {
+    if (!profile_inited) {
+        wifi_profile_copy(profile_full_precision, sizeof(profile_full_precision) / sizeof(profile_full_precision[0]));
+        profile_inited = 1;
+    }
+}
+
+typedef union {
+    uint8_t u8;
+    int8_t i8;
+    uint16_t u16;
+    int16_t i16;
+    uint32_t u32;
+    int32_t i32;
+    float f32;
+    double f64;
+} wifi_value_union_t;
+
+static uint8_t wifi_get_channel_value(uint8_t channel_id, wifi_value_union_t *out_val) {
+    switch (channel_id) {
+        case WIFI_CH_LOOP_COUNTER: out_val->u32 = loop_counter; return 1;
+        case WIFI_CH_NAV_X: out_val->f32 = inertial_nav.x; return 1;
+        case WIFI_CH_NAV_Y: out_val->f32 = inertial_nav.y; return 1;
+        case WIFI_CH_NAV_VX_BODY: out_val->f32 = inertial_nav.vx_body; return 1;
+        case WIFI_CH_NAV_VY_BODY: out_val->f32 = inertial_nav.vy_body; return 1;
+        case WIFI_CH_GNSS_YEAR: out_val->u16 = gnss.time.year; return 1;
+        case WIFI_CH_GNSS_MONTH: out_val->u8 = gnss.time.month; return 1;
+        case WIFI_CH_GNSS_DAY: out_val->u8 = gnss.time.day; return 1;
+        case WIFI_CH_GNSS_HOUR: out_val->u8 = gnss.time.hour; return 1;
+        case WIFI_CH_GNSS_MINUTE: out_val->u8 = gnss.time.minute; return 1;
+        case WIFI_CH_GNSS_SECOND: out_val->u8 = gnss.time.second; return 1;
+        case WIFI_CH_GNSS_STATE: out_val->u8 = gnss.state; return 1;
+        case WIFI_CH_LAT_DEG: out_val->u16 = gnss.latitude_degree; return 1;
+        case WIFI_CH_LAT_CENT: out_val->u16 = gnss.latitude_cent; return 1;
+        case WIFI_CH_LAT_SEC: out_val->u16 = gnss.latitude_second; return 1;
+        case WIFI_CH_LON_DEG: out_val->u16 = gnss.longitude_degree; return 1;
+        case WIFI_CH_LON_CENT: out_val->u16 = gnss.longitude_cent; return 1;
+        case WIFI_CH_LON_SEC: out_val->u16 = gnss.longitude_second; return 1;
+        case WIFI_CH_LAT_DOUBLE: out_val->f64 = gnss.latitude; return 1;
+        case WIFI_CH_LON_DOUBLE: out_val->f64 = gnss.longitude; return 1;
+        case WIFI_CH_NS: out_val->i8 = gnss.ns; return 1;
+        case WIFI_CH_EW: out_val->i8 = gnss.ew; return 1;
+        case WIFI_CH_SPEED: out_val->f32 = gnss.speed; return 1;
+        case WIFI_CH_DIRECTION: out_val->f32 = gnss.direction; return 1;
+        case WIFI_CH_ANT_STATE: out_val->u8 = gnss.antenna_direction_state; return 1;
+        case WIFI_CH_ANT_DIRECTION: out_val->f32 = gnss.antenna_direction; return 1;
+        case WIFI_CH_SAT_USED: out_val->u8 = gnss.satellite_used; return 1;
+        case WIFI_CH_HEIGHT: out_val->f32 = gnss.height; return 1;
+        default: return 0;
+    }
+}
+
+static uint8_t wifi_write_value_by_type(wifi_value_type_t type, const wifi_value_union_t *v) {
+    switch (type) {
+        case WIFI_VAL_U8: write_u8(v->u8); return 1;
+        case WIFI_VAL_I8: write_i8(v->i8); return 1;
+        case WIFI_VAL_U16: write_u16(v->u16); return 1;
+        case WIFI_VAL_I16: write_i16(v->i16); return 1;
+        case WIFI_VAL_U32: write_u32_or_float(&v->u32); return 1;
+        case WIFI_VAL_I32: write_i32(v->i32); return 1;
+        case WIFI_VAL_FLOAT: write_u32_or_float(&v->f32); return 1;
+        case WIFI_VAL_DOUBLE: write_double(&v->f64); return 1;
+        default: return 0;
+    }
+}
+
+void wifi_protocol_select_profile(uint8_t profile_id) {
+    wifi_profile_ensure_init();
+    active_profile.profile_id = profile_id;
+    if (profile_id == 1) {
+        wifi_profile_copy(profile_motion, sizeof(profile_motion) / sizeof(profile_motion[0]));
+    } else if (profile_id == 2) {
+        wifi_profile_copy(profile_gnss_diag, sizeof(profile_gnss_diag) / sizeof(profile_gnss_diag[0]));
+    } else {
+        active_profile.profile_id = 0;
+        wifi_profile_copy(profile_full_precision, sizeof(profile_full_precision) / sizeof(profile_full_precision[0]));
+    }
+}
+
+uint8_t wifi_protocol_set_custom_profile(uint8_t profile_id, const wifi_channel_config_t *cfg_list, uint8_t cfg_count) {
+    wifi_profile_ensure_init();
+    if (cfg_list == 0 || cfg_count == 0 || cfg_count > WIFI_CUSTOM_MAX_CHANNELS) {
+        return 0;
+    }
+    for (uint8_t i = 0; i < cfg_count; i++) {
+        if (wifi_type_size(cfg_list[i].value_type) == 0) {
+            return 0;
+        }
+    }
+    active_profile.profile_id = profile_id;
+    wifi_profile_copy(cfg_list, cfg_count);
+    return 1;
+}
+
+void wifi_protocol_send_custom_data(void) {
+    wifi_profile_ensure_init();
+    idx = 0;
+    write_u8(WIFI_FRAME_HEAD1);
+    write_u8(WIFI_FRAME_HEAD2);
+    write_u8(WIFI_CMD_CUSTOM_PACKET);
+    uint16_t len_pos = idx;
+    write_u8(0x00);
+
+    write_u8(active_profile.profile_id);
+    write_u8(custom_seq++);
+    uint16_t ch_cnt_pos = idx;
+    write_u8(0x00); // 实际写入通道数，稍后回填
+
+    uint8_t sent_channels = 0;
+    for (uint8_t i = 0; i < active_profile.channel_count; i++) {
+        wifi_channel_config_t cfg = active_profile.channels[i];
+        wifi_value_union_t value;
+        uint8_t data_size = wifi_type_size(cfg.value_type);
+        if (data_size == 0 || !wifi_get_channel_value(cfg.channel_id, &value)) {
+            continue;
+        }
+
+        if (idx + 2 + data_size + 2 > WIFI_TX_BUFFER_SIZE) {
+            break;
+        }
+
+        write_u8(cfg.channel_id);
+        write_u8((uint8_t)cfg.value_type);
+        if (!wifi_write_value_by_type(cfg.value_type, &value)) {
+            idx -= 2;
+            break;
+        }
+        sent_channels++;
+    }
+    tx_buf[ch_cnt_pos] = sent_channels;
+
+    uint8_t payload_len = idx - (len_pos + 1);
+    tx_buf[len_pos] = payload_len;
+
+    uint8_t check_sum = 0;
+    for (int i = 0; i < idx; i++) {
+        check_sum += tx_buf[i];
+    }
+    write_u8(check_sum);
+    write_u8(WIFI_FRAME_TAIL);
+
+    wifi_spi_send_buffer(tx_buf, idx);
 }
 
 // ---------------------------------------------------------
