@@ -15,6 +15,60 @@ extern int16 pwm_high; // 查表后的高度duty基准
 float g_air_kp;
 float g_air_kd;
 float g_air_target_pitch;
+extern InertialNav_t inertial_nav;
+extern volatile float target_speed_set;
+
+typedef enum {
+    STEP_UP_TEST_IDLE = 0,
+    STEP_UP_TEST_RUN_1,
+    STEP_UP_TEST_WAIT_1,
+    STEP_UP_TEST_RUN_2,
+    STEP_UP_TEST_WAIT_2,
+    STEP_UP_TEST_RUN_3,
+    STEP_UP_TEST_WAIT_3,
+    STEP_UP_TEST_FINISH
+} StepUpTestState_e;
+
+typedef struct {
+    float left_module_length_mm;
+    float middle_module_length_mm;
+    float right_module_length_mm;
+    float step_height_mm;
+    float ramp_angle_deg;
+    float ramp_face_length_mm;
+    float ramp_top_flat_mm;
+} ThreeStepGeom_t;
+
+static const ThreeStepGeom_t g_three_step_geom = {
+    625.0f,
+    500.0f,
+    500.0f,
+    50.0f,
+    22.0f,
+    404.0f,
+    250.0f
+};
+
+#define STEP_UP_TRIGGER_LEAD_MM         (120.0f)
+#define STEP_UP_JUMP_GAP_MS             (150U)
+#define STEP_UP_START_DELAY_MS          (200U)
+#define STEP_UP_SPEED_APPROACH_1        (-60.0f)
+#define STEP_UP_SPEED_APPROACH_2        (-52.0f)
+#define STEP_UP_SPEED_APPROACH_3        (-45.0f)
+#define STEP_UP_SPEED_FINISH            (0.0f)
+#define STEP_UP_FINISH_HOLD_MS          (800U)
+
+static StepUpTestState_e g_step_up_test_state = STEP_UP_TEST_IDLE;
+static uint32_t g_step_up_state_tick = 0;
+static float g_step_up_start_x = 0.0f;
+static float g_step_up_start_y = 0.0f;
+
+static float jump_stepup_test_get_distance_mm(void)
+{
+    float dx = inertial_nav.x - g_step_up_start_x;
+    float dy = inertial_nav.y - g_step_up_start_y;
+    return sqrtf(dx * dx + dy * dy);
+}
 // ===================== 参数加载器 =====================
 uint32_t time_elapsed1, time_elapsed2, time_elapsed3, time_elapsed4=0; // 距离起跳的时间 (ms)
 /**
@@ -78,9 +132,137 @@ void jump_trigger_with_type(JumpType_e type)
 {
     if(jump_flag == 0)
     {
+        g_current_jump_type = type;
+        load_jump_profile(g_current_jump_type, servo_height);
+        time_elapsed1 = 0;
+        time_elapsed2 = 0;
+        time_elapsed3 = 0;
+        time_elapsed4 = 0;
         jump_flag = 1;
         jump_start_time = loop_counter; // 锚定当前毫秒时间戳
         g_current_jump_phase = JUMP_PHASE_LAUNCH; // 初始阶段设为 A
+    }
+}
+
+// 连续上三级台阶测试状态机
+void jump_stepup_three_stairs_test_start(void)
+{
+    g_step_up_start_x = inertial_nav.x;
+    g_step_up_start_y = inertial_nav.y;
+    g_step_up_state_tick = loop_counter;
+    g_step_up_test_state = STEP_UP_TEST_RUN_1;
+}
+
+bool jump_stepup_three_stairs_test_is_active(void)
+{
+    return (g_step_up_test_state != STEP_UP_TEST_IDLE);
+}
+
+void jump_stepup_three_stairs_test_update(void)
+{
+    float distance_mm;
+    float trigger1_mm;
+    float trigger2_mm;
+    float trigger3_mm;
+
+    if (vision_detected_jump_point)
+    {
+        if (g_step_up_test_state == STEP_UP_TEST_IDLE)
+        {
+            jump_stepup_three_stairs_test_start();
+        }
+        vision_detected_jump_point = false;
+    }
+
+    if (g_step_up_test_state == STEP_UP_TEST_IDLE)
+    {
+        return;
+    }
+
+    distance_mm = jump_stepup_test_get_distance_mm();
+    trigger1_mm = g_three_step_geom.left_module_length_mm - STEP_UP_TRIGGER_LEAD_MM;
+    trigger2_mm = g_three_step_geom.left_module_length_mm +
+                  g_three_step_geom.middle_module_length_mm - STEP_UP_TRIGGER_LEAD_MM;
+    trigger3_mm = g_three_step_geom.left_module_length_mm +
+                  g_three_step_geom.middle_module_length_mm +
+                  g_three_step_geom.right_module_length_mm - STEP_UP_TRIGGER_LEAD_MM;
+
+    switch (g_step_up_test_state)
+    {
+        case STEP_UP_TEST_RUN_1:
+            target_speed_set = STEP_UP_SPEED_APPROACH_1;
+            if ((loop_counter - g_step_up_state_tick) < STEP_UP_START_DELAY_MS)
+            {
+                break;
+            }
+            if ((distance_mm >= trigger1_mm) && (jump_flag == 0))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_WAIT_1;
+            }
+            break;
+
+        case STEP_UP_TEST_WAIT_1:
+            target_speed_set = STEP_UP_SPEED_APPROACH_2;
+            if ((jump_flag == 0) && ((loop_counter - g_step_up_state_tick) > STEP_UP_JUMP_GAP_MS))
+            {
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_RUN_2;
+            }
+            break;
+
+        case STEP_UP_TEST_RUN_2:
+            target_speed_set = STEP_UP_SPEED_APPROACH_2;
+            if ((distance_mm >= trigger2_mm) && (jump_flag == 0))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_WAIT_2;
+            }
+            break;
+
+        case STEP_UP_TEST_WAIT_2:
+            target_speed_set = STEP_UP_SPEED_APPROACH_3;
+            if ((jump_flag == 0) && ((loop_counter - g_step_up_state_tick) > STEP_UP_JUMP_GAP_MS))
+            {
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_RUN_3;
+            }
+            break;
+
+        case STEP_UP_TEST_RUN_3:
+            target_speed_set = STEP_UP_SPEED_APPROACH_3;
+            if ((distance_mm >= trigger3_mm) && (jump_flag == 0))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_WAIT_3;
+            }
+            break;
+
+        case STEP_UP_TEST_WAIT_3:
+            target_speed_set = STEP_UP_SPEED_APPROACH_3;
+            if ((jump_flag == 0) && ((loop_counter - g_step_up_state_tick) > STEP_UP_JUMP_GAP_MS))
+            {
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_FINISH;
+                target_speed_set = STEP_UP_SPEED_FINISH;
+            }
+            break;
+
+        case STEP_UP_TEST_FINISH:
+            target_speed_set = STEP_UP_SPEED_FINISH;
+            if ((loop_counter - g_step_up_state_tick) > STEP_UP_FINISH_HOLD_MS)
+            {
+                g_step_up_test_state = STEP_UP_TEST_IDLE;
+            }
+            break;
+
+        case STEP_UP_TEST_IDLE:
+        default:
+            g_step_up_test_state = STEP_UP_TEST_IDLE;
+            break;
     }
 }
 

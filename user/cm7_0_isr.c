@@ -123,6 +123,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
     if (loop_counter % 20 == 0) {  // 20ms 一次
         if(g_motor_enable){Bridge_Test_Smooth_PID();} //复现控制
+        jump_stepup_three_stairs_test_update(); // 连续上三级台阶测试状态机
     };//【测试】抬高双腿
 
     // ==========================================================
@@ -470,7 +471,12 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         g_motor_enable = 1; // 正常工作
     }
 
-    if (g_replay_state != REPLAY_RUNNING)//【nav】不在复现的时候才可以遥控器给目标速度进去
+    if (jump_stepup_three_stairs_test_is_active())
+    {
+        err_degree = 0.0f;
+    }
+
+    if ((g_replay_state != REPLAY_RUNNING) && (!jump_stepup_three_stairs_test_is_active()))//【nav】不在复现的时候才可以遥控器给目标速度进去
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
