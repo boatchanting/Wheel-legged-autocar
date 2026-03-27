@@ -132,6 +132,7 @@ void wifi_protocol_send_data(void) {
     float heading_to_send = 0.0f;
 #endif
     write_u32_or_float(&heading_to_send);   // 4 bytes (float)
+    write_u32_or_float(&inertial_nav.relative_yaw); // 4 bytes (float)
 
     // -----------------------------------------------------
     // 3. 计算长度与校验
