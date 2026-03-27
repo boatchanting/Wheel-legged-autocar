@@ -15,6 +15,76 @@ extern int16 pwm_high; // 查表后的高度duty基准
 float g_air_kp;
 float g_air_kd;
 float g_air_target_pitch;
+extern InertialNav_t inertial_nav;
+extern volatile float target_speed_set;
+
+typedef enum {
+    STEP_UP_TEST_IDLE = 0,
+    STEP_UP_TEST_RUN_1,
+    STEP_UP_TEST_WAIT_1,
+    STEP_UP_TEST_RUN_2,
+    STEP_UP_TEST_WAIT_2,
+    STEP_UP_TEST_RUN_3,
+    STEP_UP_TEST_WAIT_3,
+    STEP_UP_TEST_FINISH
+} StepUpTestState_e;
+
+typedef struct {
+    float left_module_length_mm;   // 起点到第1级台阶“目标落脚区”的等效路程
+    float middle_module_length_mm; // 第1级到第2级之间的等效路程
+    float right_module_length_mm;  // 第2级到第3级之间的等效路程
+    float step_height_mm;          // 单级台阶高度（当前三连跳触发逻辑未直接使用，主要用于记录赛道）
+    float ramp_angle_deg;          // 斜面角度（当前三连跳触发逻辑未直接使用）
+    float ramp_face_length_mm;     // 斜面长度（当前三连跳触发逻辑未直接使用）
+    float ramp_top_flat_mm;        // 台阶平台平直长度（当前三连跳触发逻辑未直接使用）
+} ThreeStepGeom_t;
+
+// 三连跳赛道几何参数（单位统一为 mm/deg）
+// 当前触发距离只使用前三个“等效路程”参数：
+//   第1跳门限 = left_module_length_mm - STEP_UP_TRIGGER_LEAD_MM
+//   第2跳门限 = left + middle - STEP_UP_TRIGGER_LEAD_MM
+//   第3跳门限 = left + middle + right - STEP_UP_TRIGGER_LEAD_MM
+//
+// 下面这组值对应的门限大约是：
+//   第1跳 505mm, 第2跳 1005mm, 第3跳 1505mm
+static const ThreeStepGeom_t g_three_step_geom = {
+    625.0f, // left_module_length_mm
+    500.0f, // middle_module_length_mm
+    500.0f, // right_module_length_mm
+    50.0f,  // step_height_mm
+    22.0f,  // ramp_angle_deg
+    404.0f, // ramp_face_length_mm
+    250.0f  // ramp_top_flat_mm
+};
+
+// 触发提前量（mm）：用于“提前起跳”而不是到台阶边缘再起跳。
+// 规则：值越大 -> 触发越早；值越小 -> 触发越晚。
+// 若出现“还没到就跳”，应减小此值；若出现“到边缘才跳/跳不上”，应增大此值。
+#define STEP_UP_TRIGGER_LEAD_MM         (120.0f)
+#define STEP_UP_JUMP_GAP_MS             (150U)
+#define STEP_UP_START_DELAY_MS          (200U)
+#define STEP_UP_SPEED_APPROACH_1        (-60.0f)
+#define STEP_UP_SPEED_APPROACH_2        (-52.0f)
+#define STEP_UP_SPEED_APPROACH_3        (-45.0f)
+#define STEP_UP_SPEED_FINISH            (0.0f)
+#define STEP_UP_POST_RUN_MM             (1000.0f)
+#define STEP_UP_FINISH_HOLD_MS          (800U)
+
+static StepUpTestState_e g_step_up_test_state = STEP_UP_TEST_IDLE;
+static uint32_t g_step_up_state_tick = 0;
+static float g_step_up_start_x = 0.0f;
+static float g_step_up_start_y = 0.0f;
+static float g_step_up_finish_start_distance_mm = 0.0f;
+static uint8_t g_step_up_finish_stopped = 0;
+
+static float jump_stepup_test_get_distance_mm(void)
+{
+    // 以“三连跳开始时”的惯导坐标为零点，计算累计平面位移（mm）。
+    // 该距离直接用于 trigger1/2/3 的门限判断。
+    float dx = inertial_nav.x - g_step_up_start_x;
+    float dy = inertial_nav.y - g_step_up_start_y;
+    return sqrtf(dx * dx + dy * dy);
+}
 // ===================== 参数加载器 =====================
 uint32_t time_elapsed1, time_elapsed2, time_elapsed3, time_elapsed4=0; // 距离起跳的时间 (ms)
 /**
@@ -78,9 +148,164 @@ void jump_trigger_with_type(JumpType_e type)
 {
     if(jump_flag == 0)
     {
+        g_current_jump_type = type;
+        load_jump_profile(g_current_jump_type, servo_height);
+        time_elapsed1 = 0;
+        time_elapsed2 = 0;
+        time_elapsed3 = 0;
+        time_elapsed4 = 0;
         jump_flag = 1;
         jump_start_time = loop_counter; // 锚定当前毫秒时间戳
         g_current_jump_phase = JUMP_PHASE_LAUNCH; // 初始阶段设为 A
+    }
+}
+
+// 连续上三级台阶测试状态机
+void jump_stepup_three_stairs_test_start(void)
+{
+    g_step_up_start_x = inertial_nav.x;
+    g_step_up_start_y = inertial_nav.y;
+    g_step_up_state_tick = loop_counter;
+    g_step_up_test_state = STEP_UP_TEST_RUN_1;
+}
+
+bool jump_stepup_three_stairs_test_is_active(void)
+{
+    return (g_step_up_test_state != STEP_UP_TEST_IDLE);
+}
+
+void jump_stepup_three_stairs_test_update(void)
+{
+    float distance_mm;
+    float trigger1_mm;
+    float trigger2_mm;
+    float trigger3_mm;
+
+    if (vision_detected_jump_point)
+    {
+        if (g_step_up_test_state == STEP_UP_TEST_IDLE)
+        {
+            jump_stepup_three_stairs_test_start();
+        }
+        vision_detected_jump_point = false;
+    }
+
+    if (g_step_up_test_state == STEP_UP_TEST_IDLE)
+    {
+        return;
+    }
+
+    // distance_mm: 从三连跳起点累计走过的平面距离（mm）
+    distance_mm = jump_stepup_test_get_distance_mm();
+
+    // 三个跳跃触发门限（mm）：
+    // 1) trigger1_mm：接近第1级台阶前的起跳点
+    // 2) trigger2_mm：接近第2级台阶前的起跳点
+    // 3) trigger3_mm：接近第3级台阶前的起跳点
+    //
+    // 设计要点：三个门限都减去同一个 STEP_UP_TRIGGER_LEAD_MM，
+    // 便于只改一个参数就整体“提前/延后”三次起跳时机。
+    trigger1_mm = g_three_step_geom.left_module_length_mm - STEP_UP_TRIGGER_LEAD_MM;
+    trigger2_mm = g_three_step_geom.left_module_length_mm +
+                  g_three_step_geom.middle_module_length_mm - STEP_UP_TRIGGER_LEAD_MM;
+    trigger3_mm = g_three_step_geom.left_module_length_mm +
+                  g_three_step_geom.middle_module_length_mm +
+                  g_three_step_geom.right_module_length_mm - STEP_UP_TRIGGER_LEAD_MM;
+
+    switch (g_step_up_test_state)
+    {
+        case STEP_UP_TEST_RUN_1:
+            target_speed_set = STEP_UP_SPEED_APPROACH_1;
+            if ((loop_counter - g_step_up_state_tick) < STEP_UP_START_DELAY_MS)
+            {
+                break;
+            }
+            if ((distance_mm >= trigger1_mm) && (jump_flag == 0))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_WAIT_1;
+            }
+            break;
+
+        case STEP_UP_TEST_WAIT_1:
+            target_speed_set = STEP_UP_SPEED_APPROACH_2;
+            if ((jump_flag == 0) && ((loop_counter - g_step_up_state_tick) > STEP_UP_JUMP_GAP_MS))
+            {
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_RUN_2;
+            }
+            break;
+
+        case STEP_UP_TEST_RUN_2:
+            target_speed_set = STEP_UP_SPEED_APPROACH_2;
+            if ((distance_mm >= trigger2_mm) && (jump_flag == 0))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_WAIT_2;
+            }
+            break;
+
+        case STEP_UP_TEST_WAIT_2:
+            target_speed_set = STEP_UP_SPEED_APPROACH_3;
+            if ((jump_flag == 0) && ((loop_counter - g_step_up_state_tick) > STEP_UP_JUMP_GAP_MS))
+            {
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_RUN_3;
+            }
+            break;
+
+        case STEP_UP_TEST_RUN_3:
+            target_speed_set = STEP_UP_SPEED_APPROACH_3;
+            if ((distance_mm >= trigger3_mm) && (jump_flag == 0))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_WAIT_3;
+            }
+            break;
+
+        case STEP_UP_TEST_WAIT_3:
+            target_speed_set = STEP_UP_SPEED_APPROACH_3;
+            if ((jump_flag == 0) && ((loop_counter - g_step_up_state_tick) > STEP_UP_JUMP_GAP_MS))
+            {
+                g_step_up_state_tick = loop_counter;
+                g_step_up_test_state = STEP_UP_TEST_FINISH;
+                g_step_up_finish_start_distance_mm = distance_mm;
+                g_step_up_finish_stopped = 0;
+            }
+            break;
+
+        case STEP_UP_TEST_FINISH:
+            if (g_step_up_finish_stopped == 0)
+            {
+                // 第三跳完成后继续前进固定距离，再停车。
+                if ((distance_mm - g_step_up_finish_start_distance_mm) >= STEP_UP_POST_RUN_MM)
+                {
+                    g_step_up_finish_stopped = 1;
+                    g_step_up_state_tick = loop_counter;
+                    target_speed_set = STEP_UP_SPEED_FINISH;
+                }
+                else
+                {
+                    target_speed_set = STEP_UP_SPEED_APPROACH_3;
+                }
+            }
+            else
+            {
+                target_speed_set = STEP_UP_SPEED_FINISH;
+                if ((loop_counter - g_step_up_state_tick) > STEP_UP_FINISH_HOLD_MS)
+                {
+                    g_step_up_test_state = STEP_UP_TEST_IDLE;
+                }
+            }
+            break;
+
+        case STEP_UP_TEST_IDLE:
+        default:
+            g_step_up_test_state = STEP_UP_TEST_IDLE;
+            break;
     }
 }
 
