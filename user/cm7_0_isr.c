@@ -131,7 +131,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     }
 
     if (loop_counter % 20 == 0) {  // 20ms 一次
-        if(g_motor_enable){Bridge_Test_Smooth_PID();} //复现控制
+        if(g_motor_enable){Bridge_Test_Triple_SingleSide_Inertial();} //复现控制
         //jump_stepup_three_stairs_test_update(); // 连续上三级台阶测试状态机
     };//【测试】抬高双腿
 
