@@ -77,28 +77,37 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 按下记录按钮之前的惯性导航不可信==========================================================
     if(loop_counter % 10 == 0 && g_yaw_initialized)
     {
-        // 调用导航更新函数
-        #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
-        InertialNav_Update(
-            euler_angle.yaw,                                 // 当前偏航角
-            9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-            9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-            (float)motor_value.receive_left_speed_data,      // 左轮速
-            (float)motor_value.receive_right_speed_data      // 右轮速
-        );
-        #endif
+        if (jump_flag == 0)
+        {
+            // 调用导航更新函数
+            #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
+            InertialNav_Update(
+                euler_angle.yaw,                                 // 当前偏航角
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
+                9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
+                (float)motor_value.receive_left_speed_data,      // 左轮速
+                (float)motor_value.receive_right_speed_data      // 右轮速
+            );
+            #endif
 
-        #if IMU_CATEGORY == 3 //imu963ra 如果小车不同再对小车加&&加以区分
-        InertialNav_Update(
-            euler_angle.yaw,                                 // 当前偏航角
-            9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-            9806.65*((float)imu_data.grav_x-(float)imu_data.acc_x/4098), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-            (float)motor_value.receive_left_speed_data,      // 左轮速
-            (float)motor_value.receive_right_speed_data      // 右轮速
-        );
-        #endif
-        
-        // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y 
+            #if IMU_CATEGORY == 3 //imu963ra 如果小车不同再对小车加&&加以区分
+            InertialNav_Update(
+                euler_angle.yaw,                                 // 当前偏航角
+                9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
+                9806.65*((float)imu_data.grav_x-(float)imu_data.acc_x/4098), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
+                (float)motor_value.receive_left_speed_data,      // 左轮速
+                (float)motor_value.receive_right_speed_data      // 右轮速
+            );
+            #endif
+        }
+        else
+        {
+            // 跳跃期间轮胎可能空转，冻结惯导速度状态，避免里程突增。
+            inertial_nav.vx_body = 0.0f;
+            inertial_nav.vy_body = 0.0f;
+        }
+
+        // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y
         // 例如, 用于路径规划、位置闭环等
         // float current_pos_x = inertial_nav.x;
         // float current_pos_y = inertial_nav.y;
@@ -123,6 +132,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
     if (loop_counter % 20 == 0) {  // 20ms 一次
         if(g_motor_enable){Bridge_Test_Smooth_PID();} //复现控制
+        //jump_stepup_three_stairs_test_update(); // 连续上三级台阶测试状态机
     };//【测试】抬高双腿
 
     // ==========================================================
@@ -384,29 +394,29 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         {
             // 阶段A: 起跳瞬间，车轮在地面，关闭电机防止干扰
             case JUMP_PHASE_LAUNCH:
-                small_driver_set_duty(0, 0);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
 
             // 阶段B: 空中飞行，启用动量轮控制
             case JUMP_PHASE_FLIGHT:
             { // 使用花括号创建一个局部作用域
-                int16_t air_pwm = Momentum_Wheel_Control_Run(now_angle, now_gyro);
+                //int16_t air_pwm = Momentum_Wheel_Control_Run(now_angle, now_gyro);
                 
                 // [关键] 根据你的电机极性，使用异号PWM使两轮同向转动
                 // 假设 air_pwm > 0 意图让车头抬起 (轮子前转)
-                small_driver_set_duty(air_pwm, -air_pwm);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
             }
 
             // 阶段C/D: 准备落地和缓冲，关闭电机，防止轮速过快触地导致弹射
             case JUMP_PHASE_LANDING:
             case JUMP_PHASE_RECOVERY:
-                small_driver_set_duty(0, 0);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
 
             // 默认或未知状态，安全起见关闭电机
             default:
-                small_driver_set_duty(0, 0);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
         }
         }
@@ -470,7 +480,12 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         g_motor_enable = 1; // 正常工作
     }
 
-    if (g_replay_state != REPLAY_RUNNING)//【nav】不在复现的时候才可以遥控器给目标速度进去
+    if (jump_stepup_three_stairs_test_is_active())
+    {
+        err_degree = 0.0f;
+    }
+
+    if ((g_replay_state != REPLAY_RUNNING) && (!jump_stepup_three_stairs_test_is_active()))//【nav】不在复现的时候才可以遥控器给目标速度进去
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)

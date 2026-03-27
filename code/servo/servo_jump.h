@@ -59,6 +59,9 @@ void jump_module_init(void);
 void jump_trigger(void);           // 触发跳跃
 void jump_trigger_with_type(JumpType_e type);        // 新版触发，可选择跳跃类型
 void servo_jump_executor(void);    // 周期性调用执行函数
+void jump_stepup_three_stairs_test_start(void);
+void jump_stepup_three_stairs_test_update(void);
+bool jump_stepup_three_stairs_test_is_active(void);
 /**
  * @brief 初始化空中姿态控制参数
  */
