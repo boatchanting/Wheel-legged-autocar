@@ -15,6 +15,13 @@
 #define SERVO_SPEED_MAX_I  100000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
+// 舵机速度环（增量式PID）独立参数：与位置式分开调参
+#define SERVO_SPEED_INC_KP  -3.8f
+#define SERVO_SPEED_INC_KI  -0.018f
+#define SERVO_SPEED_INC_KD  -0.15f
+#define SERVO_SPEED_INC_MAX_I  SERVO_SPEED_MAX_I
+#define SERVO_SPEED_INC_MAX_O  SERVO_SPEED_MAX_O
+#define SERVO_SPEED_INC_COMP   SERVO_SPEED_COMP
 extern float current_actual_speed;
 
 // ----------------------------------------------------------------------------
@@ -118,6 +125,13 @@ extern float current_actual_speed;
 #define SERVO_SPEED_MAX_I  100000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
+// 舵机速度环（增量式PID）独立参数：与位置式分开调参
+#define SERVO_SPEED_INC_KP  -5.8f
+#define SERVO_SPEED_INC_KI  -0.020f
+#define SERVO_SPEED_INC_KD  -0.18f
+#define SERVO_SPEED_INC_MAX_I  SERVO_SPEED_MAX_I
+#define SERVO_SPEED_INC_MAX_O  SERVO_SPEED_MAX_O
+#define SERVO_SPEED_INC_COMP   SERVO_SPEED_COMP
 extern float current_actual_speed;
 
 // ----------------------------------------------------------------------------
@@ -256,6 +270,8 @@ float Float_Constrain(float val, float min, float max);//限幅函数
 float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
 float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
 float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)
+float Servo_Speed_Control_Incremental(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)-增量式PID
+float Servo_Speed_Control_SmoothSwitch(float target_speed, float actual_speed, float actual_angle, uint8 use_incremental);//速度环(舵机)-位置式/增量式丝滑切换
 float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)(电机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)

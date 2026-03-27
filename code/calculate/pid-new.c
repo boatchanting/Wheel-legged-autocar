@@ -413,6 +413,31 @@ float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
 //内部静态变量，用于舵机速度环的滤波
 static float servo_speed_last = 0.0f;
 static float servo_speed_prelast = 0.0f;
+// 增量式PID独立滤波历史，避免与位置式PID互相影响
+static float servo_speed_inc_last = 0.0f;
+static float servo_speed_inc_prelast = 0.0f;
+
+// 根据控制模式加载舵机速度环参数
+// use_incremental=0: 位置式PID参数
+// use_incremental=1: 增量式PID参数
+static void Servo_Speed_Load_Params(uint8 use_incremental)
+{
+    if (use_incremental) {
+        pid_servo_speed.kp = SERVO_SPEED_INC_KP;
+        pid_servo_speed.ki = SERVO_SPEED_INC_KI;
+        pid_servo_speed.kd = SERVO_SPEED_INC_KD;
+        pid_servo_speed.max_output = SERVO_SPEED_INC_MAX_O;
+        pid_servo_speed.max_integral = SERVO_SPEED_INC_MAX_I;
+        pid_servo_speed.compensation = SERVO_SPEED_INC_COMP;
+    } else {
+        pid_servo_speed.kp = SERVO_SPEED_KP;
+        pid_servo_speed.ki = SERVO_SPEED_KI;
+        pid_servo_speed.kd = SERVO_SPEED_KD;
+        pid_servo_speed.max_output = SERVO_SPEED_MAX_O;
+        pid_servo_speed.max_integral = SERVO_SPEED_MAX_I;
+        pid_servo_speed.compensation = SERVO_SPEED_COMP;
+    }
+}
 /**
  * @brief 舵机速度闭环控制器 (移植并使用 PID_Param_t 结构)
  * @param target_speed 目标速度
@@ -482,6 +507,151 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
  * @note   原理：想让车加速，就得让车身先往前倾斜，利用重力分量加速。
  *         所以速度环的输出，实际上是角度环的目标输入。
  */
+/**
+ * @brief 舵机速度环增量式PID
+ * @param target_speed 目标速度
+ * @param actual_speed 实际速度（编码器）
+ * @param actual_angle 实际俯仰角（当前版本未参与门控，仅保留接口一致性）
+ * @return 舵机速度环输出
+ */
+float Servo_Speed_Control_Incremental(float target_speed, float actual_speed, float actual_angle)
+{
+    // 自动切换到增量式参数，避免受外部位置式参数覆盖
+    Servo_Speed_Load_Params(1);
+
+    // 避免未使用参数告警，同时保留与原函数一致的参数接口
+    (void)actual_angle;
+
+    // 1) 输入滤波：与原位置式函数一致，但使用独立历史变量
+    float speed_now = actual_speed * 0.6f + servo_speed_inc_last * 0.3f + servo_speed_inc_prelast * 0.1f;
+    servo_speed_inc_prelast = servo_speed_inc_last;
+    servo_speed_inc_last = speed_now;
+
+    // 2) 当前误差与历史误差
+    float error_now = target_speed - speed_now;
+    float error_last = pid_servo_speed.last_error;
+    float error_prev = pid_servo_speed.prev_error;
+
+    // 3) 保留原有自适应Kp策略，减少切换后的手感变化
+    float e = expf(-fabsf(error_now / 10.0f));
+    float k = ((1.0f - e) / (1.0f + e)) * 0.6f + 0.4f;
+    float adaptive_kp = pid_servo_speed.kp * k;
+
+    // 4) 增量式PID：du(k)=P增量+I增量+D增量
+    float delta_p = adaptive_kp * (error_now - error_last);
+    float delta_d = pid_servo_speed.kd * (error_now - 2.0f * error_last + error_prev);
+
+    // I项抗饱和策略：小误差死区 + 饱和边界抑制
+    const float i_error_deadband = 0.5f;
+    float delta_i = 0.0f;
+    float delta_i_candidate = pid_servo_speed.ki * error_now;
+    float output_no_i = pid_servo_speed.output + delta_p + delta_d;
+    uint8 allow_i = 1;
+
+    // 小误差区域不积分，降低噪声引起的抖动
+    if (fabsf(error_now) < i_error_deadband) {
+        allow_i = 0;
+    }
+
+    // 若输出已在饱和边界，且I项会继续推向更饱和方向，则禁止I项
+    if ((output_no_i >= pid_servo_speed.max_output && delta_i_candidate > 0.0f) ||
+        (output_no_i <= -pid_servo_speed.max_output && delta_i_candidate < 0.0f)) {
+        allow_i = 0;
+    }
+
+    if (allow_i) {
+        delta_i = delta_i_candidate;
+    }
+
+    float delta_output = delta_p + delta_i + delta_d;
+
+    // 5) 输出累加并限幅
+    float output_raw = pid_servo_speed.output + delta_output;
+    pid_servo_speed.output = Float_Constrain(output_raw, -pid_servo_speed.max_output, pid_servo_speed.max_output);
+
+    // 6) 更新状态
+    pid_servo_speed.prev_error = pid_servo_speed.last_error;
+    pid_servo_speed.last_error = error_now;
+    pid_servo_speed.error = error_now;
+    // 增量式不使用积分累加器，这里清零用于调试显示一致性
+    pid_servo_speed.error_integral = 0.0f;
+
+    return pid_servo_speed.output;
+}
+
+/**
+ * @brief 舵机速度环丝滑切换函数（位置式 <-> 增量式）
+ * @param target_speed 目标速度
+ * @param actual_speed 实际速度
+ * @param actual_angle 实际俯仰角
+ * @param use_incremental 0=位置式PID，1=增量式PID
+ * @return 丝滑过渡后的输出
+ */
+float Servo_Speed_Control_SmoothSwitch(float target_speed, float actual_speed, float actual_angle, uint8 use_incremental)
+{
+    // 当前舵机速度环在20ms调用，这里设8步过渡，约160ms
+    const uint8 switch_steps = 8;
+
+    // 过渡状态
+    static uint8 state_inited = 0;
+    static uint8 last_mode = 0;
+    static uint8 in_transition = 0;
+    static uint8 transition_step = 0;
+    static float transition_start_output = 0.0f;
+    static float blended_output = 0.0f;
+
+    uint8 mode_now = (use_incremental != 0) ? 1 : 0;
+
+    if (!state_inited) {
+        state_inited = 1;
+        last_mode = mode_now;
+        blended_output = pid_servo_speed.output;
+    }
+
+    // 模式变化时，启动一次线性插值过渡
+    if (mode_now != last_mode) {
+        last_mode = mode_now;
+        in_transition = 1;
+        transition_step = 0;
+        transition_start_output = blended_output;
+
+        // 对齐内部输出状态，避免模式切换时内部状态断层
+        pid_servo_speed.output = blended_output;
+    }
+
+    // 每周期按模式装载参数，确保与ISR里固定写入的位置式参数解耦
+    Servo_Speed_Load_Params(mode_now);
+
+    // 计算目标模式下的原始输出
+    float raw_output = 0.0f;
+    if (mode_now) {
+        raw_output = Servo_Speed_Control_Incremental(target_speed, actual_speed, actual_angle);
+    } else {
+        raw_output = Servo_Speed_Control(target_speed, actual_speed, actual_angle);
+    }
+
+    // 切换窗口内做线性融合
+    if (in_transition) {
+        float alpha = (float)(transition_step + 1) / (float)switch_steps;
+        if (alpha > 1.0f) alpha = 1.0f;
+
+        blended_output = transition_start_output + (raw_output - transition_start_output) * alpha;
+        blended_output = Float_Constrain(blended_output, -pid_servo_speed.max_output, pid_servo_speed.max_output);
+
+        transition_step++;
+        if (transition_step >= switch_steps) {
+            in_transition = 0;
+            blended_output = raw_output;
+        }
+    } else {
+        blended_output = raw_output;
+    }
+
+    // 回写融合输出，保证下一周期连续
+    pid_servo_speed.output = blended_output;
+    return blended_output;
+}
+
 float Speed_Loop_Control(float target_speed, float actual_speed)
 {
     // 1. 计算误差
