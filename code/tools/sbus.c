@@ -79,7 +79,7 @@ void Remote_Control_Process(void)
     else
     {
         // printf("Remote control is disconnected. ");
-        robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机
+        robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 失控则不进行后续处理
 
     }
@@ -199,7 +199,7 @@ void Remote_Control_Process(void)
     // 这意味着无论是从0变1(上升沿)还是从1变0(下降沿)，都会触发
     if (curr_ch3_state != last_ch3_state) 
     {
-    robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
+    vision_detected_jump_point = 1; // 置位，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点
     // NAV_POINT_SLOPE = 2,    // 上坡点
