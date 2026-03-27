@@ -124,6 +124,15 @@ void wifi_protocol_send_data(void) {
     // C.8 其他
     write_u8(gnss.satellite_used);          // 1 byte
     write_u32_or_float(&gnss.height);       // 4 bytes (float)
+    
+    // D. heading (IMU963RA磁航向角)
+#if IMU_CATEGORY == 3
+    float heading_to_send = heading;
+#else
+    float heading_to_send = 0.0f;
+#endif
+    write_u32_or_float(&heading_to_send);   // 4 bytes (float)
+    write_u32_or_float(&inertial_nav.relative_yaw); // 4 bytes (float)
 
     // -----------------------------------------------------
     // 3. 计算长度与校验

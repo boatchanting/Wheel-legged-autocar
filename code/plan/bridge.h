@@ -86,4 +86,7 @@ extern uint8_t debug_force_height_up;
 // 仅用于测试 PID 平滑升降的函数 (替代 Bridge_Update 放在 20ms 定时器中)
 void Bridge_Test_Smooth_PID(void);
 
+extern uint8_t debug_triple_bridge_test_enable;
+void Bridge_Test_Triple_SingleSide_Inertial(void);
+
 #endif // __BRIDGE_H__
