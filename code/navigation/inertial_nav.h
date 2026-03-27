@@ -21,9 +21,9 @@
 // 通过实验确定此值: 系数 = 实际行驶距离 / 程序计算距离
 // 初始值设为 1.0f, 如果程序计算的距离偏小, 则该值 > 1.0; 如果偏大, 则该值 < 1.0
 #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
-#define NAV_DISTANCE_SCALE_FACTOR   3.566666f // <--- 在这里填入你计算出的校准值，未调用【优化点】
+#define NAV_DISTANCE_SCALE_FACTOR   3.4596f // <--- 在这里填入你计算出的校准值，未调用【优化点】
 #define WHEEL_BASE_MM       159.7f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       3.566666f//大致为车轮半径
+#define SPEED_TO_MM_S       3.4596f//大致为车轮半径
 #endif
 #if CAR_SELECT == 2 // 2代表我们新车 板子 2026 /01/16 锦鲤跃龙门
 
