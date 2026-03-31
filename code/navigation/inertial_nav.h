@@ -31,7 +31,6 @@
 #define WHEEL_BASE_MM       185.0f  // 小车轮距 (单位: mm)
 #define SPEED_TO_MM_S       4.866666f*1.065//大致为车轮半径
 #endif
-<<<<<<< HEAD
 
 #if CAR_SELECT ==  3 // 3代表 【2026/3/30新车】 对应板子 【2026/03/24 最后的舵机v腿】
 
@@ -40,13 +39,6 @@
 #define SPEED_TO_MM_S       1.0f//大致为车轮半径
 #endif
 
-=======
-#if CAR_SELECT == 3 // 3代表我们带壳新车 板子 2026 /02/15 锦鲤队
-#define NAV_DISTANCE_SCALE_FACTOR   3.566666f // <--- 在这里填入你计算出的校准值，未调用【优化点】
-#define WHEEL_BASE_MM       185.0f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       4.866666f*1.065//大致为车轮半径
-#endif
->>>>>>> 0316新车调试pid分支
 // --- 坐标系数据结构 ---
 typedef struct {
     // [输出] 世界坐标系下的位置 (单位: mm)
