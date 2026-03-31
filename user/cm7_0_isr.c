@@ -80,7 +80,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         if (jump_flag == 0)
         {
             // 调用导航更新函数
-            #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
             InertialNav_Update(
                 euler_angle.yaw,                                 // 当前偏航角
                 9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
@@ -89,7 +89,15 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 (float)motor_value.receive_right_speed_data      // 右轮速
             );
             #endif
-
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
+            InertialNav_Update(
+                euler_angle.yaw,                                 // 当前偏航角
+                -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),              // 纵向加速度 (前+)
+                (float)motor_value.receive_left_speed_data,      // 左轮速
+                (float)motor_value.receive_right_speed_data      // 右轮速
+            );
+            #endif
             #if IMU_CATEGORY == 3 //imu963ra 如果小车不同再对小车加&&加以区分
             InertialNav_Update(
                 euler_angle.yaw,                                 // 当前偏航角
@@ -293,8 +301,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     
     // 5.1 获取原始陀螺仪数据
     //陀螺仪数据获取已经在中断函数最前面的地方获取完成
-    #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
     int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
+    int16 raw_gyro_y = -imu660ra_gyro_y; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
     #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
     int16 raw_gyro_y = -imu963ra_gyro_y; // 根据实际安装方向调整符号
