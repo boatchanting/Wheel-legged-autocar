@@ -225,43 +225,44 @@ void wifi_update_pid_params(void)
             // 这个映射关系需要在逐飞助手软件上对应设置
             switch(i)
             {
+                //【调节直立环】
                 // 参数 0: 角速度环 Kp (pid_gyro.kp)
-                // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
-                //参数 0: 期望速度 (target_speed_set) 目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
-                case 0: g_jump_profile.t_launch =  (uint32_t)seekfree_assistant_parameter[i]; break;
+                case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
                 // 参数 1: 角度环Kp
-                case 1:g_jump_profile.t_flight   = (uint32_t)seekfree_assistant_parameter[i]; break;
+                case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
                 // 参数 2: 角度环kd
-                case 2:g_jump_profile.t_landing  = (uint32_t)seekfree_assistant_parameter[i]; break;
-                    // 参数 3: 舵机速度控制环kp
-                    case 3:   g_jump_profile.t_recovery  = (uint32_t)seekfree_assistant_parameter[i]; break;
-                // 参数 4: 舵机速度控制环ki
-                case 4:g_jump_profile.offset_launch = (int32_t)seekfree_assistant_parameter[i]; break;
-                // 参数 5: 是否存储数据到 Flash 
-                // case 5: flash_write = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; 
-                //         if (flash_write_flag == 0&& flash_write == 1)
-                //         {
-                //             param_save_to_flash();
-                //             flash_write_flag = 1;
-                //         }
-                //         if (flash_write_flag == 1&& flash_write == 0)
-                //         {
-                //             flash_write_flag = 0;
-                //         }
-                //         break;
-                
-                
-                // 参数5: 转向角速度环kp
-                // case 5: pid_turn_gyro.kp = seekfree_assistant_parameter[i]; break;
-                // 参数5 :vision_detected_jump_point,跳跃测试
-                case 5:  g_jump_profile.offset_flight = (int32_t)seekfree_assistant_parameter[i]; break;
-                // 参数6: 转向角速度环kd
-                // case 6: pid_turn_gyro.kd = seekfree_assistant_parameter[i]; break;
-                // 参数6:  vision_detected_marker = 0/1;//雷区调用,测试用
-                case 6: g_jump_profile.offset_land  = (int32_t)seekfree_assistant_parameter[i]; break;
+                case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
+                // 参数 3: 舵机速度环kp 
+                case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
+                // 参数 4: 舵机速度环ki 
+                case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
+                // 参数 5: 跳跃 
+                case 5: vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // 参数 6: 机械零点
+                case 6:pid_angle.compensation = seekfree_assistant_parameter[i]; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
-                case 7:vision_detected_jump_point= (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;
+                                
+                ////【调节转向环】
+                // // 参数 0: 转向角速度环 Kp 
+                // case 0:pid_turn_gyro.kp  = seekfree_assistant_parameter[i]; break;
+                // // 参数 1: 转向角速度环kd
+                // case 1: pid_turn_gyro.kd = seekfree_assistant_parameter[i]; break;
+                // // 参数 2: 转向角度环kd
+                // case 2:  pid_turn_angle.kp = seekfree_assistant_parameter[i]; break;
+                // // 参数 3:  
+                // case 3: vision_detected_marker = seekfree_assistant_parameter[i]; break;
+                // // 参数 4: 
+                // case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
+                // // 参数 5: 跳跃 
+                // case 5: vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // // 参数 6: 旋转
+                // case 6:vision_detected_marker = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
+                // case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // default: break;
+
             }
         }
     }

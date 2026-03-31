@@ -1,7 +1,11 @@
 #ifndef __CAR_SELECT_H__
 #define __CAR_SELECT_H__
 
+<<<<<<< HEAD
 #define CAR_SELECT 3 // 【全局配置】选择哪个小车，这里改动之后会全局改变对应的引脚，重新编译会自动选择
+=======
+#define CAR_SELECT 0 // 【全局配置】选择哪个小车，这里改动之后会全局改变对应的引脚，重新编译会自动选择
+>>>>>>> 0316新车调试pid分支
 
 //【请在下方撰写小车具体包含什么硬件及对应的配置在哪里】
 
@@ -35,6 +39,7 @@
 6.GNSS的配置：zf_driver_uart.c末尾的检测要注释掉，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
 */
 
+<<<<<<< HEAD
 /*
 3代表 【2026/3/30新车】 对应板子 【2026/03/24 最后的舵机v腿】
 1.四个舵机的引脚及占90度时候的占空比，极性，每次拆装都需要重新测试，来自servo/servo.h
@@ -45,5 +50,19 @@
 6.GNSS的配置：zf_driver_uart.c末尾的检测要注释掉，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
 7.摄像头的配置：来自zf_device_mt9v03x.h
 */
+=======
+/* 
+#if CAR_SELECT == 3 // 3代表 【2026/3/16带壳新车】 对应板子 【2026/02/15 锦鲤队】   引脚未知
+我们的板子1小车内容    
+1.四个舵机的引脚及占90度时候的占空比，极性，每次拆装都需要重新测试，来自servo/servo.h        //舵机未调试先不改，引脚没改
+2.屏幕的引脚配置，来自zf_device/zf_device_ips200.h                             //屏幕未调试先不改，引脚没改
+3.无线模块配置，来自zf_device/zf_device_wifi_spi.h                       //wifi未调试先不改，引脚没改
+4.按钮模块配置，来自zf_device/zf_device_key.h，需要更改按钮和结构体         //按键未调试先不改，引脚没改
+5.pid参数配置，来自code/calculate/pid-new.h                              //pid参数留好，未调试，见pid-new.h
+6.GNSS的配置：zf_driver_uart.c末尾的检测要注释掉，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
+//引脚可能没改
+7.遥控uart配置                 //引脚改了
+*/                  
+>>>>>>> 0316新车调试pid分支
 
 #endif // __CAR_SELECT_H__
