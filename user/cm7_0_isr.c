@@ -148,10 +148,6 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     if(g_is_push_mode==0)
     {  
-        pid_servo_speed.kp = SERVO_SPEED_KP;
-        pid_servo_speed.ki = SERVO_SPEED_KI;
-        pid_servo_speed.kd = SERVO_SPEED_KD;
-
         if (loop_counter % 20 == 0 && g_yaw_initialized)  // 20ms周期，且偏航角已初始化，且不在推车模式
         {
             // 2.1 获取编码器速度
@@ -168,9 +164,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     }
     else if(g_is_push_mode==1)
     {    
-        pid_servo_speed.kp = 0;
-        pid_servo_speed.ki = 0;
-        pid_servo_speed.kd = 0;
+        // 重置舵机速度环状态变量
+        pid_servo_speed.error = 0;
+        pid_servo_speed.last_error = 0;
+        pid_servo_speed.prev_error = 0;
+        pid_servo_speed.error_integral = 0;
+        pid_servo_speed.output = 0;
 
     }
     // ==========================================================
@@ -349,8 +348,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         //   (4) 第一次站起来之后，loop_counter > 2000(中断开启两秒后)
         if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
         {
-             // 如果角度过大（例如超过 30 度），判定为倒地
-            if (now_angle > 30.0f || now_angle < -30.0f)
+             // 如果角度过大（例如超过 40 度），判定为倒地
+            if (now_angle-ANG_MECH_ZERO > 40.0f || now_angle-ANG_MECH_ZERO < -40.0f)
             {
                 gyro_loop_out = 0;          // 清零平衡PWM
                 turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
