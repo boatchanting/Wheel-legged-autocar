@@ -318,17 +318,6 @@ vision_detected_marker = 0;//雷区调用,测试用
 
                 // 逐飞助手示波器发送代码        
                 // 1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
-
-
-                // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
@@ -337,6 +326,17 @@ vision_detected_marker = 0;//雷区调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+
+
+                // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // //3.【调试遥控器，前六个通道】
