@@ -36,6 +36,7 @@
 
 #include "zf_common_headfile.h"
 #include "config/config.h"//【提醒】配置请在这里修改
+#include "tools/runtime_profiler.h"
 
 // 声明外部函数
 
@@ -44,6 +45,7 @@ extern volatile uint8 pit_state;
 extern volatile uint8 pit_state1; 
 // 声明外部函数，确保编译器能找到 ekf.c 中的函数
 extern void EKF_UpData(void);//卡尔曼滤波
+extern volatile runtime_profiler_t g_ekf_profiler;
 
 volatile uint32_t control_tick = 0;        // 1ms计数器
 extern volatile float pid_out_speed;  // 速度环输出（目标角度）
@@ -75,7 +77,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 【nav.1】惯性导航解算 (10ms 跑一次)
     // 按下记录按钮之前的惯性导航不可信==========================================================
-    if(loop_counter % 10 == 0 && g_yaw_initialized)
+    if(loop_counter % 10 == 1 && g_yaw_initialized)
     {
         if (jump_flag == 0)
         {
@@ -91,6 +93,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             #endif
 
             #if IMU_CATEGORY == 3 //imu963ra 如果小车不同再对小车加&&加以区分
+            
             InertialNav_Update(
                 euler_angle.yaw,                                 // 当前偏航角
                 9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
@@ -98,6 +101,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 (float)motor_value.receive_left_speed_data,      // 左轮速
                 (float)motor_value.receive_right_speed_data      // 右轮速
             );
+            
             #endif
         }
         else
@@ -115,7 +119,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     }
 
     //【gnss.1】GNSS定位更新
-    if (loop_counter % 100 == 0) {  // 100ms 一次
+    if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
@@ -126,11 +130,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
    // ------------------------------------------------------
     // 【nav.4】复现控制任务 (10ms运行一次)
     // ------------------------------------------------------
-    if (loop_counter % 10 == 0) {  // 10ms 一次
+    if (loop_counter % 10 == 3) {  // 10ms 一次
         if(g_motor_enable){NavReplay_Process();} //复现控制
     }
 
-    if (loop_counter % 20 == 0) {  // 20ms 一次
+    if (loop_counter % 20 == 4) {  // 20ms 一次
         if(g_motor_enable){Bridge_Test_Triple_SingleSide_Inertial();} //复现控制
         //jump_stepup_three_stairs_test_update(); // 连续上三级台阶测试状态机
     };//【测试】抬高双腿
@@ -144,7 +148,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         pid_servo_speed.ki = SERVO_SPEED_KI;
         pid_servo_speed.kd = SERVO_SPEED_KD;
 
-        if (loop_counter % 20 == 0 && g_yaw_initialized)  // 20ms周期，且偏航角已初始化，且不在推车模式
+        if (loop_counter % 20 == 5 && g_yaw_initialized)  // 20ms周期，且偏航角已初始化，且不在推车模式
         {
             // 2.1 获取编码器速度
             //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
@@ -168,7 +172,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 2: 转向角度环 (6ms) - 外环
     // ==========================================================
-        if (loop_counter % 6 == 0)  // 6ms周期
+        if (loop_counter % 6 == 1)  // 6ms周期
         {
             // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
             // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
@@ -228,10 +232,10 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 3: 平衡角度环 (5ms 跑一次)
     // ==========================================================
-    if (loop_counter % 5 == 0)
+    if (loop_counter % 5 == 2)
     {
         // 运行姿态解算 (EKF / 互补滤波)
-        EKF_UpData(); 
+        EKF_UpData();
         #if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
         EKF_Update_Heading();//磁力计北更新
         #endif
@@ -250,7 +254,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 4: 转向角速度环 (2ms) - 内环
     // ==========================================================
-    if (loop_counter % 2 == 0 && g_yaw_initialized)  // 2ms周期
+    if (loop_counter % 2 == 1 && g_yaw_initialized)  // 2ms周期
     {
         #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
@@ -322,7 +326,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
 
     // 6.rolling平衡环(5ms一次)
-    if (loop_counter % 5 == 0){
+    if (loop_counter % 5 == 3){
         Roll_Balance_Control(euler_angle.roll, roll_degree);
     }
 
@@ -330,7 +334,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 6: 安全保护 (倒地停止)(9ms)
     // ==========================================================
-    if (loop_counter % 9 == 0){
+    if (loop_counter % 9 == 6){
         // 【倒地保护条件】：必须同时满足
         //   (1) 偏航角已初始化
         //   (2) 非跳跃状态（jump_flag == 0）
@@ -450,7 +454,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 9: 系统心跳
     // ==========================================================
-    if(loop_counter % 10 == 0) 
+    if(loop_counter % 50 == 11) 
     {
         pit_state = 1; 
     }
