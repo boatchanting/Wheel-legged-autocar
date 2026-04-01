@@ -35,6 +35,7 @@
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "config/config.h"//【提醒】配置请在这里修改
+#include "tools/runtime_profiler.h"
 
 // **************************** uart配置区域 **************************** 
 #define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0
@@ -61,7 +62,9 @@ bool dir = true;
 #define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1     用于遥控器，10ms
 #define PIT_NUM_10         (PIT_CH10) // 使用定时器通道10  用于遥控器，10ms
 volatile uint8 pit_state = 0;  //通道0中断标志位
+
 uint8 pit_state_1 = 0;//通道1中断标志位
+volatile runtime_profiler_t g_ekf_profiler = {0};
 
 
 // *************************** EKF中断声明 ***************************
@@ -284,6 +287,11 @@ Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 // *****************中断在这后面开*****************
     
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
+    // EKF 运行时间测试
+    timer_init(TC_TIME2_CH0, TIMER_US);
+    timer_start(TC_TIME2_CH0);
+    RUNTIME_PROFILE_RESET(&g_ekf_profiler);
+    
     pit_ms_init(PIT_NUM, 1);
     #if REMOTE_CONTROL
     pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
@@ -299,6 +307,7 @@ Bridge_Init();//【优化点】单边桥控制初始化，可以集成
     ips200_clear();
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
+ uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
 
 vision_detected_marker = 0;//雷区调用,测试用
     //-------------------------------------------------------------------
@@ -313,6 +322,22 @@ vision_detected_marker = 0;//雷区调用,测试用
         {
             // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
             pit_state = 0; // 清除标志   
+
+            // ekf_print_div++;
+            // if(ekf_print_div >= 10)
+            // {
+            //     uint32 ekf_cnt = g_ekf_profiler.count;
+            //     if(ekf_cnt > 0U)
+            //     {
+            //         printf("[EKF] cnt=%lu, avg=%lu us, min=%lu us, max=%lu us, last=%lu us\r\n",
+            //                (unsigned long)g_ekf_profiler.count,
+            //                (unsigned long)g_ekf_profiler.avg_us,
+            //                (unsigned long)g_ekf_profiler.min_us,
+            //                (unsigned long)g_ekf_profiler.max_us,
+            //                (unsigned long)g_ekf_profiler.last_us);
+            //     }
+            //     ekf_print_div = 0;
+            // }
             #if WIFI_USE
                 //wifi_protocol_send_data();//自定义wifi协议
 
@@ -411,12 +436,12 @@ vision_detected_marker = 0;//雷区调用,测试用
         //     vision_detected_marker = 0;
         // }//雷区旋转调用，测试用
 
-        // //模拟视觉触发跳跃测试
-        // if (vision_detected_jump_point == 1) 
-        // {
-        //     jump_trigger(); // <--- 只需要调用这一句
-        //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
-        // }
+        //模拟视觉触发跳跃测试
+        if (vision_detected_jump_point == 1) 
+        {
+            jump_trigger(); // <--- 只需要调用这一句
+            vision_detected_jump_point = 0; // 清除标志位，防止连续触发
+        }
         //跳跃雷区测试用，【调试】打开
         // system_delay_ms(50);
 
