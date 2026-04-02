@@ -144,9 +144,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     if(g_is_push_mode==0)
     {  
-        pid_servo_speed.kp = SERVO_SPEED_KP;
-        pid_servo_speed.ki = SERVO_SPEED_KI;
-        pid_servo_speed.kd = SERVO_SPEED_KD;
+
 
         if (loop_counter % 20 == 5 && g_yaw_initialized)  // 20ms周期，且偏航角已初始化，且不在推车模式
         {
@@ -164,10 +162,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     }
     else if(g_is_push_mode==1)
     {    
-        pid_servo_speed.kp = 0;
-        pid_servo_speed.ki = 0;
-        pid_servo_speed.kd = 0;
-
+        // 重置舵机速度环状态变量
+        pid_servo_speed.error = 0;
+        pid_servo_speed.last_error = 0;
+        pid_servo_speed.prev_error = 0;
+        pid_servo_speed.error_integral = 0;
+        pid_servo_speed.output = 0;
     }
     // ==========================================================
     // 步骤 2: 转向角度环 (6ms) - 外环
