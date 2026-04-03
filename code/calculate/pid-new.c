@@ -499,14 +499,7 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
 }
 
 
-/**
- * @brief 速度环控制 (外环)无刷电机
- * @param target_speed 期望速度 (通常遥控给定)
- * @param actual_speed 实际速度 (编码器测得)
- * @return 期望的角度调整量 (单位：度)
- * @note   原理：想让车加速，就得让车身先往前倾斜，利用重力分量加速。
- *         所以速度环的输出，实际上是角度环的目标输入。
- */
+
 /**
  * @brief 舵机速度环增量式PID
  * @param target_speed 目标速度
@@ -652,6 +645,14 @@ float Servo_Speed_Control_SmoothSwitch(float target_speed, float actual_speed, f
     return blended_output;
 }
 
+/**
+ * @brief 速度环控制 (外环)无刷电机
+ * @param target_speed 期望速度 (通常遥控给定)
+ * @param actual_speed 实际速度 (编码器测得)
+ * @return 期望的角度调整量 (单位：度)
+ * @note   原理：想让车加速，就得让车身先往前倾斜，利用重力分量加速。
+ *         所以速度环的输出，实际上是角度环的目标输入。
+ */
 float Speed_Loop_Control(float target_speed, float actual_speed)
 {
     // 1. 计算误差
