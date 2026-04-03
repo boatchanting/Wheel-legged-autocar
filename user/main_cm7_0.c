@@ -427,11 +427,11 @@ vision_detected_marker = 0;//雷区调用,测试用
         }//雷区旋转调用，测试用
 
         //模拟视觉触发跳跃测试
-        if (vision_detected_jump_point == 1) 
-        {
-            jump_trigger(); // <--- 只需要调用这一句
-            vision_detected_jump_point = 0; // 清除标志位，防止连续触发
-        }
+        // if (vision_detected_jump_point == 1) 
+        // {
+        //     jump_trigger(); // <--- 只需要调用这一句
+        //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
+        // }
         //跳跃雷区测试用，【调试】打开
         system_delay_ms(50);
 

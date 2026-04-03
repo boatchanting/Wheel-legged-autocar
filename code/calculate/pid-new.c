@@ -456,6 +456,11 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
     // else{
     //     pid_servo_speed.error_integral = 0.0f;
     // }
+    if (fabsf(pid_servo_speed.error) < 20.0f) {
+        pid_servo_speed.error_integral += pid_servo_speed.error;
+    } else {
+        pid_servo_speed.error_integral = 0.0f;
+    }
     pid_servo_speed.error_integral = Float_Constrain(pid_servo_speed.error_integral, -pid_servo_speed.max_integral, pid_servo_speed.max_integral);
 
     // PID输出计算
