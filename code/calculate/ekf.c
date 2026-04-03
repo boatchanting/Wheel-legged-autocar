@@ -80,8 +80,12 @@ const matrix_type r[3][3] = {{10000, 0, 0}, {0, 10000, 0}, {0, 0, 10000}};
 const matrix_type p[4][4] = {{1000000, 0, 0, 0}, {0, 1000000, 0, 0}, {0, 0, 1000000, 0}, {0, 0, 0, 1000000}};
 // 初始四元数 [1, 0, 0, 0]
 //const matrix_type ekf[4] = {1, 0, 0, 0};//原先代码中的值
-#if IMU_CATEGORY == 1//imu660ra
+#if IMU_CATEGORY == 1 && CAR_SELECT == 0 //imu660ra
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};//学习板小车使用的
+// 静态矩阵变量
+#endif
+#if IMU_CATEGORY == 1 && CAR_SELECT == 3 //imu660ra
+const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
 // 静态矩阵变量
 #endif
 #if IMU_CATEGORY == 3//imu963ra
@@ -121,7 +125,7 @@ static inline void quaternion_to_euler(void)
     float q2 = (exf_x.data[2][0]);
     float q3 = (exf_x.data[3][0]);
 
-    #if IMU_CATEGORY == 1//imu660ra
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //imu660ra
     // 计算翻滚角(roll)
     euler_angle.roll = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;                                  // pitch
     // 计算俯仰角(pitch)
@@ -130,6 +134,16 @@ static inline void quaternion_to_euler(void)
     // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;//我们的板子1
     // 计算偏航角(yaw)
     euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD;    // yaw
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //imu660ra
+    // 计算翻滚角(roll)：新的 roll = -原来的 pitch
+    euler_angle.roll = -atan2(-2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1) * DEG_TO_RAD;
+
+    // 计算俯仰角(pitch)：新的 pitch = 原来的 roll
+    euler_angle.pitch = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;
+
+    // 计算偏航角(yaw)：新的 yaw = 原来的 yaw + 90°
+    euler_angle.yaw = (atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) ) * DEG_TO_RAD + 90.0;
     #endif
     #if IMU_CATEGORY == 3//imu963ra //这里面根据实际测试使用了面向结果编程，imu换轴的时候使用转轴公式，或者根据上位机波形来判断一下
     // 计算翻滚角(roll)
@@ -225,6 +239,9 @@ void imu_get_values(void)
     gx_temp =(float)-gx_temp;
     gz_temp =(float)-gz_temp;
     #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==3  // 3车ra，可能不是ra，后面再改
+    //这里做轴转换
+    #endif
     // 3. 死区处理
     if (fabs(gx_temp) < GYRO_DEAD_ZONE) gx_temp = 0.0f;
     if (fabs(gy_temp) < GYRO_DEAD_ZONE) gy_temp = 0.0f;
@@ -254,6 +271,9 @@ void imu_get_values(void)
     #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
     imu_data.acc_x =(float)-imu_data.acc_x;
     imu_data.acc_z =(float)-imu_data.acc_z;
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==3  // 3车ra，可能不是ra，后面再改
+    //这里做轴转换
     #endif
 }
 

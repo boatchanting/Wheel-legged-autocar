@@ -35,8 +35,8 @@
 #if CAR_SELECT ==  3 // 3代表 【2026/3/30新车】 对应板子 【2026/03/24 最后的舵机v腿】
 
 #define NAV_DISTANCE_SCALE_FACTOR   1.0f // <--- 在这里填入你计算出的校准值，未调用【优化点】
-#define WHEEL_BASE_MM       1.0f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       1.0f//大致为车轮半径
+#define WHEEL_BASE_MM       175.0f  // 小车轮距 (单位: mm)
+#define SPEED_TO_MM_S       5.183f//大致为车轮半径
 #endif
 
 // --- 坐标系数据结构 ---

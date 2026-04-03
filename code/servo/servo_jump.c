@@ -1,5 +1,6 @@
 #include "servo_jump.h"
 #include "servo_executor.h"
+#include "../config/car_select.h"//根据小车选择配置不同的跳跃参数
 // 状态变量
 uint8_t jump_flag = 0;
 uint32_t jump_start_time = 0;
@@ -95,6 +96,8 @@ uint32_t time_elapsed1, time_elapsed2, time_elapsed3, time_elapsed4=0; // 距离
 static void load_jump_profile(JumpType_e type, float current_height)
 {
     switch(type) {
+        //以下为0车的参数，其他车需要调参
+        #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
         case JUMP_TYPE_HURDLE: // 【跨杆模式】
             g_jump_profile.t_launch = 100;
             g_jump_profile.t_flight = 320; // 跨杆需要更长的滞空收腿时间
@@ -132,6 +135,47 @@ static void load_jump_profile(JumpType_e type, float current_height)
             g_jump_profile.air_target_pitch = -1.0f; // 默认轻微低头
             g_jump_profile.post_jump_height = current_height; // 落地高度不变
             break;
+        #endif
+          //以下为0车的参数，其他车需要调参
+        #if CAR_SELECT == 3 // // 3代表 【2026/3/16带壳新车】 对应板子 【2026/02/15 锦鲤队】
+        case JUMP_TYPE_HURDLE: // 【跨杆模式】
+            g_jump_profile.t_launch = 100;
+            g_jump_profile.t_flight = 320; // 跨杆需要更长的滞空收腿时间
+            g_jump_profile.t_landing = 350;
+            g_jump_profile.t_recovery = 420;
+            
+            g_jump_profile.offset_launch = 3000;  // 极限发力
+            g_jump_profile.offset_flight = -3000; // 【防挂杆】极限收腿
+            g_jump_profile.offset_land = 1000;           
+            g_jump_profile.air_target_pitch = -1.0f; // 空中保持绝对水平
+            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            break;
+            
+        case JUMP_TYPE_STEP_UP: // 【上台阶模式】
+            g_jump_profile.t_launch = 110; 
+            g_jump_profile.t_flight = 220; // 【高度截断】台阶高，提前触地，腾空时间缩短
+            g_jump_profile.t_landing = 250;
+            g_jump_profile.t_recovery = 330;
+            g_jump_profile.offset_launch = 3000;  // 更强发力获取高度
+            g_jump_profile.offset_flight = -1500; // 适度收腿即可
+            g_jump_profile.offset_land = 1000;
+            g_jump_profile.air_target_pitch = -1.0f;
+            g_jump_profile.post_jump_height = current_height;  // 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
+            break;
+            
+        case JUMP_TYPE_NORMAL: // 【普通平地跳】
+        default:
+            g_jump_profile.t_launch = 100;
+            g_jump_profile.t_flight = 200;
+            g_jump_profile.t_landing = 220;
+            g_jump_profile.t_recovery = 280;
+            g_jump_profile.offset_launch = 2700; 
+            g_jump_profile.offset_flight = -1500;
+            g_jump_profile.offset_land = 1700;
+            g_jump_profile.air_target_pitch = -1.0f; // 默认轻微低头
+            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            break;
+        #endif
     }
     
     // 同步更新动量轮的控制目标
