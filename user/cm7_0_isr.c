@@ -164,21 +164,23 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
 
 
             // 2.3 计算目标速度调整分量
-            // 2.3.1 位置式/增量式自动切换：普通路段用位置式，颠簸/上桥阶段用增量式
-            uint8 use_incremental_pid = 0;
-            if ((current_bridge_state == BRIDGE_STATE_CLIMB) ||
-                (current_bridge_state == BRIDGE_STATE_ON_BRIDGE) ||
-                (current_bridge_state == BRIDGE_STATE_LEAVING))
-            {
-                use_incremental_pid = 1;
-            }
+            // 2.3.1 通过状态位切换位置式/增量式PID
+            // if ((current_bridge_state == BRIDGE_STATE_CLIMB) ||
+            //     (current_bridge_state == BRIDGE_STATE_ON_BRIDGE) ||
+            //     (current_bridge_state == BRIDGE_STATE_LEAVING))
+            // {
+            //     Servo_Speed_PID_Mode_Set(1);
+            // }
+            // else
+            // {
+            //     Servo_Speed_PID_Mode_Set(0);
+            // }
 
-            // 2.3.2 丝滑切换函数：内部会按模式自动装载对应参数并平滑过渡
-            float duty_adjustment = Servo_Speed_Control_SmoothSwitch(
+            // 2.3.2 按状态位执行丝滑切换
+            float duty_adjustment = Servo_Speed_Control_SmoothSwitch_ByMode(
                 target_speed_set,
                 current_actual_speed,
-                euler_angle.pitch,
-                use_incremental_pid
+                euler_angle.pitch
             );
             g_target_pwm_speed_adj = (int16)duty_adjustment;
         }

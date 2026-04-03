@@ -15,6 +15,7 @@ PID_Param_t pid_roll = {ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_
 
 
 volatile float target_speed_set = 0.0f;
+volatile uint8 g_servo_speed_pid_mode = 0; // 0=position,1=incremental
 
 //状态与调试变量
 volatile float now_speed       = 0.0f;
@@ -48,6 +49,16 @@ float Float_Constrain(float val, float min, float max) {
  * @note  调用此函数后，所有PID环的积分项和输出都会被重置为0。
  *        
  */
+
+void Servo_Speed_PID_Mode_Set(uint8 use_incremental)
+{
+    g_servo_speed_pid_mode = (use_incremental != 0) ? 1 : 0;
+}
+
+uint8 Servo_Speed_PID_Mode_Get(void)
+{
+    return g_servo_speed_pid_mode;
+}
 void PID_Param_Init(void) {
     // 初始化舵机速度环PID参数
     pid_servo_speed.kp = SERVO_SPEED_KP;
@@ -653,6 +664,16 @@ float Servo_Speed_Control_SmoothSwitch(float target_speed, float actual_speed, f
  * @note   原理：想让车加速，就得让车身先往前倾斜，利用重力分量加速。
  *         所以速度环的输出，实际上是角度环的目标输入。
  */
+
+float Servo_Speed_Control_SmoothSwitch_ByMode(float target_speed, float actual_speed, float actual_angle)
+{
+    return Servo_Speed_Control_SmoothSwitch(
+        target_speed,
+        actual_speed,
+        actual_angle,
+        Servo_Speed_PID_Mode_Get()
+    );
+}
 float Speed_Loop_Control(float target_speed, float actual_speed)
 {
     // 1. 计算误差

@@ -540,6 +540,7 @@ extern volatile float turn_gyro_loop_out; // 转向角速度环输出（PWM）
 extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern volatile float target_speed_set;
+extern volatile uint8 g_servo_speed_pid_mode; // 0=position,1=incremental
 extern uint8_t roll_balance_enable; // rolling环使能开关
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
@@ -550,7 +551,10 @@ float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
 float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
 float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)
 float Servo_Speed_Control_Incremental(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)-增量式PID
-float Servo_Speed_Control_SmoothSwitch(float target_speed, float actual_speed, float actual_angle, uint8 use_incremental);//速度环(舵机)-位置式/增量式丝滑切换
+float Servo_Speed_Control_SmoothSwitch(float target_speed, float actual_speed, float actual_angle, uint8 use_incremental);
+void Servo_Speed_PID_Mode_Set(uint8 use_incremental);
+uint8 Servo_Speed_PID_Mode_Get(void);
+float Servo_Speed_Control_SmoothSwitch_ByMode(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)-位置式/增量式丝滑切换
 float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)(电机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
