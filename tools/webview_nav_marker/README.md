@@ -1,6 +1,6 @@
 ﻿# 惯导打点 WebView 上位机
 
-## 运行
+## 运行上位机
 
 ```bash
 python tools/webview_nav_marker/nav_marker_host.py
@@ -16,6 +16,22 @@ python tools/webview_nav_marker/nav_marker_host.py
 - 下位机 `mark_trigger=1` 时自动打点
 - 点支持新增、删除、拖拽位移、类型编辑（0~5）
 - 导出 CSV：`total_count,index,x,y,point_type`
+
+## 生成静态 C 点表（无需 Flash）
+
+将导出的 CSV 转为 `nav_replay` 可直接使用的 C 点表头文件：
+
+```bash
+python tools/webview_nav_marker/csv_to_nav_table.py <你的csv路径>
+```
+
+不传路径时，会自动使用 `tools/webview_nav_marker/` 下最新的 `nav_mark_points_*.csv`。
+
+输出文件：
+
+- `code/navigation/nav_replay_route_table.h`
+
+项目已改为静态点表复现模式，复现时不再依赖 `NavFlash_ReadFlashToRam()`。
 
 ## 协议字段扩展
 

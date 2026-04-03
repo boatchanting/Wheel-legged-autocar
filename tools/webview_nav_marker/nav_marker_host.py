@@ -19,7 +19,6 @@ PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
-STRUCT_FMT_V2 = "<IffffHBBBBBBHHHHHHddbbffBfBfffBB"
 
 FIELD_NAMES_V1 = [
     "loop",
@@ -64,24 +63,29 @@ all_history_data = []
 new_data_buffer = []
 
 last_rx_time = 0.0
+last_frame_time = 0.0
 last_payload_size = 0
 server_error = ""
 peer_addr = ""
+listen_ip = HOST_IP
 
 
 def _decode_payload(payload_bytes):
     size = len(payload_bytes)
 
-    if size == PAYLOAD_SIZE_V2:
-        unpacked = struct.unpack(STRUCT_FMT_V2, payload_bytes)
-        data = dict(zip(FIELD_NAMES_V2, unpacked))
-    elif size == PAYLOAD_SIZE_V1:
-        unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes)
-        data = dict(zip(FIELD_NAMES_V1, unpacked))
+    if size < PAYLOAD_SIZE_V1:
+        return None
+
+    # 兼容扩展 payload：基础字段始终按 V1 解析，后续字段按可用字节补齐。
+    unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes[:PAYLOAD_SIZE_V1])
+    data = dict(zip(FIELD_NAMES_V1, unpacked))
+
+    if size >= PAYLOAD_SIZE_V2:
+        data["mark_trigger"] = payload_bytes[PAYLOAD_SIZE_V1]
+        data["point_type"] = payload_bytes[PAYLOAD_SIZE_V1 + 1]
+    else:
         data["mark_trigger"] = 0
         data["point_type"] = 0
-    else:
-        return None
 
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
@@ -105,6 +109,8 @@ def _push_data(data):
 
 
 def _parse_frame_stream(raw_buffer):
+    global last_frame_time, last_payload_size
+
     while len(raw_buffer) >= FRAME_MIN_SIZE:
         if raw_buffer[0] != FRAME_HEAD1 or raw_buffer[1] != FRAME_HEAD2:
             del raw_buffer[0]
@@ -131,11 +137,36 @@ def _parse_frame_stream(raw_buffer):
             continue
 
         payload = bytes(raw_buffer[4 : 4 + payload_len])
+        with state_lock:
+            last_frame_time = time.time()
+            last_payload_size = payload_len
+
         data = _decode_payload(payload)
         if data is not None:
             _push_data(data)
 
         del raw_buffer[:frame_len]
+
+
+def _bind_server_socket(server_socket):
+    global listen_ip
+
+    bind_targets = [HOST_IP]
+    if HOST_IP != "0.0.0.0":
+        bind_targets.append("0.0.0.0")
+
+    last_exc = None
+    for ip in bind_targets:
+        try:
+            server_socket.bind((ip, HOST_PORT))
+            listen_ip = ip
+            return
+        except Exception as exc:
+            last_exc = exc
+
+    if last_exc is not None:
+        raise last_exc
+    raise RuntimeError("Bind failed: unknown error")
 
 
 def tcp_server_thread():
@@ -145,10 +176,12 @@ def tcp_server_thread():
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 
     try:
-        server_socket.bind((HOST_IP, HOST_PORT))
+        _bind_server_socket(server_socket)
         server_socket.listen(1)
         server_socket.settimeout(1.0)
-        print(f"[TCP] Listening on {HOST_IP}:{HOST_PORT}")
+        with state_lock:
+            server_error = ""
+        print(f"[TCP] Listening on {listen_ip}:{HOST_PORT}")
     except Exception as exc:
         with state_lock:
             server_error = f"Bind failed: {exc}"
@@ -161,6 +194,7 @@ def tcp_server_thread():
             peer = f"{addr[0]}:{addr[1]}"
             with state_lock:
                 peer_addr = peer
+                server_error = ""
             print(f"[TCP] Connected: {peer}")
 
             raw_buffer = bytearray()
@@ -183,6 +217,7 @@ def tcp_server_thread():
             continue
         except Exception as exc:
             with state_lock:
+                peer_addr = ""
                 server_error = f"Server error: {exc}"
             time.sleep(0.5)
 
@@ -199,14 +234,18 @@ class Api:
     def get_status(self):
         with state_lock:
             now = time.time()
-            connected = (now - last_rx_time) < 1.2
+            connected = bool(peer_addr)
+            data_fresh = (now - last_rx_time) < 1.2
+            frame_fresh = (now - last_frame_time) < 1.2
             return {
                 "connected": connected,
+                "data_fresh": data_fresh,
+                "frame_fresh": frame_fresh,
                 "peer": peer_addr,
                 "last_payload_size": last_payload_size,
                 "history_count": len(all_history_data),
                 "server_error": server_error,
-                "host_ip": HOST_IP,
+                "host_ip": listen_ip,
                 "host_port": HOST_PORT,
             }
 
