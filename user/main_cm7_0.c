@@ -339,7 +339,7 @@ vision_detected_marker = 0;//雷区调用,测试用
             //     ekf_print_div = 0;
             // }
             #if WIFI_USE
-                //wifi_protocol_send_data();//自定义wifi协议
+                wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
 
                 // 逐飞助手示波器发送代码        
                 // 1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
@@ -543,5 +543,4 @@ void uart_rx_interrupt_handler (void)
         fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // 将数据写入 fifo 中
     }
 }
-
 

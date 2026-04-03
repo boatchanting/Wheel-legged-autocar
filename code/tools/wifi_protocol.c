@@ -133,6 +133,9 @@ void wifi_protocol_send_data(void) {
 #endif
     write_u32_or_float(&heading_to_send);   // 4 bytes (float)
     write_u32_or_float(&inertial_nav.relative_yaw); // 4 bytes (float)
+    // E. mark state for host point editor
+    write_u8(robot_ctrl.mark_trigger);      // 1 byte
+    write_u8(robot_ctrl.point_type);        // 1 byte
 
     // -----------------------------------------------------
     // 3. 计算长度与校验
