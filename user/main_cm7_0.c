@@ -35,6 +35,7 @@
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "config/config.h"//【提醒】配置请在这里修改
+#include "tools/runtime_profiler.h"
 
 // **************************** uart配置区域 **************************** 
 #define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0
@@ -61,7 +62,9 @@ bool dir = true;
 #define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1     用于遥控器，10ms
 #define PIT_NUM_10         (PIT_CH10) // 使用定时器通道10  用于遥控器，10ms
 volatile uint8 pit_state = 0;  //通道0中断标志位
+
 uint8 pit_state_1 = 0;//通道1中断标志位
+volatile runtime_profiler_t g_ekf_profiler = {0};
 
 
 // *************************** EKF中断声明 ***************************
@@ -284,6 +287,11 @@ Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 // *****************中断在这后面开*****************
     
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
+    // EKF 运行时间测试
+    timer_init(TC_TIME2_CH0, TIMER_US);
+    timer_start(TC_TIME2_CH0);
+    RUNTIME_PROFILE_RESET(&g_ekf_profiler);
+    
     pit_ms_init(PIT_NUM, 1);
     #if REMOTE_CONTROL
     pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
@@ -299,6 +307,7 @@ Bridge_Init();//【优化点】单边桥控制初始化，可以集成
     ips200_clear();
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
+ uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
 
 vision_detected_marker = 0;//雷区调用,测试用
     //-------------------------------------------------------------------
@@ -313,59 +322,65 @@ vision_detected_marker = 0;//雷区调用,测试用
         {
             // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
             pit_state = 0; // 清除标志   
+
+            // ekf_print_div++;
+            // if(ekf_print_div >= 10)
+            // {
+            //     uint32 ekf_cnt = g_ekf_profiler.count;
+            //     if(ekf_cnt > 0U)
+            //     {
+            //         printf("[EKF] cnt=%lu, avg=%lu us, min=%lu us, max=%lu us, last=%lu us\r\n",
+            //                (unsigned long)g_ekf_profiler.count,
+            //                (unsigned long)g_ekf_profiler.avg_us,
+            //                (unsigned long)g_ekf_profiler.min_us,
+            //                (unsigned long)g_ekf_profiler.max_us,
+            //                (unsigned long)g_ekf_profiler.last_us);
+            //     }
+            //     ekf_print_div = 0;
+            // }
             #if WIFI_USE
                 //wifi_protocol_send_data();//自定义wifi协议
 
                 // 逐飞助手示波器发送代码        
-                // 1. 填充速度数据 (通道 0-2)姿态角    角速度环输出，角速度，左右轮，角度环输出，舵机速度环输出，
-                // seekfree_assistant_oscilloscope_data.data[0] =(float)inertial_nav.x;
-                // seekfree_assistant_oscilloscope_data.data[1] =(float)inertial_nav.y;
-                // seekfree_assistant_oscilloscope_data.data[2] = (float)inertial_nav.vx_body;
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)inertial_nav.vy_body;
-                // seekfree_assistant_oscilloscope_data.data[4] =(float)motor_value.receive_right_speed_data;
-                // seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
-                // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_turn_angle.output;
+                // 1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+
+
+                // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
-                //                     seekfree_assistant_oscilloscope_data.data[0] = (float)uart_receiver.channel[0];
+
+
+                // //3.【调试遥控器，前六个通道】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)uart_receiver.channel[0];
                 // seekfree_assistant_oscilloscope_data.data[1] =(float)uart_receiver.channel[1];
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)uart_receiver.channel[2];
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)uart_receiver.channel[3];
                 // seekfree_assistant_oscilloscope_data.data[4] =(float)uart_receiver.channel[4];
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
-                //                 seekfree_assistant_oscilloscope_data.data[6] = robot_ctrl.target_speedf;//(float)uart_receiver.channel[6];
+                // seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
                 // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
-
-                //    // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
-                //     seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
-
-                //     //通道1,2：gnss纬度，【注意】这个是double型数据，示波器传的是float型数据
-                //     seekfree_assistant_oscilloscope_data.data[1] = (float)gnss.latitude;
-
-                //     //通道3,4：gnss经度
-
-                //     //通道3：gnss方向+使用卫星数*10000
-                //     seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
-
-                //     //通道5：nav x
-                //     seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.x;
-
-                //     //通道6：nav y
-                //     seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.y;
-
-                //     //通道6：nav relative_yaw
-                //     //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
-
-                //     //通道7：系统毫秒时间戳
-                //     seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
-
-                //     // 4. 设置本次发送的通道数量 (一共8个数据)
-                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
+                    // 4. 设置本次发送的通道数量 (一共8个数据)
+                    seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                //     // 5. 调用发送函数
-                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                    // 5. 调用发送函数
+                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // // 用于上位机向小车发送pid信息
-                // wifi_update_pid_params(); 
+                // 用于上位机向小车发送pid信息
+                wifi_update_pid_params(); 
                 #endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---
@@ -406,19 +421,19 @@ vision_detected_marker = 0;//雷区调用,测试用
         }
         #endif
 
-        // if (vision_detected_marker == 1) {
-        //     minefield_flag = 1; // 触发旋转
-        //     vision_detected_marker = 0;
-        // }//雷区旋转调用，测试用
+        if (vision_detected_marker == 1) {
+            minefield_flag = 1; // 触发旋转
+            vision_detected_marker = 0;
+        }//雷区旋转调用，测试用
 
-        // //模拟视觉触发跳跃测试
-        // if (vision_detected_jump_point == 1) 
-        // {
-        //     jump_trigger(); // <--- 只需要调用这一句
-        //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
-        // }
+        //模拟视觉触发跳跃测试
+        if (vision_detected_jump_point == 1) 
+        {
+            jump_trigger(); // <--- 只需要调用这一句
+            vision_detected_jump_point = 0; // 清除标志位，防止连续触发
+        }
         //跳跃雷区测试用，【调试】打开
-        // system_delay_ms(50);
+        system_delay_ms(50);
 
 
         // ---------------------------------------------------------

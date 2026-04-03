@@ -475,12 +475,12 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
     // 5. 位置式 PID 计算
     // 积分项 & 积分限幅
     // 只有在接近机械零点的情况下，才使用积分项，修复起来的时候开始积分的问题
-    if (fabsf(actual_angle-ANG_MECH_ZERO) < 1.0f) {
+    // if (fabsf(actual_angle-ANG_MECH_ZERO) < 2.0f) {
         pid_servo_speed.error_integral += pid_servo_speed.error;
-    }
-    else{
-        pid_servo_speed.error_integral = 0.0f;
-    }
+    // }
+    // else{
+    //     pid_servo_speed.error_integral = 0.0f;
+    // }
     pid_servo_speed.error_integral = Float_Constrain(pid_servo_speed.error_integral, -pid_servo_speed.max_integral, pid_servo_speed.max_integral);
 
     // PID输出计算

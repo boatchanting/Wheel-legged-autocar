@@ -22,6 +22,7 @@ extern PID_Param_t pid_angle;
 extern PID_Param_t pid_gyro;
 extern PID_Param_t pid_turn_angle;
 extern PID_Param_t pid_turn_gyro;
+extern volatile float roll_degree;
 
 // ============================================================================
 // 内部状态与变量
@@ -37,6 +38,31 @@ static float initial_distance_to_bridge = 0.0f;
 // 保存正常的舵机限制，以便下桥后恢复
 static int32 saved_acc_limit = 10;     
 static int32 saved_dec_limit = 10;
+
+typedef enum {
+    BRIDGE_TEST_STATE_IDLE = 0,
+    BRIDGE_TEST_STATE_PREPARE,
+    BRIDGE_TEST_STATE_ON_BRIDGE,
+    BRIDGE_TEST_STATE_EXIT
+} BridgeTestState_e;
+
+uint8_t debug_triple_bridge_test_enable = 0;
+static BridgeTestState_e s_bridge_test_state = BRIDGE_TEST_STATE_IDLE;
+static float s_test_roll_target = 0.0f;
+
+#define BRIDGE_TEST_PREPARE_LEN_MM      300.0f
+#define BRIDGE_TEST_TOTAL_LEN_MM       3000.0f
+#define BRIDGE_TEST_EXIT_BUFFER_MM      200.0f
+
+#define BRIDGE_TEST_EDGE_MARGIN_MM     1000.0f
+#define BRIDGE_TEST_OBS_LENGTH_MM       200.0f
+#define BRIDGE_TEST_OBS_GAP_MM          200.0f
+#define BRIDGE_TEST_ROLL_LEAD_MM         80.0f
+#define BRIDGE_TEST_ROLL_HOLD_MM          40.0f
+
+#define BRIDGE_TEST_ROLL_BIAS_DEG         3.0f
+#define BRIDGE_TEST_ROLL_RAMP_STEP_DEG    0.3f
+static const float k_bridge_test_side_sign[3] = {1.0f, -1.0f, 1.0f};
 
 // 绝对值辅助函数
 #define MY_ABS_F(x) ((x) > 0.0f ? (x) : -(x))
@@ -119,6 +145,52 @@ static void Smooth_Height_Control(float target_height, float step_size) {
     PID_Dynamic_Update_By_Height(servo_height);
 }
 
+static float Ramp_Float(float current, float target, float step) {
+    if (current < target) {
+        current += step;
+        if (current > target) current = target;
+    } else if (current > target) {
+        current -= step;
+        if (current < target) current = target;
+    }
+    return current;
+}
+
+static void Bridge_Test_Reset_All(uint8 keep_speed) {
+    roll_balance_enable = 0;
+    roll_degree = 0.0f;
+    s_test_roll_target = 0.0f;
+
+    acc_limit = saved_acc_limit;
+    dec_limit = saved_dec_limit;
+
+    if (keep_speed == 0) {
+        target_speed_set = 0.0f;
+    } else {
+        target_speed_set = bridge_params.speed_normal;
+    }
+
+    s_bridge_test_state = BRIDGE_TEST_STATE_IDLE;
+}
+
+static float Bridge_Test_Get_Roll_Bias(float dist_mm) {
+    float obstacle_start = BRIDGE_TEST_EDGE_MARGIN_MM;
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        float trigger_begin = obstacle_start - BRIDGE_TEST_ROLL_LEAD_MM;
+        float trigger_end = obstacle_start + BRIDGE_TEST_OBS_LENGTH_MM + BRIDGE_TEST_ROLL_HOLD_MM;
+
+        if ((dist_mm >= trigger_begin) && (dist_mm <= trigger_end)) {
+            return k_bridge_test_side_sign[i] * BRIDGE_TEST_ROLL_BIAS_DEG;
+        }
+
+        obstacle_start += BRIDGE_TEST_OBS_LENGTH_MM + BRIDGE_TEST_OBS_GAP_MM;
+    }
+
+    return 0.0f;
+}
+
 
 // ============================================================================
 // 主流程控制
@@ -127,6 +199,9 @@ static void Smooth_Height_Control(float target_height, float step_size) {
 void Bridge_Init(void) {
     current_bridge_state = BRIDGE_STATE_IDLE;
     roll_balance_enable = 0;
+    debug_triple_bridge_test_enable = 0;
+    s_bridge_test_state = BRIDGE_TEST_STATE_IDLE;
+    s_test_roll_target = 0.0f;
     
     // 距离参数 (需实测微调)
     bridge_params.trigger_brake_dist = 800.0f; 
@@ -275,4 +350,75 @@ void Bridge_Test_Smooth_PID(void) {
     // 测试时，强制关闭底层的 Roll 自适应平衡，避免干扰纯直立 PID 的整定
     //roll_balance_enable = 0;
 
+}
+
+void Bridge_Test_Triple_SingleSide_Inertial(void) {
+    float traveled_mm;
+    float target_roll_bias;
+
+    if (debug_triple_bridge_test_enable == 0) {
+        if (s_bridge_test_state != BRIDGE_TEST_STATE_IDLE) {
+            Bridge_Test_Reset_All(1);
+        }
+        return;
+    }
+
+    switch (s_bridge_test_state) {
+        case BRIDGE_TEST_STATE_IDLE:
+            saved_acc_limit = acc_limit;
+            saved_dec_limit = dec_limit;
+            Reset_Start_Point();
+            s_test_roll_target = 0.0f;
+            roll_degree = 0.0f;
+            s_bridge_test_state = BRIDGE_TEST_STATE_PREPARE;
+            break;
+
+        case BRIDGE_TEST_STATE_PREPARE:
+            target_speed_set = bridge_params.speed_ready;
+            Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
+            acc_limit = bridge_params.servo_acc_bridge;
+            dec_limit = bridge_params.servo_dec_bridge;
+            roll_balance_enable = 1;
+
+            if (Get_Traveled_Distance() >= BRIDGE_TEST_PREPARE_LEN_MM) {
+                Reset_Start_Point();
+                s_bridge_test_state = BRIDGE_TEST_STATE_ON_BRIDGE;
+            }
+            break;
+
+        case BRIDGE_TEST_STATE_ON_BRIDGE:
+            target_speed_set = bridge_params.speed_climb;
+            Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
+
+            traveled_mm = Get_Traveled_Distance();
+            target_roll_bias = Bridge_Test_Get_Roll_Bias(traveled_mm);
+            s_test_roll_target = Ramp_Float(s_test_roll_target, target_roll_bias, BRIDGE_TEST_ROLL_RAMP_STEP_DEG);
+            roll_degree = s_test_roll_target;
+
+            if (traveled_mm >= (BRIDGE_TEST_TOTAL_LEN_MM + BRIDGE_TEST_EXIT_BUFFER_MM)) {
+                Reset_Start_Point();
+                s_bridge_test_state = BRIDGE_TEST_STATE_EXIT;
+            }
+            break;
+
+        case BRIDGE_TEST_STATE_EXIT:
+            target_speed_set = bridge_params.speed_normal;
+            Smooth_Height_Control(bridge_params.height_normal, bridge_params.height_step_drop);
+
+            s_test_roll_target = Ramp_Float(s_test_roll_target, 0.0f, BRIDGE_TEST_ROLL_RAMP_STEP_DEG);
+            roll_degree = s_test_roll_target;
+
+            if ((MY_ABS_F(servo_height - bridge_params.height_normal) < 0.1f) &&
+                (MY_ABS_F(s_test_roll_target) < 0.2f) &&
+                (Get_Traveled_Distance() >= bridge_params.cooldown_distance)) {
+                Bridge_Test_Reset_All(1);
+                debug_triple_bridge_test_enable = 0;
+            }
+            break;
+
+        default:
+            Bridge_Test_Reset_All(0);
+            debug_triple_bridge_test_enable = 0;
+            break;
+    }
 }

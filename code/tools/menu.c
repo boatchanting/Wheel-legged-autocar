@@ -156,7 +156,8 @@ static void Menu_ShowActionConfirmScreen(void)
     ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
     ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
     ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
-    
+
+    ips200_show_float(60, 15*7, gnss.state, 3, 2);
     ips200_show_float(25, 135, current_angles[0], 3, 1);
     ips200_show_float(25, 150, current_angles[1], 3, 1);
     ips200_show_float(25, 165, current_angles[2], 3, 1);
@@ -192,7 +193,8 @@ static void Menu_ShowActionRunningScreen(void)
     ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
     ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
     ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
-    
+       
+    ips200_show_float(60, 15*7, gnss.state, 3, 2);
     ips200_show_float(25, 135, current_angles[0], 3, 1);
     ips200_show_float(25, 150, current_angles[1], 3, 1);
     ips200_show_float(25, 165, current_angles[2], 3, 1);
@@ -342,13 +344,14 @@ void Menu_ShowDynamic(void)
     // 在主界面显示动态数据
     else if (current_state == MENU_STATE_MAIN)
     {
-        ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
-        ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
-        ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
+        ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
+        ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
+        ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
         //ips200_show_uint(50,15*2, gnss.state,5); 
         //ips200_show_uint(40,15*6,gnss.satellite_used,5);
 
-
+   
+    ips200_show_float(60, 15*7, gnss.state, 3, 2);
         ips200_show_float(25, 135, current_angles[0], 3, 1);
         ips200_show_float(25, 150, current_angles[1], 3, 1);
         ips200_show_float(25, 165, current_angles[2], 3, 1);
