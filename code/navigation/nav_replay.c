@@ -1,5 +1,6 @@
 #include "nav_replay.h"
 #include "../common.h"
+#include "nav_replay_route_table.h"
 
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;
@@ -31,8 +32,32 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
 
 // ========================= 接口实现 =========================
 
+uint16 NavReplay_LoadStaticRouteToRam(void)
+{
+#if NAV_REPLAY_USE_STATIC_ROUTE_TABLE
+    uint16 load_count = NAV_REPLAY_STATIC_ROUTE_COUNT;
+    if (load_count > NAV_RAM_MAX_POINTS)
+    {
+        load_count = NAV_RAM_MAX_POINTS;
+    }
+    nav_ram_data.plan_type = NAV_PLAN_1;
+    nav_ram_data.point_count = load_count;
+    for (uint16 i = 0; i < load_count; i++)
+    {
+        nav_ram_data.points[i] = nav_replay_static_route_points[i];
+    }
+    return load_count;
+#else
+    return nav_ram_data.point_count;
+#endif
+}
+
 void NavReplay_Start(void)
 {
+#if NAV_REPLAY_USE_STATIC_ROUTE_TABLE
+    NavReplay_LoadStaticRouteToRam();
+#endif
+
     if (nav_ram_data.point_count == 0)
     {
         #if DEBUG_LOG_ENABLE
@@ -374,3 +399,4 @@ void NavReplay_Process(void)
         
 //         // 底层电机控制 (使用 target_speed_set 和 err_degree)
 //         // Motor_Control(target_speed_set, err_degree);
+

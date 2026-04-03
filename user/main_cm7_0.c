@@ -343,14 +343,14 @@ vision_detected_marker = 0;//雷区调用,测试用
 
                 // 逐飞助手示波器发送代码        
                 // 1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
@@ -374,13 +374,13 @@ vision_detected_marker = 0;//雷区调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
                 // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
                     // 4. 设置本次发送的通道数量 (一共8个数据)
-                    seekfree_assistant_oscilloscope_data.channel_num = 8;
+                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                    // 5. 调用发送函数
-                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                //     // 5. 调用发送函数
+                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // 用于上位机向小车发送pid信息
-                wifi_update_pid_params(); 
+                // // 用于上位机向小车发送pid信息
+                // wifi_update_pid_params(); 
                 #endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---
@@ -490,40 +490,32 @@ vision_detected_marker = 0;//雷区调用,测试用
         // }
 
     // ---------------------------------------------------------
-    //  【nav.3】处理 Flash 保存请求
+    //  【nav.3】静态点表模式：忽略 Flash 保存请求
     // ---------------------------------------------------------
     if(g_save_flash_request == 1)
     {
         #if DEBUG_LOG_ENABLE
-        printf("Main: Starting Flash save process...\r\n");
+        printf("Main: Flash save disabled (static route mode).\r\n");
         #endif
-        NavFlash_SaveRamToFlash();
-        Buzzer_Beep_By_PointType(2);//叫三次
-        // 清除请求标志
         g_save_flash_request = 0;
     }
 
     // ---------------------------------------------------------
-    //  【nav.4】处理读取，然后开始调用
+    //  【nav.4】静态点表模式：加载 C 点表并开始复现
     // ---------------------------------------------------------
     if (g_motor_enable == 1 && g_load_flash_request == 1)
     {
-        #if DEBUG_LOG_ENABLE
-        printf("Main: Starting Flash read test...\r\n");
-        #endif
-        NavFlash_ReadFlashToRam();
-        // 清除请求标志
         g_load_flash_request = 0;
-        #if DEBUG_LOG_ENABLE
-        printf("Main: Flash read completed.\r\n");
-        printf("Main: Starting Inertial Navigation...\r\n");
-        #endif
+
         InertialNav_Init();
+
+        NavReplay_Start();//start replay
         #if DEBUG_LOG_ENABLE
+        printf("Main: Static route loaded.\r\n");
         printf("Main: Starting Inertial Navigation...\r\n");
         #endif
-        NavReplay_Start();//开始复现
-        Buzzer_Beep_By_PointType(2);//叫三次
+
+        Buzzer_Beep_By_PointType(2);//beep x3
     }
         // 此处编写需要循环执行的代码
     }
