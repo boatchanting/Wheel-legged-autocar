@@ -457,37 +457,37 @@ vision_detected_marker = 0;//雷区调用,测试用
         // ---------------------------------------------------------
         // ---------------- 【nav.2】打点处理 ----------------
         // ---------------------------------------------------------
-        if (robot_ctrl.mark_trigger)
-        {
-            uint8_t ret;
+        // if (robot_ctrl.mark_trigger)
+        // {
+        //     uint8_t ret;
 
-            // 写入 RAM
-            ret = NavRam_RecordPoint(robot_ctrl.point_type);
+        //     // 写入 RAM
+        //     ret = NavRam_RecordPoint(robot_ctrl.point_type);
 
-            if (ret == 0)
-            {
-                // 写入成功 → 蜂鸣器反馈
-                Buzzer_Beep_By_PointType(robot_ctrl.point_type);
+        //     if (ret == 0)
+        //     {
+        //         // 写入成功 → 蜂鸣器反馈
+        //         Buzzer_Beep_By_PointType(robot_ctrl.point_type);
 
-            #if DEBUG_LOG_ENABLE
-                printf("[NAV] Record OK: idx=%d type=%d x=%.2f y=%.2f\r\n",
-                       NavRam_GetPointCount() - 1,
-                       robot_ctrl.point_type,
-                       inertial_nav.x,
-                       inertial_nav.y);
-            #endif
-            }
-            else
-            {
-                // RAM 满
-                #if DEBUG_LOG_ENABLE
-                    printf("[NAV] Record FAILED: RAM FULL\r\n");
-                #endif
-            }
+        //     #if DEBUG_LOG_ENABLE
+        //         printf("[NAV] Record OK: idx=%d type=%d x=%.2f y=%.2f\r\n",
+        //                NavRam_GetPointCount() - 1,
+        //                robot_ctrl.point_type,
+        //                inertial_nav.x,
+        //                inertial_nav.y);
+        //     #endif
+        //     }
+        //     else
+        //     {
+        //         // RAM 满
+        //         #if DEBUG_LOG_ENABLE
+        //             printf("[NAV] Record FAILED: RAM FULL\r\n");
+        //         #endif
+        //     }
 
-            // ★ 必须清零，否则会重复写入 ★
-            robot_ctrl.mark_trigger = 0;
-        }
+        //     // ★ 必须清零，否则会重复写入 ★
+        //     robot_ctrl.mark_trigger = 0;
+        // }
 
     // ---------------------------------------------------------
     //  【nav.3】处理 Flash 保存请求

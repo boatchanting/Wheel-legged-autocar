@@ -1,4 +1,4 @@
-#include "wifi_protocol.h"
+﻿#include "wifi_protocol.h"
 
 // ---------------------------------------------------------
 // 内部变量
@@ -162,4 +162,6 @@ void wifi_protocol_send_data(void) {
     // -----------------------------------------------------
     // 调用 zf_device_wifi_spi.h 中的发送函数
     wifi_spi_send_buffer(tx_buf, idx);
+
+    robot_ctrl.mark_trigger = 0;
 }
