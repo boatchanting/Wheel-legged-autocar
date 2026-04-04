@@ -197,7 +197,11 @@ void Remote_Control_Process(void)
 
     // 检测状态跳变进行打点 (当前状态 != 上一次状态)
     // 这意味着无论是从0变1(上升沿)还是从1变0(下降沿)，都会触发
-    if (curr_ch3_state != last_ch3_state) 
+    if(ch3_mark ==0)
+    {
+        curr_ch3_state =last_ch3_state ;
+    }
+    if (curr_ch3_state != last_ch3_state )
     {
     vision_detected_jump_point = 1; // 置位，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
