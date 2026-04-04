@@ -1,6 +1,7 @@
 #include "gnss_replay.h"
 #include "../common.h"
 #include "gnss_transform.h"
+#include "../calculate/ekf.h"
 
 // ========================= 内部变量 =========================
 GnssReplayState_e g_gnss_replay_state = GNSS_REPLAY_IDLE;
@@ -9,8 +10,13 @@ uint8 g_gnss_current_point_type = GNSS_POINT_PATH;
 uint8 g_gnss_special_action_trigger = 0;             
 
 // --- 航向融合相关变量 ---
-static float g_yaw_offset = 0.0f;       // 绝对角度与相对角度的差值
-static uint8 gnss_yaw_initialized = 0;     // 是否已完成首次航向校准
+static float g_yaw_offset = 0.0f;         // 绝对角度与相对角度的差值
+static float g_fused_abs_yaw = 0.0f;      // 融合后的绝对航向（-180~180）
+static uint8 gnss_yaw_initialized = 0;    // 是否已完成首次航向校准
+
+// 绝对航向融合参数（磁北为主，GNSS方向为辅）
+#define MAG_YAW_FUSION_KP      0.20f
+#define GNSS_DIR_ASSIST_KP     0.08f
 
 // ========================= 辅助函数 =========================
 
@@ -32,6 +38,39 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
     return sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
 }
 
+/**
+ * @brief  判断当前GNSS方向是否可靠（仅在前进且侧滑较小时使用）
+ */
+static uint8 IsMotionDirectionReliable(void)
+{
+    return (gnss.state == 1 &&
+            inertial_nav.vx_body < -50.0f &&
+            fabsf(inertial_nav.vy_body) < 30.0f);
+}
+
+/**
+ * @brief  获取磁力计航向（0~360，北为0，顺时针为正）
+ * @retval 1: 有效 0: 无效
+ */
+static uint8 TryGetMagHeading(float *out_yaw)
+{
+#if IMU_CATEGORY == 3
+    float mag_energy = fabsf(mag_x) + fabsf(mag_y) + fabsf(mag_z);
+
+    if ((out_yaw != 0) &&
+        (mag_energy > 0.001f) &&
+        (heading >= 0.0f) &&
+        (heading < 360.0f))
+    {
+        *out_yaw = NormalizeAngle(heading);
+        return 1;
+    }
+#else
+    (void)out_yaw;
+#endif
+    return 0;
+}
+
 // ========================= 航向融合核心算法 =========================
 
 /**
@@ -40,32 +79,50 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
  */
 static void Update_Fused_Yaw(void)
 {
-    // 触发条件：
-    // 1. GNSS 状态正常 (state == 1)
-    // 2. 小车正在向前移动 (vx_body < -50)  [注: 你的设定中向前为负]
-    // 3. 小车没有发生严重侧滑或原地剧烈转向 (fabs(vy_body) < 30)
-    if (gnss.state == 1 && 
-        inertial_nav.vx_body < -50.0f && 
-        fabs(inertial_nav.vy_body) < 30.0f)
-    {
-        float raw_gnss_yaw = gnss.direction; // 0~360 绝对真北基准
-        
-        // 计算当前误差偏移 (Offset = GNSS绝对 - IMU相对)
-        float raw_offset = NormalizeAngle(raw_gnss_yaw - inertial_nav.relative_yaw);
+    float measured_abs_yaw = 0.0f;
+    float mag_abs_yaw = 0.0f;
+    uint8 has_abs_yaw = 0;
+    uint8 motion_reliable = IsMotionDirectionReliable();
 
-        if (!gnss_yaw_initialized)
+    // 1) 主航向来源：磁力计北向
+    if (TryGetMagHeading(&mag_abs_yaw))
+    {
+        measured_abs_yaw = mag_abs_yaw;
+        has_abs_yaw = 1;
+    }
+
+    // 2) 辅助航向来源：GNSS运动方向（仅在可靠运动状态下参与）
+    if (motion_reliable)
+    {
+        float gnss_abs_yaw = NormalizeAngle(gnss.direction);
+
+        if (!has_abs_yaw)
         {
-            // 首次满足条件，直接暴力初始化
-            g_yaw_offset = raw_offset;
-            gnss_yaw_initialized = 1;
+            measured_abs_yaw = gnss_abs_yaw;
+            has_abs_yaw = 1;
         }
         else
         {
-            // 后续使用低通滤波 (互补滤波) 平滑跳动
-            // 取最短路径的差值，防止在 180/-180 处滤波崩溃
-            float err = NormalizeAngle(raw_offset - g_yaw_offset);
-            g_yaw_offset = NormalizeAngle(g_yaw_offset + YAW_FUSION_KP * err);
+            float gnss_err = NormalizeAngle(gnss_abs_yaw - measured_abs_yaw);
+            measured_abs_yaw = NormalizeAngle(measured_abs_yaw + GNSS_DIR_ASSIST_KP * gnss_err);
         }
+    }
+
+    if (!has_abs_yaw) return;
+
+    // 3) 把绝对航向平滑映射到相对航向偏移量，保持外部调用方式不变
+    if (!gnss_yaw_initialized)
+    {
+        g_fused_abs_yaw = measured_abs_yaw;
+        g_yaw_offset = NormalizeAngle(g_fused_abs_yaw - inertial_nav.relative_yaw);
+        gnss_yaw_initialized = 1;
+        return;
+    }
+
+    {
+        float err = NormalizeAngle(measured_abs_yaw - g_fused_abs_yaw);
+        g_fused_abs_yaw = NormalizeAngle(g_fused_abs_yaw + MAG_YAW_FUSION_KP * err);
+        g_yaw_offset = NormalizeAngle(g_fused_abs_yaw - inertial_nav.relative_yaw);
     }
 }
 
@@ -74,6 +131,10 @@ static void Update_Fused_Yaw(void)
  */
 float GnssReplay_GetFusedYaw(void)
 {
+    if (gnss_yaw_initialized)
+    {
+        return g_fused_abs_yaw;
+    }
     return NormalizeAngle(inertial_nav.relative_yaw + g_yaw_offset);
 }
 
@@ -88,6 +149,8 @@ void GnssReplay_Start(void)
     g_gnss_special_action_trigger = 0;
     
     // 重置航向校准状态（每次跑图开始都重新校准）
+    g_yaw_offset = 0.0f;
+    g_fused_abs_yaw = 0.0f;
     gnss_yaw_initialized = 0;
     
     #if DEBUG_LOG_ENABLE
@@ -109,11 +172,11 @@ void GnssReplay_Process(void)
     // 1. 每周期更新一次航向融合
     Update_Fused_Yaw();
 
-    // 2. 检查是否未初始化航向 (防呆保护)
-    // 如果还没校准出真北方向，小车直接打轮转向会迷失方向
+    // 2. 检查绝对航向是否已就绪 (防呆保护)
+    // 若磁北未就绪且GNSS方向也不可靠，则先低速直行等待航向初始化
     if (!gnss_yaw_initialized)
     {
-        // 【自动校准阶段】强制小车直线慢速前进，以激活 Update_Fused_Yaw 的条件
+        // 自动校准阶段：保持直行，等待绝对航向来源可用
         target_speed_set = GNSS_SPEED_SLOW; 
         err_degree = 0.0f; // 保持直走
         return;            // 不进行路径点计算
