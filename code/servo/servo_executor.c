@@ -6,7 +6,7 @@ volatile int16 g_target_pwm_angle_adj = 0;
 
 // --- 执行器的内部状态变量 (static封装) ---
 volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
-
+int32 current_duty_lf, current_duty_rf, current_duty_rr, current_duty_lr; // 当前实际占空比 (用于斜率限制计算)
 /**
  * @brief 初始化舵机执行器的内部状态
  */
@@ -79,12 +79,43 @@ void servo_executor_update(void)
     target_final_duty_rr += g_target_pwm_angle_adj; // --舵机, 收缩是加
     target_final_duty_lr += g_target_pwm_angle_adj; // ++舵机, 伸展是加
 
+    // ==========================================================
+    // 3.5 叠加 Rolling 补偿 (一边不动一边缩短)
+    // 约定：g_target_pwm_roll_adj
+    //      > 0 : 左侧缩短，右侧不动
+    //      < 0 : 右侧缩短，左侧不动
+    //      (假设收缩是 PWM 减小，伸长是 PWM 增加。需确认你的舵机DIR方向！)
+    // ==========================================================
+    int16 adj = g_target_pwm_roll_adj;
+    // 假设 SERVO_MOTOR_PWMx_DIR 为 1 表示增加PWM是伸长，减少PWM是收缩。
+    // 如果你的硬件相反，请反转下面的逻辑。
+    
+    if (adj > 0) {
+        // --- 情况 B: 左高右低 (adj > 0) ---
+        // 策略：左侧缩短，右侧不动
+        // adj 是正数，缩短需要减去它 (假设收缩是减)
+        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj; // 左前缩
+        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj; // 左后缩
+        // 右侧 rf, rr 保持不动
+    } 
+    else if (adj < 0) {
+        // --- 情况 A: 右高左低 (adj < 0) ---
+        // 策略：右侧缩短，左侧不动
+        // adj 是负数，缩短需要加上它 (负负得正? 不对，缩短是减)
+        // 让我们理一下：我们需要一个正的量去减。
+        // 所以取 -adj (变成正数)，然后减去它。或者直接 += adj (因为adj是负数)
+        
+        target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj; // 右前缩 (+=负数 = 减)
+        target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj; // 右后缩 (+=负数 = 减)
+        // 左侧 lf, lr 保持不动
+    }
+
     // 4. 【核心】使用斜率限制，平滑地趋近目标值
     // 公式: new = last + limit(target - last, -dec, +acc)
-    int32 current_duty_lf = PWM_CH1_LAST + (int32)Float_Constrain(target_final_duty_lf - PWM_CH1_LAST, -dec_limit, acc_limit);
-    int32 current_duty_rf = PWM_CH2_LAST + (int32)Float_Constrain(target_final_duty_rf - PWM_CH2_LAST, -dec_limit, acc_limit);
-    int32 current_duty_rr = PWM_CH3_LAST + (int32)Float_Constrain(target_final_duty_rr - PWM_CH3_LAST, -dec_limit, acc_limit);
-    int32 current_duty_lr = PWM_CH4_LAST + (int32)Float_Constrain(target_final_duty_lr - PWM_CH4_LAST, -dec_limit, acc_limit);
+    current_duty_lf = PWM_CH1_LAST + (int32)Float_Constrain(target_final_duty_lf - PWM_CH1_LAST, -dec_limit, acc_limit);
+    current_duty_rf = PWM_CH2_LAST + (int32)Float_Constrain(target_final_duty_rf - PWM_CH2_LAST, -dec_limit, acc_limit);
+    current_duty_rr = PWM_CH3_LAST + (int32)Float_Constrain(target_final_duty_rr - PWM_CH3_LAST, -dec_limit, acc_limit);
+    current_duty_lr = PWM_CH4_LAST + (int32)Float_Constrain(target_final_duty_lr - PWM_CH4_LAST, -dec_limit, acc_limit);
 
 
     // 5. 更新内部状态，为下一次计算做准备
@@ -106,5 +137,5 @@ void servo_executor_update(void)
         (uint16_t)current_duty_rr,
         (uint16_t)current_duty_lr
     };
-    update_all_servo_angles(current_duties);//更新舵机角度数组，舵机debug使用，优化时可以删除
+    update_all_servo_angles(current_duties);//更新舵机角度数组，舵机debug使用，优化时可以删除【优化点】
 }

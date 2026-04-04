@@ -2,6 +2,10 @@
 #define _NAV_REPLAY_H_
 
 #include "zf_common_headfile.h"
+#include "nav_ram.h"
+
+// 1: use compile-time route table generated from CSV (no flash dependency)
+#define NAV_REPLAY_USE_STATIC_ROUTE_TABLE   1
 
 // ========================= 控制参数宏定义 =========================
 // 距离阈值 (单位: mm)
@@ -19,6 +23,7 @@
 // 这些变量由外部定义 (通常在 control.c 或 main.c)，此处引用
 extern volatile float target_speed_set;
 extern volatile float err_degree;
+extern volatile float roll_degree;
 
 // ========================= 模块状态变量 =========================
 typedef enum
@@ -37,7 +42,7 @@ extern uint8 g_special_action_trigger;          // 特殊动作触发标志 (1: 
 
 /**
  * @brief  开始复现路径
- * @note   调用前请确保已从 Flash 读取数据到 RAM
+ * @note   Loads route from compile-time table when NAV_REPLAY_USE_STATIC_ROUTE_TABLE = 1
  *         会将状态置为 REPLAY_RUNNING，索引置 0
  */
 void NavReplay_Start(void);
@@ -54,5 +59,11 @@ void NavReplay_Stop(void);
  *         它会根据当前 inertial_nav 坐标计算 target_speed_set 和 err_degree
  */
 void NavReplay_Process(void);
+
+/**
+ * @brief  Load static route table (generated from CSV) into nav_ram_data
+ * @return loaded point count
+ */
+uint16 NavReplay_LoadStaticRouteToRam(void);
 
 #endif

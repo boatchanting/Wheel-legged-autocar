@@ -20,7 +20,7 @@ extern MenuState_t current_state;
 extern uint8_t menu_index;
 extern uint8_t menu_values[MENU_STATE_COUNT];
 extern const uint8_t menu_max_values[MENU_STATE_COUNT];
-
+extern uint8_t g_is_push_mode; // 推车模式全局标志位（供底层PID控制环使用）
 extern uint8_t need_redraw;
 
 

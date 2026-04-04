@@ -1,4 +1,4 @@
-#include "wifi_protocol.h"
+﻿#include "wifi_protocol.h"
 
 // ---------------------------------------------------------
 // 内部变量
@@ -78,6 +78,8 @@ void wifi_protocol_send_data(void) {
     // --- B. 惯导信息 (InertialNav_t) ---
     write_u32_or_float(&inertial_nav.x);    // 4 bytes (float)
     write_u32_or_float(&inertial_nav.y);    // 4 bytes (float)
+    write_u32_or_float(&inertial_nav.vx_body);   // 4 bytes (float)
+    write_u32_or_float(&inertial_nav.vy_body);   // 4 bytes (float)
     // 如果需要 vx_body, slip_flag 等，在这里继续添加 write_xx
 
     // --- C. GNSS 信息 (gnss_info_struct) ---
@@ -122,6 +124,18 @@ void wifi_protocol_send_data(void) {
     // C.8 其他
     write_u8(gnss.satellite_used);          // 1 byte
     write_u32_or_float(&gnss.height);       // 4 bytes (float)
+    
+    // D. heading (IMU963RA磁航向角)
+#if IMU_CATEGORY == 3
+    float heading_to_send = heading;
+#else
+    float heading_to_send = 0.0f;
+#endif
+    write_u32_or_float(&heading_to_send);   // 4 bytes (float)
+    write_u32_or_float(&inertial_nav.relative_yaw); // 4 bytes (float)
+    // E. mark state for host point editor
+    write_u8(robot_ctrl.mark_trigger);      // 1 byte
+    write_u8(robot_ctrl.point_type);        // 1 byte
 
     // -----------------------------------------------------
     // 3. 计算长度与校验
@@ -148,4 +162,6 @@ void wifi_protocol_send_data(void) {
     // -----------------------------------------------------
     // 调用 zf_device_wifi_spi.h 中的发送函数
     wifi_spi_send_buffer(tx_buf, idx);
+
+    robot_ctrl.mark_trigger = 0;
 }

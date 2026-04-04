@@ -50,9 +50,15 @@ int main(void)
     debug_info_init();                  // 调试串口信息初始化
      
     // 此处编写用户代码 例如外设初始化代码等
-    //【注意】一定不能使用printf函数 否则会导致程序异常
-    // printf("hello world!\r\n");
     
+     // 初始化 WiFi 模块
+    wifi_init();                                                                // 初始化WIFI模块
+
+    // 连接TCP服务器
+    wifi_connect_tcp_server();                                                  // 连接TCP服务器
+    
+    // 初始化摄像头和逐飞助手
+    wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
     
     
 
@@ -60,10 +66,20 @@ int main(void)
     while(true)
     {
         // 此处编写需要循环执行的代码
-        
+                // 处理摄像头图像数据
+        if(mt9v03x_finish_flag)
+        {
+            mt9v03x_finish_flag = 0;
+            // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
+            memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
-      
-      
+            // 发送图像
+            seekfree_assistant_camera_send();
+            // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
+            // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
+            // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节
+            // wifi_spi_udp_send_now();
+        } 
         // 此处编写需要循环执行的代码
     }
 }

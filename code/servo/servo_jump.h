@@ -11,7 +11,32 @@
 #define JUMP_OFFSET_LAUNCH    2500   // 起跳爆发力 (数值越大跳得越高)
 #define JUMP_OFFSET_FLIGHT    -1800  // 空中收腿幅度 (数值越小腿收得越紧，防止绊倒)
 #define JUMP_OFFSET_LAND      800    // 落地前探幅度 (提前接触地面)
-
+#define TARGET_TOLERANCE      100    // 跳跃阶段切换的容错DUTY范围
+// ===================== 跳跃类型与配置 =====================
+// 定义不同的跳跃场景
+typedef enum {
+    JUMP_TYPE_NORMAL = 0, // 原地跳/平地普通跳 (默认)
+    JUMP_TYPE_HURDLE,     // 跨越横杆 (极限收腿，保持水平)
+    JUMP_TYPE_STEP_UP     // 跳上台阶 (提前触地，抬头，落地点变高)
+} JumpType_e;
+// 跳跃动作参数配置表
+typedef struct {
+    // 1. 时序参数 (ms)
+    uint32_t t_launch;    // 起跳发力结束时间
+    uint32_t t_flight;    // 空中收腿结束时间 (上台阶时需缩短)
+    uint32_t t_landing;   // 落地准备结束时间
+    uint32_t t_recovery;  // 缓冲结束时间
+    
+    // 2. 动作幅度参数 (Duty Offset)
+    int32_t offset_launch;
+    int32_t offset_flight;
+    int32_t offset_land; // 落地时腿伸长量
+    // 3. 动量轮姿态控制参数
+    float air_target_pitch;    // 空中目标俯仰角 (上台阶需抬头)
+    // 4. 【关键】落地后的稳态控制
+    float post_jump_height;    // 落地后的新基准身高 (修改 servo_height)
+} JumpProfile_t;
+extern JumpProfile_t g_jump_profile; // 当前正在执行的跳跃参数
 // ===================== 状态控制 =====================
 extern uint8_t jump_flag;          // 0:空闲, 1:跳跃中
 extern uint32_t jump_start_time;   // 记录起跳时的 loop_counter
@@ -25,12 +50,18 @@ typedef enum {
     JUMP_PHASE_RECOVERY     // 4: 阶段 D, 缓冲恢复
 } JumpPhase;
 extern volatile JumpPhase g_current_jump_phase;//跳跃阶段的变量
+extern JumpType_e g_current_jump_type;
 // 跳跃阶段枚举
+extern uint32_t time_elapsed1, time_elapsed2, time_elapsed3, time_elapsed4; // 距离起跳的时间 (ms)
 
 // ===================== 函数声明 =====================
 void jump_module_init(void);
 void jump_trigger(void);           // 触发跳跃
+void jump_trigger_with_type(JumpType_e type);        // 新版触发，可选择跳跃类型
 void servo_jump_executor(void);    // 周期性调用执行函数
+void jump_stepup_three_stairs_test_start(void);
+void jump_stepup_three_stairs_test_update(void);
+bool jump_stepup_three_stairs_test_is_active(void);
 /**
  * @brief 初始化空中姿态控制参数
  */

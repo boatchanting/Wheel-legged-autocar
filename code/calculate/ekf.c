@@ -1,5 +1,4 @@
 #include "ekf.h"
-#include "../config/sys_options.h"
 
 // ========================================================================
 // IMU 硬件抽象层：根据 IMU_CATEGORY 统一访问接口
@@ -34,6 +33,21 @@
     #define IMU_ACC_X_LP          imu660rb_acc_x_l
     #define IMU_ACC_Y_LP          imu660rb_acc_y_l
     #define IMU_ACC_Z_LP          imu660rb_acc_z_l
+#elif IMU_CATEGORY == 3  // IMU963RA
+    #define IMU_GET_GYRO()        imu963ra_get_gyro()
+    #define IMU_GET_ACC()         imu963ra_get_acc()
+    #define IMU_GYRO_X            imu963ra_gyro_x
+    #define IMU_GYRO_Y            imu963ra_gyro_y
+    #define IMU_GYRO_Z            imu963ra_gyro_z
+    #define IMU_ACC_X             imu963ra_acc_x
+    #define IMU_ACC_Y             imu963ra_acc_y
+    #define IMU_ACC_Z             imu963ra_acc_z
+    #define IMU_ACC_X_OFFSET      imu963ra_acc_x_AND
+    #define IMU_ACC_Y_OFFSET      imu963ra_acc_y_AND
+    #define IMU_ACC_Z_OFFSET      imu963ra_acc_z_AND //这里暂时未使用，所以先这样命名【优化点】
+    #define IMU_ACC_X_LP          imu963ra_acc_x_l
+    #define IMU_ACC_Y_LP          imu963ra_acc_y_l
+    #define IMU_ACC_Z_LP          imu963ra_acc_z_l
 #else
     #error "Unsupported IMU_CATEGORY value"
 #endif
@@ -66,8 +80,18 @@ const matrix_type r[3][3] = {{10000, 0, 0}, {0, 10000, 0}, {0, 0, 10000}};
 const matrix_type p[4][4] = {{1000000, 0, 0, 0}, {0, 1000000, 0, 0}, {0, 0, 1000000, 0}, {0, 0, 0, 1000000}};
 // 初始四元数 [1, 0, 0, 0]
 //const matrix_type ekf[4] = {1, 0, 0, 0};//原先代码中的值
+#if IMU_CATEGORY == 1 && CAR_SELECT == 0 //imu660ra
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};//学习板小车使用的
 // 静态矩阵变量
+#endif
+#if IMU_CATEGORY == 1 && CAR_SELECT == 3 //imu660ra
+const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
+// 静态矩阵变量
+#endif
+#if IMU_CATEGORY == 3//imu963ra
+const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
+// 静态矩阵变量
+#endif
 static matrix_t Q;  // 过程噪声协方差矩阵
 static matrix_t R;  // 测量噪声协方差矩阵
 static matrix_t P;  // 协方差矩阵
@@ -101,6 +125,7 @@ static inline void quaternion_to_euler(void)
     float q2 = (exf_x.data[2][0]);
     float q3 = (exf_x.data[3][0]);
 
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //imu660ra
     // 计算翻滚角(roll)
     euler_angle.roll = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;                                  // pitch
     // 计算俯仰角(pitch)
@@ -109,12 +134,34 @@ static inline void quaternion_to_euler(void)
     // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;//我们的板子1
     // 计算偏航角(yaw)
     euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD;    // yaw
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //imu660ra
+    // 计算翻滚角(roll)：新的 roll = -原来的 pitch
+    euler_angle.roll = -atan2(-2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1) * DEG_TO_RAD;
+
+    // 计算俯仰角(pitch)：新的 pitch = 原来的 roll
+    euler_angle.pitch = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;
+
+    // 计算偏航角(yaw)：新的 yaw = 原来的 yaw + 90°
+    euler_angle.yaw = (atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) ) * DEG_TO_RAD + 90.0;
+    #endif
+    #if IMU_CATEGORY == 3//imu963ra //这里面根据实际测试使用了面向结果编程，imu换轴的时候使用转轴公式，或者根据上位机波形来判断一下
+    // 计算翻滚角(roll)
+    euler_angle.roll = atan2( -2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1 ) * DEG_TO_RAD;                                // pitch
+    // 计算俯仰角(pitch)
+    // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;   // roll原来的
+    euler_angle.pitch = -asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;   //改为0度为平衡状态的pitch，学习板
+    // euler_angle.roll = atan2(2 * q2 * q3 + 2 * q0 * q1, -2 * q1 * q1 - 2 * q2 * q2 + 1) * DEG_TO_RAD;//我们的板子1
+    // 计算偏航角(yaw)
+    euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD-90;    // yaw
+    //if(euler_angle.yaw   < -180.0f) euler_angle.yaw  += 360.0f;
+    #endif
 }
 
 // IMU加速度计低通滤波变量
-static int16 imu660ra_acc_x_l = 0;
-static int16 imu660ra_acc_y_l = 0;
-static int16 imu660ra_acc_z_l = 0;
+static int16 IMU_ACC_X_LP = 0;
+static int16 IMU_ACC_Y_LP = 0;
+static int16 IMU_ACC_Z_LP = 0;
 
 // --- 静态偏移量变量 ---
 static float gyro_offset_x = 0.0f;
@@ -126,7 +173,7 @@ static float acc_offset_y = 0.0f;
 static float acc_offset_z = 0.0f;
 // --- 死区阈值 (根据传感器噪声调整) ---
 #define GYRO_DEAD_ZONE 8.0f 
-float imu660ra_acc_x_AND=0.0f;
+float imu660ra_acc_x_AND=0.0f;//这里暂时未使用，所以先这样命名【优化点】下面几行也要改掉
 float imu660ra_acc_y_AND=0.0f;
 float imu660ra_acc_z_AND=0.0f;
  
@@ -169,7 +216,7 @@ void IMU_Calibrate_All_Gyro(void)
     acc_offset_x = sum_x_a / sample_count;
     acc_offset_y = sum_y_a / sample_count;
     acc_offset_z = sum_z_a / sample_count;
-    imu660ra_acc_x_AND=acc_offset_x;
+    imu660ra_acc_x_AND=acc_offset_x;//【优化点】暂时未使用，这三行都是
     imu660ra_acc_y_AND=acc_offset_y;
     imu660ra_acc_z_AND=acc_offset_z;
 }
@@ -180,33 +227,54 @@ void IMU_Calibrate_All_Gyro(void)
 void imu_get_values(void)
 {
     // 1. 获取原始数据
-    imu660ra_get_gyro();
-    imu660ra_get_acc();
+    IMU_GET_GYRO();
+    IMU_GET_ACC();
 
     // 2. 减去零偏 (这里是报错的地方，已修正为新变量名)
     // 之前报错是因为写成了 gyro_z_offset
-    float gx_temp = (float)imu660ra_gyro_x - gyro_offset_x; 
-    float gy_temp = (float)imu660ra_gyro_y - gyro_offset_y;
-    float gz_temp = (float)imu660ra_gyro_z - gyro_offset_z; 
-
+    float gx_temp = (float)IMU_GYRO_X - gyro_offset_x; 
+    float gy_temp = (float)IMU_GYRO_Y - gyro_offset_y;
+    float gz_temp = (float)IMU_GYRO_Z - gyro_offset_z; 
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
+    gx_temp =(float)-gx_temp;
+    gz_temp =(float)-gz_temp;
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==3  // 3车ra，可能不是ra，后面再改
+    //这里做轴转换
+    #endif
     // 3. 死区处理
     if (fabs(gx_temp) < GYRO_DEAD_ZONE) gx_temp = 0.0f;
     if (fabs(gy_temp) < GYRO_DEAD_ZONE) gy_temp = 0.0f;
     if (fabs(gz_temp) < GYRO_DEAD_ZONE) gz_temp = 0.0f;
 
     // 4. 单位转换 (使用修正后的 temp 变量)
+    #if IMU_CATEGORY == 1//660ra
     imu_data.gyro_x = gx_temp * PI / 180 / 16.384f;
     imu_data.gyro_y = gy_temp * PI / 180 / 16.384f;
     imu_data.gyro_z = gz_temp * PI / 180 / 16.384f;
+    #endif
+    #if IMU_CATEGORY == 3//963ra
+    imu_data.gyro_x = gx_temp * PI / 180 / 14.3f;
+    imu_data.gyro_y = gy_temp * PI / 180 / 14.3f;
+    imu_data.gyro_z = gz_temp * PI / 180 / 14.3f;
+    #endif
+
 
     // --- 加速度计部分保持不变 ---
-    imu_data.acc_x = K * imu660ra_acc_x + (1 - K) * imu660ra_acc_x_l;
-    imu_data.acc_y = K * imu660ra_acc_y + (1 - K) * imu660ra_acc_y_l;
-    imu_data.acc_z = K * imu660ra_acc_z + (1 - K) * imu660ra_acc_z_l;
+    imu_data.acc_x = K * IMU_ACC_X + (1 - K) * IMU_ACC_X_LP;
+    imu_data.acc_y = K * IMU_ACC_Y + (1 - K) * IMU_ACC_Y_LP;
+    imu_data.acc_z = K * IMU_ACC_Z + (1 - K) * IMU_ACC_Z_LP;
 
-    imu660ra_acc_x_l = (int16)imu_data.acc_x;
-    imu660ra_acc_y_l = (int16)imu_data.acc_y;
-    imu660ra_acc_z_l = (int16)imu_data.acc_z;
+    IMU_ACC_X_LP = (int16)imu_data.acc_x;
+    IMU_ACC_Y_LP = (int16)imu_data.acc_y;
+    IMU_ACC_Z_LP = (int16)imu_data.acc_z;
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==2  // 2车ra
+    imu_data.acc_x =(float)-imu_data.acc_x;
+    imu_data.acc_z =(float)-imu_data.acc_z;
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT ==3  // 3车ra，可能不是ra，后面再改
+    //这里做轴转换
+    #endif
 }
 
 /**
@@ -317,7 +385,6 @@ void EKF_UpData(void)
     
     // Z轴分量: 1 - 2*(q1*q1 + q2*q2) (Madgwick 写法为 2 * (0.5 - q1^2 - q2^2))
     imu_data.grav_z = 2.0f * (0.5f - q1 * q1 - q2 * q2);
-
     /* 
        应用说明：
        现在 imu_data.grav_x/y/z 表示的是传感器处于当前姿态时，
@@ -382,3 +449,96 @@ void record_initial_yaw_task(uint32_t current_tick)
     }
 }
 // ======================== 偏航角零点初始化模块实现结束 ==================
+
+
+#if IMU_CATEGORY == 3  // IMU963RA的磁力计模块
+//【优化点】在嵌入式中，建议使用 sinf, cosf, atan2f（带f后缀的），它们是针对 float 类型的，效率更高。
+volatile float heading = 0.0f;
+float mag_x = 0.0f;
+float mag_y = 0.0f;
+float mag_z = 0.0f;
+// =========================================================================
+// 2. 磁力计校准参数 (常量定义在函数外部)
+// =========================================================================
+// 硬铁偏移：从原始读数中减去
+const float MAG_OFFSET_X = -236.46f;
+const float MAG_OFFSET_Y = -167.84f;
+const float MAG_OFFSET_Z = 274.64f;
+
+// 软铁校正矩阵
+const float MAG_SOFT_IRON[3][3] = {
+    {0.988940f, 0.000863f, 0.007377f},
+    {0.000863f, 0.989113f, 0.005068f},
+    {0.007377f, 0.005068f, 1.021947f}
+};
+
+// =========================================================================
+// 3. 磁力计校准函数
+// =========================================================================
+void mag_calibrate(float raw_x, float raw_y, float raw_z, float *mag_x, float *mag_y, float *mag_z)
+{
+    // 1. 减去硬铁偏移
+    float x = raw_x - MAG_OFFSET_X;
+    float y = raw_y - MAG_OFFSET_Y;
+    float z = raw_z - MAG_OFFSET_Z;
+    
+    // 2. 应用软铁校正矩阵
+    *mag_x = MAG_SOFT_IRON[0][0] * x + MAG_SOFT_IRON[0][1] * y + MAG_SOFT_IRON[0][2] * z;
+    *mag_y = MAG_SOFT_IRON[1][0] * x + MAG_SOFT_IRON[1][1] * y + MAG_SOFT_IRON[1][2] * z;
+    *mag_z = MAG_SOFT_IRON[2][0] * x + MAG_SOFT_IRON[2][1] * y + MAG_SOFT_IRON[2][2] * z;
+}
+void EKF_Update_Heading(void)
+{
+    // 1. 获取物理值 (局部变量可以在函数内直接初始化)
+    imu963ra_get_mag();
+    // ---------------------------------------------------------
+    // 步骤1：获取磁力计原始数据，并进行校准
+    // ---------------------------------------------------------
+    mag_calibrate((float)imu963ra_mag_x, 
+                  (float)imu963ra_mag_y, 
+                  (float)imu963ra_mag_z, 
+                  &mag_x, &mag_y, &mag_z);
+
+    // ---------------------------------------------------------
+    // 步骤2：将校准后的原始数据转换为物理单位 (高斯)
+    // 注意：这里复用了头文件中的转换宏，传入的是校准后的变量
+    // ---------------------------------------------------------
+    float m_x = imu963ra_mag_transition(mag_x);
+    float m_y = imu963ra_mag_transition(mag_y);
+    float m_z = imu963ra_mag_transition(mag_z);
+
+    // ---------------------------------------------------------
+    // 步骤3：提取欧拉角并转换为弧度制
+    // ---------------------------------------------------------
+    // 【重要提示】：
+    // 标准航空坐标系中，Pitch 是“车头向上为正”。
+    // 而你的定义是“车头向下倒为正”。因此，为了匹配标准的倾角补偿公式，
+    // 我们在这里加上负号 (-euler_angle.pitch) 将其翻转。
+    // 如果实际测试时发现车头上下俯仰时航向乱飘，可以尝试去掉这个负号。
+    float roll_rad  = euler_angle.roll  * (3.14159265f / 180.0f);
+    float pitch_rad = -euler_angle.pitch * (3.14159265f / 180.0f);
+
+    // ---------------------------------------------------------
+    // 步骤4：倾角补偿计算 (保留中间变量，防止写反，不损耗算力！)
+    // ---------------------------------------------------------
+    float mag_x_h = m_x * cosf(pitch_rad) + m_z * sinf(pitch_rad);
+    float mag_y_h = m_x * sinf(roll_rad) * sinf(pitch_rad) + m_y * cosf(roll_rad) - m_z * sinf(roll_rad) * cosf(pitch_rad);
+
+    // ---------------------------------------------------------
+    // 步骤5：计算航向 (注意：atan2f 必须是 Y 在前，X 在后)
+    // ---------------------------------------------------------
+    float temp_heading = atan2f(mag_y_h, mag_x_h) * (180.0f / 3.14159265f);
+
+    // 5. 磁偏角修正及范围归一化
+    temp_heading += -5.5f; // 这里的 -5.5 替换为你当地的磁偏角，上海是 -5.5 度【优化点】写在头文件里面，最好应该写在config里面，这样换地方了要注意
+
+    if (temp_heading < 0.0f) {
+        temp_heading += 360.0f;
+    } else if (temp_heading >= 360.0f) {
+        temp_heading -= 360.0f;
+    }
+
+    // 6. 赋值给全局变量
+    heading = temp_heading;
+}
+#endif

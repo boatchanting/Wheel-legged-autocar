@@ -36,6 +36,7 @@
 
 #include "zf_common_headfile.h"
 #include "config/config.h"//【提醒】配置请在这里修改
+#include "tools/runtime_profiler.h"
 
 // 声明外部函数
 
@@ -44,6 +45,7 @@ extern volatile uint8 pit_state;
 extern volatile uint8 pit_state1; 
 // 声明外部函数，确保编译器能找到 ekf.c 中的函数
 extern void EKF_UpData(void);//卡尔曼滤波
+extern volatile runtime_profiler_t g_ekf_profiler;
 
 volatile uint32_t control_tick = 0;        // 1ms计数器
 extern volatile float pid_out_speed;  // 速度环输出（目标角度）
@@ -58,6 +60,7 @@ volatile struct {
 # define OUR_PWM_MAX_LIMIT 5000.0f // 最大PWM值（根据实际情况调整）
 
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
+volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
 // **************************** PIT中断函数 ****************************
@@ -74,18 +77,49 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 【nav.1】惯性导航解算 (10ms 跑一次)
     // 按下记录按钮之前的惯性导航不可信==========================================================
-    if(loop_counter % 10 == 0 && g_yaw_initialized)
+    if(loop_counter % 10 == 1 && g_yaw_initialized)
     {
-        // 调用导航更新函数
-        InertialNav_Update(
-            euler_angle.yaw,                                 // 当前偏航角
-            9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-            9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-            (float)motor_value.receive_left_speed_data,      // 左轮速
-            (float)motor_value.receive_right_speed_data      // 右轮速
-        );
-        
-        // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y 
+        if (jump_flag == 0)
+        {
+            // 调用导航更新函数
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
+            InertialNav_Update(
+                euler_angle.yaw,                                 // 当前偏航角
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
+                9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
+                (float)motor_value.receive_left_speed_data,      // 左轮速
+                (float)motor_value.receive_right_speed_data      // 右轮速
+            );
+            #endif
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
+            InertialNav_Update(
+                euler_angle.yaw,                                 // 当前偏航角
+                -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),              // 纵向加速度 (前+)
+                (float)motor_value.receive_left_speed_data,      // 左轮速
+                (float)motor_value.receive_right_speed_data      // 右轮速
+            );
+            #endif
+            #if IMU_CATEGORY == 3 //imu963ra 如果小车不同再对小车加&&加以区分
+            
+            InertialNav_Update(
+                euler_angle.yaw,                                 // 当前偏航角
+                9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
+                9806.65*((float)imu_data.grav_x-(float)imu_data.acc_x/4098), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
+                (float)motor_value.receive_left_speed_data,      // 左轮速
+                (float)motor_value.receive_right_speed_data      // 右轮速
+            );
+            
+            #endif
+        }
+        else
+        {
+            // 跳跃期间轮胎可能空转，冻结惯导速度状态，避免里程突增。
+            inertial_nav.vx_body = 0.0f;
+            inertial_nav.vy_body = 0.0f;
+        }
+
+        // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y
         // 例如, 用于路径规划、位置闭环等
         // float current_pos_x = inertial_nav.x;
         // float current_pos_y = inertial_nav.y;
@@ -93,7 +127,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     }
 
     //【gnss.1】GNSS定位更新
-    if (loop_counter % 100 == 0) {  // 100ms 一次
+    if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
@@ -105,93 +139,118 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
    // ------------------------------------------------------
     // 【nav.4】复现控制任务 (10ms运行一次)
     // ------------------------------------------------------
-    if (loop_counter % 10 == 0) {  // 10ms 一次
+    if (loop_counter % 10 == 3) {  // 10ms 一次
         if(g_motor_enable){
             NavReplay_Process();//惯性导航复现【优化点】：复现控制的时候遥控器给0速度是不行的，可以考虑支持遥控器0速度的控制，遥控器使能和失能是支持的
             GnssReplay_Process();//GNSS导航复现
         } //复现控制
     }
-    
+
+    if (loop_counter % 20 == 4) {  // 20ms 一次
+        if(g_motor_enable){Bridge_Test_Triple_SingleSide_Inertial();} //复现控制
+        //jump_stepup_three_stairs_test_update(); // 连续上三级台阶测试状态机
+    };//【测试】抬高双腿
 
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
     // ==========================================================
-    if (loop_counter % 20 == 0 && g_yaw_initialized)
-    {
-         // 2.1 获取编码器速度
-        //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
-        float left_speed = (float)motor_value.receive_left_speed_data;
-        float right_speed = (float)motor_value.receive_right_speed_data;
-        current_actual_speed = 0.5f * (right_speed - left_speed);
+    if(g_is_push_mode==0)
+    {  
 
 
-        // 2.3 计算目标速度调整分量
-        float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed);
-        g_target_pwm_speed_adj = (int16)duty_adjustment;
+        if (loop_counter % 20 == 5 && g_yaw_initialized)  // 20ms周期，且偏航角已初始化，且不在推车模式
+        {
+            // 2.1 获取编码器速度
+            //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
+            float left_speed = (float)motor_value.receive_left_speed_data;
+            float right_speed = (float)motor_value.receive_right_speed_data;
+            current_actual_speed = 0.5f * (right_speed - left_speed);
+
+
+            // 2.3 计算目标速度调整分量
+            float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed,euler_angle.pitch);
+            g_target_pwm_speed_adj = (int16)duty_adjustment;
+        }
     }
-
+    else if(g_is_push_mode==1)
+    {    
+        // 重置舵机速度环状态变量
+        pid_servo_speed.error = 0;
+        pid_servo_speed.last_error = 0;
+        pid_servo_speed.prev_error = 0;
+        pid_servo_speed.error_integral = 0;
+        pid_servo_speed.output = 0;
+    }
     // ==========================================================
     // 步骤 2: 转向角度环 (6ms) - 外环
     // ==========================================================
-    if (loop_counter % 6 == 0)  // 6ms周期
-    {
-        // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
-        // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
-        // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
-         // 只有在偏航角成功初始化后，才执行航向保持控制
-         // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
-        if (g_yaw_initialized && Minefield_Is_Active() == 0)
+        if (loop_counter % 6 == 1)  // 6ms周期
         {
-            // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
-            float yaw_error = err_degree;
+            // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
+            // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
+            // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
+             // 只有在偏航角成功初始化后，才执行航向保持控制
+            // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
+            if (g_yaw_initialized && Minefield_Is_Active() == 0)
+            {
+                // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
+                
+                
+                if(g_is_push_mode==1)
+                {
+                    g_initial_yaw = euler_angle.yaw; // 改变目标航向角，单位：度
+                }
+                float yaw_error = err_degree;
+                //yaw_error =  g_initial_yaw-euler_angle.yaw ; // 调节pid转向角度环时使用【调试pid打开】
+                // 2. [关键] 处理角度“卷绕”问题 (Wraparound)
+                //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
+                //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
+                //    我们需要将误差归一化到 -180 ~ +180 度之间。
+                yaw_error = fmod(yaw_error, 360.0f);//先对yaw_error取模，确保在-360到360之间
+                if (yaw_error > 180.0f)
+                {
+                    yaw_error -= 360.0f; // 例如: 358 -> -2
+                }
+                else if (yaw_error < -180.0f)
+                {
+                    yaw_error += 360.0f; // 例如: -358 -> 2
+                }
+                
+                // ============= 输入误差限幅，这个防止视觉或者gps给的参数一下过大导致小车疯狂旋转，优化方案是如果大角度可以关角度环转一下，但是先这么用，后续可以优化【优化点】 ==================
+                // 设定一个最大误差阈值，例如 30度 或 45度
+                // 如果误差太大，就骗PID说误差只有这么大，防止输出饱和
+                float max_error_limit = 45.0f; 
 
-            // 2. [关键] 处理角度“卷绕”问题 (Wraparound)
-            //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
-            //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
-            //    我们需要将误差归一化到 -180 ~ +180 度之间。
-            yaw_error = fmod(yaw_error, 360.0f);//先对yaw_error取模，确保在-360到360之间
-            if (yaw_error > 180.0f)
-            {
-                yaw_error -= 360.0f; // 例如: 358 -> -2
-            }
-            else if (yaw_error < -180.0f)
-            {
-                yaw_error += 360.0f; // 例如: -358 -> 2
-            }
-            
-            // ============= 输入误差限幅，这个防止视觉或者gps给的参数一下过大导致小车疯狂旋转，优化方案是如果大角度可以关角度环转一下，但是先这么用，后续可以优化【优化点】 ==================
-            // 设定一个最大误差阈值，例如 30度 或 45度
-            // 如果误差太大，就骗PID说误差只有这么大，防止输出饱和
-            float max_error_limit = 45.0f; 
+                if (yaw_error > max_error_limit)
+                {
+                    yaw_error = max_error_limit;
+                }
+                else if (yaw_error < -max_error_limit)
+                {
+                    yaw_error = -max_error_limit;
+                }
 
-            if (yaw_error > max_error_limit)
-            {
-                yaw_error = max_error_limit;
+                // 4. 将计算出的精确航向误差送入PID控制器
+                //    控制器的目标就是将这个 yaw_error 减小到0
+                turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
             }
-            else if (yaw_error < -max_error_limit)
+            else
             {
-                yaw_error = -max_error_limit;
+                //1.角度未初始化状态下，外环不输出
+                //2.在雷区旋转模式下，切断外环对内环的控制
+                turn_angle_loop_out = 0.0f; 
             }
-
-            // 4. 将计算出的精确航向误差送入PID控制器
-            //    控制器的目标就是将这个 yaw_error 减小到0
-            turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
         }
-        else
-        {
-            //1.角度未初始化状态下，外环不输出
-            //2.在雷区旋转模式下，切断外环对内环的控制
-            turn_angle_loop_out = 0.0f; 
-        }
-    }
-
     // ==========================================================
     // 步骤 3: 平衡角度环 (5ms 跑一次)
     // ==========================================================
-    if (loop_counter % 5 == 0)
+    if (loop_counter % 5 == 2)
     {
         // 运行姿态解算 (EKF / 互补滤波)
-        EKF_UpData(); 
+        EKF_UpData();
+        #if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
+        EKF_Update_Heading();//磁力计北更新
+        #endif
         record_initial_yaw_task(loop_counter);//初始化偏航角，里面的代码只会在初始化的时候被调用一次，记录初始的偏航角
         now_angle = euler_angle.pitch; // 获取解算后的角度 (单位：度)
 
@@ -207,9 +266,15 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 4: 转向角速度环 (2ms) - 内环
     // ==========================================================
-    if (loop_counter % 2 == 0 && g_yaw_initialized)  // 2ms周期
+    if (loop_counter % 2 == 1 && g_yaw_initialized)  // 2ms周期
     {
+        #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
+        #endif
+        #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
+        int16_t raw_gyro_z = imu963ra_gyro_z;  //根据实际安装方向调整符号
+        #endif
+
         // Z轴(yaw)处理：用于转向角速度环
         float gyro_z_val = (float)raw_gyro_z;
         if (fabsf(gyro_z_val) < 5.0f) gyro_z_val = 0.0f;
@@ -244,8 +309,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     
     // 5.1 获取原始陀螺仪数据
     //陀螺仪数据获取已经在中断函数最前面的地方获取完成
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
     int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
-
+    #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
+    int16 raw_gyro_y = -imu660ra_gyro_y; // 根据实际安装方向调整符号[学习板小车3使用]
+    #endif
+    #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
+    int16 raw_gyro_y = -imu963ra_gyro_y; // 根据实际安装方向调整符号
+    #endif
+    
     // 5.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
     float gyro_val = (float)raw_gyro_y;
     if (fabs(gyro_val) < 5.0f) gyro_val = 0;
@@ -267,11 +340,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 返回: gyro_loop_out (最终PWM)
     gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
 
+    // 6.rolling平衡环(5ms一次)
+    if (loop_counter % 5 == 3){
+        Roll_Balance_Control(euler_angle.roll, roll_degree);
+    }
+
 
     // ==========================================================
     // 步骤 6: 安全保护 (倒地停止)(9ms)
     // ==========================================================
-    if (loop_counter % 9 == 0){
+    if (loop_counter % 9 == 6){
         // 【倒地保护条件】：必须同时满足
         //   (1) 偏航角已初始化
         //   (2) 非跳跃状态（jump_flag == 0）
@@ -279,8 +357,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         //   (4) 第一次站起来之后，loop_counter > 2000(中断开启两秒后)
         if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
         {
-             // 如果角度过大（例如超过 30 度），判定为倒地
-            if (now_angle > 30.0f || now_angle < -30.0f)
+             // 如果角度过大（例如超过 40 度），判定为倒地
+            if (now_angle-ANG_MECH_ZERO > 40.0f || now_angle-ANG_MECH_ZERO < -40.0f)
             {
                 gyro_loop_out = 0;          // 清零平衡PWM
                 turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
@@ -335,29 +413,29 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         {
             // 阶段A: 起跳瞬间，车轮在地面，关闭电机防止干扰
             case JUMP_PHASE_LAUNCH:
-                small_driver_set_duty(0, 0);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
 
             // 阶段B: 空中飞行，启用动量轮控制
             case JUMP_PHASE_FLIGHT:
             { // 使用花括号创建一个局部作用域
-                int16_t air_pwm = Momentum_Wheel_Control_Run(now_angle, now_gyro);
+                //int16_t air_pwm = Momentum_Wheel_Control_Run(now_angle, now_gyro);
                 
                 // [关键] 根据你的电机极性，使用异号PWM使两轮同向转动
                 // 假设 air_pwm > 0 意图让车头抬起 (轮子前转)
-                small_driver_set_duty(air_pwm, -air_pwm);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
             }
 
             // 阶段C/D: 准备落地和缓冲，关闭电机，防止轮速过快触地导致弹射
             case JUMP_PHASE_LANDING:
             case JUMP_PHASE_RECOVERY:
-                small_driver_set_duty(0, 0);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
 
             // 默认或未知状态，安全起见关闭电机
             default:
-                small_driver_set_duty(0, 0);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
         }
         }
@@ -391,7 +469,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ==========================================================
     // 步骤 9: 系统心跳
     // ==========================================================
-    if(loop_counter % 50 == 0) 
+    if(loop_counter % 50 == 11) 
     {
         pit_state = 1; 
     }
@@ -421,7 +499,12 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         g_motor_enable = 1; // 正常工作
     }
 
-    if (g_replay_state != REPLAY_RUNNING && g_gnss_replay_state != GNSS_REPLAY_RUNNING)//【nav】不在复现的时候才可以遥控器给目标速度进去 【gnss】不在复现的时候才可以遥控器给目标速度进去【优化点】如果遥控器给的速度是ch5，那应该可以控制，即让小车急停
+    if (jump_stepup_three_stairs_test_is_active())
+    {
+        err_degree = 0.0f;
+    }
+
+    if (g_replay_state != REPLAY_RUNNING && g_gnss_replay_state != GNSS_REPLAY_RUNNING && (!jump_stepup_three_stairs_test_is_active()))//【nav】不在复现的时候才可以遥控器给目标速度进去 【gnss】不在复现的时候才可以遥控器给目标速度进去【优化点】如果遥控器给的速度是ch5，那应该可以控制，即让小车急停
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
@@ -453,6 +536,7 @@ void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数
 {
     pit_isr_flag_clear(PIT_CH10);
     key_scanner();   // 必须定期调用！可写在中断或者循环
+    Menu_HandleKey();
 }
 
 void pit0_ch11_isr()                    // 定时器通道 11 周期中断服务函数      

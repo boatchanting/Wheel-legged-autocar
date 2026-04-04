@@ -1,6 +1,7 @@
 #ifndef CODE_EKF_H_
 #define CODE_EKF_H_
 #include "zf_common_headfile.h"
+#include "../config/sys_options.h"
 // 角度转弧度转换系数 (180/π)
 #define DEG_TO_RAD      (57.295779513082320876798154814105f)
 // 采样时间间隔 (秒)
@@ -22,7 +23,7 @@ void record_initial_yaw_task(uint32_t current_tick);
 
 
 // 加速度静态偏移量变量
-extern float imu660ra_acc_x_AND;//暂时未使用
+extern float imu660ra_acc_x_AND;//【优化点】暂时未使用
 extern float imu660ra_acc_y_AND;//暂时未使用
 extern float imu660ra_acc_z_AND;//暂时未使用
 extern  volatile float g_initial_yaw;         // 存储记录下来的初始偏航角
@@ -67,5 +68,14 @@ void EKF_Init(void);
  */
 void EKF_UpData(void);
 
+#if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
+extern volatile float heading;
+void EKF_Update_Heading(void);
+void mag_calibrate(float raw_x, float raw_y, float raw_z, float *mag_x, float *mag_y, float *mag_z);
+// 声明校准后的磁力计全局变量，允许其他文件访问
+extern float mag_x;
+extern float mag_y;
+extern float mag_z;
+#endif
 
 #endif /* CODE_EKF_H_ */

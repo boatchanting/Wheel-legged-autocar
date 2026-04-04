@@ -2,13 +2,14 @@
 
 
 // ==================== 全局变量定义 ====================
-MenuState_t current_state = MENU_STATE_MAIN;
+MenuState_t current_state = MENU_STATE_MAIN; 
 uint8_t menu_index = MENU_STATE_SUBJECT;
-
+// 新增：推车模式全局标志位（供底层PID控制环使用）
+uint8_t g_is_push_mode = 0; // 0: 非推车模式，正常PID控制；1: 推车模式
 uint8_t menu_values[MENU_STATE_COUNT] = {0};
 const uint8_t menu_max_values[MENU_STATE_COUNT] = {
     1,  // MENU_STATE_MAIN
-    3,  // MENU_STATE_SUBJECT: 1-3
+    4,  // MENU_STATE_SUBJECT: 1-3，推车模式4
     2,  // MENU_STATE_CALIBRATION: 1=自动, 2=手动
     2,  // MENU_STATE_ACTION_SELECT: 1=Record, 2=Start
     1,  // MENU_STATE_ACTION_CONFIRM
@@ -19,9 +20,6 @@ const uint8_t menu_max_values[MENU_STATE_COUNT] = {
 uint8_t need_redraw = 1;
 float motor_speeds[2] = {0.0f, 0.0f};
 float current_angles[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-
-// 动作步骤计数器
-//static uint8_t //action_step = 0;
 
 // ==================== 辅助函数 ====================
 static void Menu_ClearScreen(void)
@@ -35,40 +33,22 @@ static void Menu_ShowMainScreen(void)
     if(current_state == MENU_STATE_MAIN)
     {
     // 基本UI框架
-    // ips200_show_string(0,15*0, "Pitch:");
-    // ips200_show_string(0,15*1, "Roll :");
-    // ips200_show_string(0,15*2, "Yaw  :");
+    ips200_show_string(0,15*4, "Pitch:");
+    ips200_show_string(0,15*5, "Roll :");
+    ips200_show_string(0,15*6, "Yaw  :");
     // ips200宽240，高320，一个字符宽10，高14
     //字符部分
-    ips200_show_string(0,15*0, "Time:");
-    ips200_show_string(0,15*1, "HMS:");
-    ips200_show_string(0,15*2, "State:"); ips200_show_string(90,15*2, "Lat:");
-    ips200_show_string(0,15*3, "Lon:"); 
-    ips200_show_string(0,15*4, "Spd:");
-    ips200_show_string(0,15*5, "Dir:"); 
-    ips200_show_string(0,15*6, "Sat:");
-    ips200_show_string(0,15*7, "Height:");
+    // ips200_show_string(0,15*0, "Time:");
+    // ips200_show_string(0,15*1, "HMS:");
+   //ips200_show_string(90,15*2, "Lat:");
+
+    // ips200_show_string(0,15*3, "Lon:"); 
+    // ips200_show_string(0,15*4, "Spd:");
+    // ips200_show_string(0,15*5, "Dir:"); 
+    // ips200_show_string(0,15*6, "Sat:");
+    // ips200_show_string(0,15*7, "Height:");
     //ips200_show_string(0, 100,"Freq : 20Hz");
-    //ips200_show_string(0, 120, "Servo Angles:");
-    ips200_show_string(0, 135, "RF:");
-    ips200_show_string(0, 150, "RR:");
-    ips200_show_string(0, 165, "LF:");
-    ips200_show_string(0, 180, "LR:");
-    //ips200_show_string(0, 200, "Motor Speed:");
-    ips200_show_string(0, 215, "L:");
-    ips200_show_string(80, 215, "R:");
-    //ips200_show_string(0, 230, "gyro.kp");
-    //ips200_show_string(0, 245, "gyro.kd");
-    ips200_show_string(0, 260, "g_motor_enable");
-    // 提示信息
-    ips200_show_string(0, 280, "Press any key to menu");
-    }
-    else
-    {
-    ips200_show_string(0,15*0, "Pitch:");
-    ips200_show_string(0,15*1, "Roll :");
-    ips200_show_string(0,15*2, "Yaw  :");
-    ips200_show_string(0, 100,"Freq : 20Hz");
+    ips200_show_string(0,15*7, "State:"); 
     ips200_show_string(0, 120, "Servo Angles:");
     ips200_show_string(0, 135, "RF:");
     ips200_show_string(0, 150, "RR:");
@@ -76,11 +56,26 @@ static void Menu_ShowMainScreen(void)
     ips200_show_string(0, 180, "LR:");
     ips200_show_string(0, 200, "Motor Speed:");
     ips200_show_string(0, 215, "L:");
-    ips200_show_string(80, 215, "R:");
-    ips200_show_string(0, 230, "gyro.kp");
-    ips200_show_string(0, 245, "gyro.kd");
+    ips200_show_string(100, 215, "R:");
     ips200_show_string(0, 260, "g_motor_enable");
-    
+    // 提示信息
+    ips200_show_string(0, 280, "Press any key to menu");
+    }
+    else
+    {
+    ips200_show_string(0,15*4, "Pitch:");
+    ips200_show_string(0,15*5, "Roll :");
+    ips200_show_string(0,15*6, "Yaw  :");
+    ips200_show_string(0,15*7, "State:"); 
+    ips200_show_string(0, 120, "Servo Angles:");
+    ips200_show_string(0, 135, "RF:");
+    ips200_show_string(0, 150, "RR:");
+    ips200_show_string(0, 165, "LF:");
+    ips200_show_string(0, 180, "LR:");
+    ips200_show_string(0, 200, "Motor Speed:");
+    ips200_show_string(0, 215, "L:");
+    ips200_show_string(100, 215, "R:");
+    ips200_show_string(0, 260, "g_motor_enable");
     }
 }
 
@@ -96,13 +91,16 @@ static void Menu_ShowSubjectScreen(void)
     ips200_show_string(0, 40, "Subject 1");
     
     ips200_set_color((subject == 2) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0,15*1, "Subject 2");
+    ips200_show_string(0,60, "Subject 2");
     
     ips200_set_color((subject == 3) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
     ips200_show_string(0, 80, "Subject 3");
+      // 新增：第4个选项 推车模式
+    ips200_set_color((subject == 4) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
+    ips200_show_string(0, 100, "Push Mode"); 
     
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
-    ips200_draw_line(10, 100, 230, 100, RGB565_RED);
+    ips200_draw_line(10, 120, 230, 120, RGB565_RED);
 }
 
 static void Menu_ShowCalibrationScreen(void)
@@ -117,7 +115,7 @@ static void Menu_ShowCalibrationScreen(void)
     ips200_show_string(0, 40, "Auto Calibration");
     
     ips200_set_color((calib == 2) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0,15*1, "Manual Calibration");
+    ips200_show_string(0,60, "Manual Calibration");
     
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     ips200_draw_line(10, 80, 230, 80, RGB565_RED);
@@ -135,7 +133,7 @@ static void Menu_ShowActionSelectScreen(void)
     ips200_show_string(0, 40, "Record");
     
     ips200_set_color((action == 2) ? RGB565_RED : RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0,15*1, "Start");
+    ips200_show_string(0,60, "Start");
     
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     ips200_draw_line(10, 80, 230, 80, RGB565_RED);
@@ -145,31 +143,37 @@ static void Menu_ShowActionConfirmScreen(void)
 {
     // 显示选择的动作
     uint8_t action = menu_values[MENU_STATE_ACTION_SELECT];
+    uint8_t subject = menu_values[MENU_STATE_SUBJECT]; // 获取当前科目
     
-    ips200_show_string(80, 0, (action == 1) ? "Record Mode" : "Start Mode");
+    if (subject == 4) {
+        ips200_show_string(80, 0, "Push Mode...");
+    } else {
+        ips200_show_string(80, 0, (action == 1) ? "Recording..." : "Starting...");
+    }
     ips200_draw_line(10, 20, 230, 20, RGB565_RED);
     
     // 显示动态数据（和主界面一样）
-    ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
-    ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
-    ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
-    
+    ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
+    ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
+    ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
+
+    ips200_show_float(60, 15*7, gnss.state, 3, 2);
     ips200_show_float(25, 135, current_angles[0], 3, 1);
     ips200_show_float(25, 150, current_angles[1], 3, 1);
     ips200_show_float(25, 165, current_angles[2], 3, 1);
     ips200_show_float(25, 180, current_angles[3], 3, 1);
     
     ips200_show_float(25, 215, motor_speeds[0], 5, 1);
-    ips200_show_float(105, 215, motor_speeds[1], 5, 1);
-    
-    ips200_show_float(25, 230, pid_gyro.kp, 4, 2);
-    ips200_show_float(25, 245, pid_gyro.kd, 4, 2);
-    
+    ips200_show_float(125, 215, motor_speeds[1], 5, 1);
     ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
     
     // 下面打印"未发车"
     ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
-    ips200_show_string(0, 280, "Not Started          ");
+    if (subject == 4) {
+        ips200_show_string(0, 280, "Pushing Phase Active"); // 显示为推车阶段
+    } else {
+        ips200_show_string(0, 280, "Not Started          ");
+    }
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
 }
 
@@ -177,30 +181,36 @@ static void Menu_ShowActionRunningScreen(void)
 {
     // 显示动态数据（和ACTION_CONFIRM一样）
     uint8_t action = menu_values[MENU_STATE_ACTION_SELECT];
-    
-    ips200_show_string(80, 0, (action == 1) ? "Recording..." : "Starting...");
+    uint8_t subject = menu_values[MENU_STATE_SUBJECT]; // 获取当前科目
+
+    if (subject == 4) {
+        ips200_show_string(80, 0, "Push Mode...");
+    } else {
+        ips200_show_string(80, 0, (action == 1) ? "Recording..." : "Starting...");
+    }
     ips200_draw_line(10, 20, 230, 20, RGB565_BLUE);
     
-    ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
-    ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
-    ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
-    
+    ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
+    ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
+    ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
+       
+    ips200_show_float(60, 15*7, gnss.state, 3, 2);
     ips200_show_float(25, 135, current_angles[0], 3, 1);
     ips200_show_float(25, 150, current_angles[1], 3, 1);
     ips200_show_float(25, 165, current_angles[2], 3, 1);
     ips200_show_float(25, 180, current_angles[3], 3, 1);
     
     ips200_show_float(25, 215, motor_speeds[0], 5, 1);
-    ips200_show_float(105, 215, motor_speeds[1], 5, 1);
-    
-    ips200_show_float(25, 230, pid_gyro.kp, 4, 2);
-    ips200_show_float(25, 245, pid_gyro.kd, 4, 2);
-    
+    ips200_show_float(125, 215, motor_speeds[1], 5, 1);
     ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
     
     // 下面打印"发车成功"
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
-    ips200_show_string(0, 280, "Started Successfully");
+    if (subject == 4) {
+        ips200_show_string(0, 280, "Pushing Phase Active"); // 显示为推车阶段
+    } else {
+        ips200_show_string(0, 280, "Started Successfully");
+    }
 }
 
 static void Menu_ShowActionCompleteScreen(void)
@@ -208,18 +218,24 @@ static void Menu_ShowActionCompleteScreen(void)
     Menu_ClearScreen();
     
     uint8_t action = menu_values[MENU_STATE_ACTION_SELECT];
+    uint8_t subject = menu_values[MENU_STATE_SUBJECT]; // 获取当前科目
     
-    if (action == 1)  // Record
+    if (subject == 4)
+    {
+        ips200_show_string(0, 10, "Push Mode Ended");
+        ips200_show_string(0,15*2, "System returned");
+    }
+    else if (action == 1)  // Record
     {
         ips200_show_string(0, 10, "Record Complete");
-        ips200_show_string(0,15*0, "Data saved successfully");
+        ips200_show_string(0,15*2, "Data saved successfully");
     }
     else if (action == 2)  // Start
     {
         ips200_show_string(0, 10, "Start Complete");
-        ips200_show_string(0,15*0, "System paused");
+        ips200_show_string(0,15*2, "System paused");
     }
-     ips200_show_string(0,15*1, "Press any key to return");
+     ips200_show_string(0,15*3, "Press any key to return");
 
 }
 
@@ -246,10 +262,13 @@ void Menu_ShowStatic(void)
         case MENU_STATE_ACTION_CONFIRM:
            Menu_ShowMainScreen(); // 先显示主界面框架
             break;
-
-/*  //下面的部分注释掉是原有的惯性导航模块的科目一和科目二的实现。暂时注释掉，以便调试gnss
-         case MENU_STATE_ACTION_RUNNING:
-            if(action==1)
+        case MENU_STATE_ACTION_RUNNING:
+            if (menu_values[MENU_STATE_SUBJECT] == 4)
+            {
+                gpio_toggle_level(P19_0);
+                g_is_push_mode = 1; // 打开底层推车控制逻辑！！！
+            }
+            else if(action==1)
             {        
                 gpio_toggle_level(P19_0);       // 指示灯切换
                 if (g_motor_enable && g_yaw_initialized)
@@ -258,7 +277,7 @@ void Menu_ShowStatic(void)
                 g_nav_recording = 1;
                 }
             }
-            if(action==2)
+            else if(action==2)
             {
                 gpio_toggle_level(P19_0);       // 指示灯切换
                 if(g_motor_enable)
@@ -266,11 +285,13 @@ void Menu_ShowStatic(void)
                 g_load_flash_request = 1;      // 请求读取测试
                 g_save_flash_request = 0;     // 清除保存请求
                 g_nav_recording = 0;          // 确保停止录制
-            }
+                }
             }
             Menu_ShowMainScreen(); // 先显示主界面框架
             break;
         case MENU_STATE_ACTION_COMPLETE:
+            // 不管什么模式，到了完成界面都关闭推车模式
+            g_is_push_mode = 0; 
             if(action==1)
             {
                 gpio_toggle_level(P19_0);       // 指示灯切换
@@ -383,43 +404,30 @@ void Menu_ShowDynamic(void)
     // 在主界面显示动态数据
     else if (current_state == MENU_STATE_MAIN)
     {
-        // ips200_show_float(60,15*0, euler_angle.pitch, 3, 2);
-        // ips200_show_float(60,15*1, euler_angle.roll, 3, 2);
-        // ips200_show_float(60,15*2, euler_angle.yaw, 3, 2);
-        //gnss数据接收与解析都是通过串口中断调用gnss_uart_callback函数进行实现的
-        //数据解析完毕之后gnss_flag标志位会置1
-        // if(gnss_flag)
-        // {
-        //     gnss_flag = 0;//将标志位清零
-        //     gnss_data_parse();           //开始解析数据
-        //     ips200_show_uint(40,15*0, gnss.time.year,4); ips200_show_uint(90,15*0,gnss.time.month,2); ips200_show_uint(130,15*0,gnss.time.day,2);
-        //     ips200_show_uint(40,15*1, gnss.time.hour,2); ips200_show_uint(90,15*1,gnss.time.minute,2); ips200_show_uint(120,15*1,gnss.time.second,2);
-        ips200_show_uint(50,15*2, gnss.state,5); //ips200_show_float(130,15*2,gnss.latitude,4,6);
-        //     ips200_show_float(40,15*3, gnss.longitude,7,6); ips200_show_float(40,15*4,gnss.speed,4,6);
-        //     ips200_show_float(40,15*5, gnss.direction,4,6);
-        //     ips200_show_uint(40,15*6,gnss.satellite_used,5);
-        //     ips200_show_float(50,15*7, gnss.height,8,6);
-        // }
+        ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
+        ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
+        ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
+        //ips200_show_uint(50,15*2, gnss.state,5); 
+        //ips200_show_uint(40,15*6,gnss.satellite_used,5);
 
+   
+    ips200_show_float(60, 15*7, gnss.state, 3, 2);
         ips200_show_float(25, 135, current_angles[0], 3, 1);
         ips200_show_float(25, 150, current_angles[1], 3, 1);
         ips200_show_float(25, 165, current_angles[2], 3, 1);
         ips200_show_float(25, 180, current_angles[3], 3, 1);
         
         ips200_show_float(25, 215, motor_speeds[0], 5, 1);
-        ips200_show_float(105, 215, motor_speeds[1], 5, 1);
-        
-        ips200_show_float(25, 230, pid_gyro.kp, 4, 2);
-        ips200_show_float(25, 245, pid_gyro.kd, 4, 2);
-        
+        ips200_show_float(125, 215, motor_speeds[1], 5, 1);
         ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
     }
 }
 
 // ==================== 按键处理（完全按照您的设计） ====================
+// ==================== 按键处理（状态机重写版） ====================
 void Menu_HandleKey(void)
 {
-    // 进入菜单：任意键短按
+    // 1. 在主界面：任意键进入菜单
     if (current_state == MENU_STATE_MAIN)
     {
         if (key_get_state(KEY_1) == KEY_SHORT_PRESS ||
@@ -430,18 +438,13 @@ void Menu_HandleKey(void)
             current_state = MENU_STATE_SUBJECT;
             menu_index = MENU_STATE_SUBJECT;
             menu_values[menu_index] = 1;
-            ////action_step = 0;
             need_redraw = 1;
-            
-            key_clear_state(KEY_1);
-            key_clear_state(KEY_2);
-            key_clear_state(KEY_3);
-            key_clear_state(KEY_4);
+            key_clear_state(KEY_1); key_clear_state(KEY_2); key_clear_state(KEY_3); key_clear_state(KEY_4);
         }
         return;
     }
     
-    // 完成界面：可以按任意键立即返回
+    // 2. 在完成界面：任意键返回主界面
     if (current_state == MENU_STATE_ACTION_COMPLETE)
     {
         if (key_get_state(KEY_1) == KEY_SHORT_PRESS ||
@@ -451,127 +454,119 @@ void Menu_HandleKey(void)
         {
             current_state = MENU_STATE_MAIN;
             menu_index = MENU_STATE_SUBJECT;
-            //action_step = 0;
             need_redraw = 1;
-            
-            key_clear_state(KEY_1);
-            key_clear_state(KEY_2);
-            key_clear_state(KEY_3);
-            key_clear_state(KEY_4);
+            key_clear_state(KEY_1); key_clear_state(KEY_2); key_clear_state(KEY_3); key_clear_state(KEY_4);
         }
         return;
     }
     
-    // 左键：返回上一步
+    // ==========================================================
+    // 3. 左键 (KEY_2)：返回 / 锁住
+    // ==========================================================
     if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
     {
-        if (current_state == MENU_STATE_ACTION_CONFIRM)
+        switch (current_state)
         {
-            // 从确认界面返回选择界面
-            current_state = MENU_STATE_ACTION_SELECT;
-            menu_index = current_state;
-            //action_step = 0;
+            case MENU_STATE_SUBJECT:
+                current_state = MENU_STATE_MAIN; // 退回主界面
+                break;
+                
+            case MENU_STATE_CALIBRATION:
+                current_state = MENU_STATE_SUBJECT; // 退回科目选择
+                break;
+                
+            case MENU_STATE_ACTION_SELECT:
+                current_state = MENU_STATE_CALIBRATION; // 退回标定选择
+                break;
+                
+            case MENU_STATE_ACTION_CONFIRM:
+                current_state = MENU_STATE_ACTION_SELECT; // 退回动作选择
+                break;
+                
+            case MENU_STATE_ACTION_RUNNING:
+                // 【核心退出逻辑：如果是推车模式，直接退回科目选择并锁死！】
+                if (menu_values[MENU_STATE_SUBJECT] == 4) {
+                    current_state = MENU_STATE_SUBJECT; 
+                    g_is_push_mode = 0; // 强行清0，车轮瞬间变硬锁死！
+                } else {
+                    current_state = MENU_STATE_ACTION_CONFIRM; // 普通模式退回确认界面
+                }
+                break;
+                
+            default:
+                break;
         }
-        else if (current_state == MENU_STATE_ACTION_RUNNING)
-        {
-            // 从运行界面返回确认界面
-            current_state = MENU_STATE_ACTION_CONFIRM;
-            menu_index = current_state;
-            //action_step = 1;  // 保持在第一步
-        }
-        else if (current_state > MENU_STATE_SUBJECT)
-        {
-            // 普通返回
-            current_state--;
-            menu_index = current_state;
-            if (current_state <= MENU_STATE_ACTION_SELECT)
-            {
-                //action_step = 0;
-            }
-        }
-        else if (current_state == MENU_STATE_SUBJECT)
-        {
-            // 返回到主界面
-            current_state = MENU_STATE_MAIN;
-            menu_index = MENU_STATE_SUBJECT;
-            //action_step = 0;
-        }
-        
+        menu_index = current_state;
         need_redraw = 1;
         key_clear_state(KEY_2);
     }
-    // 右键：前进
+    
+    // ==========================================================
+    // 4. 右键 (KEY_4)：前进 / 开启推车模式
+    // ==========================================================
     else if (key_get_state(KEY_4) == KEY_SHORT_PRESS)
     {
-        // ACTION_SELECT后的多步骤流程
-        if (current_state == MENU_STATE_ACTION_SELECT)
+        switch (current_state)
         {
-            // 第一步：进入确认界面（显示未发车）
-            current_state = MENU_STATE_ACTION_CONFIRM;
-            menu_index = current_state;
-            //action_step = 1;
+            case MENU_STATE_SUBJECT:
+                // 【核心跳转逻辑：如果选了4，直接飞越到运行界面！】
+                if (menu_values[MENU_STATE_SUBJECT] == 4) {
+                    current_state = MENU_STATE_ACTION_RUNNING; 
+                } else {
+                    current_state = MENU_STATE_CALIBRATION; // 选1,2,3则正常进入标定选择
+                }
+                
+                menu_index = current_state;
+                if (menu_values[menu_index] == 0) menu_values[menu_index] = 1;
+                break;
+                
+            case MENU_STATE_CALIBRATION:
+                current_state = MENU_STATE_ACTION_SELECT;
+                menu_index = current_state;
+                if (menu_values[menu_index] == 0) menu_values[menu_index] = 1;
+                break;
+                
+            case MENU_STATE_ACTION_SELECT:
+                current_state = MENU_STATE_ACTION_CONFIRM;
+                menu_index = current_state;
+                break;
+                
+            case MENU_STATE_ACTION_CONFIRM:
+                current_state = MENU_STATE_ACTION_RUNNING;
+                menu_index = current_state;
+                break;
+                
+            case MENU_STATE_ACTION_RUNNING:
+                current_state = MENU_STATE_ACTION_COMPLETE; // 运行中按右键，进入完成界面（自动锁车）
+                menu_index = current_state;
+                break;
+                
+            default:
+                break;
         }
-        else if (current_state == MENU_STATE_ACTION_CONFIRM)
-        {
-            // 第二步：进入运行界面（显示发车成功）
-            current_state = MENU_STATE_ACTION_RUNNING;
-            menu_index = current_state;
-            //action_step = 2;
-        }
-        else if (current_state == MENU_STATE_ACTION_RUNNING)
-        {
-            // 第三步：进入完成界面
-            current_state = MENU_STATE_ACTION_COMPLETE;
-            menu_index = current_state;
-            //action_step = 0;
-        }
-        else if (current_state < MENU_STATE_ACTION_SELECT)
-        {
-            // 普通前进
-            current_state++;
-            menu_index = current_state;
-            
-            // 设置默认值
-            if (menu_values[menu_index] == 0)
-            {
-                menu_values[menu_index] = 1;
-            }
-        }
-        
         need_redraw = 1;
         key_clear_state(KEY_4);
     }
-    // 上下键调整值（只在ACTION_SELECT之前有效）
-    else if (key_get_state(KEY_1) == KEY_SHORT_PRESS && 
-             current_state <= MENU_STATE_ACTION_SELECT)
+    
+    // ==========================================================
+    // 5. 上下键 (KEY_1 / KEY_3)：调整数值
+    // ==========================================================
+    else if (key_get_state(KEY_1) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
     {
         if (current_state != MENU_STATE_MAIN)
         {
-            if (menu_values[menu_index] > 1)
-            {
-                menu_values[menu_index]--;
-            }
-            else
-            {
-                menu_values[menu_index] = menu_max_values[menu_index];
-            }
+            if (menu_values[menu_index] > 1) { menu_values[menu_index]--; }
+            else { menu_values[menu_index] = menu_max_values[menu_index]; }
             need_redraw = 1;
         }
         key_clear_state(KEY_1);
     }
-    else if (key_get_state(KEY_3) == KEY_SHORT_PRESS && 
-             current_state <= MENU_STATE_ACTION_SELECT)
+    else if (key_get_state(KEY_3) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
     {
         if (current_state != MENU_STATE_MAIN)
         {
-            if (menu_values[menu_index] < menu_max_values[menu_index])
-            {
-                menu_values[menu_index]++;
-            }
-            else
-            {
-                menu_values[menu_index] = 1;
-            }
+            if (menu_values[menu_index] < menu_max_values[menu_index]) { menu_values[menu_index]++; }
+            else { menu_values[menu_index] = 1; }
             need_redraw = 1;
         }
         key_clear_state(KEY_3);

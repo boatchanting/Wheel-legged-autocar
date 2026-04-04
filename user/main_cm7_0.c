@@ -35,44 +35,9 @@
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "config/config.h"//【提醒】配置请在这里修改
+#include "tools/runtime_profiler.h"
 
-// 打开新的工程或者工程移动了位置务必执行以下操作
-// 第一步 关闭上面所有打开的文件
-// 第二步 project->clean  等待下方进度条走完
-
-
-// *************************** UART例程硬件连接说明 ***************************
-// 使用逐飞科技 CMSIS-DAP 调试下载器连接
-//      直接将下载器正确连接在核心板的调试下载接口即可
-// 使用 USB-TTL 模块连接
-//      模块管脚            单片机管脚
-//      USB-TTL-RX          查看 zf_common_debug.h 文件中 DEBUG_UART_TX_PIN 宏定义的引脚 默认 P14_0
-//      USB-TTL-TX          查看 zf_common_debug.h 文件中 DEBUG_UART_RX_PIN 宏定义的引脚 默认 P14_1
-//      USB-TTL-GND         核心板电源地 GND
-//      USB-TTL-3V3         核心板 3V3 电源
-
-//================================特别注意================================
-// 串口接线时一定要接GND 否则无法正常通讯
-//================================特别注意================================
-//================================特别注意================================
-// 串口接线时一定要接GND 否则无法正常通讯
-//================================特别注意================================
-//================================特别注意================================
-// 串口接线时一定要接GND 否则无法正常通讯
-//================================特别注意================================
-
-// ***************************** 例程测试说明 *****************************
-// 1.核心板烧录完成本例程，单独使用核心板与调试下载器或者 USB-TTL 模块，在断电情况下完成连接
-// 2.将调试下载器或者 USB-TTL 模块连接电脑，完成上电
-// 3.电脑上使用串口助手打开对应的串口，串口波特率为 DEBUG_UART_BAUDRATE 宏定义 默认 115200，核心板按下复位按键
-// 4.可以在串口助手上看到如下串口信息：
-//      UART Text.
-// 5.通过串口助手发送数据，会收到相同的反馈数据
-//      UART get data:.......
-// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
-
-// ******************************* 代码区域 *******************************
-// uart配置
+// **************************** uart配置区域 **************************** 
 #define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0
 #define UART_BAUDRATE           (DEBUG_UART_BAUDRATE)                           // 默认 115200
 #define UART_TX_PIN             (DEBUG_UART_TX_PIN  )                           // 默认 UART0_TX_P00_1
@@ -82,83 +47,38 @@ uint8 fifo_get_data[64];                                                        
 uint8  get_data = 0;                                                            // 接收数据变量
 uint32 fifo_data_count = 0;                                                     // fifo 数据个数
 fifo_struct uart_data_fifo;
-// uart配置结束
-
-// *************************** 4bb7无刷电机例程硬件连接说明 ***************************
-// 使用逐飞科技 tc264 V2.6主板 按照下述方式进行接线
-//      模块引脚    单片机引脚
-//      RX          查看 small_driver_uart_control.h 中 SMALL_DRIVER_TX  宏定义 默认 P10_1
-//      TX          查看 small_driver_uart_control.h 中 SMALL_DRIVER_RX  宏定义 默认 P10_0
-//      GND         GND
-
-// *************************** 例程测试说明 ***************************
-// 1.核心板烧录完成本例程 主板电池供电 连接 CYT2BL3 FOC 双驱
-// 2.如果初次使用 请先点击双驱上的MODE按键 以矫正零点位置 矫正时 电机会发出音乐
-// 3.可以在逐飞助手上位机上看到如下串口信息：
-//      left speed:xxxx, right speed:xxxx
-// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
-
-// **************************** 代码区域 ****************************
-// 无刷电机配置
+// **************************** 无刷电机配置区域 **************************** 
 #define MAX_DUTY            (30 )                                               // 最大 MAX_DUTY% 占空比
 int8 duty = 0;
 bool dir = true;
-//无刷电机配置结束
-
-// *************************** ips200屏幕例程硬件连接说明 ***************************
-//      模块管脚            单片机管脚
-//      BL                  查看 zf_device_ips200_parallel8.h 中 IPS200_BL_PIN 宏定义 
-//      CS                  查看 zf_device_ips200_parallel8.h 中 IPS200_CS_PIN 宏定义 
-//      RST                 查看 zf_device_ips200_parallel8.h 中 IPS200_RST_PIN 宏定义
-//      RS                  查看 zf_device_ips200_parallel8.h 中 IPS200_RS_PIN 宏定义 
-//      WR                  查看 zf_device_ips200_parallel8.h 中 IPS200_WR_PIN 宏定义 
-//      RD                  查看 zf_device_ips200_parallel8.h 中 IPS200_RD_PIN 宏定义 
-//      D0-D7               查看 zf_device_ips200_parallel8.h 中 IPS200_Dx_PIN 宏定义 
-//      GND                 核心板电源地 GND
-//      3V3                 核心板 3V3 电源
-
-
-
-// *************************** 例程测试说明 ***************************
-// 1.核心板烧录本例程 插在主板上 2寸IPS 显示模块插在主板的屏幕接口排座上 请注意引脚对应 不要插错
-// 2.电池供电 上电后 2寸IPS 屏幕亮起 显示字符数字浮点数和波形图
-// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
-
 // **************************** ips200屏幕配置区域 ****************************                                    
-#define IPS200_TYPE     (IPS200_TYPE_SPI)   // 八位并口两寸屏 这里宏定义填写 IPS200_TYPE_PARALLEL8  定义屏幕接口类型
-//#define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭        放在前面了，它属于这里                                                                        // SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
-// *************************** imu660ra例程测试说明 ***************************
-// 1.核心板烧录完成本例程，单独使用核心板与调试下载器或者 USB-TTL 模块，并连接好编码器，在断电情况下完成连接
-// 2.将调试下载器或者 USB-TTL 模块连接电脑 完成上电 正常 H2 LED 会闪烁
-// 3.电脑上使用 逐飞助手 打开对应的串口，串口波特率为 zf_common_debug.h 文件中 DEBUG_UART_BAUDRATE 宏定义 默认 115200，核心板按下复位按键
-// 4.可以在 逐飞助手 上看到如下串口信息：
-//      imu660ra acc data: x-..., y-..., z-...
-//      imu660ra gyro data: x-..., y-..., z-...
-// 5.移动旋转 imu660ra 就会看到数值变化
-// 如果发现现象与说明严重不符 请参照本文件最下方 例程常见问题说明 进行排查
-
-// **************************** 代码区域 ****************************
+#define IPS200_TYPE     (IPS200_TYPE_SPI)   // 八位并口两寸屏 这里宏定义填写 IPS200_TYPE_PARALLEL8  定义屏幕接口类型    
+// SPI 串口两寸屏 这里宏定义填写 IPS200_TYPE_SPI
+// **************************** LED配置区域 ****************************
 #define LED1                    (P19_0)                                         // SPI 串口 SPI 两寸屏 这里宏定义填写 IPS200_TYPE_SPI
+
+//  **************************** 中断配置区域 ****************************
+#define PIT_NUM         (PIT_CH0) // 使用定时器通道0       用于平衡控制，1ms
+#define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1     用于遥控器，10ms
+#define PIT_NUM_10         (PIT_CH10) // 使用定时器通道10  用于遥控器，10ms
+volatile uint8 pit_state = 0;  //通道0中断标志位
+
+uint8 pit_state_1 = 0;//通道1中断标志位
+volatile runtime_profiler_t g_ekf_profiler = {0};
+
 
 // *************************** EKF中断声明 ***************************
 extern void IMU_Calibrate_All_Gyro(void); // 校准陀螺仪声明
 extern void EKF_Init(void);
 extern void EKF_UpData(void);
 extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
-volatile uint8 pit_state = 0;
-// --- EKF宏定义 ---
-#define PIT_NUM         (PIT_CH0) // 使用定时器通道0
-#define PIT_NUM_10         (PIT_CH10) // 使用定时器通道0    pit_ms_init(PIT_NUM_10, 10);
 // =================================================================================
 // PID控制中间变量开始
-// =================================================================================
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
 int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
-// =============================================
-// PID控制中间变量结束
-// ===============================================
+// =================================================================================
 
 #define PIT_NUM_1         (PIT_CH1) // 使用定时器通道1
 uint8 pit_state_1 = 0;
@@ -168,7 +88,6 @@ uint8 pit_state_1 = 0;
 
 // ==========================================
 // 导航记录控制标志位
-// ==========================================
 volatile uint8_t g_nav_recording = 0;       // 1: 正在记录 RAM, 0: 停止记录
 volatile uint8_t g_nav_start_recording = 0;  // 1: 请求开始录制，创建内存区
 volatile uint8_t g_save_flash_request = 0;  // 1: 请求将 RAM 数据存入 Flash【优化点】可以移动到对应的文件里面的，不用都放在main里面
@@ -277,20 +196,26 @@ servo_executor_init();
     ips200_show_string(0, disp_y, "WiFi Init OK");
     disp_y += 16;
 #endif
-
-
-
-// 此处编写用户代码 例如外设初始化代码等
 while(1)//检测imu660ra是否初始化成功
 {
+    #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
     if(imu660ra_init())
     {
         printf("\r\n imu660ra init error.");                                 // imu660ra 初始化失败
     }
-    else
+    else{
+        break;
+    }   
+    #endif
+    #if IMU_CATEGORY == 3
+    if(imu963ra_init())
     {
+        printf("\r\n imu963ra init error.");                                 // imu963ra 初始化失败
+    }
+    else{
         break;
     }
+    #endif
     gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭 初始化出错这个灯会闪的很慢
 }
 #if DEBUG_DISPLAY
@@ -354,7 +279,7 @@ Gnss_Transform_Init();//GNSS坐标转换笛卡尔初始化
 //exti_init(P20_2, EXTI_TRIGGER_RISING);
 // P20_3: 停止复现
 //exti_init(P20_3, EXTI_TRIGGER_RISING);
-
+Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
@@ -372,6 +297,11 @@ Gnss_Transform_Init();//GNSS坐标转换笛卡尔初始化
 // *****************中断在这后面开*****************
     
     // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
+    // EKF 运行时间测试
+    timer_init(TC_TIME2_CH0, TIMER_US);
+    timer_start(TC_TIME2_CH0);
+    RUNTIME_PROFILE_RESET(&g_ekf_profiler);
+    
     pit_ms_init(PIT_NUM, 1);
     #if REMOTE_CONTROL
     pit_ms_init(PIT_NUM_1, 10);                                                // 定时器通道1 初始化为 10ms 中断 用于 sbus 遥控器数据处理
@@ -381,36 +311,13 @@ Gnss_Transform_Init();//GNSS坐标转换笛卡尔初始化
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
 
-#if DEBUG_DISPLAY
-    // ips200_show_string(0, disp_y, "PIT & INT OK");
-    // disp_y += 16;
-    
+#if DEBUG_DISPLAY    
     // 延时一会儿让人看清启动信息，然后清屏准备显示数据
     system_delay_ms(1000); 
     ips200_clear();
-    
-    // // 绘制静态UI标签 (避免循环里重复绘制浪费时间)
-    // ips200_show_string(0, 0,  "EKF Monitor");
-    // ips200_show_string(0, 30, "Pitch:");
-    // ips200_show_string(0, 50, "Roll :");
-    // ips200_show_string(0, 70, "Yaw  :");
-    // ips200_show_string(0, 100,"Freq : 20Hz");
-    // 添加舵机角度显示标签
-    // ips200_show_string(0, 120, "Servo Angles:");
-    // ips200_show_string(0, 135, "RF:");  // 右前
-    // ips200_show_string(0, 150, "RR:");  // 右后
-    // ips200_show_string(0, 165, "LF:");  // 左前
-    // ips200_show_string(0, 180, "LR:");  // 左后
-    // // 添加电机转速显示标签
-    // ips200_show_string(0, 200, "Motor Speed:");
-    // ips200_show_string(0, 215, "L:");  // 左电机
-    // ips200_show_string(80, 215, "R:");  // 右电机
-    // ips200_show_string(0, 230, "gyro.kp");  // 右电机
-    // ips200_show_string(0, 245, "gyro.kd");  // 右电机
-    // //添加g_yaw_initialized状态
-    // ips200_show_string(0, 260, "g_motor_enable");
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
+ uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
 
 vision_detected_marker = 0;//雷区调用,测试用
     //-------------------------------------------------------------------
@@ -420,125 +327,81 @@ vision_detected_marker = 0;//雷区调用,测试用
 
     while(true)
     {
-        // 菜单处理
-        Menu_HandleKey();
-        #if DEBUG_DISPLAY
-        Menu_ShowStatic();    // 静态显示
-        Menu_ShowDynamic();   // 动态显示
-        #endif
-        // 此处编写需要循环执行的代码
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
-        if(pit_state == 1)
+        if(pit_state == 1)//10mswifi，100ms屏幕刷新
         {
+            // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
             pit_state = 0; // 清除标志   
-            
-            //下面撰写的是50ms执行一次的代码
 
-            // --- 屏幕刷新逻辑 (降频处理) ---
-            display_count++;
-            if(display_count >= 2) // 2* 50 ms = 100ms 刷新一次屏幕
-            {
-                display_count = 0;
-                // 在这里获取舵机角度，而不是在显示时获取
-                //float current_angles[4];
-                //servo_get_current_angles(current_angles);
-                // 获取电机速度数据
-                //float motor_speeds[2];
-                //small_driver_get_speed();
-                //motor_speeds[0] = motor_value.receive_left_speed_data;
-                //motor_speeds[1] = motor_value.receive_right_speed_data;
-
-                // gpio_toggle_level(LED1); // LED闪烁指示系统正在运行
-                
-                #if DEBUG_DISPLAY
-                    // 显示 Pitch (俯仰角)
-                    // // 参数：X坐标, Y坐标, 浮点数值, 整数位宽, 小数位数
-                    // ips200_show_float(60, 30, euler_angle.pitch, 3, 2);
-                    
-                    // // 显示 Roll (横滚角)
-                    // ips200_show_float(60, 50, euler_angle.roll, 3, 2);
-                    
-                    // // 显示 Yaw (偏航角)
-                    // ips200_show_float(60, 70, euler_angle.yaw, 3, 2);
-
-                    // // 显示已获取的舵机角度
-                    // ips200_show_float(25, 135, current_angles[0], 3, 1);
-                    // ips200_show_float(25, 150, current_angles[1], 3, 1);
-                    // ips200_show_float(25, 165, current_angles[2], 3, 1);
-                    // ips200_show_float(25, 180, current_angles[3], 3, 1);
-
-                    // // 显示电机速度
-                    // ips200_show_float(25, 215, motor_speeds[0], 5, 1); 
-                    // ips200_show_float(105, 215, motor_speeds[1], 5, 1);  
-                    // //显示角速度环pid输出
-                    //  ips200_show_float(25, 230, pid_gyro.kp, 4, 2);  
-                    //  ips200_show_float(25, 245, pid_gyro.kd, 4, 2); 
-                    // //显示g_motor_enable状态
-                    //  ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
-                #endif
-                
-                // 如果需要 WiFi 发送，建议也放在这里(50ms一次)，或者放在5ms的逻辑里
-                #if WIFI_USE
-                wifi_protocol_send_data();//自定义wifi协议
+            // ekf_print_div++;
+            // if(ekf_print_div >= 10)
+            // {
+            //     uint32 ekf_cnt = g_ekf_profiler.count;
+            //     if(ekf_cnt > 0U)
+            //     {
+            //         printf("[EKF] cnt=%lu, avg=%lu us, min=%lu us, max=%lu us, last=%lu us\r\n",
+            //                (unsigned long)g_ekf_profiler.count,
+            //                (unsigned long)g_ekf_profiler.avg_us,
+            //                (unsigned long)g_ekf_profiler.min_us,
+            //                (unsigned long)g_ekf_profiler.max_us,
+            //                (unsigned long)g_ekf_profiler.last_us);
+            //     }
+            //     ekf_print_div = 0;
+            // }
+            #if WIFI_USE
+                wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
 
                 // 逐飞助手示波器发送代码        
-                // 1. 填充速度数据 (通道 0-1)
-                //seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.yaw;
-                //seekfree_assistant_oscilloscope_data.data[1] = (float)euler_angle.pitch;
+                // 1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
-                
-                // 通道 2
-                //seekfree_assistant_oscilloscope_data.data[2] = 9.80665*((float)imu_data.acc_x/4096-(float)imu_data.grav_x);
-                // 通道 3
-                //seekfree_assistant_oscilloscope_data.data[3] = 9.80665*((float)imu_data.acc_y/4096-(float)imu_data.grav_y);
-                // 通道 4
-                //seekfree_assistant_oscilloscope_data.data[4] = 9.80665*((float)imu_data.acc_z/4096-(float)imu_data.grav_z);
-                //通道 5
-                //seekfree_assistant_oscilloscope_data.data[5] = 4096*(float)imu_data.grav_x;
-                
-                
-                //3. 填充陀螺仪数据 (通道 5-7)
-                
-                // seekfree_assistant_oscilloscope_data.data[6] = (float)pid_servo_speed.error_integral;
 
-                // seekfree_assistant_oscilloscope_data.data[7] = (float)gyro_loop_out;
-                //通道6
-                //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.x;
-                //通道7
-                //seekfree_assistant_oscilloscope_data.data[7] = inertial_nav.y;
-                    
+                // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
-                    // 通道0：gnss合并时间数据 (状态*1000000+ 时*10000 + 分*100 + 秒*1) 
-                    //seekfree_assistant_oscilloscope_data.data[0] = (float)(gnss.time.hour * 10000 + gnss.time.minute * 100 + gnss.time.second * 1);
 
-                    // 通道1,2：gnss纬度，【注意】这个是double型数据，示波器传的是float型数据
-
-                    // 通道3,4：gnss经度
-
-                    // 通道3：gnss方向+使用卫星数*10000
-                    //seekfree_assistant_oscilloscope_data.data[3] = (float)(gnss.direction + gnss.satellite_used * 10000);
-
-                    // 通道5：nav x
-                    //seekfree_assistant_oscilloscope_data.data[5] = inertial_nav.x;
-
-                    //通道6：nav y
-                    //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.y;
-
-                    //通道6：nav relative_yaw
-                    //seekfree_assistant_oscilloscope_data.data[6] = inertial_nav.relative_yaw;
-
-                    //通道7：系统毫秒时间戳
-                    //seekfree_assistant_oscilloscope_data.data[7] = (float)loop_counter;
-
+                // //3.【调试遥控器，前六个通道】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)uart_receiver.channel[0];
+                // seekfree_assistant_oscilloscope_data.data[1] =(float)uart_receiver.channel[1];
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)uart_receiver.channel[2];
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)uart_receiver.channel[3];
+                // seekfree_assistant_oscilloscope_data.data[4] =(float)uart_receiver.channel[4];
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
+                // seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
+                // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
                     // 4. 设置本次发送的通道数量 (一共8个数据)
-                    //seekfree_assistant_oscilloscope_data.channel_num = 8;
+                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                    // 5. 调用发送函数
-                    //seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                //     // 5. 调用发送函数
+                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // 用于上位机向小车发送pid信息
-                //wifi_update_pid_params(); 
+                // // 用于上位机向小车发送pid信息
+                // wifi_update_pid_params(); 
                 #endif
+            //下面撰写的是100ms执行一次的代码
+            // --- 屏幕刷新逻辑 (降频处理) ---
+            display_count++;
+            if(display_count >= 10) // 10* 10 ms = 100ms 刷新一次屏幕
+            {
+                display_count = 0;    
+                #if DEBUG_DISPLAY
+                    Menu_ShowStatic();    // 静态显示
+                    Menu_ShowDynamic();   // 动态显示
+                #endif    
             }
         }
 
@@ -551,11 +414,11 @@ vision_detected_marker = 0;//雷区调用,测试用
         //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
         // }
 
+        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
         // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
         {
             mt9v03x_finish_flag = 0;
-        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
             // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
@@ -565,22 +428,22 @@ vision_detected_marker = 0;//雷区调用,测试用
             // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
             // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节
             // wifi_spi_udp_send_now();
-        #endif
         }
+        #endif
 
-        // if (vision_detected_marker == 1) {
-        //     minefield_flag = 1; // 触发旋转
-        //     vision_detected_marker = 0;
-        // }//雷区旋转调用，测试用
+        if (vision_detected_marker == 1) {
+            minefield_flag = 1; // 触发旋转
+            vision_detected_marker = 0;
+        }//雷区旋转调用，测试用
 
-        // 模拟视觉触发跳跃测试
+        //模拟视觉触发跳跃测试
         // if (vision_detected_jump_point == 1) 
         // {
         //     jump_trigger(); // <--- 只需要调用这一句
         //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
         // }
-
-        // system_delay_ms(50);
+        //跳跃雷区测试用，【调试】打开
+        system_delay_ms(50);
 
 /*
         // ---------------------------------------------------------
@@ -604,69 +467,61 @@ vision_detected_marker = 0;//雷区调用,测试用
         // ---------------------------------------------------------
         // ---------------- 【nav.2】打点处理 ----------------
         // ---------------------------------------------------------
-        if (robot_ctrl.mark_trigger)
-        {
-            uint8_t ret;
+        // if (robot_ctrl.mark_trigger)
+        // {
+        //     uint8_t ret;
 
-            // 写入 RAM
-            ret = NavRam_RecordPoint(robot_ctrl.point_type);
+        //     // 写入 RAM
+        //     ret = NavRam_RecordPoint(robot_ctrl.point_type);
 
-            if (ret == 0)
-            {
-                // 写入成功 → 蜂鸣器反馈
-                Buzzer_Beep_By_PointType(robot_ctrl.point_type);
+        //     if (ret == 0)
+        //     {
+        //         // 写入成功 → 蜂鸣器反馈
+        //         Buzzer_Beep_By_PointType(robot_ctrl.point_type);
 
-            #if DEBUG_LOG_ENABLE
-                printf("[NAV] Record OK: idx=%d type=%d x=%.2f y=%.2f\r\n",
-                       NavRam_GetPointCount() - 1,
-                       robot_ctrl.point_type,
-                       inertial_nav.x,
-                       inertial_nav.y);
-            #endif
-            }
-            else
-            {
-                // RAM 满
-                #if DEBUG_LOG_ENABLE
-                    printf("[NAV] Record FAILED: RAM FULL\r\n");
-                #endif
-            }
+        //     #if DEBUG_LOG_ENABLE
+        //         printf("[NAV] Record OK: idx=%d type=%d x=%.2f y=%.2f\r\n",
+        //                NavRam_GetPointCount() - 1,
+        //                robot_ctrl.point_type,
+        //                inertial_nav.x,
+        //                inertial_nav.y);
+        //     #endif
+        //     }
+        //     else
+        //     {
+        //         // RAM 满
+        //         #if DEBUG_LOG_ENABLE
+        //             printf("[NAV] Record FAILED: RAM FULL\r\n");
+        //         #endif
+        //     }
 
-            // ★ 必须清零，否则会重复写入 ★
-            robot_ctrl.mark_trigger = 0;
-        }
+        //     // ★ 必须清零，否则会重复写入 ★
+        //     robot_ctrl.mark_trigger = 0;
+        // }
 
     // ---------------------------------------------------------
-    //  【nav.3】处理 Flash 保存请求
+    //  【nav.3】静态点表模式：忽略 Flash 保存请求
     // ---------------------------------------------------------
     if(g_save_flash_request == 1)
     {
         #if DEBUG_LOG_ENABLE
-        printf("Main: Starting Flash save process...\r\n");
+        printf("Main: Flash save disabled (static route mode).\r\n");
         #endif
-        NavFlash_SaveRamToFlash();
-        Buzzer_Beep_By_PointType(2);//叫三次
-        // 清除请求标志
         g_save_flash_request = 0;
     }
 
     // ---------------------------------------------------------
-    //  【nav.4】处理读取，然后开始调用
+    //  【nav.4】静态点表模式：加载 C 点表并开始复现
     // ---------------------------------------------------------
     if (g_motor_enable == 1 && g_load_flash_request == 1)
     {
-        #if DEBUG_LOG_ENABLE
-        printf("Main: Starting Flash read test...\r\n");
-        #endif
-        NavFlash_ReadFlashToRam();
-        // 清除请求标志
         g_load_flash_request = 0;
-        #if DEBUG_LOG_ENABLE
-        printf("Main: Flash read completed.\r\n");
-        printf("Main: Starting Inertial Navigation...\r\n");
-        #endif
+
         InertialNav_Init();
+
+        NavReplay_Start();//start replay
         #if DEBUG_LOG_ENABLE
+        printf("Main: Static route loaded.\r\n");
         printf("Main: Starting Inertial Navigation...\r\n");
         #endif
         NavReplay_Start();//开始复现
@@ -804,17 +659,4 @@ void uart_rx_interrupt_handler (void)
         fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // 将数据写入 fifo 中
     }
 }
-
-// **************************** 代码区域 ****************************
-// **************************** 串口例程常见问题说明 ****************************
-// 遇到问题时请按照以下问题检查列表检查
-// 问题1：串口没有数据
-//      查看串口助手打开的是否是正确的串口，检查打开的 COM 口是否对应的是调试下载器或者 USB-TTL 模块的 COM 口
-//      如果是使用逐飞科技 CMSIS-DAP 调试下载器连接，那么检查下载器线是否松动，检查核心板串口跳线是否已经焊接，串口跳线查看核心板原理图即可找到
-//      如果是使用 USB-TTL 模块连接，那么检查连线是否正常是否松动，模块 TX 是否连接的核心板的 RX，模块 RX 是否连接的核心板的 TX
-// 问题2：串口数据乱码
-//      查看串口助手设置的波特率是否与程序设置一致，程序中 zf_common_debug.h 文件中 DEBUG_UART_BAUDRATE 宏定义为 debug uart 使用的串口波特率
-
-
-
 
