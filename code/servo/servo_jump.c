@@ -193,7 +193,7 @@ void jump_trigger_with_type(JumpType_e type)
     if(jump_flag == 0)
     {
         g_current_jump_type = type;
-        load_jump_profile(g_current_jump_type, servo_height);
+        //load_jump_profile(g_current_jump_type, servo_height);
         time_elapsed1 = 0;
         time_elapsed2 = 0;
         time_elapsed3 = 0;
