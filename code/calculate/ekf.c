@@ -457,6 +457,11 @@ volatile float heading = 0.0f;
 float mag_x = 0.0f;
 float mag_y = 0.0f;
 float mag_z = 0.0f;
+static float mag_raw_lpf_x = 0.0f;
+static float mag_raw_lpf_y = 0.0f;
+static float mag_raw_lpf_z = 0.0f;
+static uint8_t mag_raw_lpf_inited = 0;
+#define MAG_RAW_LPF_ALPHA 0.15f
 // =========================================================================
 // 2. 磁力计校准参数 (常量定义在函数外部)
 // =========================================================================
@@ -491,12 +496,29 @@ void EKF_Update_Heading(void)
 {
     // 1. 获取物理值 (局部变量可以在函数内直接初始化)
     imu963ra_get_mag();
+    float raw_mag_x = (float)imu963ra_mag_x;
+    float raw_mag_y = (float)imu963ra_mag_y;
+    float raw_mag_z = (float)imu963ra_mag_z;
+
+    if (!mag_raw_lpf_inited)
+    {
+        mag_raw_lpf_x = raw_mag_x;
+        mag_raw_lpf_y = raw_mag_y;
+        mag_raw_lpf_z = raw_mag_z;
+        mag_raw_lpf_inited = 1;
+    }
+    else
+    {
+        mag_raw_lpf_x += MAG_RAW_LPF_ALPHA * (raw_mag_x - mag_raw_lpf_x);
+        mag_raw_lpf_y += MAG_RAW_LPF_ALPHA * (raw_mag_y - mag_raw_lpf_y);
+        mag_raw_lpf_z += MAG_RAW_LPF_ALPHA * (raw_mag_z - mag_raw_lpf_z);
+    }
     // ---------------------------------------------------------
     // 步骤1：获取磁力计原始数据，并进行校准
     // ---------------------------------------------------------
-    mag_calibrate((float)imu963ra_mag_x, 
-                  (float)imu963ra_mag_y, 
-                  (float)imu963ra_mag_z, 
+    mag_calibrate(mag_raw_lpf_x, 
+                  mag_raw_lpf_y, 
+                  mag_raw_lpf_z, 
                   &mag_x, &mag_y, &mag_z);
 
     // ---------------------------------------------------------
