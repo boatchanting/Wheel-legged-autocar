@@ -187,6 +187,7 @@ servo_executor_init();
     ips200_show_string(0, disp_y, "WiFi Init OK");
     disp_y += 16;
 #endif
+system_delay_ms(1000);
 while(1)//检测imu660ra是否初始化成功
 {
     #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
