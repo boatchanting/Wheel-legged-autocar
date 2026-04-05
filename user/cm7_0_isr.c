@@ -354,7 +354,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
         {
              // 如果角度过大（例如超过 40 度），判定为倒地
-            if (now_angle-ANG_MECH_ZERO > 40.0f || now_angle-ANG_MECH_ZERO < -40.0f)
+            if (now_angle-ANG_MECH_ZERO > 70.0f || now_angle-ANG_MECH_ZERO < -70.0f)
             {
                 gyro_loop_out = 0;          // 清零平衡PWM
                 turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
