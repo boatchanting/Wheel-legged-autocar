@@ -1,4 +1,5 @@
 ﻿import csv
+import math
 import os
 import socket
 import struct
@@ -57,6 +58,7 @@ FIELD_NAMES_V2 = FIELD_NAMES_V1 + ["mark_trigger", "point_type"]
 
 MAX_HISTORY = 20000
 MAX_NEW_BUFFER = 4000
+START_POINT_CAPTURE_RADIUS_MM = 120.0
 
 state_lock = threading.Lock()
 all_history_data = []
@@ -68,6 +70,69 @@ last_payload_size = 0
 server_error = ""
 peer_addr = ""
 listen_ip = HOST_IP
+
+def _safe_float(value):
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(num):
+        return None
+    return num
+
+
+def _normalize_heading_deg(value):
+    num = _safe_float(value)
+    if num is None:
+        return None
+    num = math.fmod(num, 360.0)
+    if num < 0.0:
+        num += 360.0
+    return num
+
+
+def _estimate_start_heading():
+    with state_lock:
+        history = list(all_history_data)
+
+    if not history:
+        return None
+
+    # IMU963RA下 heading 是绝对航向；若数据流里始终为0，回退到 relative_yaw。
+    has_heading_signal = False
+    for item in history:
+        h = _normalize_heading_deg(item.get("heading"))
+        if h is not None and abs(h) > 1e-3:
+            has_heading_signal = True
+            break
+
+    radius2 = START_POINT_CAPTURE_RADIUS_MM * START_POINT_CAPTURE_RADIUS_MM
+    best_dist2 = float("inf")
+    best_heading = None
+
+    for item in history:
+        x = _safe_float(item.get("nav_x"))
+        y = _safe_float(item.get("nav_y"))
+        if x is None or y is None:
+            continue
+
+        if has_heading_signal:
+            heading_deg = _normalize_heading_deg(item.get("heading"))
+        else:
+            heading_deg = _normalize_heading_deg(item.get("relative_yaw"))
+
+        if heading_deg is None:
+            continue
+
+        dist2 = x * x + y * y
+        if dist2 <= radius2:
+            return heading_deg
+
+        if dist2 < best_dist2:
+            best_dist2 = dist2
+            best_heading = heading_deg
+
+    return best_heading
 
 
 def _decode_payload(payload_bytes):
@@ -261,20 +326,28 @@ class Api:
                 return {"success": False, "msg": "没有可导出的标记点"}
 
             count = len(points)
+            start_heading = _estimate_start_heading()
+            start_heading_str = "" if start_heading is None else f"{start_heading:.3f}"
             filename = f"nav_mark_points_{time.strftime('%Y%m%d_%H%M%S')}.csv"
             filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
             with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
-                writer.writerow(["total_count", "index", "x", "y", "point_type"])
+                writer.writerow(["total_count", "start_heading", "index", "x", "y", "point_type"])
                 for i, item in enumerate(points):
                     idx = int(item.get("index", i))
                     x = float(item.get("x", 0.0))
                     y = float(item.get("y", 0.0))
                     point_type = int(item.get("point_type", 0))
-                    writer.writerow([count, idx, f"{x:.3f}", f"{y:.3f}", point_type])
+                    writer.writerow([count, start_heading_str, idx, f"{x:.3f}", f"{y:.3f}", point_type])
 
-            return {"success": True, "msg": f"导出成功: {filepath}", "path": filepath}
+            heading_msg = "NA" if start_heading is None else f"{start_heading:.3f}"
+            return {
+                "success": True,
+                "msg": f"导出成功: {filepath} (start_heading={heading_msg})",
+                "path": filepath,
+                "start_heading": start_heading,
+            }
         except Exception as exc:
             return {"success": False, "msg": f"导出失败: {exc}"}
 
@@ -299,3 +372,4 @@ if __name__ == "__main__":
         min_size=(1120, 700),
     )
     webview.start(debug=False)
+

@@ -33,6 +33,19 @@ python tools/webview_nav_marker/csv_to_nav_table.py <你的csv路径>
 
 项目已改为静态点表复现模式，复现时不再依赖 `NavFlash_ReadFlashToRam()`。
 
+## 三次样条离线重采样（20mm 点距）
+
+基于 `code/navigation/nav_replay_route_table.h` 已有点表做三次样条插值，按弧长每 20mm 取一点，生成可视化并回写头文件：
+
+```bash
+python tools/webview_nav_marker/spline_interpolate.py --interval 20
+```
+
+默认输出：
+
+- 轨迹头文件：`code/navigation/nav_replay_route_table.h`
+- 预览图：`tools/webview_nav_marker/nav_replay_spline_preview.png`
+
 ## 协议字段扩展
 
 下位机在原有 payload 末尾新增：
