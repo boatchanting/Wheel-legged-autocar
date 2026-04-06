@@ -2,77 +2,35 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.interpolate import splprep, splev, PchipInterpolator, interp1d
 import os
+import re
 from datetime import datetime
 
-# 原始数据点 (x, y, type) - 不包含 0,0
-# 原始数据点 (x, y, type) - 不包含 0,0
-raw_points = [
-    (-2.923, 0.005, 0),
-    (-421.654, 0.947, 0),
-    (-2370.609, 4.047, 0),
-    (-3787.577, 5.696, 0),
-    (-5470.305, 8.361, 0),
-    (-7614.508, 14.713, 0),
-    (-9907.133, 22.203, 0),
-    (-11485.285, 25.698, 0),
-    (-12300.820, 27.073, 0),
-    (-15707.019, 23.802, 0),
-    (-18552.697, 23.660, 0),
-    (-20018.730, 86.793, 0),
-    (-22288.832, 310.772, 0),
-    (-25421.318, 458.648, 0),
-    (-28712.213, 613.092, 0),
-    (-30900.275, 637.586, 0),
-    (-32389.277, -187.754, 0),
-    (-32841.406, -1219.045, 0),
-    (-33106.613, -2780.062, 0),
-    (-32988.996, -4110.017, 0),
-    (-33035.848, -5693.622, 0),
-    (-33095.297, -7268.230, 0),
-    (-33172.539, -9285.077, 0),
-    (-33253.859, -11396.635, 0),
-    (-33303.004, -12651.248, 0),
-    (-33159.371, -13484.717, 0),
-    (-32555.029, -14262.805, 0),
-    (-31821.059, -14860.599, 0),
-    (-30599.803, -15718.862, 0),
-    (-29693.664, -16350.939, 0),
-    (-28632.975, -16782.447, 0),
-    (-26807.799, -17304.076, 0),
-    (-25378.885, -17712.502, 0),
-    (-23826.355, -18031.244, 0),
-    (-22094.240, -18155.537, 0),
-    (-19878.785, -18314.572, 0),
-    (-16515.918, -18630.006, 0),
-    (-15367.512, -19020.633, 0),
-    (-14490.661, -19416.357, 0),
-    (-13414.976, -19810.586, 0),
-    (-11575.257, -19993.707, 0),
-    (-10012.531, -20148.107, 0),
-    (-8900.969, -20257.270, 0),
-    (-7736.379, -20372.867, 0),
-    (-6533.146, -20492.895, 0),
-    (-5632.268, -20581.775, 0),
-    (-4936.849, -20630.031, 0),
-    (-4029.284, -20452.230, 0),
-    (-3349.466, -20107.311, 0),
-    (-2721.078, -19508.475, 0),
-    (-2121.016, -18921.453, 0),
-    (-1439.868, -18163.961, 0),
-    (-960.642, -17449.428, 0),
-    (-606.012, -16653.795, 0),
-    (-378.946, -15706.365, 0),
-    (-287.118, -14623.071, 0),
-    (-189.757, -13486.538, 0),
-    (-58.752, -11957.844, 0),
-    (87.842, -10242.366, 0),
-    (251.850, -8324.591, 0),
-    (389.118, -6716.722, 0),
-]
-
-
+# 设置中文字体
+plt.rcParams['font.sans-serif'] = ['SimHei']  # 用来正常显示中文标签
+plt.rcParams['axes.unicode_minus'] = False    # 用来正常显示负号
 
 INTERPOLATE_DIST = 20.0 # 目标插值间隔：20mm
+
+def read_raw_points_from_header(file_path):
+    points = []
+    if not os.path.exists(file_path):
+        print(f"找不到文件: {file_path}")
+        return points
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # 查找数组内容
+    match = re.search(r'static const NavRamPoint_t nav_replay_static_route_points\[.*?\] = \{(.*?)\};', content, re.DOTALL)
+    if match:
+        array_content = match.group(1)
+        # 解析每一行的数据 {-1061.905f, 2385.714f, (uint8)0}
+        pattern = r'\{\s*([+-]?[\d\.]+)f\s*,\s*([+-]?[\d\.]+)f\s*,\s*\(uint8\)(\d+)\s*\}'
+        for m in re.finditer(pattern, array_content):
+            x, y, t = float(m.group(1)), float(m.group(2)), int(m.group(3))
+            points.append((x, y, t))
+            
+    return points
 
 def generate_header(points, method_name, output_path):
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -89,7 +47,7 @@ def generate_header(points, method_name, output_path):
         f.write(f"// Note: Origin (0,0) was used for curve shaping but excluded from this table.\n\n")
         
         f.write("#define NAV_REPLAY_START_HEADING_VALID 0\n")
-        f.write("#define NAV_REPLAY_START_HEADING_DEG 0.0f\n\n")
+        f.write("#define NAV_REPLAY_START_HEADING_DEG 0.000f\n\n")
         
         f.write(f"#define NAV_REPLAY_STATIC_ROUTE_COUNT {len(points)}\n\n")
         
@@ -118,6 +76,15 @@ def resample_path(x_fine, y_fine, target_dist):
     return x_new, y_new, num_points
 
 def main():
+    header_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../code/navigation/nav_replay_route_table.h'))
+    raw_points = read_raw_points_from_header(header_path)
+    
+    if not raw_points:
+        print("未读取到任何原始数据点，程序退出。")
+        return
+        
+    print(f"成功读取 {len(raw_points)} 个原始数据点。")
+
     # 引入 (0,0) 作为起点
     spline_input_points = [(0.0, 0.0, 0)] + raw_points
     x_orig = np.array([p[0] for p in spline_input_points])
@@ -131,7 +98,6 @@ def main():
     methods = {}
     
     # ================= 1. Cubic Spline (三次样条) =================
-    # 优点：极其平滑；缺点：拐角处可能出现明显的 Overshoot (过冲偏离航线)
     k_degree = min(3, len(x_orig) - 1)
     tck, _ = splprep([x_orig, y_orig], s=0, k=k_degree)
     u_fine = np.linspace(0, 1, 2000)
@@ -140,7 +106,6 @@ def main():
     methods['1'] = ('Cubic Spline (三次样条)', x_spline_res, y_spline_res)
 
     # ================= 2. PCHIP (分段三次Hermite保形插值) =================
-    # 优点：不会产生过冲，严格贴合多边形包络；缺点：拐点曲率变化稍显生硬
     fx_pchip = PchipInterpolator(t_orig, x_orig)
     fy_pchip = PchipInterpolator(t_orig, y_orig)
     x_pchip = fx_pchip(u_fine)
@@ -149,7 +114,6 @@ def main():
     methods['2'] = ('PCHIP (保形插值)', x_pchip_res, y_pchip_res)
 
     # ================= 3. Linear (线性插值) =================
-    # 优点：就是两点之间的绝对直线；缺点：没有倒角，完全不平滑
     fx_linear = interp1d(t_orig, x_orig, kind='linear')
     fy_linear = interp1d(t_orig, y_orig, kind='linear')
     x_linear = fx_linear(u_fine)
@@ -160,13 +124,13 @@ def main():
     # ================= 可视化展示 =================
     plt.ion() # 开启交互模式，不阻塞终端
     fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-    fig.canvas.manager.set_window_title('Path Interpolation Comparison')
+    fig.canvas.manager.set_window_title('路径插值对比 (支持滚轮缩放放大)')
     
     for idx, (key, (name, x_res, y_res)) in enumerate(methods.items()):
         ax = axs[idx]
-        ax.plot(x_orig, y_orig, 'ro-', label='Original', markersize=6, zorder=3)
-        ax.plot(x_res, y_res, 'b.-', markersize=3, label=f'Resampled (~20mm)', zorder=2)
-        ax.plot(x_res[1], y_res[1], 'g*', markersize=10, label='Start Point (idx=1)', zorder=4)
+        ax.plot(x_orig, y_orig, 'ro-', label='原始点', markersize=6, zorder=3)
+        ax.plot(x_res, y_res, 'b.-', markersize=3, label=f'重采样 (~20mm)', zorder=2)
+        ax.plot(x_res[1] if len(x_res)>1 else x_res[0], y_res[1] if len(y_res)>1 else y_res[0], 'g*', markersize=10, label='起始点 (idx=1)', zorder=4)
         ax.set_title(f"[{key}] {name}")
         ax.set_xlabel('X (mm)')
         ax.set_ylabel('Y (mm)')
@@ -174,12 +138,13 @@ def main():
         ax.grid(True)
         ax.legend()
     
+    # 启用交互式缩放平移工具，方便查看局部细节
     plt.tight_layout()
-    plt.pause(0.5) # 给 matplotlib 一点时间渲染窗口
+    plt.pause(0.5)
 
     # ================= 终端交互 =================
     print("\n" + "="*50)
-    print("请在弹出的图形窗口中观察三种插值效果：")
+    print("请在弹出的图形窗口中观察三种插值效果：(可在窗口中使用放大镜工具查看细节)")
     print("  [1] Cubic Spline - 极其平滑，但急弯处可能出现过冲 (Overshoot)")
     print("  [2] PCHIP 保形   - 贴合原折线，不会过冲，弯道适中 (推荐)")
     print("  [3] Linear 直线  - 纯粹的多边形折线，拐角生硬")
@@ -199,11 +164,10 @@ def main():
         pt_type = raw_points[-1][2] if i == num_pts - 1 else 0
         final_points.append((sel_x[i], sel_y[i], pt_type))
         
-    output_h_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../code/navigation/nav_replay_route_table.h'))
-    generate_header(final_points, selected_name, output_h_path)
+    generate_header(final_points, selected_name, header_path)
     
     print(f"\n✅ 已选择: {selected_name}")
-    print(f"✅ 头文件已生成: {output_h_path}")
+    print(f"✅ 头文件已生成覆盖: {header_path}")
     print(f"✅ 共 {num_pts} 个点，剔除原点后写入表中的有 {len(final_points)} 个点。")
     
     plt.ioff()
