@@ -98,6 +98,11 @@ void Remote_Control_Process(void)
     // Step 2: 处理最高优先级逻辑 (CH6 总开关)
     // --------------------------------------------------------
     // 1792 (>1000) 为关电机状态
+    if(ch1_steer == 0 && ch2_thro == 0 && ch3_mark == 0 && ch4_mode == 0 && ch5_brake == 0 && ch6_off == 0)
+    {
+        robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
+        return; // 遥控器完全回中且总开关关闭，则不进行后续处理
+    }
     if (ch6_off > RC_SW_THRESHOLD) 
     {
         robot_ctrl.motor_enable = 0;
