@@ -36,6 +36,7 @@
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
+#include "plan/bumpy_road.h"
 
 // **************************** uart配置区域 **************************** 
 #define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0
@@ -88,6 +89,7 @@ volatile uint8_t g_save_flash_request = 0;  // 1: 请求将 RAM 数据存入 Flash
 volatile uint8_t g_load_flash_request = 0;      // 1: 请求从 Flash 加载数据
 volatile uint8_t g_replay_start_request = 0;
 volatile uint8_t g_replay_stop_request = 0;
+volatile uint8_t vision_detected_bumpy_point = 0; // 模拟视觉检测到“颠簸入口”
 // =================================================================================
 int main(void)
 {
@@ -271,6 +273,7 @@ gnss_init(TAU1201);//gnss导航初始化
 // P20_3: 停止复现
 //exti_init(P20_3, EXTI_TRIGGER_RISING);
 Bridge_Init();//【优化点】单边桥控制初始化，可以集成
+BumpyRoad_Init();//颠簸路段状态机初始化
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
@@ -311,6 +314,7 @@ Bridge_Init();//【优化点】单边桥控制初始化，可以集成
  uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
 
 vision_detected_marker = 0;//雷区调用,测试用
+vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
     //-------------------------------------------------------------------
     //******************************系统初始化结束************************
     //-------------------------------------------------------------------
@@ -433,6 +437,13 @@ vision_detected_marker = 0;//雷区调用,测试用
         //     jump_trigger(); // <--- 只需要调用这一句
         //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
         // }
+
+        // 模拟视觉触发颠簸测试
+        if (vision_detected_bumpy_point == 1)
+        {
+            BumpyRoad_Trigger();             // <--- 只需要调用这一句
+            vision_detected_bumpy_point = 0; // 清除标志位，防止连续触发
+        }
         //跳跃雷区测试用，【调试】打开
         system_delay_ms(50);
 
