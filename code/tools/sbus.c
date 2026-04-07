@@ -25,7 +25,7 @@
 
 // 积分限幅
 #define MAX_STEER_ANGLE 45.0f   // 最大转向角度 (例如 +/- 45度)
-#define MAX_SPEED_VAL   1000.0f  // 最大速度目标值 (对应 target_speed_set)
+#define MAX_SPEED_VAL   3000.0f  // 最大速度目标值 (对应 target_speed_set)
 
 #define SPEED_DECEL_RATIO    0.99f  // 百分比减速，实际没那么快
 #define SPEED_STOP_THRESHOLD  1.0f// 速度归零阈值：当目标速度削弱到这个绝对值以下时，直接归 0 且锁定
@@ -98,6 +98,11 @@ void Remote_Control_Process(void)
     // Step 2: 处理最高优先级逻辑 (CH6 总开关)
     // --------------------------------------------------------
     // 1792 (>1000) 为关电机状态
+    if(ch1_steer == 0 && ch2_thro == 0 && ch3_mark == 0 && ch4_mode == 0 && ch5_brake == 0 && ch6_off == 0)
+    {
+        robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
+        return; // 遥控器完全回中且总开关关闭，则不进行后续处理
+    }
     if (ch6_off > RC_SW_THRESHOLD) 
     {
         robot_ctrl.motor_enable = 0;
@@ -197,12 +202,11 @@ void Remote_Control_Process(void)
 
     // 检测状态跳变进行打点 (当前状态 != 上一次状态)
     // 这意味着无论是从0变1(上升沿)还是从1变0(下降沿)，都会触发
-    if(ch3_mark==0)
+    if(ch3_mark ==0)
     {
-        curr_ch3_state=last_ch3_state;
+        curr_ch3_state =last_ch3_state ;
     }
-
-    if (curr_ch3_state != last_ch3_state) 
+    if (curr_ch3_state != last_ch3_state )
     {
     robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
