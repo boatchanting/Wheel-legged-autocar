@@ -99,16 +99,22 @@ static void load_jump_profile(JumpType_e type, float current_height)
         //以下为0车的参数，其他车需要调参
         #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
         case JUMP_TYPE_HURDLE: // 【跨杆模式】
-            g_jump_profile.t_launch = 100;
-            g_jump_profile.t_flight = 320; // 跨杆需要更长的滞空收腿时间
-            g_jump_profile.t_landing = 350;
-            g_jump_profile.t_recovery = 420;
+             // === 时间轴参数 (ms) ===
+            g_jump_profile.t_launch = 80;        // 起跳发力：时间缩短至80ms
+            g_jump_profile.t_flight = 150;       // 腾空时间：缩短至150ms开始准备落地
+            g_jump_profile.t_landing = 170;      // 落地准备：保持20ms的空中伸腿前摇
+            g_jump_profile.t_recovery = 230;     // 缓冲恢复：冲击小，恢复时间可缩短至60ms完成
             
-            g_jump_profile.offset_launch = 3000;  // 极限发力
-            g_jump_profile.offset_flight = -3000; // 【防挂杆】极限收腿
-            g_jump_profile.offset_land = 1000;           
-            g_jump_profile.air_target_pitch = -1.0f; // 空中保持绝对水平
-            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            // === 动作幅度参数 (Duty Offset) ===
+            // 设基准值1500，具体需根据这台车的实际物理反馈微调（见下方指南）
+            g_jump_profile.offset_launch = 1500; // 起跳推力：原推力2700的约55%
+            g_jump_profile.offset_flight = -800; // 空中收腿：无需大幅度收紧
+            g_jump_profile.offset_land = 1000;   // 落地缓冲：伸腿幅度减小
+            
+            // === 姿态与其他 ===
+            // 如果这台车起跳容易“栽头”或者“后翻”，可以微调这个Pitch值
+            g_jump_profile.air_target_pitch = -1.0f; 
+            g_jump_profile.post_jump_height = current_height; 
             break;
             
         case JUMP_TYPE_STEP_UP: // 【上台阶模式】
@@ -139,16 +145,22 @@ static void load_jump_profile(JumpType_e type, float current_height)
           //以下为0车的参数，其他车需要调参
         #if CAR_SELECT == 3 // // 3代表 【2026/3/16带壳新车】 对应板子 【2026/02/15 锦鲤队】
         case JUMP_TYPE_HURDLE: // 【跨杆模式】
-            g_jump_profile.t_launch = 100;
-            g_jump_profile.t_flight = 320; // 跨杆需要更长的滞空收腿时间
-            g_jump_profile.t_landing = 350;
-            g_jump_profile.t_recovery = 420;
+             // === 时间轴参数 (ms) ===
+            // 滞空时间与高度的平方根成正比，高度减半，总时间约缩短 25%~30%
+            g_jump_profile.t_launch = 80;        // 行程变短，起跳发力时间相应减少 (原100)
+            g_jump_profile.t_flight = 150;       // 腾空时间变短，提前结束空中姿态 (原200)
+            g_jump_profile.t_landing = 170;      // 落地伸腿准备时间保持20ms左右 (原220)
+            g_jump_profile.t_recovery = 230;     // 冲击力小了，恢复时间可以缩短 (原280)
             
-            g_jump_profile.offset_launch = 3000;  // 极限发力
-            g_jump_profile.offset_flight = -3000; // 【防挂杆】极限收腿
-            g_jump_profile.offset_land = 1000;           
-            g_jump_profile.air_target_pitch = -1.0f; // 空中保持绝对水平
-            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            // === 动作幅度参数 (Duty Offset) ===
+            // 由于机器人自重和机械损耗，占空比直接减半可能导致离不开地，所以取一半偏上
+            g_jump_profile.offset_launch = 1500; // 起跳推力：约为原推力(2700)的一半多一点
+            g_jump_profile.offset_flight = -800; // 空中收腿：跳得低，不需要大幅度收腿 (原-1500)
+            g_jump_profile.offset_land = 1000;   // 落地缓冲：下落冲击力小，伸腿幅度减小 (原1700)
+            
+            // === 姿态与其他 ===
+            g_jump_profile.air_target_pitch = -0.5f; // 小跳姿态变化小，稍微低头即可
+            g_jump_profile.post_jump_height = current_height; 
             break;
             
         case JUMP_TYPE_STEP_UP: // 【上台阶模式】
@@ -175,6 +187,7 @@ static void load_jump_profile(JumpType_e type, float current_height)
             g_jump_profile.air_target_pitch = -1.0f; // 默认轻微低头
             g_jump_profile.post_jump_height = current_height; // 落地高度不变
             break;
+           
         #endif
     }
     
@@ -517,7 +530,7 @@ void Momentum_Wheel_Control_Init(void)
     g_air_kd = 8.0f;   // 空中姿态D，抑制空中翻转速度
     g_air_target_pitch = -1.0f; // 空中目标角度(度)，轻微后仰
     // 加载当前跳跃类型的时序和参数
-    g_current_jump_type = JUMP_TYPE_NORMAL;//这里面可以选择不同的跳跃类型，测试时先用普通跳
+    g_current_jump_type = JUMP_TYPE_HURDLE;//这里面可以选择不同的跳跃类型，测试时先用普通跳
     load_jump_profile(g_current_jump_type, servo_height);//【优化点】加载初始化跳跃姿态控制参数
 }
 
