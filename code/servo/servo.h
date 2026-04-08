@@ -66,7 +66,7 @@
 #define SERVO_MOTOR_PWM1_90            (4550)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_90            (4700)      // 右前 RF --
 #define SERVO_MOTOR_PWM3_90            (4600)      // 右后 RR ++
-#define SERVO_MOTOR_PWM4_90            (4600)      // 左后 LR --
+#define SERVO_MOTOR_PWM4_90            (4800)      // 左后 LR --
 // ===================== 舵机极性定义 (向下伸腿为正) 【2026/03/24 最后的舵机v腿】=====================
 #define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_DIR            (-1)      // 右前 RF --
