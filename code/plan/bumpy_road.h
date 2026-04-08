@@ -13,6 +13,7 @@ typedef enum
     BUMPY_ROAD_STATE_FINISH       // 收尾态：停止并退出
 } BumpyRoadState_e;
 
+extern volatile uint8_t vision_detected_bumpy_point;
 /**
  * @brief 颠簸路段状态机初始化
  *

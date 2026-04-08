@@ -1,18 +1,31 @@
 #include "bumpy_road.h"
 
-// ========================= ²ÎÊıÇø£¨¿É°´Êµ³µµ÷²Î£© =========================
-#define BUMPY_ROAD_LOCK_SPEED_SET      (-150.0f)   // ×´Ì¬»úÖ´ĞĞÆÚ¼äÇ¿ÖÆËø¶¨Ä¿±êËÙ¶È
-#define BUMPY_ROAD_TARGET_DISTANCE_MM  (3000.0f)   // Ä¿±êÖ±ĞĞ¾àÀë£¨mm£©
-#define BUMPY_ROAD_SAMPLE_DIV_1MS      (10U)       // 1msÈÎÎñ·ÖÆµ£ºÃ¿10ms¼ÆËãÒ»´ÎÀï³Ì
+// ========================= å‚æ•°åŒºï¼ˆå¯æŒ‰å®è½¦è°ƒå‚ï¼‰ =========================
+#define BUMPY_ROAD_LOCK_SPEED_SET      (-100.0f)     // çŠ¶æ€æœºæ‰§è¡ŒæœŸé—´å¼ºåˆ¶é”å®šç›®æ ‡é€Ÿåº¦
+#define BUMPY_ROAD_TARGET_DISTANCE_MM  (3000.0f)   // ç›®æ ‡ç›´è¡Œè·ç¦»ï¼ˆmmï¼‰
+#define BUMPY_ROAD_SAMPLE_DIV_1MS      (10U)       // 1msä»»åŠ¡åˆ†é¢‘ï¼šæ¯10msè®¡ç®—ä¸€æ¬¡é‡Œç¨‹
 
-// ========================= ÄÚ²¿ÔËĞĞÊ±ÉÏÏÂÎÄ =========================
+// å µè½¬è§¦å‘è·³è·ƒåˆ¤æ®ï¼š
+// 1) å·¦å³ç”µæœºé€Ÿåº¦ç»å¯¹å€¼éƒ½å°äºè¯¥é˜ˆå€¼
+// 2) ä¿¯ä»°è§’ pitch å°äºè¯¥é˜ˆå€¼ï¼ˆè½¦å¤´ä¸‹æ‰ï¼‰
+// 3) ä»…åœ¨éè·³è·ƒçŠ¶æ€ä¸‹è§¦å‘ï¼ˆjump_flag == 0ï¼‰
+#define BUMPY_ROAD_STALL_SPEED_ABS_TH  (50.0f)
+#define BUMPY_ROAD_STALL_PITCH_TH      (3.0f)
+
+// è¿ç»­è·³è·ƒä¿æŠ¤ï¼š
+// ä½¿ç”¨ loop_counterï¼ˆ1msè®¡æ•°ï¼‰é™åˆ¶ä¸¤æ¬¡è‡ªåŠ¨è·³è·ƒè§¦å‘é—´éš”ï¼Œé˜²æ­¢ç–¯ç‹‚è¿è·³
+#define BUMPY_ROAD_JUMP_MIN_GAP_MS     (1000U)
+#define BUMPY_ROAD_NO_JUMP_TICK        (0xFFFFFFFFU)
+
+// ========================= å†…éƒ¨è¿è¡Œæ—¶ä¸Šä¸‹æ–‡ =========================
 typedef struct
 {
-    BumpyRoadState_e state;      // µ±Ç°×´Ì¬
-    float start_x_mm;            // ´¥·¢Ê±¹ßµ¼Æğµã x£¨mm£©
-    float start_y_mm;            // ´¥·¢Ê±¹ßµ¼Æğµã y£¨mm£©
-    float traveled_mm;           // ÒÑÀÛ¼ÆĞĞÊ»¾àÀë£¨mm£©
-    uint16_t sample_div_cnt;     // 1ms ·ÖÆµ¼ÆÊıÆ÷
+    BumpyRoadState_e state;      // å½“å‰çŠ¶æ€
+    float start_x_mm;            // è§¦å‘æ—¶æƒ¯å¯¼èµ·ç‚¹ xï¼ˆmmï¼‰
+    float start_y_mm;            // è§¦å‘æ—¶æƒ¯å¯¼èµ·ç‚¹ yï¼ˆmmï¼‰
+    float traveled_mm;           // å·²ç´¯è®¡è¡Œé©¶è·ç¦»ï¼ˆmmï¼‰
+    uint16_t sample_div_cnt;     // 1ms åˆ†é¢‘è®¡æ•°å™¨
+    uint32_t last_jump_tick_ms;  // æœ€è¿‘ä¸€æ¬¡è‡ªåŠ¨è§¦å‘è·³è·ƒçš„æ—¶é—´æˆ³ï¼ˆloop_counterï¼‰
 } BumpyRoadContext_t;
 
 static BumpyRoadContext_t s_bumpy_ctx =
@@ -21,13 +34,14 @@ static BumpyRoadContext_t s_bumpy_ctx =
     0.0f,
     0.0f,
     0.0f,
-    0U
+    0U,
+    BUMPY_ROAD_NO_JUMP_TICK
 };
 
 /**
- * @brief »ùÓÚ¹ßµ¼×ø±ê¼ÆËãµ±Ç°Î»ÖÃµ½ÆğµãµÄÆ½Ãæ¾àÀë
+ * @brief åŸºäºæƒ¯å¯¼åæ ‡è®¡ç®—å½“å‰ä½ç½®åˆ°èµ·ç‚¹çš„å¹³é¢è·ç¦»
  *
- * @return ¾àÀë£¨mm£©
+ * @return è·ç¦»ï¼ˆmmï¼‰
  */
 static float BumpyRoad_CalcDistanceMm(void)
 {
@@ -43,21 +57,23 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.start_y_mm = 0.0f;
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
+    s_bumpy_ctx.last_jump_tick_ms = BUMPY_ROAD_NO_JUMP_TICK;
 }
 
 void BumpyRoad_Trigger(void)
 {
-    // ½öÔÊĞí´Ó¿ÕÏĞÌ¬´¥·¢£¬±ÜÃâÖØ¸´´¥·¢´ò¶ÏÁ÷³Ì
+    // ä»…å…è®¸ä»ç©ºé—²æ€è§¦å‘ï¼Œé¿å…é‡å¤è§¦å‘æ‰“æ–­æµç¨‹
     if (s_bumpy_ctx.state != BUMPY_ROAD_STATE_IDLE)
     {
         return;
     }
 
-    // ¼ÇÂ¼´¥·¢µã×÷Îª¡°1000mmÖ±ĞĞ¡±µÄÆğµã
+    // è®°å½•è§¦å‘ç‚¹ä½œä¸ºâ€œç›®æ ‡é‡Œç¨‹ç›´è¡Œâ€çš„èµ·ç‚¹
     s_bumpy_ctx.start_x_mm = inertial_nav.x;
     s_bumpy_ctx.start_y_mm = inertial_nav.y;
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
+    s_bumpy_ctx.last_jump_tick_ms = BUMPY_ROAD_NO_JUMP_TICK;
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;
 }
 
@@ -70,20 +86,53 @@ void BumpyRoad_Update_1ms(void)
 
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
-        // ------------------------- Ö´ĞĞÌ¬¿ØÖÆÄ¿±ê -------------------------
-        // 1) Ç¿ÖÆËøËÙ£ºtarget_speed_set = -150.0f
-        // 2) Ö±ĞĞÔ¼Êø£ºerr_degree = 0£¬ÒÖÖÆÍâ²¿×ªÏòÖ¸Áî¸ÉÈÅ
+        // ------------------------- æ‰§è¡Œæ€æ§åˆ¶ç›®æ ‡ -------------------------
+        // 1) å¼ºåˆ¶é”é€Ÿï¼štarget_speed_set = -75.0f
+        // 2) ç›´è¡Œçº¦æŸï¼šerr_degree = 0ï¼ŒæŠ‘åˆ¶å¤–éƒ¨è½¬å‘æŒ‡ä»¤å¹²æ‰°
         target_speed_set = BUMPY_ROAD_LOCK_SPEED_SET;
         err_degree = 0.0f;
 
-        // Ã¿10ms¸üĞÂÒ»´Î¾àÀë£¬½µµÍ¼ÆËã¿ªÏú²¢Óë¹ßµ¼¸üĞÂ½ÚÅÄ¸üÆ¥Åä
+        // ------------------------- å µè½¬åˆ¤æ®ä¸è·³è·ƒè§¦å‘ -------------------------
+        // æ¡ä»¶è¯´æ˜ï¼š
+        // A. ä»…åœ¨éè·³è·ƒçŠ¶æ€ä¸‹æ£€æµ‹ï¼ˆé¿å…è·³è·ƒè¿‡ç¨‹ä¸­é‡å¤è§¦å‘ï¼‰
+        // B. å·¦å³è½®é€Ÿåº¦éƒ½å¾ˆå°ï¼ˆæ¥è¿‘å µè½¬/é¡¶æ­»ï¼‰
+        // C. ä¿¯ä»°è§’æ˜æ˜¾ä¸‹æ‰ï¼ˆpitch < -7Â°ï¼‰
+        // D. æ»¡è¶³æœ€å°è§¦å‘é—´éš”ï¼ˆloop_counter è®¡æ—¶ï¼‰
+        // æ»¡è¶³åç½®ä½ vision_detected_jump_pointï¼Œç”±ä¸»å¾ªç¯ä¸­çš„è·³è·ƒé€»è¾‘æ¶ˆè´¹å¹¶æ¸…é›¶ã€‚
+        if (jump_flag == 0U)
+        {
+            const float left_speed_abs = fabsf((float)motor_value.receive_left_speed_data);
+            const float right_speed_abs = fabsf((float)motor_value.receive_right_speed_data);
+            const float pitch_deg = euler_angle.pitch;
+            uint8_t jump_gap_ok = 0U;
+
+            if (s_bumpy_ctx.last_jump_tick_ms == BUMPY_ROAD_NO_JUMP_TICK)
+            {
+                jump_gap_ok = 1U;
+            }
+            else if ((uint32_t)(loop_counter - s_bumpy_ctx.last_jump_tick_ms) >= BUMPY_ROAD_JUMP_MIN_GAP_MS)
+            {
+                jump_gap_ok = 1U;
+            }
+
+            if ((left_speed_abs < BUMPY_ROAD_STALL_SPEED_ABS_TH) &&
+                (right_speed_abs < BUMPY_ROAD_STALL_SPEED_ABS_TH) &&
+                (pitch_deg > BUMPY_ROAD_STALL_PITCH_TH) &&
+                (jump_gap_ok == 1U))
+            {
+                vision_detected_jump_point = true;
+                s_bumpy_ctx.last_jump_tick_ms = loop_counter;
+            }
+        }
+
+        // æ¯10msæ›´æ–°ä¸€æ¬¡è·ç¦»ï¼Œé™ä½è®¡ç®—å¼€é”€å¹¶ä¸æƒ¯å¯¼æ›´æ–°èŠ‚æ‹æ›´åŒ¹é…
         s_bumpy_ctx.sample_div_cnt++;
         if (s_bumpy_ctx.sample_div_cnt >= BUMPY_ROAD_SAMPLE_DIV_1MS)
         {
             s_bumpy_ctx.sample_div_cnt = 0U;
             s_bumpy_ctx.traveled_mm = BumpyRoad_CalcDistanceMm();
 
-            // ´ïµ½Ä¿±ê¾àÀë£º½øÈëÊÕÎ²Ì¬
+            // è¾¾åˆ°ç›®æ ‡è·ç¦»ï¼šè¿›å…¥æ”¶å°¾æ€
             if (s_bumpy_ctx.traveled_mm >= BUMPY_ROAD_TARGET_DISTANCE_MM)
             {
                 s_bumpy_ctx.state = BUMPY_ROAD_STATE_FINISH;
@@ -93,7 +142,7 @@ void BumpyRoad_Update_1ms(void)
 
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_FINISH)
     {
-        // ÊÕÎ²£ºÍ£³µÒ»´Î£¬È»ºóÍË³ö×´Ì¬»ú£¬¿ØÖÆÈ¨½»»¹ÉÏ²ãÂß¼­
+        // æ”¶å°¾ï¼šåœè½¦ä¸€æ¬¡ï¼Œç„¶åé€€å‡ºçŠ¶æ€æœºï¼Œæ§åˆ¶æƒäº¤è¿˜ä¸Šå±‚é€»è¾‘
         target_speed_set = 0.0f;
         err_degree = 0.0f;
         s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
@@ -110,7 +159,11 @@ BumpyRoadState_e BumpyRoad_GetState(void)
     return s_bumpy_ctx.state;
 }
 
+/**
+ * @brief è·å–é¢ ç°¸é“è·¯å·²è¡Œé©¶è·ç¦»(æ¯«ç±³)
+ * @return è¿”å›å·²è¡Œé©¶çš„è·ç¦»ï¼Œå•ä½ä¸ºæ¯«ç±³
+ */
 float BumpyRoad_GetDistanceMm(void)
 {
-    return s_bumpy_ctx.traveled_mm;
+    return s_bumpy_ctx.traveled_mm;  // è¿”å›é¢ ç°¸é“è·¯ä¸Šä¸‹æ–‡ä¸­å­˜å‚¨çš„å·²è¡Œé©¶è·ç¦»
 }
