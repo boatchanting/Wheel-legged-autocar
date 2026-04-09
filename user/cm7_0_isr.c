@@ -77,7 +77,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 颠簸路段状态机（1ms调度）：
     // 1) 锁定 target_speed_set = -150.0f
     // 2) 里程累计到 1000mm 后停车并退出状态机
-    BumpyRoad_Update_1ms();
+    if(g_motor_enable ==1){BumpyRoad_Update_1ms();}
 
     
     // ==========================================================
@@ -416,7 +416,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         {
             // 阶段A: 起跳瞬间，车轮在地面，关闭电机防止干扰
             case JUMP_PHASE_LAUNCH:
-                small_driver_set_duty(turn_gyro_loop_out, turn_gyro_loop_out);
+                small_driver_set_duty( (int16_t)turn_gyro_loop_out,  (int16_t)turn_gyro_loop_out);
                 break;
 
             // 阶段B: 空中飞行，启用动量轮控制
@@ -426,19 +426,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 
                 // [关键] 根据你的电机极性，使用异号PWM使两轮同向转动
                 // 假设 air_pwm > 0 意图让车头抬起 (轮子前转)
-                small_driver_set_duty(turn_gyro_loop_out, turn_gyro_loop_out);
+                small_driver_set_duty( (int16_t)turn_gyro_loop_out,  (int16_t)turn_gyro_loop_out);
                 break;
             }
 
             // 阶段C/D: 准备落地和缓冲，关闭电机，防止轮速过快触地导致弹射
             case JUMP_PHASE_LANDING:
             case JUMP_PHASE_RECOVERY:
-                small_driver_set_duty(turn_gyro_loop_out, turn_gyro_loop_out);
+                small_driver_set_duty( (int16_t)turn_gyro_loop_out,  (int16_t)turn_gyro_loop_out);
                 break;
 
             // 默认或未知状态，安全起见关闭电机
             default:
-                small_driver_set_duty(turn_gyro_loop_out, turn_gyro_loop_out);
+                small_driver_set_duty((int16_t)turn_gyro_loop_out, (int16_t)turn_gyro_loop_out);
                 break;
         }
         }
