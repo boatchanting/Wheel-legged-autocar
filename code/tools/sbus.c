@@ -208,7 +208,7 @@ void Remote_Control_Process(void)
     }
     if (curr_ch3_state != last_ch3_state )
     {
-    robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
+    vision_detected_jump_point = 1; // 置位，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点
     // NAV_POINT_SLOPE = 2,    // 上坡点

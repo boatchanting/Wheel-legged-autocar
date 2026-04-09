@@ -37,6 +37,7 @@
 #include "zf_common_headfile.h"
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
+#include "plan/bumpy_road.h"
 
 // 声明外部函数
 
@@ -72,6 +73,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     loop_counter++;
 
     imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用
+
+    // 颠簸路段状态机（1ms调度）：
+    // 1) 锁定 target_speed_set = -150.0f
+    // 2) 里程累计到 1000mm 后停车并退出状态机
+    if(g_motor_enable ==1){BumpyRoad_Update_1ms();}
 
     
     // ==========================================================
@@ -139,7 +145,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 【nav.4】复现控制任务 (10ms运行一次)
     // ------------------------------------------------------
     if (loop_counter % 10 == 3) {  // 10ms 一次
-        if(g_motor_enable){NavReplay_Process();} //复现控制
+        // 颠簸状态机激活时，暂停导航复现，避免覆盖锁速目标
+        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U)) { NavReplay_Process(); } //复现控制
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
@@ -500,7 +507,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         err_degree = 0.0f;
     }
 
-    if ((g_replay_state != REPLAY_RUNNING) && (!jump_stepup_three_stairs_test_is_active()))//【nav】不在复现的时候才可以遥控器给目标速度进去
+    if ((g_replay_state != REPLAY_RUNNING) &&
+        (!jump_stepup_three_stairs_test_is_active()) &&
+        (BumpyRoad_Is_Active() == 0U))//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
