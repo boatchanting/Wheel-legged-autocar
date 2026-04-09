@@ -441,7 +441,7 @@ extern float current_actual_speed;
 //    作用：根据视觉/编码器计算的角度误差，生成期望转向角速度
 //    特性：无积分项（避免转向累积误差），支持赛道场景自适应增益
 // ----------------------------------------------------------------------------
-#define TURN_ANG_KP     -10.0f   // [转向刚度] 值越大转向越灵敏，但易振荡
+#define TURN_ANG_KP     -6.0f   // [转向刚度] 值越大转向越灵敏，但易振荡
 #define TURN_ANG_KI     0.0f   // [一般不用] 无积分项，避免转向累积误差
 #define TURN_ANG_KD     0.0f   // [转向阻尼] 抑制转向超调，值过大会导致响应迟钝
 #define TURN_ANG_MAX_I  0.0f    // [一般不用] 无积分项，避免转向累积误差
@@ -452,9 +452,9 @@ extern float current_actual_speed;
 // 6. 转向角速度环参数 (内环 - 周期2ms)
 //    作用：快速跟踪期望角速度，直接输出转向专用PWM
 // ----------------------------------------------------------------------------
-#define TURN_GYR_KP     30.0f    // [响应速度] 决定转向电机响应刚度
+#define TURN_GYR_KP     20.0f    // [响应速度] 决定转向电机响应刚度
 #define TURN_GYR_KI     0.0f     // [一般不用] 无积分项，避免转向累积误差
-#define TURN_GYR_KD     11.0f     // [抖动抑制] 消除高频抖动
+#define TURN_GYR_KD     6.0f     // [抖动抑制] 消除高频抖动
 #define TURN_GYR_MAX_I  0.0f     // [一般不用] 无积分项，避免转向累积误差
 #define TURN_GYR_DEAD_ZONE 0.0f  // [死区] 消除低速时的非线性迟滞
 #define TURN_GYR_MAX_O  5000.0f  // [PWM限幅] 普通赛道转向PWM上限
