@@ -6,11 +6,15 @@
 /**
  * @brief 颠簸路段状态机状态
  */
+// 状态枚举
+// 状态枚举
 typedef enum
 {
-    BUMPY_ROAD_STATE_IDLE = 0,    // 空闲态：未触发
-    BUMPY_ROAD_STATE_RUNNING,     // 执行态：锁速直行并累计里程
-    BUMPY_ROAD_STATE_FINISH       // 收尾态：停止并退出
+    BUMPY_ROAD_STATE_IDLE = 0,    // 空闲态
+    BUMPY_ROAD_STATE_RUNNING,     // 运行态
+    BUMPY_ROAD_STATE_BACKING,     // 后退态
+    BUMPY_ROAD_STATE_APPROACHING, // 接近态（新增）
+    BUMPY_ROAD_STATE_FINISH       // 收尾态
 } BumpyRoadState_e;
 
 extern volatile uint8_t vision_detected_bumpy_point;

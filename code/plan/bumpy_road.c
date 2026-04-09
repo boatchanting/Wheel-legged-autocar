@@ -1,13 +1,13 @@
 #include "bumpy_road.h"
 
 // ========================= 参数区（可按实车调参） =========================
-#define BUMPY_ROAD_LOCK_SPEED_SET      (-100.0f)     // 状态机执行期间强制锁定目标速度
+#define BUMPY_ROAD_LOCK_SPEED_SET      (-150.0f)     // 状态机执行期间强制锁定目标速度
 #define BUMPY_ROAD_TARGET_DISTANCE_MM  (3000.0f)   // 目标直行距离（mm）
 #define BUMPY_ROAD_SAMPLE_DIV_1MS      (10U)       // 1ms任务分频：每10ms计算一次里程
 
 // 堵转触发跳跃判据：
 // 1) 左右电机速度绝对值都小于该阈值
-// 2) 俯仰角 pitch 小于该阈值（车头下扎）
+// 2) 俯仰角 pitch 大于该阈值（车头下扎）
 // 3) 仅在非跳跃状态下触发（jump_flag == 0）
 #define BUMPY_ROAD_STALL_SPEED_ABS_TH  (50.0f)
 #define BUMPY_ROAD_STALL_PITCH_TH      (3.0f)
@@ -16,6 +16,17 @@
 // 使用 loop_counter（1ms计数）限制两次自动跳跃触发间隔，防止疯狂连跳
 #define BUMPY_ROAD_JUMP_MIN_GAP_MS     (1000U)
 #define BUMPY_ROAD_NO_JUMP_TICK        (0xFFFFFFFFU)
+
+// 堵转条件持续时间阈值（毫秒）
+#define BUMPY_ROAD_STALL_MS    (100U)
+
+// 后退参数
+#define BUMPY_ROAD_BACK_SPEED_SET      (100.0f)   // 后退速度(mm/s)
+#define BUMPY_ROAD_BACK_DURATION_MS    (800U)     // 后退持续时间(ms)
+
+// 接近参数（新增）
+#define BUMPY_ROAD_APPROACH_SPEED_SET  (-200.0f)  // 接近速度(mm/s)
+#define BUMPY_ROAD_APPROACH_DURATION_MS (200U)    // 接近持续时间(ms)
 
 // ========================= 内部运行时上下文 =========================
 typedef struct
@@ -26,6 +37,9 @@ typedef struct
     float traveled_mm;           // 已累计行驶距离（mm）
     uint16_t sample_div_cnt;     // 1ms 分频计数器
     uint32_t last_jump_tick_ms;  // 最近一次自动触发跳跃的时间戳（loop_counter）
+    uint32_t stall_counter_ms;   // 堵转条件持续计数器（1ms计数）
+    uint32_t backing_start_tick_ms;  // 后退开始时间戳
+    uint32_t approach_start_tick_ms; // 接近开始时间戳（新增）
 } BumpyRoadContext_t;
 
 static BumpyRoadContext_t s_bumpy_ctx =
@@ -35,7 +49,10 @@ static BumpyRoadContext_t s_bumpy_ctx =
     0.0f,
     0.0f,
     0U,
-    BUMPY_ROAD_NO_JUMP_TICK
+    BUMPY_ROAD_NO_JUMP_TICK,
+    0U,
+    0U,
+    0U  // 新增初始化
 };
 
 /**
@@ -58,6 +75,9 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
     s_bumpy_ctx.last_jump_tick_ms = BUMPY_ROAD_NO_JUMP_TICK;
+    s_bumpy_ctx.stall_counter_ms = 0U;
+    s_bumpy_ctx.backing_start_tick_ms = 0U;
+    s_bumpy_ctx.approach_start_tick_ms = 0U;  // 新增初始化
 }
 
 void BumpyRoad_Trigger(void)
@@ -68,12 +88,15 @@ void BumpyRoad_Trigger(void)
         return;
     }
 
-    // 记录触发点作为“目标里程直行”的起点
+    // 记录触发点作为"目标里程直行"的起点
     s_bumpy_ctx.start_x_mm = inertial_nav.x;
     s_bumpy_ctx.start_y_mm = inertial_nav.y;
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
     s_bumpy_ctx.last_jump_tick_ms = BUMPY_ROAD_NO_JUMP_TICK;
+    s_bumpy_ctx.stall_counter_ms = 0U;
+    s_bumpy_ctx.backing_start_tick_ms = 0U;
+    s_bumpy_ctx.approach_start_tick_ms = 0U;  // 新增初始化
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;
 }
 
@@ -87,7 +110,7 @@ void BumpyRoad_Update_1ms(void)
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
         // ------------------------- 执行态控制目标 -------------------------
-        // 1) 强制锁速：target_speed_set = -75.0f
+        // 1) 强制锁速：target_speed_set = -150.0f
         // 2) 直行约束：err_degree = 0，抑制外部转向指令干扰
         target_speed_set = BUMPY_ROAD_LOCK_SPEED_SET;
         err_degree = 0.0f;
@@ -96,9 +119,10 @@ void BumpyRoad_Update_1ms(void)
         // 条件说明：
         // A. 仅在非跳跃状态下检测（避免跳跃过程中重复触发）
         // B. 左右轮速度都很小（接近堵转/顶死）
-        // C. 俯仰角明显下扎（pitch < -7°）
+        // C. 俯仰角明显下扎（pitch > 3°）
         // D. 满足最小触发间隔（loop_counter 计时）
-        // 满足后置位 vision_detected_jump_point，由主循环中的跳跃逻辑消费并清零。
+        // E. 堵转条件必须持续保持 500ms
+        // 满足后进入后退状态，而不是直接触发跳跃
         if (jump_flag == 0U)
         {
             const float left_speed_abs = fabsf((float)motor_value.receive_left_speed_data);
@@ -115,13 +139,35 @@ void BumpyRoad_Update_1ms(void)
                 jump_gap_ok = 1U;
             }
 
+            // 检测堵转条件是否满足
+            uint8_t stall_condition_met = 0U;
             if ((left_speed_abs < BUMPY_ROAD_STALL_SPEED_ABS_TH) &&
                 (right_speed_abs < BUMPY_ROAD_STALL_SPEED_ABS_TH) &&
                 (pitch_deg > BUMPY_ROAD_STALL_PITCH_TH) &&
+                (pitch_deg < 60.0f))
+            {
+                stall_condition_met = 1U;
+            }
+
+            // 处理堵转持续时间计数器
+            if (stall_condition_met)
+            {
+                s_bumpy_ctx.stall_counter_ms++;
+            }
+            else
+            {
+                s_bumpy_ctx.stall_counter_ms = 0U;
+            }
+
+            // 判断是否进入后退状态：条件满足 且 持续时间达标 且 间隔时间达标
+            if ((stall_condition_met == 1U) &&
+                (s_bumpy_ctx.stall_counter_ms >= BUMPY_ROAD_STALL_MS) &&
                 (jump_gap_ok == 1U))
             {
-                vision_detected_jump_point = true;
-                s_bumpy_ctx.last_jump_tick_ms = loop_counter;
+                // 不直接触发跳跃，而是进入后退状态
+                s_bumpy_ctx.state = BUMPY_ROAD_STATE_BACKING;
+                s_bumpy_ctx.backing_start_tick_ms = loop_counter;
+                s_bumpy_ctx.stall_counter_ms = 0U;
             }
         }
 
@@ -137,6 +183,39 @@ void BumpyRoad_Update_1ms(void)
             {
                 s_bumpy_ctx.state = BUMPY_ROAD_STATE_FINISH;
             }
+        }
+    }
+
+    // 后退状态处理
+    if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_BACKING)
+    {
+        // 后退速度控制
+        target_speed_set = BUMPY_ROAD_BACK_SPEED_SET;
+        err_degree = 0.0f;
+        
+        // 检查后退时间是否达到100ms
+        if ((loop_counter - s_bumpy_ctx.backing_start_tick_ms) >= BUMPY_ROAD_BACK_DURATION_MS)
+        {
+            // 后退完成，进入接近状态
+            s_bumpy_ctx.state = BUMPY_ROAD_STATE_APPROACHING;
+            s_bumpy_ctx.approach_start_tick_ms = loop_counter;
+        }
+    }
+
+    // 接近状态处理（新增）
+    if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_APPROACHING)
+    {
+        // 设置接近速度（前进加速）
+        target_speed_set = BUMPY_ROAD_APPROACH_SPEED_SET;
+        err_degree = 0.0f;
+        
+        // 检查接近时间是否达到200ms
+        if ((loop_counter - s_bumpy_ctx.approach_start_tick_ms) >= BUMPY_ROAD_APPROACH_DURATION_MS)
+        {
+            // 接近完成，触发跳跃
+            vision_detected_jump_point = true;
+            s_bumpy_ctx.last_jump_tick_ms = loop_counter;
+            s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;  // 返回运行状态
         }
     }
 
