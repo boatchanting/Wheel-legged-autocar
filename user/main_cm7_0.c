@@ -36,7 +36,7 @@
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
-#include "plan/bumpy_road.h"
+
 
 // **************************** uart配置区域 **************************** 
 #define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0
@@ -378,14 +378,24 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
                 // seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
                 // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
-                    // 4. 设置本次发送的通道数量 (一共8个数据)
-                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
-                    
-                //     // 5. 调用发送函数
-                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // // 用于上位机向小车发送pid信息
-                // wifi_update_pid_params(); 
+                // 4.【调节颠簸路段状态机】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)(gyro_loop_out + turn_gyro_loop_out); 
+                seekfree_assistant_oscilloscope_data.data[3] = (float)(-gyro_loop_out + turn_gyro_loop_out); 
+                seekfree_assistant_oscilloscope_data.data[4] = (float)target_speed_set;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw; 
+                    // 4. 设置本次发送的通道数量 (一共8个数据)
+                    seekfree_assistant_oscilloscope_data.channel_num = 8;
+                    
+                    // 5. 调用发送函数
+                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+
+                // 用于上位机向小车发送pid信息
+                wifi_update_pid_params(); 
                 #endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---
@@ -432,11 +442,11 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         }//雷区旋转调用，测试用
 
         //模拟视觉触发跳跃测试
-        // if (vision_detected_jump_point == 1) 
-        // {
-        //     jump_trigger(); // <--- 只需要调用这一句
-        //     vision_detected_jump_point = 0; // 清除标志位，防止连续触发
-        // }
+        if (vision_detected_jump_point == 1) 
+        {
+            jump_trigger(); // <--- 只需要调用这一句
+            vision_detected_jump_point = 0; // 清除标志位，防止连续触发
+        }
 
         // 模拟视觉触发颠簸测试
         if (vision_detected_bumpy_point == 1)
