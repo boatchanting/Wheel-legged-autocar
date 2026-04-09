@@ -416,7 +416,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         {
             // 阶段A: 起跳瞬间，车轮在地面，关闭电机防止干扰
             case JUMP_PHASE_LAUNCH:
-                small_driver_set_duty( (int16_t)turn_gyro_loop_out,  (int16_t)turn_gyro_loop_out);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
 
             // 阶段B: 空中飞行，启用动量轮控制
@@ -426,19 +426,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 
                 // [关键] 根据你的电机极性，使用异号PWM使两轮同向转动
                 // 假设 air_pwm > 0 意图让车头抬起 (轮子前转)
-                small_driver_set_duty( (int16_t)turn_gyro_loop_out,  (int16_t)turn_gyro_loop_out);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
             }
 
             // 阶段C/D: 准备落地和缓冲，关闭电机，防止轮速过快触地导致弹射
             case JUMP_PHASE_LANDING:
             case JUMP_PHASE_RECOVERY:
-                small_driver_set_duty( (int16_t)turn_gyro_loop_out,  (int16_t)turn_gyro_loop_out);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
 
             // 默认或未知状态，安全起见关闭电机
             default:
-                small_driver_set_duty((int16_t)turn_gyro_loop_out, (int16_t)turn_gyro_loop_out);
+                small_driver_set_duty(pwm_left, pwm_right);
                 break;
         }
         }
