@@ -343,14 +343,14 @@ vision_detected_marker = 0;//雷区调用,测试用
 
                 // 逐飞助手示波器发送代码        
                 // 1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
@@ -373,6 +373,15 @@ vision_detected_marker = 0;//雷区调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)uart_receiver.channel[5];
                 // seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
                 // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
+
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)( gyro_loop_out + turn_gyro_loop_out);
+                seekfree_assistant_oscilloscope_data.data[3] = (float)( -gyro_loop_out + turn_gyro_loop_out);
+                seekfree_assistant_oscilloscope_data.data[4] = (float)target_speed_set;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
                     // 4. 设置本次发送的通道数量 (一共8个数据)
                     seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
