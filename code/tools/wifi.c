@@ -237,7 +237,7 @@ void wifi_update_pid_params(void)
                 // 参数 4: 舵机速度环ki 
                 case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
                 // 参数 5: 跳跃 
-                case 5: vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                case 5: g_servo_speed_pid_mode = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 // 参数 6: 机械零点
                 case 6:pid_angle.compensation = seekfree_assistant_parameter[i]; break;
                 // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)

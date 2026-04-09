@@ -20,7 +20,7 @@
 // --- 增量系数 (灵敏度) ---
 // 说明: 每次调用 Process 函数增加的数值 = (摇杆偏差值) * 系数
 // 假设 Process 每 10ms 调用一次
-#define K_STEER_INC     0.00225f  // 转向灵敏度
+#define K_STEER_INC     0.0225f  // 转向灵敏度
 #define K_SPEED_INC     0.005f  // 速度灵敏度
 
 // 积分限幅

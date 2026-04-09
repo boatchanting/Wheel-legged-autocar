@@ -400,6 +400,13 @@ extern float current_actual_speed;
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
 extern float current_actual_speed;
+// 舵机速度环（增量式PID）独立参数：与位置式分开调参
+#define SERVO_SPEED_INC_KP  -4.2f
+#define SERVO_SPEED_INC_KI  -0.020f
+#define SERVO_SPEED_INC_KD  -0.12f
+#define SERVO_SPEED_INC_MAX_I  SERVO_SPEED_MAX_I
+#define SERVO_SPEED_INC_MAX_O  SERVO_SPEED_MAX_O
+#define SERVO_SPEED_INC_COMP   SERVO_SPEED_COMP
 
 // ----------------------------------------------------------------------------
 // 1. 速度环参数 (最外环 - 周期约 20ms~50ms)
