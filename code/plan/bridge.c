@@ -50,6 +50,11 @@ uint8_t debug_triple_bridge_test_enable = 0;
 static BridgeTestState_e s_bridge_test_state = BRIDGE_TEST_STATE_IDLE;
 static float s_test_roll_target = 0.0f;
 
+// ============================================================================
+// 【状态机新增】视觉触发标志位
+// ============================================================================
+bool vision_detected_bridge_point = false;
+
 #define BRIDGE_TEST_PREPARE_LEN_MM      300.0f
 #define BRIDGE_TEST_TOTAL_LEN_MM       3000.0f
 #define BRIDGE_TEST_EXIT_BUFFER_MM      200.0f
@@ -191,6 +196,28 @@ static float Bridge_Test_Get_Roll_Bias(float dist_mm) {
     return 0.0f;
 }
 
+// ============================================================================
+// 【状态机新增】视觉触发相关函数实现
+// ============================================================================
+
+/**
+ * @brief 检查单边桥测试是否处于活动状态
+ * @return true: 测试进行中 / false: 空闲状态
+ */
+bool Bridge_Test_Triple_SingleSide_Is_Active(void) {
+    return (s_bridge_test_state != BRIDGE_TEST_STATE_IDLE);
+}
+
+/**
+ * @brief 启动单边桥测试
+ * @note 仅当状态机处于 IDLE 时生效，防止测试中途重复触发
+ */
+void Bridge_Test_Triple_SingleSide_Start(void) {
+    if (s_bridge_test_state == BRIDGE_TEST_STATE_IDLE) {
+        debug_triple_bridge_test_enable = 1;
+        // 状态机会在下一次调用 Bridge_Test_Triple_SingleSide_Inertial 时自动从 IDLE 转到 PREPARE
+    }
+}
 
 // ============================================================================
 // 主流程控制
@@ -202,6 +229,7 @@ void Bridge_Init(void) {
     debug_triple_bridge_test_enable = 0;
     s_bridge_test_state = BRIDGE_TEST_STATE_IDLE;
     s_test_roll_target = 0.0f;
+    vision_detected_bridge_point = false;  // 【状态机新增】初始化视觉标志位
     
     // 距离参数 (需实测微调)
     bridge_params.trigger_brake_dist = 800.0f; 
@@ -364,13 +392,18 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
     }
 
     switch (s_bridge_test_state) {
+        // ====================================================================
+        // 【状态机修改】IDLE 状态：确保 debug_triple_bridge_test_enable 为 1 时正确启动
+        // ====================================================================
         case BRIDGE_TEST_STATE_IDLE:
-            saved_acc_limit = acc_limit;
-            saved_dec_limit = dec_limit;
-            Reset_Start_Point();
-            s_test_roll_target = 0.0f;
-            roll_degree = 0.0f;
-            s_bridge_test_state = BRIDGE_TEST_STATE_PREPARE;
+            if (debug_triple_bridge_test_enable) {
+                saved_acc_limit = acc_limit;
+                saved_dec_limit = dec_limit;
+                Reset_Start_Point();
+                s_test_roll_target = 0.0f;
+                roll_degree = 0.0f;
+                s_bridge_test_state = BRIDGE_TEST_STATE_PREPARE;
+            }
             break;
 
         case BRIDGE_TEST_STATE_PREPARE:

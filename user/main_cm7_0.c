@@ -465,6 +465,18 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             BumpyRoad_Trigger();             // <--- 只需要调用这一句
             vision_detected_bumpy_point = 0; // 清除标志位，防止连续触发
         }
+
+        // 模拟视觉触发单边桥测试
+        if (vision_detected_bridge_point == 1) 
+        {
+            // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
+            if (!Bridge_Test_Triple_SingleSide_Is_Active()) 
+            {
+                Bridge_Test_Triple_SingleSide_Start(); // 启动单边桥测试状态机
+            }
+            vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
+        }
+
         //跳跃雷区测试用，【调试】打开
         system_delay_ms(50);
 

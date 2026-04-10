@@ -360,6 +360,9 @@ void NavReplay_Process(void)
                     if (g_current_point_type == NAV_POINT_JUMP) {
                         vision_detected_three_jump_point = 1;//触发三级跳状态机
                     }
+                    if (g_current_point_type == NAV_POINT_BRIDGE) {
+                        vision_detected_bridge_point = 1;//触发三桥桥状态机
+                    }
                     if (g_current_point_type == NAV_POINT_BUMP) {
                         BumpyRoad_Trigger();  // 触发颠簸路段状态机
                     }
