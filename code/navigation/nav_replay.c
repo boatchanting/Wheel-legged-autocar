@@ -324,6 +324,9 @@ void NavReplay_Process(void)
                     if (g_current_point_type == NAV_POINT_CIRCLE) {
                         minefield_flag = 1;
                     }
+                    if (g_current_point_type == NAV_POINT_BUMP) {
+                        BumpyRoad_Trigger();  // 触发颠簸路段状态机
+                    }
                     g_special_action_trigger = 1;
                 }
                 

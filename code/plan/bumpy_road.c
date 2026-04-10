@@ -224,6 +224,7 @@ void BumpyRoad_Update_1ms(void)
         // 收尾：停车一次，然后退出状态机，控制权交还上层逻辑
         target_speed_set = 0.0f;
         err_degree = 0.0f;
+        g_special_action_trigger = 0;//交还总状态机控制权限
         s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
     }
 }
