@@ -8,6 +8,7 @@ volatile JumpPhase g_current_jump_phase = JUMP_PHASE_NONE; // 初始化为 NONE
 JumpType_e g_current_jump_type = JUMP_TYPE_NORMAL;
 JumpProfile_t g_jump_profile; // 当前正在执行的跳跃参数
 bool vision_detected_jump_point = false;//跳跃测试用
+bool vision_detected_three_jump_point = false; // 三连跳测试用
 // 引用外部变量 (来自servo.c)
 extern volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
 extern float servo_height; 
@@ -164,15 +165,15 @@ static void load_jump_profile(JumpType_e type, float current_height)
             break;
             
         case JUMP_TYPE_STEP_UP: // 【上台阶模式】
-            g_jump_profile.t_launch = 110; 
-            g_jump_profile.t_flight = 220; // 【高度截断】台阶高，提前触地，腾空时间缩短
-            g_jump_profile.t_landing = 250;
-            g_jump_profile.t_recovery = 330;
-            g_jump_profile.offset_launch = 3000;  // 更强发力获取高度
-            g_jump_profile.offset_flight = -1500; // 适度收腿即可
-            g_jump_profile.offset_land = 1000;
-            g_jump_profile.air_target_pitch = -1.0f;
-            g_jump_profile.post_jump_height = current_height;  // 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
+            g_jump_profile.t_launch = 90;
+            g_jump_profile.t_flight = 100;
+            g_jump_profile.t_landing = 130;
+            g_jump_profile.t_recovery = 1500;
+            g_jump_profile.offset_launch = 3000; 
+            g_jump_profile.offset_flight = -1000;
+            g_jump_profile.offset_land = 1700;
+            g_jump_profile.air_target_pitch = -1.0f; // 默认轻微低头
+            g_jump_profile.post_jump_height = current_height;// 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
             break;
             
         case JUMP_TYPE_NORMAL: // 【普通平地跳】
@@ -238,14 +239,14 @@ void jump_stepup_three_stairs_test_update(void)
     float trigger2_mm;
     float trigger3_mm;
 
-    if (vision_detected_jump_point)
-    {
-        if (g_step_up_test_state == STEP_UP_TEST_IDLE)
-        {
-            jump_stepup_three_stairs_test_start();
-        }
-        vision_detected_jump_point = false;
-    }
+    // if (vision_detected_three_jump_point)
+    // {
+    //     if (g_step_up_test_state == STEP_UP_TEST_IDLE)
+    //     {
+    //         jump_stepup_three_stairs_test_start();
+    //     }
+    //     vision_detected_three_jump_point = false;
+    // }
 
     if (g_step_up_test_state == STEP_UP_TEST_IDLE)
     {
@@ -355,6 +356,7 @@ void jump_stepup_three_stairs_test_update(void)
                 if ((loop_counter - g_step_up_state_tick) > STEP_UP_FINISH_HOLD_MS)
                 {
                     g_step_up_test_state = STEP_UP_TEST_IDLE;
+                    g_special_action_trigger = 0;  // 交还总状态机控制权限
                 }
             }
             break;
@@ -530,7 +532,7 @@ void Momentum_Wheel_Control_Init(void)
     g_air_kd = 8.0f;   // 空中姿态D，抑制空中翻转速度
     g_air_target_pitch = -1.0f; // 空中目标角度(度)，轻微后仰
     // 加载当前跳跃类型的时序和参数
-    g_current_jump_type = JUMP_TYPE_HURDLE;//这里面可以选择不同的跳跃类型，测试时先用普通跳
+    g_current_jump_type = JUMP_TYPE_NORMAL;//这里面可以选择不同的跳跃类型，测试时先用普通跳
     load_jump_profile(g_current_jump_type, servo_height);//【优化点】加载初始化跳跃姿态控制参数
 }
 

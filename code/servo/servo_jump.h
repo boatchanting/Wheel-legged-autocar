@@ -62,6 +62,7 @@ void servo_jump_executor(void);    // 周期性调用执行函数
 void jump_stepup_three_stairs_test_start(void);
 void jump_stepup_three_stairs_test_update(void);
 bool jump_stepup_three_stairs_test_is_active(void);
+extern bool vision_detected_three_jump_point; // 视觉检测到的三连跳起点
 /**
  * @brief 初始化空中姿态控制参数
  */
