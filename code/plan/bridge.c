@@ -23,6 +23,8 @@ extern PID_Param_t pid_gyro;
 extern PID_Param_t pid_turn_angle;
 extern PID_Param_t pid_turn_gyro;
 extern volatile float roll_degree;
+extern volatile float err_degree;
+extern uint8 g_special_action_trigger;
 
 // ============================================================================
 // 内部状态与变量
@@ -49,6 +51,7 @@ typedef enum {
 uint8_t debug_triple_bridge_test_enable = 0;
 static BridgeTestState_e s_bridge_test_state = BRIDGE_TEST_STATE_IDLE;
 static float s_test_roll_target = 0.0f;
+static float s_locked_heading_deg = 0.0f;
 
 // ============================================================================
 // 【状态机新增】视觉触发标志位
@@ -71,6 +74,12 @@ static const float k_bridge_test_side_sign[3] = {1.0f, -1.0f, 1.0f};
 
 // 绝对值辅助函数
 #define MY_ABS_F(x) ((x) > 0.0f ? (x) : -(x))
+
+static float Bridge_Normalize_Angle(float angle_deg) {
+    while (angle_deg > 180.0f) angle_deg -= 360.0f;
+    while (angle_deg < -180.0f) angle_deg += 360.0f;
+    return angle_deg;
+}
 
 // ============================================================================
 // 辅助函数定义
@@ -164,7 +173,9 @@ static float Ramp_Float(float current, float target, float step) {
 static void Bridge_Test_Reset_All(uint8 keep_speed) {
     roll_balance_enable = 0;
     roll_degree = 0.0f;
+    err_degree = 0.0f;
     s_test_roll_target = 0.0f;
+    s_locked_heading_deg = inertial_nav.relative_yaw;
 
     acc_limit = saved_acc_limit;
     dec_limit = saved_dec_limit;
@@ -176,6 +187,7 @@ static void Bridge_Test_Reset_All(uint8 keep_speed) {
     }
 
     s_bridge_test_state = BRIDGE_TEST_STATE_IDLE;
+    g_special_action_trigger = 0;
 }
 
 static float Bridge_Test_Get_Roll_Bias(float dist_mm) {
@@ -215,6 +227,7 @@ bool Bridge_Test_Triple_SingleSide_Is_Active(void) {
 void Bridge_Test_Triple_SingleSide_Start(void) {
     if (s_bridge_test_state == BRIDGE_TEST_STATE_IDLE) {
         debug_triple_bridge_test_enable = 1;
+        s_locked_heading_deg = inertial_nav.relative_yaw;
         // 状态机会在下一次调用 Bridge_Test_Triple_SingleSide_Inertial 时自动从 IDLE 转到 PREPARE
     }
 }
@@ -402,11 +415,13 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
                 Reset_Start_Point();
                 s_test_roll_target = 0.0f;
                 roll_degree = 0.0f;
+                s_locked_heading_deg = inertial_nav.relative_yaw;
                 s_bridge_test_state = BRIDGE_TEST_STATE_PREPARE;
             }
             break;
 
         case BRIDGE_TEST_STATE_PREPARE:
+            err_degree = Bridge_Normalize_Angle(s_locked_heading_deg - inertial_nav.relative_yaw);
             target_speed_set = bridge_params.speed_ready;
             Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
             acc_limit = bridge_params.servo_acc_bridge;
@@ -420,6 +435,7 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
             break;
 
         case BRIDGE_TEST_STATE_ON_BRIDGE:
+            err_degree = Bridge_Normalize_Angle(s_locked_heading_deg - inertial_nav.relative_yaw);
             target_speed_set = bridge_params.speed_climb;
             Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
 
@@ -435,6 +451,7 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
             break;
 
         case BRIDGE_TEST_STATE_EXIT:
+            err_degree = Bridge_Normalize_Angle(s_locked_heading_deg - inertial_nav.relative_yaw);
             target_speed_set = bridge_params.speed_normal;
             Smooth_Height_Control(bridge_params.height_normal, bridge_params.height_step_drop);
 

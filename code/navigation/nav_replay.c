@@ -96,6 +96,7 @@ void NavReplay_Stop(void)
     target_speed_set = 0.0f;
     g_replay_state = REPLAY_IDLE;
     err_degree = 0.0f;
+    g_special_action_trigger = 0;
     g_start_heading_aligned = 1;
     
     #if DEBUG_LOG_ENABLE
@@ -242,6 +243,7 @@ void NavReplay_Process(void)
     if (s_prev_trigger == 1 && g_special_action_trigger == 0) {
         is_recovering = 1;
         s_prev_trigger = 0;
+        is_arrived = 0;
         
         // 【关键】：清空历史包袱！
         // 防止车子把进入特殊点前的旧角度和速度带入到现在，导致突然猛打方向盘
