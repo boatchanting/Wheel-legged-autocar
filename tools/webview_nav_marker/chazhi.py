@@ -11,6 +11,16 @@ plt.rcParams['axes.unicode_minus'] = False
 
 INTERPOLATE_DIST = 20.0 # 目标插值间隔：20mm
 
+# 定义特殊点枚举映射 (配合 C 语言 NavPointType_e)
+# 格式: 类型值: ('图例名称', '颜色', '标记形状')
+SPECIAL_POINTS_MAP = {
+    1: ('转圈点 (Circle)', '#FF00FF', 'o'),  # 品红色 圆圈
+    2: ('上坡点 (Slope)', '#FFA500', '^'),    # 橙色 正三角
+    3: ('跳跃点 (Jump)', '#00FFFF', 'v'),     # 青色 倒三角
+    4: ('单边桥点 (Bridge)', '#8B4513', 's'), # 棕色 正方形
+    5: ('颠簸路段 (Bump)', '#800080', 'D')    # 紫色 菱形
+}
+
 def read_raw_points_from_header(file_path):
     points = []
     if not os.path.exists(file_path):
@@ -126,6 +136,16 @@ def main():
         print("未读取到任何原始数据点，程序退出。")
         return
 
+    # 分类提取特殊点用于绘图展示
+    sp_dict = {}
+    for p in raw_points:
+        orig_t = p[2]
+        if orig_t != 0:
+            if orig_t not in sp_dict:
+                sp_dict[orig_t] = {'x': [], 'y': []}
+            sp_dict[orig_t]['x'].append(p[0])
+            sp_dict[orig_t]['y'].append(p[1])
+
     # 引入 (0,0) 作为起点
     spline_input_points = [(0.0, 0.0, 0)] + raw_points
     x_orig = np.array([p[0] for p in spline_input_points])
@@ -178,14 +198,28 @@ def main():
     
     for idx, (key, (name, x_res, y_res)) in enumerate(methods.items()):
         ax = axs[idx]
-        ax.plot(x_orig, y_orig, 'ro-', label='原始控制点', markersize=6, alpha=0.5, zorder=3)
+        
+        # 绘制基础路线
+        ax.plot(x_orig, y_orig, 'ro-', label='原始控制点', markersize=4, alpha=0.4, zorder=3)
         ax.plot(x_res, y_res, 'b.-', markersize=3, label='规划路线', zorder=2)
         if len(x_res) > 1:
             ax.plot(x_res[1], y_res[1], 'g*', markersize=10, label='起始点(剔除原点)', zorder=4)
+            
+        # 在图上叠加高亮特殊点
+        for t, coords in sp_dict.items():
+            if t in SPECIAL_POINTS_MAP:
+                sp_name, sp_color, sp_marker = SPECIAL_POINTS_MAP[t]
+                ax.scatter(coords['x'], coords['y'], c=sp_color, marker=sp_marker, s=80, 
+                           edgecolors='black', label=sp_name, zorder=5)
+            else:
+                ax.scatter(coords['x'], coords['y'], c='black', marker='X', s=80, 
+                           label=f'未知特殊点({t})', zorder=5)
+
         ax.set_title(f"[{key}] {name}")
         ax.axis('equal')
         ax.grid(True, linestyle='--', alpha=0.6)
-        ax.legend()
+        # 缩小图例字体以容纳更多的特殊点标签
+        ax.legend(fontsize=8, loc='best')
         
     plt.tight_layout()
     plt.pause(0.5)
@@ -214,17 +248,37 @@ def main():
         
     selected_name, sel_x, sel_y = methods[choice]
     
-    final_points = []
+    # ================= 强制锚定：保留特殊点且位置绝对不动 =================
     num_pts = len(sel_x)
+    final_x = np.array(sel_x)
+    final_y = np.array(sel_y)
+    final_t = np.zeros(num_pts, dtype=int) # 默认 0 为普通路径点
+    
+    # 遍历原始的所有数据点
+    for orig_p in raw_points:
+        orig_x, orig_y, orig_type = orig_p
+        
+        # 只要是特殊点（type != 0），或者是路径的最后一个终点，都必须强制保留
+        if orig_type != 0 or orig_p == raw_points[-1]:
+            # 在新插值的密集点阵中，找到距离这个原点最近的点的索引
+            dists_sq = (final_x - orig_x)**2 + (final_y - orig_y)**2
+            closest_idx = np.argmin(dists_sq)
+            
+            # 【核心】：强行用原始的精确坐标覆盖插值坐标，确保位置绝对不移动！
+            final_x[closest_idx] = orig_x
+            final_y[closest_idx] = orig_y
+            final_t[closest_idx] = orig_type
+
+    final_points = []
+    # 从 1 开始遍历，剔除为了计算曲率而额外引入的起始原点(0,0)
     for i in range(1, num_pts):
-        pt_type = raw_points[-1][2] if i == num_pts - 1 else 0
-        final_points.append((sel_x[i], sel_y[i], pt_type))
+        final_points.append((final_x[i], final_y[i], final_t[i]))
         
     generate_header(final_points, selected_name, header_path)
     
     print(f"\n✅ 已选择: {selected_name}")
     print(f"✅ 头文件已生成覆盖: {header_path}")
-    print(f"✅ 共产生 {num_pts} 个点，写入表中 {len(final_points)} 个点。")
+    print(f"✅ 共产生 {num_pts} 个点，写入表中 {len(final_points)} 个点 (含精确特殊点)。")
     print("✅ 绘图窗口已自动关闭。")
 
 if __name__ == "__main__":

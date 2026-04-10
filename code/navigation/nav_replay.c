@@ -138,9 +138,11 @@ static inline float CalcDistanceSq(float x1, float y1, float x2, float y2) {
 }
 
 /**
- * @brief 【关键修改】严格单向索引追踪
+ * @brief 严格单向索引追踪
  * 强制要求索引只能在当前位置往后 [0, search_range] 范围内寻找。
  * 彻底解决在原路折返轨迹中，索引跳到回程路径的问题。
+ * 严格单向索引追踪 (带防穿模锁)
+ * 强制要求索引只能在当前位置往后寻找，且绝不允许跳过特殊点！
  */
 static int Find_Closest_Point_Index_Strict(int current_idx, int search_range)
 {
@@ -152,7 +154,7 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range)
         end_idx = nav_ram_data.point_count - 1;
     }
 
-    // 只往后搜，不回头，且搜寻范围限制在 search_range（建议 50-80 点）
+    // 只往后搜，不回头
     for (int i = current_idx; i <= end_idx; i++) {
         float d_sq = CalcDistanceSq(inertial_nav.x, inertial_nav.y, 
                                     nav_ram_data.points[i].x, nav_ram_data.points[i].y);
@@ -160,14 +162,19 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range)
             min_dist_sq = d_sq;
             closest_idx = i;
         }
+        
+        // 【核心保险】：如果前方扫描到了特殊点，强行截断扫描范围！
+        // 这样即使车速极快导致物理越位，索引也会被死死卡在这个特殊点上，直到触发状态机
+        if (i > current_idx && nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
+            if (closest_idx > i) closest_idx = i;
+            break; 
+        }
     }
     
-    // 如果最近点离车依然非常远（如>0.8m），说明可能丢位了，
-    // 此时保持原索引不跳跃，等待车纠偏回来
+    // 丢位保护
     if (min_dist_sq > 800.0f * 800.0f) {
         return current_idx; 
     }
-
     return closest_idx;
 }
 
@@ -213,7 +220,7 @@ void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) return;
 
-    // 1. 定位当前基准 (保持严格单向搜索，范围扩大到80点以适应极速)
+    // 1. 获取当前车辆在路径上的基准索引
     int base_idx = Find_Closest_Point_Index_Strict(g_target_idx, 80);
     g_target_idx = base_idx;
 
@@ -222,94 +229,156 @@ void NavReplay_Process(void)
         target_speed_set = 0; err_degree = 0; return;
     }
 
-    // 2. 动态极限前瞻计算
-    // 速度越快，LD越大，选取的点越靠前，转向越平滑
-    float lookahead_dist = PP_LD_MIN_CURVE + fabsf(prev_speed_set) * PP_LD_SPEED_GAIN;
-    float lookahead_dist_sq = lookahead_dist * lookahead_dist;
-
-    // 3. 极限选点 (寻找远方前瞻点)
-    float tx = nav_ram_data.points[base_idx].x;
-    float ty = nav_ram_data.points[base_idx].y;
-    // 搜索深度配合 LD：如果 LD 是 1000mm，则搜索 1000/20 + 容余 = 70个点
-    int ld_scan_limit = base_idx + (int)(lookahead_dist / 15.0f) + 40;
-    if (ld_scan_limit > nav_ram_data.point_count) ld_scan_limit = nav_ram_data.point_count;
-
-    for (int i = base_idx; i < ld_scan_limit; i++) {
-        float d_sq = CalcDistanceSq(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
-        tx = nav_ram_data.points[i].x; ty = nav_ram_data.points[i].y;
-        // 只有当点离车距离真正达标，或者遇到动作点才停
-        if (d_sq >= lookahead_dist_sq || nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
-            break;
-        }
-    }
-
-    // 4. 计算航向
-    float target_yaw = -atan2f(ty - inertial_nav.y, -(tx - inertial_nav.x)) * 57.29578f;
-    float raw_err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
-
-    // 5. 暴力速度规划
-    float curve_f = Calculate_Upcoming_Curve_Factor(base_idx, CURVE_PREVIEW_DIST);
-    
-    // 【提速关键】出弯瞬间“弹射”逻辑：如果曲率正在快速变小，直接无视剩余曲率，强制给油
-    if (curve_f < prev_curve_f) {
-        curve_f *= 0.4f; // 更加激进的出弯策略
-    }
-    prev_curve_f = curve_f;
-
-    // 非线性曲率映射
-    if (curve_f < SPD_CURVE_DEADZONE) curve_f = 0.0f;
-    else curve_f = (curve_f - SPD_CURVE_DEADZONE) / (1.0f - SPD_CURVE_DEADZONE);
-    curve_f = powf(curve_f, SPD_CURVE_EXPONENT);
-
-    // 剩余距离 (索引差值判定)
-    int stop_idx = -1;
-    float dist_stop = 99999.0f;
-    for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 300; i++) {
+    // 2. 往前扫描，寻找即将到来的特殊点以及计算其真实距离
+    int special_idx = -1;
+    float dist_to_special = 99999.0f;
+    // 扫描范围 100个点(2000mm)
+    for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 100; i++) {
         if (nav_ram_data.points[i].point_type != NAV_POINT_PATH || i == nav_ram_data.point_count - 1) {
-            stop_idx = i;
-            dist_stop = (stop_idx - base_idx) * 20.0f;
+            special_idx = i;
+            dist_to_special = CalcDistance(inertial_nav.x, inertial_nav.y, 
+                                           nav_ram_data.points[i].x, nav_ram_data.points[i].y);
             break;
         }
     }
 
-    float raw_spd = 0;
-    if (dist_stop < NAV_DIST_FAR) { 
-        // 刹车区保持原样保证精度
-        if (dist_stop <= NAV_DIST_ARRIVE) raw_spd = 0;
-        else if (dist_stop <= NAV_DIST_NEAR) raw_spd = NAV_SPEED_SLOW * (dist_stop / NAV_DIST_NEAR);
-        else raw_spd = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ((dist_stop - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR));
-    } else {
-        // 【极限区域】
-        // 1. 直道不仅跑 FAST，还要允许超频加速 (1.3倍)
-        float current_max_spd = (curve_f <= 0.0f) ? (NAV_SPEED_FAST * 1.3f) : NAV_SPEED_FAST;
+    // ====================================================================
+    // 双模式自动切换：1000mm 内进入“先转再走”模式；否则执行“高速 Pure Pursuit”
+    // ====================================================================
+    if (special_idx != -1 && dist_to_special <= 1000.0f)
+    {
+        // -------------------------------------------------------------
+        // 【模式A】精准逼近模式 (1000mm以内)：先转再走，绝对位置精准触发
+        // -------------------------------------------------------------
         
-        // 2. 弯道速度分配
+        // 航向瞄准点计算：为了不抄近道，距离大于300mm时依然看路径前方，极近时直接看特殊点
+        int aim_idx = base_idx + 15; // 往前看约300mm
+        if (aim_idx > special_idx) aim_idx = special_idx;
+        
+        float tx = nav_ram_data.points[aim_idx].x;
+        float ty = nav_ram_data.points[aim_idx].y;
+
+        float dx = tx - inertial_nav.x;
+        float dy = ty - inertial_nav.y;
+        float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
+        
+        // 精准模式下，角度不做滤波，要求直接打到目标角度
+        err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
+
+        if (dist_to_special <= NAV_DIST_ARRIVE)
+        {
+            // --- 1. 到达特殊点：触发动作 ---
+            target_speed_set = NAV_SPEED_STOP;
+            g_current_point_type = nav_ram_data.points[special_idx].point_type;
+
+            #if DEBUG_LOG_ENABLE
+            printf("[Nav] Arrived Special Point[%d] Type[%d]\r\n", special_idx, g_current_point_type);
+            #endif
+
+            if (g_current_point_type != NAV_POINT_PATH)
+            {
+                 if (g_current_point_type == NAV_POINT_CIRCLE) {
+                    minefield_flag = 1;
+                }
+                g_special_action_trigger = 1;
+            }
+            
+            // 防死锁：动作触发后，强行跨过这个特殊点，防止重复触发
+            g_target_idx = special_idx + 1;
+        }
+        else
+        {
+            // --- 2. 未到达特殊点：先转再走 ---
+            if (fabsf(err_degree) > NAV_YAW_TOLERANCE)
+            {
+                // 角度偏差较大，先原地/极低速旋转
+                target_speed_set = NAV_SPEED_STOP;
+                #if DEBUG_LOG_ENABLE
+                // printf("[Nav] Rotating to target, err: %.2f\r\n", err_degree);
+                #endif
+            }
+            else
+            {
+                // 角度基本对准，根据到特殊点的物理距离来规划速度
+                if (dist_to_special > NAV_DIST_FAR)
+                {
+                    target_speed_set = NAV_SPEED_FAST;
+                }
+                else if (dist_to_special > NAV_DIST_NEAR)
+                {
+                    float ratio = (dist_to_special - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
+                    target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
+                }
+                else
+                {
+                    target_speed_set = NAV_SPEED_SLOW;
+                }
+            }
+        }
+        
+        // 同步滤波历史，防止切回高速模式时车辆猛抖
+        prev_err_degree = err_degree;
+        prev_speed_set = target_speed_set;
+    }
+    else
+    {
+        // -------------------------------------------------------------
+        // 【模式B】高速 Pure Pursuit 寻迹模式 (距离特殊点 > 800mm 或无特殊点)
+        // -------------------------------------------------------------
+        
+        // 动态极限前瞻计算
+        float lookahead_dist = PP_LD_MIN_CURVE + fabsf(prev_speed_set) * PP_LD_SPEED_GAIN;
+        float lookahead_dist_sq = lookahead_dist * lookahead_dist;
+
+        // 极限选点 (寻找远方前瞻点)
+        float tx = nav_ram_data.points[base_idx].x;
+        float ty = nav_ram_data.points[base_idx].y;
+        int ld_scan_limit = base_idx + (int)(lookahead_dist / 15.0f) + 40;
+        if (ld_scan_limit > nav_ram_data.point_count) ld_scan_limit = nav_ram_data.point_count;
+
+        for (int i = base_idx; i < ld_scan_limit; i++) {
+            float d_sq = CalcDistanceSq(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
+            tx = nav_ram_data.points[i].x; ty = nav_ram_data.points[i].y;
+            if (d_sq >= lookahead_dist_sq || nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
+                break;
+            }
+        }
+
+        // 计算航向
+        float target_yaw = -atan2f(ty - inertial_nav.y, -(tx - inertial_nav.x)) * 57.29578f;
+        float raw_err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
+
+        // 曲率计算与暴力速度规划
+        float curve_f = Calculate_Upcoming_Curve_Factor(base_idx, CURVE_PREVIEW_DIST);
+        
+        if (curve_f < prev_curve_f) {
+            curve_f *= 0.4f; // 出弯弹射
+        }
+        prev_curve_f = curve_f;
+
+        if (curve_f < SPD_CURVE_DEADZONE) curve_f = 0.0f;
+        else curve_f = (curve_f - SPD_CURVE_DEADZONE) / (1.0f - SPD_CURVE_DEADZONE);
+        curve_f = powf(curve_f, SPD_CURVE_EXPONENT);
+
+        float raw_spd = 0;
+        float current_max_spd = (curve_f <= 0.0f) ? (NAV_SPEED_FAST * 1.3f) : NAV_SPEED_FAST;
         raw_spd = current_max_spd - (current_max_spd - NAV_SPEED_SLOW) * curve_f;
         
         // 3. 角度纠偏减速：极速行驶时，小偏差不减速，大偏差才微调
         float ang_p = fabsf(raw_err_degree) / SPD_ANGLE_TOLERANCE;
         if (ang_p > 1.0f) ang_p = 1.0f;
         raw_spd *= (1.0f - SPD_ANGLE_PENALTY * ang_p);
-    }
 
-    // 6. 极速滤波输出
-    float diff = raw_err_degree - prev_err_degree;
-    if (diff > SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree + SLEW_RATE_ANGLE;
-    else if (diff < -SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree - SLEW_RATE_ANGLE;
+        // 极速滤波输出
+        float diff = raw_err_degree - prev_err_degree;
+        if (diff > SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree + SLEW_RATE_ANGLE;
+        else if (diff < -SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree - SLEW_RATE_ANGLE;
 
-    err_degree = FILTER_ALPHA_ANGLE * raw_err_degree + (1.0f - FILTER_ALPHA_ANGLE) * prev_err_degree;
-    target_speed_set = FILTER_ALPHA_SPEED * raw_spd + (1.0f - FILTER_ALPHA_SPEED) * prev_speed_set;
+        err_degree = FILTER_ALPHA_ANGLE * raw_err_degree + (1.0f - FILTER_ALPHA_ANGLE) * prev_err_degree;
+        target_speed_set = FILTER_ALPHA_SPEED * raw_spd + (1.0f - FILTER_ALPHA_SPEED) * prev_speed_set;
 
-    prev_err_degree = err_degree;
-    prev_speed_set = target_speed_set;
-
-    // 7. 停车判定
-    if (stop_idx != -1 && dist_stop <= NAV_DIST_ARRIVE + 20.0f) { 
-        if (nav_ram_data.points[stop_idx].point_type != NAV_POINT_PATH) {
-            target_speed_set = 0; g_special_action_trigger = 1;
-        } else if (stop_idx >= nav_ram_data.point_count - 5) {
-            g_replay_state = REPLAY_FINISHED;
-        }
+        prev_err_degree = err_degree;
+        prev_speed_set = target_speed_set;
     }
 }
 
