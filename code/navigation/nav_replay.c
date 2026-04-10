@@ -141,10 +141,10 @@ static inline float CalcDistanceSq(float x1, float y1, float x2, float y2) {
  * @brief 严格单向索引追踪
  * 强制要求索引只能在当前位置往后 [0, search_range] 范围内寻找。
  * 彻底解决在原路折返轨迹中，索引跳到回程路径的问题。
- * 严格单向索引追踪 (带防穿模锁)
+ * 严格单向索引追踪 (带防穿模锁 + 支持大范围重定位)
  * 强制要求索引只能在当前位置往后寻找，且绝不允许跳过特殊点！
  */
-static int Find_Closest_Point_Index_Strict(int current_idx, int search_range)
+static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, uint8 is_recovering)
 {
     int closest_idx = current_idx;
     float min_dist_sq = 1e9f; 
@@ -171,8 +171,8 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range)
         }
     }
     
-    // 丢位保护
-    if (min_dist_sq > 800.0f * 800.0f) {
+    // 丢位保护：如果是重定位状态，豁免 800mm 限制！允许车子从远处强行切回主路
+    if (!is_recovering && min_dist_sq > 800.0f * 800.0f) {
         return current_idx; 
     }
     return closest_idx;
@@ -216,22 +216,55 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
     return (max_curve > 1.0f) ? 1.0f : max_curve;
 }
 
-uint8 is_arrived = 0;//到达判定状态锁
+// ============================================================================
+// 🎯 全局/静态变量声明区
+// ============================================================================
+uint8 is_arrived = 0;  // 到达判定状态锁
+
+// 局部静态变量：用于滤波历史保持与下降沿检测
+static uint8 s_is_aligning = 0;
+static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下降沿）
 
 void NavReplay_Process(void)
 {
-    if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) {
-        uint8 is_arrived = 0;//到达判定状态锁
-        return;
+    if (g_replay_state != REPLAY_RUNNING) return;
+
+    // 如果状态机正在干预，记录状态并退出
+    if (g_special_action_trigger == 1) {
+        s_prev_trigger = 1;
+        return; 
+    }
+
+    // ==========================================
+    // 🎯 灾后重建机制 (Recovery)：检测状态机刚刚结束的瞬间
+    // ==========================================
+    uint8 is_recovering = 0;
+    if (s_prev_trigger == 1 && g_special_action_trigger == 0) {
+        is_recovering = 1;
+        s_prev_trigger = 0;
+        
+        // 【关键】：清空历史包袱！
+        // 防止车子把进入特殊点前的旧角度和速度带入到现在，导致突然猛打方向盘
+        prev_err_degree = 0.0f;
+        prev_speed_set = 0.0f;
+        s_is_aligning = 0; 
+        
+        #if DEBUG_LOG_ENABLE
+        printf("[Nav] Special Action Finished. Recovering back to route...\r\n");
+        #endif
     }
 
     // 1. 获取当前车辆在路径上的基准索引
-    int base_idx = Find_Closest_Point_Index_Strict(g_target_idx, 80);
+    // 如果是刚刚结束状态机(is_recovering=1)，搜寻范围扩大到 300点(6米)，并豁免距离限制
+    int scan_range = is_recovering ? 300 : 80;
+    int base_idx = Find_Closest_Point_Index_Strict(g_target_idx, scan_range, is_recovering);
     g_target_idx = base_idx;
 
     if (g_target_idx >= nav_ram_data.point_count - 1) {
         g_replay_state = REPLAY_FINISHED;
-        target_speed_set = 0; err_degree = 0; return;
+        target_speed_set = 0; err_degree = 0; 
+        s_is_aligning = 0;
+        return;
     }
 
     // 2. 往前扫描，寻找即将到来的特殊点以及计算其真实距离
@@ -248,7 +281,7 @@ void NavReplay_Process(void)
     }
 
     // ====================================================================
-    // 双模式自动切换：1000mm 内进入“先转再走”模式；否则执行“高速 Pure Pursuit”
+    // 双模式自动切换：1000mm 内进入"先转再走"模式；否则执行"高速 Pure Pursuit"
     // ====================================================================
     if (special_idx != -1 && dist_to_special <= 1000.0f)
     {
