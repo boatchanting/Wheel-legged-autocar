@@ -91,6 +91,17 @@ def _normalize_heading_deg(value):
     return num
 
 
+def _normalize_relative_yaw_deg(value):
+    num = _safe_float(value)
+    if num is None:
+        return None
+    while num > 180.0:
+        num -= 360.0
+    while num <= -180.0:
+        num += 360.0
+    return num
+
+
 def _estimate_start_heading():
     with state_lock:
         history = list(all_history_data)
@@ -333,13 +344,37 @@ class Api:
 
             with open(filepath, "w", newline="", encoding="utf-8-sig") as f:
                 writer = csv.writer(f)
-                writer.writerow(["total_count", "start_heading", "index", "x", "y", "point_type"])
+                writer.writerow([
+                    "total_count",
+                    "start_heading",
+                    "index",
+                    "x",
+                    "y",
+                    "relative_yaw",
+                    "heading",
+                    "point_type",
+                ])
                 for i, item in enumerate(points):
                     idx = int(item.get("index", i))
                     x = float(item.get("x", 0.0))
                     y = float(item.get("y", 0.0))
+                    relative_yaw = _normalize_relative_yaw_deg(item.get("relative_yaw", 0.0))
+                    heading_deg = _normalize_heading_deg(item.get("heading", 0.0))
                     point_type = int(item.get("point_type", 0))
-                    writer.writerow([count, start_heading_str, idx, f"{x:.3f}", f"{y:.3f}", point_type])
+                    if relative_yaw is None:
+                        relative_yaw = 0.0
+                    if heading_deg is None:
+                        heading_deg = 0.0
+                    writer.writerow([
+                        count,
+                        start_heading_str,
+                        idx,
+                        f"{x:.3f}",
+                        f"{y:.3f}",
+                        f"{relative_yaw:.3f}",
+                        f"{heading_deg:.3f}",
+                        point_type,
+                    ])
 
             heading_msg = "NA" if start_heading is None else f"{start_heading:.3f}"
             return {

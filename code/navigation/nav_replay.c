@@ -163,9 +163,9 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range)
             closest_idx = i;
         }
         
-        // 【核心保险】：如果前方扫描到了特殊点，强行截断扫描范围！
-        // 这样即使车速极快导致物理越位，索引也会被死死卡在这个特殊点上，直到触发状态机
-        if (i > current_idx && nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
+        // 【核心修复】：只要扫描遇到特殊点，必须立刻终止！
+        // 哪怕 current_idx 自己就是特殊点，也绝不允许再往后搜！死死冻结索引！
+        if (nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
             if (closest_idx > i) closest_idx = i;
             break; 
         }
@@ -216,9 +216,14 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
     return (max_curve > 1.0f) ? 1.0f : max_curve;
 }
 
+uint8 is_arrived = 0;//到达判定状态锁
+
 void NavReplay_Process(void)
 {
-    if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) return;
+    if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) {
+        uint8 is_arrived = 0;//到达判定状态锁
+        return;
+    }
 
     // 1. 获取当前车辆在路径上的基准索引
     int base_idx = Find_Closest_Point_Index_Strict(g_target_idx, 80);
@@ -265,7 +270,21 @@ void NavReplay_Process(void)
         // 精准模式下，角度不做滤波，要求直接打到目标角度
         err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
-        if (dist_to_special <= NAV_DIST_ARRIVE)
+        if (!is_arrived) {//根据状态锁判断
+            // ==========================================
+            // 【核心修复】：引入宽容到达判定，防止高速穿透
+            // ==========================================
+            if (dist_to_special <= NAV_DIST_ARRIVE) {
+                is_arrived = 1; // 精确到达
+            } 
+            // 宽容判定：如果底层追踪索引已经被卡死在这个特殊点上了，
+            // 且物理距离在稍大范围内(如 60mm 内)，说明车子因为惯性稍微冲过了一点，强制判作到达！
+            // else if (base_idx == special_idx && dist_to_special <= NAV_DIST_ARRIVE + 40.0f) {
+            //     is_arrived = 1;
+            // }
+        }
+
+        if (is_arrived)
         {
             // --- 1. 到达特殊点：触发动作 ---
             target_speed_set = NAV_SPEED_STOP;
@@ -275,16 +294,42 @@ void NavReplay_Process(void)
             printf("[Nav] Arrived Special Point[%d] Type[%d]\r\n", special_idx, g_current_point_type);
             #endif
 
-            if (g_current_point_type != NAV_POINT_PATH)
-            {
-                 if (g_current_point_type == NAV_POINT_CIRCLE) {
-                    minefield_flag = 1;
-                }
-                g_special_action_trigger = 1;
-            }
+            // 提取该特殊点记录的目标偏航角
+            float special_target_yaw = nav_ram_data.points[special_idx].target_yaw_deg;
             
-            // 防死锁：动作触发后，强行跨过这个特殊点，防止重复触发
-            g_target_idx = special_idx + 1;
+            // 计算车身当前角度与目标角度的偏差
+            float special_yaw_err = NormalizeAngle(special_target_yaw - inertial_nav.relative_yaw);
+
+            // 判断角度是否对齐
+            if (fabsf(special_yaw_err) > NAV_YAW_TOLERANCE)
+            {
+                // 角度还没对齐！将特殊点的角度误差喂给底层，触发原地自转对齐
+                err_degree = special_yaw_err;
+                
+                #if DEBUG_LOG_ENABLE
+                // printf("[Nav] Aligning Yaw at Special Point... err: %.2f\r\n", special_yaw_err);
+                #endif
+            }
+            else
+            {
+                // 位置到了，角度也对齐了！正式触发状态机！
+                g_current_point_type = nav_ram_data.points[special_idx].point_type;
+
+                #if DEBUG_LOG_ENABLE
+                printf("[Nav] Arrived & Aligned Special Point[%d] Type[%d]\r\n", special_idx, g_current_point_type);
+                #endif
+
+                if (g_current_point_type != NAV_POINT_PATH)
+                {
+                    if (g_current_point_type == NAV_POINT_CIRCLE) {
+                        minefield_flag = 1;
+                    }
+                    g_special_action_trigger = 1;
+                }
+                
+                // 防死锁：动作触发后，强行跨过这个特殊点
+                g_target_idx = special_idx + 1;
+            }
         }
         else
         {
@@ -302,12 +347,12 @@ void NavReplay_Process(void)
                 // 角度基本对准，根据到特殊点的物理距离来规划速度
                 if (dist_to_special > NAV_DIST_FAR)
                 {
-                    target_speed_set = NAV_SPEED_FAST;
+                    target_speed_set = NAV_SPEED_FAST/5.0f;
                 }
                 else if (dist_to_special > NAV_DIST_NEAR)
                 {
                     float ratio = (dist_to_special - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
-                    target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
+                    target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST/5.0f - NAV_SPEED_SLOW) * ratio;
                 }
                 else
                 {

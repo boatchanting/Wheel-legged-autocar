@@ -1,285 +1,372 @@
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.interpolate import splprep, splev, PchipInterpolator, interp1d, Akima1DInterpolator
+#!/usr/bin/env python3
+"""Interpolate nav replay route points while preserving special-point yaw metadata."""
+
+from __future__ import annotations
+
+import math
 import os
 import re
+from dataclasses import dataclass
 from datetime import datetime
+from typing import List, Optional, Tuple
 
-# 设置中文字体
-plt.rcParams['font.sans-serif'] = ['SimHei']  
-plt.rcParams['axes.unicode_minus'] = False    
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.interpolate import Akima1DInterpolator, PchipInterpolator, interp1d, splprep, splev
 
-INTERPOLATE_DIST = 20.0 # 目标插值间隔：20mm
+plt.rcParams["font.sans-serif"] = ["SimHei"]
+plt.rcParams["axes.unicode_minus"] = False
 
-# 定义特殊点枚举映射 (配合 C 语言 NavPointType_e)
-# 格式: 类型值: ('图例名称', '颜色', '标记形状')
+INTERPOLATE_DIST = 20.0
+
 SPECIAL_POINTS_MAP = {
-    1: ('转圈点 (Circle)', '#FF00FF', 'o'),  # 品红色 圆圈
-    2: ('上坡点 (Slope)', '#FFA500', '^'),    # 橙色 正三角
-    3: ('跳跃点 (Jump)', '#00FFFF', 'v'),     # 青色 倒三角
-    4: ('单边桥点 (Bridge)', '#8B4513', 's'), # 棕色 正方形
-    5: ('颠簸路段 (Bump)', '#800080', 'D')    # 紫色 菱形
+    1: ("转圆点", "#FF00FF", "o"),
+    2: ("上坡点", "#FFA500", "^"),
+    3: ("跳跃点", "#00FFFF", "v"),
+    4: ("桥点", "#8B4513", "s"),
+    5: ("颠簸路段", "#800080", "D"),
 }
 
-def read_raw_points_from_header(file_path):
-    points = []
-    if not os.path.exists(file_path):
-        print(f"找不到文件: {file_path}")
-        return points
-    
-    with open(file_path, 'r', encoding='utf-8') as f:
-        content = f.read()
-    
-    match = re.search(r'static const NavRamPoint_t nav_replay_static_route_points\[.*?\] = \{(.*?)\};', content, re.DOTALL)
-    if match:
-        array_content = match.group(1)
-        pattern = r'\{\s*([+-]?[\d\.]+)f\s*,\s*([+-]?[\d\.]+)f\s*,\s*\(uint8\)(\d+)\s*\}'
-        for m in re.finditer(pattern, array_content):
-            x, y, t = float(m.group(1)), float(m.group(2)), int(m.group(3))
-            points.append((x, y, t))
-    return points
 
-def generate_header(points, method_name, output_path):
+@dataclass
+class RoutePoint:
+    x: float
+    y: float
+    target_yaw_deg: Optional[float]
+    heading_deg: Optional[float]
+    point_type: int
+
+
+def normalize_relative_yaw_deg(value: float) -> float:
+    while value > 180.0:
+        value -= 360.0
+    while value <= -180.0:
+        value += 360.0
+    return value
+
+
+def normalize_heading_deg(value: float) -> float:
+    value = math.fmod(value, 360.0)
+    if value < 0.0:
+        value += 360.0
+    return value
+
+
+def calc_path_yaw_deg(x0: float, y0: float, x1: float, y1: float) -> float:
+    return -math.degrees(math.atan2(y1 - y0, -(x1 - x0)))
+
+
+def infer_missing_angles(points: List[RoutePoint]) -> None:
+    for idx, point in enumerate(points):
+        if point.target_yaw_deg is None:
+            yaw = None
+            if idx + 1 < len(points):
+                nxt = points[idx + 1]
+                if not math.isclose(point.x, nxt.x) or not math.isclose(point.y, nxt.y):
+                    yaw = calc_path_yaw_deg(point.x, point.y, nxt.x, nxt.y)
+            if yaw is None and idx > 0:
+                prev = points[idx - 1]
+                if not math.isclose(prev.x, point.x) or not math.isclose(prev.y, point.y):
+                    yaw = calc_path_yaw_deg(prev.x, prev.y, point.x, point.y)
+            point.target_yaw_deg = normalize_relative_yaw_deg(0.0 if yaw is None else yaw)
+
+        if point.heading_deg is None:
+            point.heading_deg = 0.0
+
+
+def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(file_path)
+
+    text = open(file_path, "r", encoding="utf-8").read()
+
+    start_heading_valid = 0
+    match_valid = re.search(r"#define\s+NAV_REPLAY_START_HEADING_VALID\s+(\d+)", text)
+    if match_valid:
+        start_heading_valid = int(match_valid.group(1))
+
+    start_heading_deg = 0.0
+    match_heading = re.search(r"#define\s+NAV_REPLAY_START_HEADING_DEG\s+([+-]?[\d\.]+)f", text)
+    if match_heading:
+        start_heading_deg = float(match_heading.group(1))
+
+    body_match = re.search(
+        r"static const NavRamPoint_t nav_replay_static_route_points\[.*?\]\s*=\s*\{(.*?)\};",
+        text,
+        re.DOTALL,
+    )
+    if not body_match:
+        return [], start_heading_valid, start_heading_deg
+
+    body = body_match.group(1)
+    points: List[RoutePoint] = []
+
+    pattern_v2 = re.compile(
+        r"\{\s*([+-]?[\d\.]+)f\s*,\s*([+-]?[\d\.]+)f\s*,\s*([+-]?[\d\.]+)f\s*,\s*([+-]?[\d\.]+)f\s*,\s*\(uint8\)(\d+)\s*\}"
+    )
+    pattern_v1 = re.compile(
+        r"\{\s*([+-]?[\d\.]+)f\s*,\s*([+-]?[\d\.]+)f\s*,\s*\(uint8\)(\d+)\s*\}"
+    )
+
+    for match in pattern_v2.finditer(body):
+        points.append(
+            RoutePoint(
+                x=float(match.group(1)),
+                y=float(match.group(2)),
+                target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
+                heading_deg=normalize_heading_deg(float(match.group(4))),
+                point_type=int(match.group(5)),
+            )
+        )
+
+    if not points:
+        for match in pattern_v1.finditer(body):
+            points.append(
+                RoutePoint(
+                    x=float(match.group(1)),
+                    y=float(match.group(2)),
+                    target_yaw_deg=None,
+                    heading_deg=None,
+                    point_type=int(match.group(3)),
+                )
+            )
+
+    infer_missing_angles(points)
+    return points, start_heading_valid, start_heading_deg
+
+
+def generate_header(
+    points: List[RoutePoint],
+    method_name: str,
+    output_path: str,
+    start_heading_valid: int,
+    start_heading_deg: float,
+) -> None:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    with open(output_path, 'w', encoding='utf-8') as f:
+
+    with open(output_path, "w", encoding="utf-8") as f:
         f.write("#ifndef _NAV_REPLAY_ROUTE_TABLE_H_\n")
         f.write("#define _NAV_REPLAY_ROUTE_TABLE_H_\n\n")
-        f.write("#include \"nav_ram.h\"\n\n")
-        f.write(f"// Auto-generated by spline_interpolate.py\n")
+        f.write('#include "nav_ram.h"\n\n')
+        f.write("// Auto-generated by tools/webview_nav_marker/chazhi.py\n")
         f.write(f"// Generated at: {timestamp}\n")
         f.write(f"// Interpolation Method: {method_name}\n")
-        f.write(f"// Interpolation interval: ~{INTERPOLATE_DIST}mm\n")
-        f.write(f"// Note: Origin (0,0) was used for curve shaping but excluded from this table.\n\n")
-        
-        f.write("#define NAV_REPLAY_START_HEADING_VALID 0\n")
-        f.write("#define NAV_REPLAY_START_HEADING_DEG 0.000f\n\n")
-        
+        f.write(f"// Interpolation interval: ~{INTERPOLATE_DIST}mm\n\n")
+        f.write(f"#define NAV_REPLAY_START_HEADING_VALID {start_heading_valid}\n")
+        f.write(f"#define NAV_REPLAY_START_HEADING_DEG {start_heading_deg:.3f}f\n\n")
         f.write(f"#define NAV_REPLAY_STATIC_ROUTE_COUNT {len(points)}\n\n")
-        
-        f.write(f"static const NavRamPoint_t nav_replay_static_route_points[{len(points)}] = {{\n")
-        for p in points:
-            f.write(f"    {{{p[0]:.3f}f, {p[1]:.3f}f, (uint8){p[2]}}},\n")
+        f.write(f"static const NavRamPoint_t nav_replay_static_route_points[{max(len(points), 1)}] = {{\n")
+        if points:
+            for p in points:
+                f.write(
+                    f"    {{{p.x:.3f}f, {p.y:.3f}f, {p.target_yaw_deg:.3f}f, "
+                    f"{p.heading_deg:.3f}f, (uint8){p.point_type}}},\n"
+                )
+        else:
+            f.write("    {0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH},\n")
         f.write("};\n\n")
-        
         f.write("#endif // _NAV_REPLAY_ROUTE_TABLE_H_\n")
 
-# 等距重采样
-def resample_path(x_fine, y_fine, target_dist):
-    diffs = np.sqrt(np.diff(x_fine)**2 + np.diff(y_fine)**2)
+
+def resample_path(x_fine: np.ndarray, y_fine: np.ndarray, target_dist: float) -> Tuple[np.ndarray, np.ndarray]:
+    diffs = np.sqrt(np.diff(x_fine) ** 2 + np.diff(y_fine) ** 2)
     cum_dist = np.insert(np.cumsum(diffs), 0, 0.0)
     total_length = cum_dist[-1]
-    
+
     if total_length == 0:
-        return x_fine, y_fine, len(x_fine)
-        
+        return x_fine, y_fine
+
     num_points = max(int(total_length / target_dist), 2)
     target_dists = np.linspace(0, total_length, num_points)
-    
     x_new = np.interp(target_dists, cum_dist, x_fine)
     y_new = np.interp(target_dists, cum_dist, y_fine)
-    
-    return x_new, y_new, num_points
+    return x_new, y_new
 
-# 拐角倒角平滑 (Corner Fillet / Blending)
-def corner_fillet_path(x_orig, y_orig, fillet_radius=500.0):
+
+def corner_fillet_path(x_orig: np.ndarray, y_orig: np.ndarray, fillet_radius: float = 500.0) -> Tuple[np.ndarray, np.ndarray]:
     pts = np.vstack((x_orig, y_orig)).T
     new_pts = [pts[0]]
-    
-    for i in range(1, len(pts)-1):
-        p0, p1, p2 = pts[i-1], pts[i], pts[i+1]
-        
-        # 计算线段向量和长度
+
+    for i in range(1, len(pts) - 1):
+        p0, p1, p2 = pts[i - 1], pts[i], pts[i + 1]
         v1 = p0 - p1
         v2 = p2 - p1
         l1 = np.linalg.norm(v1)
         l2 = np.linalg.norm(v2)
-        
+
         if l1 < 1e-3 or l2 < 1e-3:
             new_pts.append(p1)
             continue
-            
+
         v1_norm = v1 / l1
         v2_norm = v2 / l2
-        
-        # 实际倒角截取长度 (不能超过线段的一半)
         cut_len = min(fillet_radius, l1 * 0.45, l2 * 0.45)
-        
-        # 倒角起点和终点
         p_start = p1 + v1_norm * cut_len
         p_end = p1 + v2_norm * cut_len
-        
-        # 使用二次贝塞尔曲线进行局部圆滑过渡
+
         t = np.linspace(0, 1, 20)
-        bezier_x = (1-t)**2 * p_start[0] + 2*(1-t)*t * p1[0] + t**2 * p_end[0]
-        bezier_y = (1-t)**2 * p_start[1] + 2*(1-t)*t * p1[1] + t**2 * p_end[1]
-        
+        bezier_x = (1 - t) ** 2 * p_start[0] + 2 * (1 - t) * t * p1[0] + t ** 2 * p_end[0]
+        bezier_y = (1 - t) ** 2 * p_start[1] + 2 * (1 - t) * t * p1[1] + t ** 2 * p_end[1]
         new_pts.extend(np.vstack((bezier_x, bezier_y)).T)
-        
+
     new_pts.append(pts[-1])
     new_pts = np.array(new_pts)
-    return new_pts[:,0], new_pts[:,1]
+    return new_pts[:, 0], new_pts[:, 1]
 
-# B样条平滑 (不严格过控制点)
-def b_spline_path(x_orig, y_orig, smooth_factor=5.0):
-    tck, u = splprep([x_orig, y_orig], s=smooth_factor, k=3)
+
+def b_spline_path(x_orig: np.ndarray, y_orig: np.ndarray, smooth_factor: float = 5.0) -> Tuple[np.ndarray, np.ndarray]:
+    tck, _ = splprep([x_orig, y_orig], s=smooth_factor, k=min(3, len(x_orig) - 1))
     u_fine = np.linspace(0, 1, 2000)
     x_spline, y_spline = splev(u_fine, tck)
     return x_spline, y_spline
 
-def main():
-    header_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '../../code/navigation/nav_replay_route_table.h'))
-    raw_points = read_raw_points_from_header(header_path)
-    
-    if not raw_points:
-        print("未读取到任何原始数据点，程序退出。")
-        return
 
-    # 分类提取特殊点用于绘图展示
-    sp_dict = {}
-    for p in raw_points:
-        orig_t = p[2]
-        if orig_t != 0:
-            if orig_t not in sp_dict:
-                sp_dict[orig_t] = {'x': [], 'y': []}
-            sp_dict[orig_t]['x'].append(p[0])
-            sp_dict[orig_t]['y'].append(p[1])
+def tangent_yaws(x_vals: np.ndarray, y_vals: np.ndarray) -> np.ndarray:
+    yaws = np.zeros(len(x_vals), dtype=float)
+    for i in range(len(x_vals)):
+        if i + 1 < len(x_vals):
+            x0, y0, x1, y1 = x_vals[i], y_vals[i], x_vals[i + 1], y_vals[i + 1]
+        elif i > 0:
+            x0, y0, x1, y1 = x_vals[i - 1], y_vals[i - 1], x_vals[i], y_vals[i]
+        else:
+            x0 = x1 = x_vals[i]
+            y0 = y1 = y_vals[i]
+        yaws[i] = normalize_relative_yaw_deg(calc_path_yaw_deg(x0, y0, x1, y1))
+    return yaws
 
-    # 引入 (0,0) 作为起点
-    spline_input_points = [(0.0, 0.0, 0)] + raw_points
-    x_orig = np.array([p[0] for p in spline_input_points])
-    y_orig = np.array([p[1] for p in spline_input_points])
-    
-    diffs = np.sqrt(np.diff(x_orig)**2 + np.diff(y_orig)**2)
+
+def build_methods(x_orig: np.ndarray, y_orig: np.ndarray) -> dict:
+    diffs = np.sqrt(np.diff(x_orig) ** 2 + np.diff(y_orig) ** 2)
     t_orig = np.insert(np.cumsum(diffs), 0, 0.0)
-    t_orig /= t_orig[-1] 
-    
-    methods = {}
+    if t_orig[-1] == 0:
+        t_orig[-1] = 1.0
+    t_orig = t_orig / t_orig[-1]
     u_fine = np.linspace(0, 1, 2000)
-    
-    # 1. Cubic Spline
-    k_degree = min(3, len(x_orig) - 1)
-    tck_cubic, _ = splprep([x_orig, y_orig], s=0, k=k_degree)
-    x_c, y_c = splev(u_fine, tck_cubic)
-    methods['1'] = ('Cubic Spline (严格过点,易过冲)', *resample_path(x_c, y_c, INTERPOLATE_DIST)[:2])
 
-    # 2. PCHIP
+    methods = {}
+    tck_cubic, _ = splprep([x_orig, y_orig], s=0, k=min(3, len(x_orig) - 1))
+    x_c, y_c = splev(u_fine, tck_cubic)
+    methods["1"] = ("Cubic Spline", *resample_path(np.array(x_c), np.array(y_c), INTERPOLATE_DIST))
+
     fx_pchip = PchipInterpolator(t_orig, x_orig)
     fy_pchip = PchipInterpolator(t_orig, y_orig)
-    methods['2'] = ('PCHIP (严格过点,保形无过冲)', *resample_path(fx_pchip(u_fine), fy_pchip(u_fine), INTERPOLATE_DIST)[:2])
+    methods["2"] = ("PCHIP", *resample_path(fx_pchip(u_fine), fy_pchip(u_fine), INTERPOLATE_DIST))
 
-    # 3. Akima
     fx_akima = Akima1DInterpolator(t_orig, x_orig)
     fy_akima = Akima1DInterpolator(t_orig, y_orig)
-    methods['3'] = ('Akima (严格过点,抑制过冲)', *resample_path(fx_akima(u_fine), fy_akima(u_fine), INTERPOLATE_DIST)[:2])
+    methods["3"] = ("Akima", *resample_path(fx_akima(u_fine), fy_akima(u_fine), INTERPOLATE_DIST))
 
-    # 4. Corner Fillet (几何倒角)
-    # 取平均段距的 1/3 作为倒角半径尝试值
-    avg_dist = np.mean(diffs)
-    x_fillet, y_fillet = corner_fillet_path(x_orig, y_orig, fillet_radius=avg_dist*0.5)
-    methods['4'] = ('Corner Fillet (直线+局部圆滑倒角)', *resample_path(x_fillet, y_fillet, INTERPOLATE_DIST)[:2])
+    avg_dist = np.mean(diffs) if len(diffs) else INTERPOLATE_DIST
+    x_fillet, y_fillet = corner_fillet_path(x_orig, y_orig, fillet_radius=avg_dist * 0.5)
+    methods["4"] = ("Corner Fillet", *resample_path(x_fillet, y_fillet, INTERPOLATE_DIST))
 
-    # 5. B-Spline Smoothing
-    # s 越大越平滑，偏离控制点越远
-    x_bs, y_bs = b_spline_path(x_orig, y_orig, smooth_factor=len(x_orig)*10)
-    methods['5'] = ('B-Spline (控制点平滑,不严格过点)', *resample_path(x_bs, y_bs, INTERPOLATE_DIST)[:2])
-    
-    # 6. Linear 
-    fx_lin = interp1d(t_orig, x_orig, kind='linear')
-    fy_lin = interp1d(t_orig, y_orig, kind='linear')
-    methods['6'] = ('Linear (纯粹直线)', *resample_path(fx_lin(u_fine), fy_lin(u_fine), INTERPOLATE_DIST)[:2])
+    x_bs, y_bs = b_spline_path(x_orig, y_orig, smooth_factor=max(len(x_orig) * 10, 1))
+    methods["5"] = ("B-Spline", *resample_path(x_bs, y_bs, INTERPOLATE_DIST))
 
-    # ================= 可视化展示 =================
-    plt.ion() 
+    fx_lin = interp1d(t_orig, x_orig, kind="linear")
+    fy_lin = interp1d(t_orig, y_orig, kind="linear")
+    methods["6"] = ("Linear", *resample_path(fx_lin(u_fine), fy_lin(u_fine), INTERPOLATE_DIST))
+
+    return methods
+
+
+def show_methods(raw_points: List[RoutePoint], methods: dict) -> None:
+    plt.ion()
     fig, axs = plt.subplots(2, 3, figsize=(16, 8))
-    fig.canvas.manager.set_window_title('高级路径规划与插值对比')
+    fig.canvas.manager.set_window_title("路径平滑与插值对比")
     axs = axs.flatten()
-    
-    for idx, (key, (name, x_res, y_res)) in enumerate(methods.items()):
-        ax = axs[idx]
-        
-        # 绘制基础路线
-        ax.plot(x_orig, y_orig, 'ro-', label='原始控制点', markersize=4, alpha=0.4, zorder=3)
-        ax.plot(x_res, y_res, 'b.-', markersize=3, label='规划路线', zorder=2)
-        if len(x_res) > 1:
-            ax.plot(x_res[1], y_res[1], 'g*', markersize=10, label='起始点(剔除原点)', zorder=4)
-            
-        # 在图上叠加高亮特殊点
-        for t, coords in sp_dict.items():
-            if t in SPECIAL_POINTS_MAP:
-                sp_name, sp_color, sp_marker = SPECIAL_POINTS_MAP[t]
-                ax.scatter(coords['x'], coords['y'], c=sp_color, marker=sp_marker, s=80, 
-                           edgecolors='black', label=sp_name, zorder=5)
-            else:
-                ax.scatter(coords['x'], coords['y'], c='black', marker='X', s=80, 
-                           label=f'未知特殊点({t})', zorder=5)
 
+    x_orig = np.array([p.x for p in raw_points])
+    y_orig = np.array([p.y for p in raw_points])
+    special_points = [p for p in raw_points if p.point_type != 0]
+
+    for ax, (key, (name, x_res, y_res)) in zip(axs, methods.items()):
+        ax.plot(x_orig, y_orig, "ro-", label="原始控制点", markersize=4, alpha=0.5, zorder=3)
+        ax.plot(x_res, y_res, "b.-", markersize=3, label="插值路径", zorder=2)
+        for p in special_points:
+            label, color, marker = SPECIAL_POINTS_MAP.get(p.point_type, ("特殊点", "black", "X"))
+            ax.scatter([p.x], [p.y], c=color, marker=marker, s=80, edgecolors="black", label=label, zorder=5)
         ax.set_title(f"[{key}] {name}")
-        ax.axis('equal')
-        ax.grid(True, linestyle='--', alpha=0.6)
-        # 缩小图例字体以容纳更多的特殊点标签
-        ax.legend(fontsize=8, loc='best')
-        
+        ax.axis("equal")
+        ax.grid(True, linestyle="--", alpha=0.6)
+        ax.legend(fontsize=8, loc="best")
+
     plt.tight_layout()
     plt.pause(0.5)
 
-    # ================= 终端交互 =================
-    print("\n" + "="*70)
-    print(" 🚗 路径平滑与规划算法测试区")
-    print("="*70)
-    print(" [严格过点类]")
-    print("  [1] Cubic Spline - 极其平滑连续，但急弯处易产生钟摆过冲 (Overshoot)。")
-    print("  [2] PCHIP        - 物理保形插值，严格贴合折线包络，绝不过冲，弯道略生硬。")
-    print("  [3] Akima        - 介于样条和保形之间，对阶跃点有极好的抑制效果。")
-    print(" [非严格过点 / 几何平滑类 (更适合自动驾驶车道线生成)]")
-    print("  [4] Corner Fillet- 保持长直道绝对直线，仅在拐角尖端做圆润过渡 (贴近人类驾驶习惯)。")
-    print("  [5] B-Spline     - 将原点作为引力控制点，生成全局平滑流线，彻底消除突变曲率。")
-    print(" [基础类]")
-    print("  [6] Linear       - 纯粹的多边形折线连线，无任何平滑。")
-    print("="*70)
-    
-    choice = input("👉 请输入您想采用的方法编号 (1~6) [默认 4]: ").strip()
-    plt.close('all')
-    
-    if choice not in methods:
-        print("未输入或输入无效，默认选择 [4] Corner Fillet 局部倒角")
-        choice = '4'
-        
-    selected_name, sel_x, sel_y = methods[choice]
-    
-    # ================= 强制锚定：保留特殊点且位置绝对不动 =================
-    num_pts = len(sel_x)
-    final_x = np.array(sel_x)
-    final_y = np.array(sel_y)
-    final_t = np.zeros(num_pts, dtype=int) # 默认 0 为普通路径点
-    
-    # 遍历原始的所有数据点
-    for orig_p in raw_points:
-        orig_x, orig_y, orig_type = orig_p
-        
-        # 只要是特殊点（type != 0），或者是路径的最后一个终点，都必须强制保留
-        if orig_type != 0 or orig_p == raw_points[-1]:
-            # 在新插值的密集点阵中，找到距离这个原点最近的点的索引
-            dists_sq = (final_x - orig_x)**2 + (final_y - orig_y)**2
-            closest_idx = np.argmin(dists_sq)
-            
-            # 【核心】：强行用原始的精确坐标覆盖插值坐标，确保位置绝对不移动！
-            final_x[closest_idx] = orig_x
-            final_y[closest_idx] = orig_y
-            final_t[closest_idx] = orig_type
 
-    final_points = []
-    # 从 1 开始遍历，剔除为了计算曲率而额外引入的起始原点(0,0)
-    for i in range(1, num_pts):
-        final_points.append((final_x[i], final_y[i], final_t[i]))
-        
-    generate_header(final_points, selected_name, header_path)
-    
-    print(f"\n✅ 已选择: {selected_name}")
-    print(f"✅ 头文件已生成覆盖: {header_path}")
-    print(f"✅ 共产生 {num_pts} 个点，写入表中 {len(final_points)} 个点 (含精确特殊点)。")
-    print("✅ 绘图窗口已自动关闭。")
+def build_final_points(raw_points: List[RoutePoint], sel_x: np.ndarray, sel_y: np.ndarray) -> List[RoutePoint]:
+    final_x = np.array(sel_x, dtype=float)
+    final_y = np.array(sel_y, dtype=float)
+    final_type = np.zeros(len(final_x), dtype=int)
+    final_yaw = tangent_yaws(final_x, final_y)
+    final_heading = np.zeros(len(final_x), dtype=float)
+
+    for idx, original in enumerate(raw_points):
+        if original.point_type != 0 or idx == len(raw_points) - 1:
+            dists_sq = (final_x - original.x) ** 2 + (final_y - original.y) ** 2
+            closest_idx = int(np.argmin(dists_sq))
+            final_x[closest_idx] = original.x
+            final_y[closest_idx] = original.y
+            final_type[closest_idx] = original.point_type
+            final_yaw[closest_idx] = original.target_yaw_deg
+            final_heading[closest_idx] = original.heading_deg
+
+    return [
+        RoutePoint(
+            x=float(final_x[i]),
+            y=float(final_y[i]),
+            target_yaw_deg=normalize_relative_yaw_deg(float(final_yaw[i])),
+            heading_deg=normalize_heading_deg(float(final_heading[i])),
+            point_type=int(final_type[i]),
+        )
+        for i in range(1, len(final_x))
+    ]
+
+
+def main() -> None:
+    header_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "../../code/navigation/nav_replay_route_table.h")
+    )
+    raw_points, start_heading_valid, start_heading_deg = read_route_header(header_path)
+
+    if not raw_points:
+        print("未读取到任何原始数据点。")
+        return
+
+    spline_input_points = [RoutePoint(0.0, 0.0, 0.0, 0.0, 0)] + raw_points
+    x_orig = np.array([p.x for p in spline_input_points], dtype=float)
+    y_orig = np.array([p.y for p in spline_input_points], dtype=float)
+    methods = build_methods(x_orig, y_orig)
+    show_methods(spline_input_points, methods)
+
+    print("\n" + "=" * 68)
+    print("路径平滑与插值方法")
+    print("[1] Cubic Spline")
+    print("[2] PCHIP")
+    print("[3] Akima")
+    print("[4] Corner Fillet")
+    print("[5] B-Spline")
+    print("[6] Linear")
+    print("=" * 68)
+
+    choice = input("请输入方法编号 (1~6) [默认 4]: ").strip() or "4"
+    plt.close("all")
+
+    if choice not in methods:
+        print("输入无效，默认使用 [4] Corner Fillet")
+        choice = "4"
+
+    method_name, sel_x, sel_y = methods[choice]
+    final_points = build_final_points(spline_input_points, sel_x, sel_y)
+    generate_header(final_points, method_name, header_path, start_heading_valid, start_heading_deg)
+
+    print(f"\n已选择: {method_name}")
+    print(f"头文件已生成: {header_path}")
+    print(f"写入点数: {len(final_points)}")
+    print("特殊点的位置、类型、目标偏航和 heading 已保留。")
+
 
 if __name__ == "__main__":
     main()

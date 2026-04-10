@@ -20,6 +20,8 @@ void NavRam_Init(void)
     {
         nav_ram_data.points[i].x = 0.0f;
         nav_ram_data.points[i].y = 0.0f;
+        nav_ram_data.points[i].target_yaw_deg = 0.0f;
+        nav_ram_data.points[i].heading_deg = 0.0f;
         nav_ram_data.points[i].point_type = 0;
     }
 }
@@ -51,6 +53,12 @@ uint8 NavRam_RecordPoint(uint8 point_type)
     // 直接读取当前惯导解算结果
     nav_ram_data.points[idx].x = inertial_nav.x;
     nav_ram_data.points[idx].y = inertial_nav.y;
+    nav_ram_data.points[idx].target_yaw_deg = inertial_nav.relative_yaw;
+#if IMU_CATEGORY == 3
+    nav_ram_data.points[idx].heading_deg = heading;
+#else
+    nav_ram_data.points[idx].heading_deg = 0.0f;
+#endif
     nav_ram_data.points[idx].point_type = point_type;
 
     nav_ram_data.point_count++;

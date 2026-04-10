@@ -36,12 +36,13 @@ typedef enum
 // ========================= 单个惯导点 =========================
 typedef struct
 {
-    float x;                // 惯导 X 坐标 (mm)
-    float y;                // 惯导 Y 坐标 (mm)
-    uint8 point_type;       // 点类型 (NavPointType_e)
+    float x;
+    float y;
+    float target_yaw_deg;
+    float heading_deg;
+    uint8 point_type;
 } NavRamPoint_t;
 
-// ========================= RAM 总结构 =========================
 typedef struct
 {
     uint8 plan_type;                        // 当前 plan
