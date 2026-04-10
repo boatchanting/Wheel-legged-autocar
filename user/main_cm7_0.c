@@ -448,6 +448,17 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             vision_detected_jump_point = 0; // 清除标志位，防止连续触发
         }
 
+         // 2. 模拟视觉触发【三级跳】测试
+        if (vision_detected_three_jump_point == 1) 
+        {
+            // 判断当前是否处于空闲状态，防止跳跃中途重复触发打断动作
+            if (!jump_stepup_three_stairs_test_is_active()) 
+            {
+                jump_stepup_three_stairs_test_start(); // <--- 启动三级跳状态机
+            }
+            vision_detected_three_jump_point = 0; // 清除标志位
+        }
+
         // 模拟视觉触发颠簸测试
         if (vision_detected_bumpy_point == 1)
         {
