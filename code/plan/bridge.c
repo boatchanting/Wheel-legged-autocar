@@ -254,8 +254,8 @@ void Bridge_Init(void) {
     // 速度参数 
     bridge_params.speed_brake   = -30.0f; 
     bridge_params.speed_ready   = -45.0f; 
-    bridge_params.speed_climb   = -60.0f; 
-    bridge_params.speed_normal  = -90.0f; 
+    bridge_params.speed_climb   = -120.0f; 
+    bridge_params.speed_normal  = -180.0f; 
 
     // 姿态参数
     bridge_params.height_normal = 3.0f;   // 平地正常高度
