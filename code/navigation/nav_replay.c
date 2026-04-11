@@ -217,15 +217,14 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
     return (max_curve > 1.0f) ? 1.0f : max_curve;
 }
 
-// ============================================================================
-// 🎯 全局/静态变量声明区
-// ============================================================================
 uint8 is_arrived = 0;  // 到达判定状态锁
 
 // 局部静态变量：用于滤波历史保持与下降沿检测
 static uint8 s_is_aligning = 0;
 static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下降沿）
 
+/*这里注释了，保存的是Pure Pursuit 联合 特殊点直走 状态机*/
+/*
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING) return;
@@ -470,7 +469,168 @@ void NavReplay_Process(void)
         prev_speed_set = target_speed_set;
     }
 }
+*/
 
+
+// ============================================================================
+// 精准复刻处理逻辑 (点到点，先转再走，加入防震荡与平滑滤波)
+// 慢慢的跑科三
+// ============================================================================
+// --- 角度平滑与防过冲参数 ---
+#define MAX_SPIN_ERR        2.0f   // 原地对齐时的最大输出角度(度)。越小转得越柔和，建议 20-40，彻底解决原地打转过冲！
+#define MAX_APPROACH_ERR    4.0f   // 直线逼近时的最大转角(度)。防止车子在行进中猛烈变道。
+#define ANGLE_FILTER_ALPHA  0.3f    // 角度滤波系数(0~1)。越小越丝滑，越大越跟手。防止在点旁边抽搐。
+
+static float s_prev_err_degree = 0.0f; // 用于角度滤波的静态变量
+
+// 局部静态变量，用于记录历史角度和状态锁
+
+void NavReplay_Process(void)
+{
+    if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) 
+    {
+        s_prev_err_degree = 0.0f; 
+        s_is_aligning = 0; // 状态机接管或停止时，确保解锁
+        return;
+    }
+
+#if IMU_CATEGORY == 3
+    // 开局起跑角度对齐
+    if (!g_start_heading_aligned)
+    {
+        float heading_err = NormalizeAngle(NAV_REPLAY_START_HEADING_DEG - heading);
+        
+        if (heading_err > MAX_SPIN_ERR) heading_err = MAX_SPIN_ERR;
+        if (heading_err < -MAX_SPIN_ERR) heading_err = -MAX_SPIN_ERR;
+        
+        err_degree = heading_err;
+        target_speed_set = NAV_SPEED_STOP;
+
+        if (fabsf(NormalizeAngle(NAV_REPLAY_START_HEADING_DEG - heading)) <= NAV_START_HEADING_TOLERANCE)
+        {
+            g_start_heading_aligned = 1;
+            err_degree = 0.0f;
+            s_prev_err_degree = 0.0f;
+        }
+        else return;
+    }
+#endif
+
+    // 1. 检查是否跑完全部点位
+    if (g_target_idx >= nav_ram_data.point_count)
+    {
+        g_replay_state = REPLAY_FINISHED;
+        target_speed_set = NAV_SPEED_STOP;
+        err_degree = 0.0f;
+        s_is_aligning = 0;
+        return;
+    }
+
+    // 2. 获取当前目标点数据
+    float tx = nav_ram_data.points[g_target_idx].x;
+    float ty = nav_ram_data.points[g_target_idx].y;
+    g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
+
+    // 3. 计算距离和期望位置角度
+    float dx = tx - inertial_nav.x;
+    float dy = ty - inertial_nav.y;
+    float dist = CalcDistance(inertial_nav.x, inertial_nav.y, tx, ty);
+
+    float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
+    float raw_err = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
+
+    // 4. 控制策略：先转再走
+    // 🌟 核心修改：如果距离够近，或者【已经被锁在对齐状态中】，都强行进入到达逻辑！🌟
+    if (dist <= NAV_DIST_ARRIVE || s_is_aligning)
+    {
+        // ==========================================
+        // 【A. 已经到达目标点 (执行停车 / 对角)】
+        // ==========================================
+        target_speed_set = NAV_SPEED_STOP;
+
+        if (g_current_point_type != NAV_POINT_PATH)
+        {
+            // 第一步：只要进来了，立刻锁死状态！即便下一帧 dist 变大了也不会退出去！
+            s_is_aligning = 1; 
+
+            // 第二步：开始专心对齐特殊点的角度
+            float special_target_yaw = nav_ram_data.points[g_target_idx].target_yaw_deg;
+            float special_yaw_err = NormalizeAngle(special_target_yaw - inertial_nav.relative_yaw);
+
+            if (fabsf(special_yaw_err) > NAV_YAW_TOLERANCE)
+            {
+                // 限幅保护，温柔转向
+                if (special_yaw_err > MAX_SPIN_ERR) special_yaw_err = MAX_SPIN_ERR;
+                if (special_yaw_err < -MAX_SPIN_ERR) special_yaw_err = -MAX_SPIN_ERR;
+                
+                err_degree = special_yaw_err;
+                s_prev_err_degree = err_degree; 
+            }
+            else
+            {
+                // 位置到了，角度也转对了！正式触发状态机！
+                if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
+                else if (g_current_point_type == NAV_POINT_JUMP) vision_detected_three_jump_point = 1;
+                else if (g_current_point_type == NAV_POINT_BRIDGE) vision_detected_bridge_point = 1;
+                else if (g_current_point_type == NAV_POINT_BUMP) BumpyRoad_Trigger();
+                
+                g_special_action_trigger = 1;
+                g_target_idx++;     // 切向下一个点
+                
+                s_prev_err_degree = 0.0f;
+                s_is_aligning = 0;  // 🌟 对齐完成，解除锁定！🌟
+            }
+        }
+        else
+        {
+            // 普通路径点：到了直接切下一个点
+            g_target_idx++;
+            s_is_aligning = 0;      // 确保普通点不会被误锁
+        }
+    }
+    else
+    {
+        // ==========================================
+        // 【B. 未到达目标点 (还在路上)】
+        // ==========================================
+        
+        // 距离点非常近时的抽搐保护
+        if (dist < NAV_DIST_ARRIVE + 150.0f) {
+            if (raw_err > 15.0f) raw_err = 15.0f;
+            if (raw_err < -15.0f) raw_err = -15.0f;
+        } 
+        else {
+            if (raw_err > MAX_APPROACH_ERR) raw_err = MAX_APPROACH_ERR;
+            if (raw_err < -MAX_APPROACH_ERR) raw_err = -MAX_APPROACH_ERR;
+        }
+
+        err_degree = ANGLE_FILTER_ALPHA * raw_err + (1.0f - ANGLE_FILTER_ALPHA) * s_prev_err_degree;
+        s_prev_err_degree = err_degree;
+
+        // 检查车头是否对准目标点
+        if (fabsf(NormalizeAngle(target_yaw - inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE)
+        {
+            target_speed_set = NAV_SPEED_STOP; // 角度偏大，原地转
+        }
+        else
+        {
+            // 角度基本对准，开始直线移动逼近
+            if (dist > NAV_DIST_FAR)
+            {
+                target_speed_set = NAV_SPEED_FAST;
+            }
+            else if (dist > NAV_DIST_NEAR)
+            {
+                float ratio = (dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
+                target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
+            }
+            else
+            {
+                target_speed_set = NAV_SPEED_SLOW;
+            }
+        }
+    }
+}
 
 /*这里注释了，保存的是原有的到一个点停一次的控制逻辑，仅仅能实现最基本的到达，但它的控制距离是精准的，逻辑是完备的，后面所有的代码都在其基础上进行优化和尝试*/
 /*
