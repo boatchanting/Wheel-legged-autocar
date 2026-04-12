@@ -120,6 +120,7 @@ const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:120
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
+let txStatusTimer=null;
 
 function tip(t){E.toast.textContent=t;E.toast.classList.add('show');clearTimeout(tip.t);tip.t=setTimeout(()=>E.toast.classList.remove('show'),2200)}
 function clampType(v){v=Number(v);if(Number.isNaN(v))return 0;return Math.max(0,Math.min(5,Math.round(v)))}
@@ -148,7 +149,7 @@ function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent
 function syncRows(){E.rows.innerHTML=S.marks.map((m,i)=>{const opts=TYPES.map(t=>`<option value="${t.value}" ${m.type===t.value?'selected':''}>${t.value}</option>`).join('');return `<tr class="${m.id===S.sel?'sel':''}"><td>${i}</td><td>${m.x.toFixed(0)}</td><td>${m.y.toFixed(0)}</td><td>${m.targetYaw.toFixed(1)}</td><td>${m.heading.toFixed(1)}</td><td><select class="rt" data-id="${m.id}">${opts}</select></td><td><button class="rf" data-id="${m.id}">选中</button><button class="rd" data-id="${m.id}">删</button></td></tr>`}).join('');E.rows.querySelectorAll('.rf').forEach(b=>b.onclick=()=>{S.sel=Number(b.dataset.id);syncMarks();draw()});E.rows.querySelectorAll('.rd').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.id);S.marks=S.marks.filter(v=>v.id!==id);if(S.sel===id)S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()});E.rows.querySelectorAll('.rt').forEach(s=>s.onchange=()=>{const id=Number(s.dataset.id);const m=S.marks.find(v=>v.id===id);if(!m)return;m.type=clampType(s.value);if(S.sel===id)syncSel();draw()})}
 function syncMarks(){syncTop();syncSel();syncRows()}
 function setConn(ok,text,cls){E.st.className='tag '+cls;E.st.textContent=text;if(ok)S.lastDataAt=performance.now()}
-function setTxStatus(state){if(state==='ok'){E.txState.className='tag ok';E.txState.textContent='回传成功'}else if(state==='err'){E.txState.className='tag err';E.txState.textContent='回传失败'}else{E.txState.className='tag warn';E.txState.textContent='尚未回传'}}
+function setTxStatus(state,autoReset=true){if(state==='ok'){E.txState.className='tag ok';E.txState.textContent='回传成功'}else if(state==='err'){E.txState.className='tag err';E.txState.textContent='回传失败'}else{E.txState.className='tag warn';E.txState.textContent='尚未回传'}if(autoReset&&state!=='idle'){clearTimeout(txStatusTimer);txStatusTimer=setTimeout(()=>setTxStatus('idle',false),3000)}else if(state==='idle'){clearTimeout(txStatusTimer);txStatusTimer=null}}
 function exportPayload(){return S.marks.map((m,i)=>({index:i,x:m.x,y:m.y,relative_yaw:m.targetYaw,heading:m.heading,point_type:m.type}))}
 async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pywebview.api)return{success:false,msg:'后端 API 未就绪'};try{return await window.pywebview.api.send_host_control(code)}catch(e){return{success:false,msg:'命令发送异常:'+(e.message||e)}}}
 function feed(frames){if(!Array.isArray(frames)||!frames.length)return;for(const it of frames){const x=Number(it.nav_x),y=Number(it.nav_y),yaw=normalizeYaw(it.relative_yaw||0),hdg=normalizeHeading(it.heading||0);if(Number.isFinite(x)&&Number.isFinite(y)){S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg};S.traj.push({x,y})}const trig=Number(it.mark_trigger)||0;if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',yaw,hdg);S.lastMarkLoop=Number(it.loop)||0}S.lastTrigger=trig;S.payload=it.payload_size||'--'}if(S.traj.length>S.maxTraj)S.traj.splice(0,S.traj.length-S.maxTraj);S.rx+=frames.length;S.lastDataAt=performance.now();if(V.adaptive)fitAll();else if(V.follow)follow();syncTop();draw()}
@@ -175,7 +176,7 @@ S.traj=[];S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
 if(S.api&&window.pywebview&&window.pywebview.api){try{await window.pywebview.api.clear_history()}catch(_){ }}
 draw();syncTop();tip('\u5df2\u6e05\u7a7a\u8f68\u8ff9');
 const sendResult=await sendHostControl(HOST_CTRL_CLEAR_TRAJECTORY);
-if(sendResult.success){setTxStatus('ok')}else{setTxStatus('err');tip('\u8f68\u8ff9\u5df2\u6e05\u7a7a\uff0c\u4f46\u901a\u77e5\u5c0f\u8f66\u5931\u8d25')}
+if(sendResult&&sendResult.success){setTxStatus('ok');tip(sendResult.msg||'\u5df2\u6536\u5230\u5c0f\u8f66\u56de\u4f20')}else{setTxStatus('err');tip(sendResult&&sendResult.msg?sendResult.msg:'\u8f68\u8ff9\u5df2\u6e05\u7a7a\uff0c\u4f46\u901a\u77e5\u5c0f\u8f66\u5931\u8d25')}
 };
 E.bStartCar.onclick=async()=>{
 const sendResult=await sendHostControl(HOST_CTRL_START_CAR);
@@ -186,7 +187,7 @@ E.bExport.onclick=async()=>{const p=exportPayload();if(!p.length){tip('\u6ca1\u6
 }
 function initApi(){const ck=()=>{if(window.pywebview&&window.pywebview.api){S.api=true;return true}return false};window.addEventListener('pywebviewready',()=>{S.api=true});const t=setInterval(()=>{if(ck())clearInterval(t)},80)}
 function initFps(){setInterval(()=>{S.fps=S.rx;S.rx=0;syncTop()},1000)}
-function boot(){initBtns();initCanvas();initApi();initFps();resize();syncMarks();setTxStatus('idle');pollData();pollStatus();window.addEventListener('resize',resize)}
+function boot(){initBtns();initCanvas();initApi();initFps();resize();syncMarks();setTxStatus('idle',false);pollData();pollStatus();window.addEventListener('resize',resize)}
 document.addEventListener('DOMContentLoaded',boot);
 </script>
 </body>

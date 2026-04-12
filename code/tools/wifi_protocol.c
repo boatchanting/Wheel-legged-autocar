@@ -10,6 +10,7 @@ static uint16_t tx_idx = 0;
 #define WIFI_RX_READ_CHUNK   128U
 #define WIFI_RX_STREAM_SIZE  512U
 #define WIFI_FRAME_MIN_SIZE  6U
+#define WIFI_ACK_PAYLOAD_LEN 2U
 
 static uint8_t rx_stream[WIFI_RX_STREAM_SIZE];
 static uint16_t rx_len = 0;
@@ -60,11 +61,53 @@ static void write_double(const double *val_ptr)
     }
 }
 
+static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
+{
+    uint8_t frame[WIFI_FRAME_MIN_SIZE + 16U];
+    uint16_t idx = 0U;
+
+    if (payload_len > 16U)
+    {
+        return;
+    }
+
+    frame[idx++] = WIFI_FRAME_HEAD1;
+    frame[idx++] = WIFI_FRAME_HEAD2;
+    frame[idx++] = cmd;
+    frame[idx++] = payload_len;
+
+    for (uint8_t i = 0U; i < payload_len; i++)
+    {
+        frame[idx++] = payload[i];
+    }
+
+    uint8_t check_sum = 0U;
+    for (uint16_t i = 0U; i < idx; i++)
+    {
+        check_sum = (uint8_t)(check_sum + frame[i]);
+    }
+
+    frame[idx++] = check_sum;
+    frame[idx++] = WIFI_FRAME_TAIL;
+
+    wifi_spi_send_buffer(frame, idx);
+}
+
+static void wifi_protocol_send_host_ack(uint8_t control_id, uint8_t status)
+{
+    uint8_t payload[WIFI_ACK_PAYLOAD_LEN];
+    payload[0] = control_id;
+    payload[1] = status;
+    wifi_protocol_send_simple_frame(WIFI_CMD_HOST_ACK, payload, WIFI_ACK_PAYLOAD_LEN);
+}
+
 // ------------------------------------------------------------------
 // Host control command handling
 // ------------------------------------------------------------------
 static void wifi_protocol_apply_host_control(uint8_t control_id)
 {
+    uint8_t ack_status = WIFI_HOST_ACK_UNKNOWN_CMD;
+
     switch (control_id)
     {
     case WIFI_HOST_CTRL_CLEAR_TRAJECTORY:
@@ -74,12 +117,14 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
         Menu_TriggerRecordAction();
         if (accepted)
         {
+            ack_status = WIFI_HOST_ACK_ACCEPTED;
 #if DEBUG_LOG_ENABLE
             printf("[WIFI] Host cmd CLEAR_TRAJECTORY accepted.\r\n");
 #endif
         }
         else
         {
+            ack_status = WIFI_HOST_ACK_REJECTED;
 #if DEBUG_LOG_ENABLE
             printf("[WIFI] Host cmd CLEAR_TRAJECTORY ignored (motor/yaw not ready).\r\n");
 #endif
@@ -94,12 +139,14 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
         Menu_TriggerStartAction();
         if (accepted)
         {
+            ack_status = WIFI_HOST_ACK_ACCEPTED;
 #if DEBUG_LOG_ENABLE
             printf("[WIFI] Host cmd START_CAR accepted.\r\n");
 #endif
         }
         else
         {
+            ack_status = WIFI_HOST_ACK_REJECTED;
 #if DEBUG_LOG_ENABLE
             printf("[WIFI] Host cmd START_CAR ignored (motor disabled).\r\n");
 #endif
@@ -113,6 +160,8 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
 #endif
         break;
     }
+
+    wifi_protocol_send_host_ack(control_id, ack_status);
 }
 
 static void wifi_protocol_handle_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
@@ -122,6 +171,10 @@ static void wifi_protocol_handle_frame(uint8_t cmd, const uint8_t *payload, uint
         if (payload_len >= 1U)
         {
             wifi_protocol_apply_host_control(payload[0]);
+        }
+        else
+        {
+            wifi_protocol_send_host_ack(0U, WIFI_HOST_ACK_INVALID_PAYLOAD);
         }
         return;
     }

@@ -18,8 +18,14 @@ FRAME_MIN_SIZE = 6
 
 CMD_TELEMETRY = 0x01
 CMD_HOST_CONTROL = 0x10
+CMD_HOST_ACK = 0x11
 HOST_CTRL_CLEAR_TRAJECTORY = 0x01
 HOST_CTRL_START_CAR = 0x02
+HOST_ACK_ACCEPTED = 0x00
+HOST_ACK_REJECTED = 0x01
+HOST_ACK_UNKNOWN_CMD = 0x02
+HOST_ACK_INVALID_PAYLOAD = 0x03
+HOST_ACK_TIMEOUT_SEC = 1.5
 
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
@@ -77,6 +83,10 @@ server_error = ""
 peer_addr = ""
 listen_ip = HOST_IP
 active_conn = None
+ack_cond = threading.Condition()
+ack_seq = 0
+ack_events = []
+ACK_EVENT_MAX = 64
 
 
 def _build_frame(cmd, payload_bytes=b""):
@@ -92,11 +102,58 @@ def _build_frame(cmd, payload_bytes=b""):
     return bytes(frame)
 
 
+def _push_host_ack(control_code, status_code):
+    global ack_seq
+    with ack_cond:
+        ack_seq += 1
+        ack_events.append((ack_seq, int(control_code) & 0xFF, int(status_code) & 0xFF, time.time()))
+        if len(ack_events) > ACK_EVENT_MAX:
+            del ack_events[: len(ack_events) - ACK_EVENT_MAX]
+        ack_cond.notify_all()
+
+
+def _wait_host_ack(control_code, start_seq, timeout_sec):
+    deadline = time.time() + max(0.1, float(timeout_sec))
+    with ack_cond:
+        while True:
+            for seq_no, ack_ctrl, ack_status, _ in ack_events:
+                if seq_no > start_seq and ack_ctrl == control_code:
+                    return ack_status
+
+            remain = deadline - time.time()
+            if remain <= 0:
+                return None
+            ack_cond.wait(remain)
+
+
+def _format_host_ack_result(control_code, ack_status):
+    if ack_status == HOST_ACK_ACCEPTED:
+        return {"success": True, "msg": "小车回传成功：命令已执行"}
+
+    if ack_status == HOST_ACK_REJECTED:
+        if control_code == HOST_CTRL_CLEAR_TRAJECTORY:
+            return {"success": False, "msg": "小车已收到：清除轨迹被拒绝（需电机使能且航向已初始化）"}
+        if control_code == HOST_CTRL_START_CAR:
+            return {"success": False, "msg": "小车已收到：开始发车被拒绝（需电机使能）"}
+        return {"success": False, "msg": "小车已收到：命令被拒绝（条件不满足）"}
+
+    if ack_status == HOST_ACK_UNKNOWN_CMD:
+        return {"success": False, "msg": "小车回传失败：未知命令"}
+
+    if ack_status == HOST_ACK_INVALID_PAYLOAD:
+        return {"success": False, "msg": "小车回传失败：命令载荷格式错误"}
+
+    return {"success": False, "msg": f"小车回传失败：未知ACK状态 0x{ack_status:02X}"}
+
+
 def _send_control_to_vehicle(ctrl_code):
     global active_conn, peer_addr, server_error
 
     code = int(ctrl_code) & 0xFF
     frame = _build_frame(CMD_HOST_CONTROL, bytes([code]))
+
+    with ack_cond:
+        start_seq = ack_seq
 
     with tx_lock:
         with state_lock:
@@ -108,7 +165,6 @@ def _send_control_to_vehicle(ctrl_code):
 
         try:
             conn.sendall(frame)
-            return {"success": True, "msg": f"命令已发送到小车({peer}): 0x{code:02X}"}
         except Exception as exc:
             with state_lock:
                 if active_conn is conn:
@@ -116,6 +172,15 @@ def _send_control_to_vehicle(ctrl_code):
                 peer_addr = ""
                 server_error = f"Send control failed: {exc}"
             return {"success": False, "msg": f"命令发送失败: {exc}"}
+
+    ack_status = _wait_host_ack(code, start_seq, HOST_ACK_TIMEOUT_SEC)
+    if ack_status is None:
+        return {
+            "success": False,
+            "msg": f"命令已发送到小车({peer})，但未收到回传（请确认小车已烧录最新协议）",
+        }
+
+    return _format_host_ack_result(code, ack_status)
 
 def _safe_float(value):
     try:
@@ -259,11 +324,18 @@ def _parse_frame_stream(raw_buffer):
             continue
 
         cmd = raw_buffer[2]
+        payload = bytes(raw_buffer[4 : 4 + payload_len])
+
+        if cmd == CMD_HOST_ACK:
+            if payload_len >= 2:
+                _push_host_ack(payload[0], payload[1])
+            del raw_buffer[:frame_len]
+            continue
+
         if cmd != CMD_TELEMETRY:
             del raw_buffer[:frame_len]
             continue
 
-        payload = bytes(raw_buffer[4 : 4 + payload_len])
         with state_lock:
             last_frame_time = time.time()
             last_payload_size = payload_len

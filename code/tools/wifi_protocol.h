@@ -11,10 +11,17 @@
 // Frame command IDs
 #define WIFI_CMD_DATA_PACKET    0x01    // MCU -> host telemetry
 #define WIFI_CMD_HOST_CONTROL   0x10    // Host -> MCU control
+#define WIFI_CMD_HOST_ACK       0x11    // MCU -> host control ACK
 
 // Host control payload command IDs
 #define WIFI_HOST_CTRL_CLEAR_TRAJECTORY   0x01
 #define WIFI_HOST_CTRL_START_CAR          0x02
+
+// Host control ACK status
+#define WIFI_HOST_ACK_ACCEPTED            0x00
+#define WIFI_HOST_ACK_REJECTED            0x01
+#define WIFI_HOST_ACK_UNKNOWN_CMD         0x02
+#define WIFI_HOST_ACK_INVALID_PAYLOAD     0x03
 
 #define WIFI_TX_BUFFER_SIZE     256
 
