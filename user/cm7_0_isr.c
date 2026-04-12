@@ -72,7 +72,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     pit_isr_flag_clear(PIT_CH0);
     loop_counter++;
 
-    imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用
+    imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用【优化点】
 
     // 颠簸路段状态机（1ms调度）：
     // 1) 锁定 target_speed_set = -150.0f
