@@ -109,7 +109,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 (float)motor_value.receive_right_speed_data      // 右轮速
             );
             #endif
-            #if IMU_CATEGORY == 3 //imu963ra 如果小车不同再对小车加&&加以区分
+            #if IMU_CATEGORY == 3 &&CAR_SELECT == 0//imu963ra 如果小车不同再对小车加&&加以区分
             
             InertialNav_Update(
                 euler_angle.yaw,                                 // 当前偏航角
@@ -119,6 +119,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 (float)motor_value.receive_right_speed_data      // 右轮速
             );
             
+            #endif
+            #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
+            
+            InertialNav_Update(
+            euler_angle.yaw,                                 // 当前偏航角
+            -9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
+            -9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
+            (float)motor_value.receive_left_speed_data,
+            (float)motor_value.receive_right_speed_data
+            );
             #endif
         }
         else
@@ -321,10 +331,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     int16 raw_gyro_y = -imu660ra_gyro_y; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
-    #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
+    #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
     int16 raw_gyro_y = -imu963ra_gyro_y; // 根据实际安装方向调整符号
     #endif
-    
+    #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
+    int16 raw_gyro_y = imu963ra_gyro_x; // 根据实际安装方向调整符号[学习板小车3使用]
+    #endif
     // 5.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
     float gyro_val = (float)raw_gyro_y;
     if (fabs(gyro_val) < 5.0f) gyro_val = 0;
