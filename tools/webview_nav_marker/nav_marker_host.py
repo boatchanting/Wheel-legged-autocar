@@ -16,6 +16,11 @@ FRAME_HEAD2 = 0xA5
 FRAME_TAIL = 0xED
 FRAME_MIN_SIZE = 6
 
+CMD_TELEMETRY = 0x01
+CMD_HOST_CONTROL = 0x10
+HOST_CTRL_CLEAR_TRAJECTORY = 0x01
+HOST_CTRL_START_CAR = 0x02
+
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
 
@@ -61,6 +66,7 @@ MAX_NEW_BUFFER = 4000
 START_POINT_CAPTURE_RADIUS_MM = 120.0
 
 state_lock = threading.Lock()
+tx_lock = threading.Lock()
 all_history_data = []
 new_data_buffer = []
 
@@ -70,6 +76,46 @@ last_payload_size = 0
 server_error = ""
 peer_addr = ""
 listen_ip = HOST_IP
+active_conn = None
+
+
+def _build_frame(cmd, payload_bytes=b""):
+    payload_len = len(payload_bytes)
+    if payload_len > 255:
+        raise ValueError("payload too long")
+
+    frame = bytearray([FRAME_HEAD1, FRAME_HEAD2, cmd & 0xFF, payload_len & 0xFF])
+    frame.extend(payload_bytes)
+    check_sum = sum(frame) & 0xFF
+    frame.append(check_sum)
+    frame.append(FRAME_TAIL)
+    return bytes(frame)
+
+
+def _send_control_to_vehicle(ctrl_code):
+    global active_conn, peer_addr, server_error
+
+    code = int(ctrl_code) & 0xFF
+    frame = _build_frame(CMD_HOST_CONTROL, bytes([code]))
+
+    with tx_lock:
+        with state_lock:
+            conn = active_conn
+            peer = peer_addr
+
+        if conn is None:
+            return {"success": False, "msg": "小车未连接，命令未发送"}
+
+        try:
+            conn.sendall(frame)
+            return {"success": True, "msg": f"命令已发送到小车({peer}): 0x{code:02X}"}
+        except Exception as exc:
+            with state_lock:
+                if active_conn is conn:
+                    active_conn = None
+                peer_addr = ""
+                server_error = f"Send control failed: {exc}"
+            return {"success": False, "msg": f"命令发送失败: {exc}"}
 
 def _safe_float(value):
     try:
@@ -212,6 +258,11 @@ def _parse_frame_stream(raw_buffer):
             del raw_buffer[0]
             continue
 
+        cmd = raw_buffer[2]
+        if cmd != CMD_TELEMETRY:
+            del raw_buffer[:frame_len]
+            continue
+
         payload = bytes(raw_buffer[4 : 4 + payload_len])
         with state_lock:
             last_frame_time = time.time()
@@ -246,7 +297,7 @@ def _bind_server_socket(server_socket):
 
 
 def tcp_server_thread():
-    global server_error, peer_addr
+    global server_error, peer_addr, active_conn
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -270,6 +321,7 @@ def tcp_server_thread():
             peer = f"{addr[0]}:{addr[1]}"
             with state_lock:
                 peer_addr = peer
+                active_conn = conn
                 server_error = ""
             print(f"[TCP] Connected: {peer}")
 
@@ -288,12 +340,15 @@ def tcp_server_thread():
 
             with state_lock:
                 peer_addr = ""
+                if active_conn is conn:
+                    active_conn = None
             print(f"[TCP] Disconnected: {peer}")
         except socket.timeout:
             continue
         except Exception as exc:
             with state_lock:
                 peer_addr = ""
+                active_conn = None
                 server_error = f"Server error: {exc}"
             time.sleep(0.5)
 
@@ -330,6 +385,17 @@ class Api:
             all_history_data.clear()
             new_data_buffer.clear()
         return {"success": True, "msg": "历史数据已清空"}
+
+    def send_host_control(self, control_code):
+        try:
+            code = int(control_code)
+        except Exception:
+            return {"success": False, "msg": "control_code 非法"}
+
+        if not (0 <= code <= 255):
+            return {"success": False, "msg": "control_code 超出范围"}
+
+        return _send_control_to_vehicle(code)
 
     def export_mark_points_csv(self, points):
         try:

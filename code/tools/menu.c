@@ -21,6 +21,27 @@ uint8_t need_redraw = 1;
 float motor_speeds[2] = {0.0f, 0.0f};
 float current_angles[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
+void Menu_TriggerRecordAction(void)
+{
+    gpio_toggle_level(P19_0);       // 指示灯切换
+    if (g_motor_enable && g_yaw_initialized)
+    {
+        g_nav_start_recording = 1;  // 开始录制，会在 main 中调用惯导系统初始化和点记录初始化
+        g_nav_recording = 1;
+    }
+}
+
+void Menu_TriggerStartAction(void)
+{
+    gpio_toggle_level(P19_0);       // 指示灯切换
+    if (g_motor_enable)
+    {
+        g_load_flash_request = 1;   // 请求读取测试
+        g_save_flash_request = 0;   // 清除保存请求
+        g_nav_recording = 0;        // 确保停止录制
+    }
+}
+
 // ==================== 辅助函数 ====================
 static void Menu_ClearScreen(void)
 {
@@ -250,23 +271,12 @@ void Menu_ShowStatic(void)
                 g_is_push_mode = 1; // 打开底层推车控制逻辑！！！
             }
             else if(action==1)
-            {        
-                gpio_toggle_level(P19_0);       // 指示灯切换
-                if (g_motor_enable && g_yaw_initialized)
-                {      
-                g_nav_start_recording = 1;//开始录制，会在main中调用惯导系统初始化和点的记录的初始化,然后再变回1
-                g_nav_recording = 1;
-                }
+            {
+                Menu_TriggerRecordAction();
             }
             else if(action==2)
             {
-                gpio_toggle_level(P19_0);       // 指示灯切换
-                if(g_motor_enable)
-                {
-                g_load_flash_request = 1;      // 请求读取测试
-                g_save_flash_request = 0;     // 清除保存请求
-                g_nav_recording = 0;          // 确保停止录制
-                }
+                Menu_TriggerStartAction();
             }
             Menu_ShowMainScreen(); // 先显示主界面框架
             break;

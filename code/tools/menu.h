@@ -31,4 +31,8 @@ void Menu_HandleKey(void);
 void Menu_ShowStatic(void);
 void Menu_ShowDynamic(void);
 
+// Reusable action handlers shared by menu keys and remote commands.
+void Menu_TriggerRecordAction(void);
+void Menu_TriggerStartAction(void);
+
 #endif /* _MENU_H_ */
