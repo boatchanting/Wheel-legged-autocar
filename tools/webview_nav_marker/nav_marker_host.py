@@ -132,10 +132,18 @@ def _format_host_ack_result(control_code, ack_status):
 
     if ack_status == HOST_ACK_REJECTED:
         if control_code == HOST_CTRL_CLEAR_TRAJECTORY:
-            return {"success": False, "msg": "小车已收到：清除轨迹被拒绝（需电机使能且航向已初始化）"}
+            return {
+                "success": True,
+                "executed": False,
+                "msg": "小车已回传：清除轨迹被拒绝（需电机使能且航向已初始化）",
+            }
         if control_code == HOST_CTRL_START_CAR:
-            return {"success": False, "msg": "小车已收到：开始发车被拒绝（需电机使能）"}
-        return {"success": False, "msg": "小车已收到：命令被拒绝（条件不满足）"}
+            return {
+                "success": True,
+                "executed": False,
+                "msg": "小车已回传：开始发车被拒绝（需电机使能）",
+            }
+        return {"success": True, "executed": False, "msg": "小车已回传：命令被拒绝（条件不满足）"}
 
     if ack_status == HOST_ACK_UNKNOWN_CMD:
         return {"success": False, "msg": "小车回传失败：未知命令"}

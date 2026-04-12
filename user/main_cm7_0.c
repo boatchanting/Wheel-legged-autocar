@@ -78,7 +78,7 @@ extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
 // =================================================================================
 
 // =================================================================================
@@ -339,25 +339,25 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
                 //逐飞助手示波器发送代码        
                 //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
-
-
-                // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
-                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+
+
+                // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // //3.【调试遥控器，前六个通道】

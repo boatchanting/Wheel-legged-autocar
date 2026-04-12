@@ -122,7 +122,7 @@ const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,cv:cv,bFollow:bFo
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
-function tip(t){E.toast.textContent=t;E.toast.classList.add('show');clearTimeout(tip.t);tip.t=setTimeout(()=>E.toast.classList.remove('show'),2200)}
+function tip(t){E.toast.textContent=t;E.toast.classList.add('show');clearTimeout(tip.t);tip.t=setTimeout(()=>E.toast.classList.remove('show'),3600)}
 function clampType(v){v=Number(v);if(Number.isNaN(v))return 0;return Math.max(0,Math.min(5,Math.round(v)))}
 function normalizeYaw(v){v=Number(v);if(!Number.isFinite(v))return 0;while(v>180)v-=360;while(v<=-180)v+=360;return v}
 function normalizeHeading(v){v=Number(v);if(!Number.isFinite(v))return 0;v%=360;if(v<0)v+=360;return v}
