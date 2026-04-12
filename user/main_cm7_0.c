@@ -78,7 +78,7 @@ extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable = 0; // 电机使能安全开关，1为使能，0为关机
 // =================================================================================
 
 // =================================================================================
@@ -263,15 +263,6 @@ gnss_init(TAU1201);//gnss导航初始化
     disp_y += 16;
 #endif
 
-//按钮初始化
-// P20_0: 开始录制
-//exti_init(P20_0, EXTI_TRIGGER_RISING); 
-// P20_1: 停止录制
-//exti_init(P20_1, EXTI_TRIGGER_RISING); 
-// P20_2: 开始复现
-//exti_init(P20_2, EXTI_TRIGGER_RISING);
-// P20_3: 停止复现
-//exti_init(P20_3, EXTI_TRIGGER_RISING);
 Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 BumpyRoad_Init();//颠簸路段状态机初始化
 //===============惯性导航初始化结束==================
@@ -344,18 +335,18 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             //     ekf_print_div = 0;
             // }
             #if WIFI_USE
-                wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
+                //wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
 
-                // 逐飞助手示波器发送代码        
-                // 1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
-                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                //逐飞助手示波器发送代码        
+                //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
@@ -388,14 +379,14 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.pitch;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw; 
-                //     // 4. 设置本次发送的通道数量 (一共8个数据)
-                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
+                    // 4. 设置本次发送的通道数量 (一共8个数据)
+                    seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                //     // 5. 调用发送函数
-                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                    // 5. 调用发送函数
+                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // // 用于上位机向小车发送pid信息
-                // wifi_update_pid_params(); 
+                // 用于上位机向小车发送pid信息
+                wifi_update_pid_params(); 
                 #endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---

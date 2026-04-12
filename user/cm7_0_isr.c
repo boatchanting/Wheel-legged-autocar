@@ -124,8 +124,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             
             InertialNav_Update(
             euler_angle.yaw,                                 // 当前偏航角
-            -9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
-            -9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
+            9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
+            9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
             (float)motor_value.receive_left_speed_data,
             (float)motor_value.receive_right_speed_data
             );

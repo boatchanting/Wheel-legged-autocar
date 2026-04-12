@@ -92,7 +92,7 @@ const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
 #endif
 #if IMU_CATEGORY == 3&& CAR_SELECT == 3 //imu963ra
-const matrix_type ekf[4]= {0.5, 0.5, -0.5, -0.5};
+const matrix_type ekf[4]= {-0.5, -0.5, 0.5, 0.5};
 // 静态矩阵变量
 #endif
 static matrix_t Q;  // 过程噪声协方差矩阵
@@ -161,9 +161,9 @@ static inline void quaternion_to_euler(void)
     #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3//imu963ra //这里面根据实际测试使用了面向结果编程，imu换轴的时候使用转轴公式，或者根据上位机波形来判断一下
     // 直接从旧四元数计算新坐标系下的欧拉角
-    euler_angle.roll  = atan2(2.0f * (q0 * q2 - q3 * q1),1.0f - 2.0f * (q1 * q1 + q2 * q2)) * (180.0f / M_PI);
-    euler_angle.pitch = asin(2.0f * (q0 * q1 + q2 * q3)) * (180.0f / M_PI);
-    euler_angle.yaw   = atan2(2.0f * (q0 * q3 - q1 * q2),1.0f - 2.0f * (q2 * q2 + q3 * q3)) * (180.0f / M_PI) - 90.0f;
+    euler_angle.roll  = -atan2(2.0f * (q0 * q2 - q3 * q1),1.0f - 2.0f * (q1 * q1 + q2 * q2)) * DEG_TO_RAD-180.0f;
+    euler_angle.pitch = -asin(2.0f * (q0 * q1 + q2 * q3)) * DEG_TO_RAD;
+    euler_angle.yaw   = -atan2(2.0f * (q0 * q3 - q1 * q2),1.0f - 2.0f * (q2 * q2 + q3 * q3))  * DEG_TO_RAD - 90.0f;
     #endif
 }
 
