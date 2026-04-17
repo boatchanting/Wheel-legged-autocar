@@ -217,7 +217,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                     g_initial_yaw = euler_angle.yaw; // 改变目标航向角，单位：度
                 }
                 float yaw_error = err_degree;
-                yaw_error =  g_initial_yaw-euler_angle.yaw ; // 调节pid转向角度环时使用【调试pid打开】
+                // yaw_error =  g_initial_yaw-euler_angle.yaw ; // 调节pid转向角度环时使用【调试pid打开】
                 // 2. [关键] 处理角度“卷绕”问题 (Wraparound)
                 //    例如：目标是-179度，当前是179度，实际误差是向右偏2度(-2)，
                 //    但直接相减得到 -358度，这会导致PID控制器输出巨大的错误值。
