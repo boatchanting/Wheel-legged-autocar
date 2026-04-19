@@ -8,6 +8,7 @@ portable for debugging.
 from __future__ import annotations
 
 import json
+import argparse
 import struct
 from pathlib import Path
 from typing import BinaryIO
@@ -16,9 +17,8 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from detect_white_pvc_samples import (
-    FRAME_DIR,
+    FRAME_DIR as DEFAULT_FRAME_DIR,
     MIN_DECISION_SCORE,
-    OUTPUT_DIR,
     WHITE_THRESHOLD,
     filter_candidates,
     find_components,
@@ -26,10 +26,7 @@ from detect_white_pvc_samples import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-VIDEO_OUTPUT_DIR = PROJECT_ROOT / "data/bridge_white_pvc_detection_video"
-OUTPUT_VIDEO = VIDEO_OUTPUT_DIR / "white_pvc_overlay.avi"
-OUTPUT_SUMMARY = VIDEO_OUTPUT_DIR / "video_summary.txt"
-OUTPUT_JSON = VIDEO_OUTPUT_DIR / "video_summary.json"
+DEFAULT_VIDEO_OUTPUT_DIR = PROJECT_ROOT / "data/bridge_white_pvc_detection_video"
 
 FPS = 50
 SCALE = 3
@@ -288,11 +285,26 @@ def make_overlay(rgb: np.ndarray, frame_index: int, detection: dict) -> Image.Im
     return base
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Detect white PVC on a full frame sequence.")
+    parser.add_argument("--frames", type=Path, default=DEFAULT_FRAME_DIR)
+    parser.add_argument("--output-dir", type=Path, default=DEFAULT_VIDEO_OUTPUT_DIR)
+    parser.add_argument("--output-name", default="white_pvc_overlay.avi")
+    return parser.parse_args()
+
+
 def main() -> None:
-    VIDEO_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    frame_paths = sorted(FRAME_DIR.glob("frame_*.png"))
+    args = parse_args()
+    frame_dir = args.frames
+    output_dir = args.output_dir
+    output_video = output_dir / args.output_name
+    output_summary = output_dir / "video_summary.txt"
+    output_json = output_dir / "video_summary.json"
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    frame_paths = sorted(frame_dir.glob("frame_*.png"))
     if not frame_paths:
-        raise FileNotFoundError(f"no frames found in {FRAME_DIR}")
+        raise FileNotFoundError(f"no frames found in {frame_dir}")
 
     first = Image.open(frame_paths[0]).convert("RGB")
     out_width = first.width * SCALE
@@ -303,7 +315,7 @@ def main() -> None:
     last_detected = None
     timeline: list[dict] = []
 
-    with DibAviWriter(OUTPUT_VIDEO, out_width, out_height, FPS) as writer:
+    with DibAviWriter(output_video, out_width, out_height, FPS) as writer:
         for idx, frame_path in enumerate(frame_paths, start=1):
             rgb = np.asarray(Image.open(frame_path).convert("RGB"))
             detection = detect_white_pvc(rgb)
@@ -330,8 +342,8 @@ def main() -> None:
             )
 
     summary = {
-        "frame_dir": str(FRAME_DIR),
-        "output_video": str(OUTPUT_VIDEO),
+        "frame_dir": str(frame_dir),
+        "output_video": str(output_video),
         "fps": FPS,
         "scale": SCALE,
         "frame_count": len(frame_paths),
@@ -341,15 +353,15 @@ def main() -> None:
         "threshold": WHITE_THRESHOLD,
         "decision_score": MIN_DECISION_SCORE,
     }
-    OUTPUT_JSON.write_text(
+    output_json.write_text(
         json.dumps({"summary": summary, "timeline": timeline}, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
     lines = [
         "白色 PVC 全视频检测结果",
-        f"输入帧目录: {FRAME_DIR}",
-        f"输出视频: {OUTPUT_VIDEO}",
+        f"输入帧目录: {frame_dir}",
+        f"输出视频: {output_video}",
         f"输出尺寸: {out_width}x{out_height}",
         f"FPS: {FPS}",
         f"总帧数: {len(frame_paths)}",
@@ -365,7 +377,7 @@ def main() -> None:
         "4. 单边桥入口确认后记录 entry_pose，抬底盘，进入桥状态机。",
         "5. 通过中继续检测白色 PVC 中心线；黑色单边桥后续只做计数和左右侧别。",
     ]
-    OUTPUT_SUMMARY.write_text("\n".join(lines), encoding="utf-8")
+    output_summary.write_text("\n".join(lines), encoding="utf-8")
 
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 
