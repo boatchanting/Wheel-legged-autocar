@@ -2,3 +2,8 @@
 .vscode/
 # iar环境
 iar/
+# 数据资料
+data/
+# py虚拟环境
+.venv/
+
