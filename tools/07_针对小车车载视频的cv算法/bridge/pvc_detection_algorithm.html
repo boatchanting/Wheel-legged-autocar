@@ -1,0 +1,672 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PVC 检测算法原理说明</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --text: #111827;
+      --muted: #4b5563;
+      --line: #d1d5db;
+      --accent: #10a37f;
+      --accent-soft: #ecfdf5;
+      --blue: #2563eb;
+      --amber: #d97706;
+      --danger: #dc2626;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: "Inter", "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.6;
+      letter-spacing: 0;
+    }
+
+    .top {
+      background: #0f172a;
+      color: #e5e7eb;
+      padding: 28px 22px 24px;
+      border-bottom: 1px solid #1f2937;
+    }
+
+    .top-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      display: grid;
+      gap: 12px;
+    }
+
+    .eyebrow {
+      color: #86efac;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 36px);
+      line-height: 1.2;
+      max-width: 920px;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: #cbd5e1;
+      max-width: 920px;
+      font-size: 15px;
+    }
+
+    .chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    .chip {
+      border: 1px solid #374151;
+      background: #111827;
+      color: #d1d5db;
+      font-size: 12px;
+      padding: 4px 8px;
+      border-radius: 8px;
+      white-space: nowrap;
+    }
+
+    .layout {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 20px 14px 42px;
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      gap: 16px;
+    }
+
+    aside {
+      align-self: start;
+      position: sticky;
+      top: 14px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 8px;
+      padding: 12px;
+    }
+
+    aside h2 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+
+    .toc {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: grid;
+      gap: 6px;
+    }
+
+    .toc a {
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      padding: 4px 2px;
+      display: block;
+    }
+
+    .toc a:hover { color: var(--accent); }
+
+    main {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+
+    section {
+      padding: 20px 20px 22px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    section:last-child { border-bottom: 0; }
+
+    h3 {
+      margin: 0 0 12px;
+      font-size: 20px;
+      line-height: 1.3;
+    }
+
+    p { margin: 0 0 10px; }
+
+    .meta-grid,
+    .card-grid,
+    .two-col {
+      display: grid;
+      gap: 10px;
+    }
+
+    .meta-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .two-col { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+      min-height: 100%;
+    }
+
+    .panel h4 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      line-height: 1.4;
+    }
+
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .flag {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 8px;
+      border: 1px solid;
+      margin-bottom: 8px;
+    }
+
+    .flag-ok {
+      color: #065f46;
+      border-color: #a7f3d0;
+      background: var(--accent-soft);
+    }
+
+    .flag-info {
+      color: #1e40af;
+      border-color: #bfdbfe;
+      background: #eff6ff;
+    }
+
+    .flag-warn {
+      color: #92400e;
+      border-color: #fde68a;
+      background: #fffbeb;
+    }
+
+    .pipeline {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f9fafb;
+      padding: 8px;
+    }
+
+    .formula {
+      border: 1px solid #bbf7d0;
+      background: #f0fdf4;
+      border-radius: 8px;
+      padding: 10px 12px;
+      margin: 10px 0;
+      font-family: "Consolas", "SFMono-Regular", "Menlo", monospace;
+      font-size: 13px;
+      overflow-x: auto;
+      color: #14532d;
+    }
+
+    pre {
+      margin: 10px 0 0;
+      border: 1px solid var(--line);
+      background: #f8fafc;
+      border-radius: 8px;
+      padding: 10px 12px;
+      overflow-x: auto;
+      font-family: "Consolas", "SFMono-Regular", "Menlo", monospace;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .seg {
+      display: inline-flex;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+
+    .seg button {
+      border: 0;
+      background: #fff;
+      color: var(--muted);
+      padding: 8px 14px;
+      font-size: 13px;
+      cursor: pointer;
+      border-right: 1px solid var(--line);
+    }
+
+    .seg button:last-child { border-right: 0; }
+    .seg button.active {
+      background: #111827;
+      color: #f9fafb;
+    }
+
+    .mode-block { display: none; }
+    .mode-block.active { display: block; }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 7px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f3f4f6;
+      font-weight: 700;
+    }
+
+    .note {
+      font-size: 13px;
+      color: var(--muted);
+      margin-top: 8px;
+    }
+
+    .footer {
+      color: #6b7280;
+      font-size: 12px;
+      margin-top: 8px;
+    }
+
+    @media (max-width: 980px) {
+      .layout {
+        grid-template-columns: minmax(0, 1fr);
+        padding: 14px 10px 28px;
+      }
+      aside {
+        position: static;
+      }
+      .meta-grid,
+      .card-grid,
+      .two-col {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      section {
+        padding: 16px 14px 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="top-inner">
+      <div class="eyebrow">Bridge Vision / White PVC</div>
+      <h1>PVC 检测算法原理（固定阈值 + 自适应阈值）</h1>
+      <p class="subtitle">
+        本页面对应当前工程中白色 PVC 检测实现，覆盖输入输出、特征构建、连通域筛选、评分决策、时序稳定性与调参方法，
+        方便算法联调与控制侧对接。
+      </p>
+      <div class="chips">
+        <span class="chip">extract_video_frames.py</span>
+        <span class="chip">detect_white_pvc_samples.py</span>
+        <span class="chip">detect_white_pvc_video.py</span>
+        <span class="chip">detect_white_pvc_video_adaptive.py</span>
+      </div>
+    </div>
+  </header>
+
+  <div class="layout">
+    <aside>
+      <h2>目录</h2>
+      <ul class="toc">
+        <li><a href="#sec-1">1. 任务定义</a></li>
+        <li><a href="#sec-2">2. 总体流程</a></li>
+        <li><a href="#sec-3">3. 固定阈值算法</a></li>
+        <li><a href="#sec-4">4. 自适应阈值算法</a></li>
+        <li><a href="#sec-5">5. 控制侧接入</a></li>
+        <li><a href="#sec-6">6. 调参建议</a></li>
+        <li><a href="#sec-7">7. 已跑视频结果</a></li>
+        <li><a href="#sec-8">8. 运行命令</a></li>
+      </ul>
+    </aside>
+
+    <main>
+      <section id="sec-1">
+        <h3>1) 任务定义</h3>
+        <div class="meta-grid">
+          <div class="panel">
+            <span class="flag flag-info">输入</span>
+            <p>
+              车载 AVI（DIB）视频，通常分辨率 96x60 或 94x60；通过帧提取脚本转为
+              <code>frame_*.png</code> 序列。
+            </p>
+          </div>
+          <div class="panel">
+            <span class="flag flag-ok">输出</span>
+            <p>
+              叠加可视化视频（overlay AVI）+ 逐帧时序 JSON + 文本摘要。
+              输出里包含 <code>detected</code>、<code>score</code>、<code>bbox</code>、<code>entry_bottom_y</code>。
+            </p>
+          </div>
+          <div class="panel">
+            <span class="flag flag-warn">判定目标</span>
+            <p>
+              在单边桥阶段，识别“白色 PVC 区域是否进入可见范围”，为状态机切换与入口距离估计提供视觉证据。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-2">
+        <h3>2) 总体流程</h3>
+        <div class="pipeline">
+          <svg viewBox="0 0 1080 180" width="100%" role="img" aria-label="PVC 检测流程图">
+            <rect x="10" y="20" width="190" height="58" rx="8" fill="#ffffff" stroke="#d1d5db"/>
+            <text x="24" y="44" font-size="13" fill="#111827">1. AVI 逐帧提取</text>
+            <text x="24" y="62" font-size="12" fill="#4b5563">extract_video_frames.py</text>
+
+            <rect x="230" y="20" width="190" height="58" rx="8" fill="#ffffff" stroke="#d1d5db"/>
+            <text x="244" y="44" font-size="13" fill="#111827">2. 灰度 + 白色掩码</text>
+            <text x="244" y="62" font-size="12" fill="#4b5563">固定阈值或自适应阈值</text>
+
+            <rect x="450" y="20" width="190" height="58" rx="8" fill="#ffffff" stroke="#d1d5db"/>
+            <text x="466" y="44" font-size="13" fill="#111827">3. 连通域提取</text>
+            <text x="466" y="62" font-size="12" fill="#4b5563">area/bbox/centroid/fill</text>
+
+            <rect x="670" y="20" width="190" height="58" rx="8" fill="#ffffff" stroke="#d1d5db"/>
+            <text x="684" y="44" font-size="13" fill="#111827">4. 规则过滤 + 打分</text>
+            <text x="684" y="62" font-size="12" fill="#4b5563">score >= decision_score</text>
+
+            <rect x="890" y="20" width="180" height="58" rx="8" fill="#ffffff" stroke="#d1d5db"/>
+            <text x="904" y="44" font-size="13" fill="#111827">5. 时序输出</text>
+            <text x="904" y="62" font-size="12" fill="#4b5563">overlay + JSON + TXT</text>
+
+            <line x1="200" y1="49" x2="230" y2="49" stroke="#9ca3af" stroke-width="2"/>
+            <line x1="420" y1="49" x2="450" y2="49" stroke="#9ca3af" stroke-width="2"/>
+            <line x1="640" y1="49" x2="670" y2="49" stroke="#9ca3af" stroke-width="2"/>
+            <line x1="860" y1="49" x2="890" y2="49" stroke="#9ca3af" stroke-width="2"/>
+
+            <text x="12" y="124" font-size="13" fill="#111827">设计关键点：</text>
+            <text x="100" y="124" font-size="12" fill="#374151">• 优先保留贴边的大块高亮区域</text>
+            <text x="340" y="124" font-size="12" fill="#374151">• 亮斑类噪声通过面积/宽高/填充率过滤</text>
+            <text x="620" y="124" font-size="12" fill="#374151">• 用 score 汇总“像 PVC”的程度</text>
+            <text x="860" y="124" font-size="12" fill="#374151">• 控制侧做连续帧确认</text>
+          </svg>
+        </div>
+      </section>
+
+      <section id="sec-3">
+        <h3>3) 固定阈值算法（detect_white_pvc_video.py）</h3>
+
+        <div class="seg" role="tablist" aria-label="算法模式">
+          <button class="active" data-mode="fixed" aria-selected="true">固定阈值模式</button>
+          <button data-mode="adaptive" aria-selected="false">自适应阈值模式</button>
+        </div>
+
+        <div class="mode-block active" id="mode-fixed">
+          <div class="two-col">
+            <div class="panel">
+              <h4>固定参数</h4>
+              <table>
+                <thead>
+                  <tr><th>参数</th><th>默认值</th><th>用途</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>WHITE_THRESHOLD</td><td>245</td><td>灰度二值化阈值，生成白色掩码</td></tr>
+                  <tr><td>MIN_AREA</td><td>120</td><td>连通域最小面积</td></tr>
+                  <tr><td>MIN_WIDTH</td><td>12</td><td>连通域最小宽度</td></tr>
+                  <tr><td>MIN_HEIGHT</td><td>4</td><td>连通域最小高度</td></tr>
+                  <tr><td>MIN_FILL_RATIO</td><td>0.25</td><td>区域紧凑度下限</td></tr>
+                  <tr><td>MIN_DECISION_SCORE</td><td>0.58</td><td>最终判定阈值</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel">
+              <h4>判定逻辑</h4>
+              <p>1) 先按 <code>gray &gt;= 245</code> 得到候选白色像素。</p>
+              <p>2) 做 4 邻域连通域，计算每个区域的几何与亮度特征。</p>
+              <p>3) 先硬过滤（面积、宽高、填充率、是否贴边），再做打分。</p>
+              <p>4) 取最高分区域，且 <code>score &gt;= 0.58</code> 才判定 <code>PVC</code>。</p>
+            </div>
+          </div>
+
+          <div class="formula">
+score =
+0.35 * area_score +
+0.18 * width_score +
+0.12 * height_score +
+0.12 * fill_score +
+0.18 * border_score +
+0.05 * brightness_score
+          </div>
+          <p class="note">
+            其中 <code>border_score</code> 是强先验：PVC 入口通常从图像边缘进入，所以“贴边”特征权重较高。
+          </p>
+        </div>
+
+        <div class="mode-block" id="mode-adaptive">
+          <div class="panel">
+            <h4>自适应模式与固定模式关系</h4>
+            <p>
+              自适应版本复用了固定模式的连通域提取、硬过滤和评分公式，仅替换“每帧白色阈值”的计算方式；
+              这样可以减少整体亮度变化时的漏检/误检，同时保持原有结构特征逻辑不变。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-4">
+        <h3>4) 自适应阈值算法（detect_white_pvc_video_adaptive.py）</h3>
+        <div class="card-grid">
+          <div class="panel">
+            <h4>每帧阈值估计</h4>
+            <div class="formula">
+tail_candidate  = P97 + 0.55 * max(0, P99.5 - P97)
+sigma_candidate = mean + 2.10 * std
+candidate       = clamp(max(tail_candidate, sigma_candidate), min_threshold, max_threshold)
+            </div>
+            <p class="note">
+              含义：同时看“亮度尾部结构”和“全局亮度波动”，防止阈值被单一指标拉偏。
+            </p>
+          </div>
+          <div class="panel">
+            <h4>时间平滑</h4>
+            <div class="formula">
+if t == 0:
+    threshold_t = candidate_t
+else:
+    threshold_t = clamp(alpha * threshold_(t-1) + (1 - alpha) * candidate_t, min, max)
+            </div>
+            <p class="note">
+              默认 <code>alpha = 0.82</code>，可抑制“颠簸或曝光突变”造成的阈值抖动。
+            </p>
+          </div>
+        </div>
+
+        <div class="two-col">
+          <div class="panel">
+            <h4>默认参数</h4>
+            <table>
+              <thead>
+                <tr><th>参数</th><th>默认值</th><th>作用</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>min-threshold</td><td>235.0</td><td>阈值下限，抑制暗场误检</td></tr>
+                <tr><td>max-threshold</td><td>252.0</td><td>阈值上限，避免过度收紧</td></tr>
+                <tr><td>smooth-alpha</td><td>0.82</td><td>阈值时间平滑强度</td></tr>
+                <tr><td>initial-threshold</td><td>null</td><td>首帧阈值种子（可选）</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div class="panel">
+            <h4>输出新增字段</h4>
+            <p>相比固定阈值版本，自适应 JSON 额外输出：</p>
+            <pre>{
+  "threshold": 247.183,
+  "threshold_candidate": 248.376
+}</pre>
+            <p class="note">
+              便于定位“误检/漏检发生时，阈值是否异常波动”。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-5">
+        <h3>5) 控制侧接入建议</h3>
+        <div class="card-grid">
+          <div class="panel">
+            <h4>建议 1：连续帧确认</h4>
+            <p>
+              不建议单帧触发。控制逻辑中可使用“连续 3~5 帧 <code>detected=true</code>”作为进入入口搜索区的确认条件。
+            </p>
+          </div>
+          <div class="panel">
+            <h4>建议 2：距离估计</h4>
+            <p>
+              使用 <code>entry_bottom_y</code> 查表映射前向距离。通常 <code>y</code> 越大，目标越近。
+            </p>
+          </div>
+          <div class="panel">
+            <h4>建议 3：横向微调</h4>
+            <p>
+              用 <code>bbox</code> 或 <code>centroid_x</code> 与图像中心的偏差，作为小幅转向修正，不直接大幅覆盖主控航向。
+            </p>
+          </div>
+          <div class="panel">
+            <h4>建议 4：失配兜底</h4>
+            <p>
+              若连续多帧无 PVC，可退回“里程+航向”保守模式，等待下一次稳定视觉确认。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="sec-6">
+        <h3>6) 调参建议（按现象定位）</h3>
+        <table>
+          <thead>
+            <tr><th>现象</th><th>优先调整</th><th>原因</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>暗场误检增多</td>
+              <td>提高 <code>min-threshold</code>（如 235→238）</td>
+              <td>压制低灰度背景被归入白色掩码</td>
+            </tr>
+            <tr>
+              <td>PVC 漏检较多</td>
+              <td>降低 <code>min-threshold</code> 或降低 <code>MIN_DECISION_SCORE</code></td>
+              <td>阈值或评分门槛过高</td>
+            </tr>
+            <tr>
+              <td>阈值跳变导致抖动</td>
+              <td>提高 <code>smooth-alpha</code>（如 0.82→0.88）</td>
+              <td>增加时间平滑，减少瞬态波动</td>
+            </tr>
+            <tr>
+              <td>高亮小反光误检</td>
+              <td>提高 <code>MIN_AREA</code>、<code>MIN_WIDTH</code></td>
+              <td>加强几何约束，过滤小亮斑</td>
+            </tr>
+            <tr>
+              <td>中央亮斑被误判</td>
+              <td>保持或加强 <code>touches_border</code> 约束</td>
+              <td>PVC 入口一般从边缘进入，贴边先验有效</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="sec-7">
+        <h3>7) 本轮已跑 8 段视频的自适应结果</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>视频</th>
+              <th>帧数</th>
+              <th>检测帧数</th>
+              <th>首次检测帧</th>
+              <th>阈值均值</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>2026_03_20_11_33_14_Video</td><td>1235</td><td>0</td><td>—</td><td>236.591</td></tr>
+            <tr><td>2026_04_17_21_13_28_Video</td><td>1742</td><td>1530</td><td>2</td><td>249.956</td></tr>
+            <tr><td>2026_04_17_21_18_39_Video</td><td>2260</td><td>2131</td><td>52</td><td>251.063</td></tr>
+            <tr><td>2026_04_17_21_36_36_Video第一级台阶</td><td>905</td><td>489</td><td>147</td><td>245.147</td></tr>
+            <tr><td>2026_04_17_21_37_48_Video第二级台阶</td><td>2114</td><td>1282</td><td>1</td><td>246.659</td></tr>
+            <tr><td>2026_04_17_21_39_13_Video第三级台阶</td><td>1249</td><td>1071</td><td>1</td><td>250.849</td></tr>
+            <tr><td>2026_04_17_21_40_37_Video下台阶</td><td>6684</td><td>5890</td><td>1</td><td>251.144</td></tr>
+            <tr><td>2026_04_17_21_44_42_Video颠簸</td><td>5510</td><td>4946</td><td>1</td><td>250.996</td></tr>
+          </tbody>
+        </table>
+        <p class="note">
+          结果目录：<code>data/bridge_white_pvc_detection_video_adaptive_batch/*</code><br />
+          每段目录均包含：<code>white_pvc_overlay_adaptive.avi</code>、<code>video_summary_adaptive.json</code>、<code>video_summary_adaptive.txt</code>。
+        </p>
+      </section>
+
+      <section id="sec-8">
+        <h3>8) 运行命令（可直接复用）</h3>
+        <pre># 1) 从 AVI 提取帧
+.venv\Scripts\python.exe tools\07_针对小车车载视频的cv算法\bridge\extract_video_frames.py ^
+  --video data\2026_04_17_21_18_39_Video.avi ^
+  --output data\frames_white_pvc_adaptive_batch\2026_04_17_21_18_39_Video
+
+# 2) 自适应阈值 PVC 检测
+.venv\Scripts\python.exe tools\07_针对小车车载视频的cv算法\bridge\detect_white_pvc_video_adaptive.py ^
+  --frames data\frames_white_pvc_adaptive_batch\2026_04_17_21_18_39_Video ^
+  --output-dir data\bridge_white_pvc_detection_video_adaptive_batch\2026_04_17_21_18_39_Video ^
+  --min-threshold 235 --max-threshold 252 --smooth-alpha 0.82
+        </pre>
+        <p class="footer">
+          说明页位置：tools/07_针对小车车载视频的cv算法/bridge/pvc_detection_algorithm_openai_style.html
+        </p>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    (function () {
+      const buttons = document.querySelectorAll(".seg button");
+      const fixedBlock = document.getElementById("mode-fixed");
+      const adaptiveBlock = document.getElementById("mode-adaptive");
+
+      buttons.forEach((btn) => {
+        btn.addEventListener("click", () => {
+          buttons.forEach((b) => {
+            b.classList.remove("active");
+            b.setAttribute("aria-selected", "false");
+          });
+          btn.classList.add("active");
+          btn.setAttribute("aria-selected", "true");
+          const mode = btn.getAttribute("data-mode");
+          if (mode === "fixed") {
+            fixedBlock.classList.add("active");
+            adaptiveBlock.classList.remove("active");
+          } else {
+            adaptiveBlock.classList.add("active");
+            fixedBlock.classList.remove("active");
+          }
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
