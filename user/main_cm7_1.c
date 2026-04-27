@@ -34,6 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
+#include "../code1/vision/pvc_vision.h"
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
 // 第二步 project->clean  等待下方进度条走完
@@ -59,6 +60,7 @@ int main(void)
     
     // 初始化摄像头和逐飞助手
     wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
+    pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     
     
 
@@ -72,6 +74,7 @@ int main(void)
             mt9v03x_finish_flag = 0;
             // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
+            pvc_vision_process_camera_frame(image_copy[0]);
 
             // 发送图像
             seekfree_assistant_camera_send();
