@@ -36,6 +36,7 @@
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
+#include "vision/vision_ipc_core0.h"
 
 
 // **************************** uart配置区域 **************************** 
@@ -265,6 +266,8 @@ gnss_init(TAU1201);//gnss导航初始化
 
 Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 BumpyRoad_Init();//颠簸路段状态机初始化
+VisionIpc_Core0_Init();
+VisionIpc_Core0_SetPvcEnable(1); // Bring-up: 0核调度1核开启PVC入口检测，后续改为进入项目800mm内再开启
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
@@ -313,6 +316,8 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
     while(true)
     {
+        VisionIpc_Core0_PollResult();
+
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
         if(pit_state == 1)//10mswifi，100ms屏幕刷新
         {
