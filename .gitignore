@@ -1,5 +1,7 @@
 # vscode配置文件
 .vscode/
+# Visual Studio local cache
+.vs/
 # iar环境
 iar/
 # 数据资料
