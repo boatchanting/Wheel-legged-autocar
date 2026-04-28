@@ -38,6 +38,8 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
 #include "plan/bumpy_road.h"
+#include "vision/vision_ipc_core0.h"
+#include "vision/vision_pvc_control.h"
 
 // 声明外部函数
 
@@ -71,6 +73,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // 1. 清除中断标志位 (必须第一步做)
     pit_isr_flag_clear(PIT_CH0);
     loop_counter++;
+
+    if ((loop_counter % 2U) == 0U)
+    {
+        VisionIpc_Core0_Update_2ms();
+        VisionPvcControl_Update_2ms();
+    }
 
     imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用【优化点】
 

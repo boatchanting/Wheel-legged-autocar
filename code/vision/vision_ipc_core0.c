@@ -17,6 +17,7 @@ volatile vision_ipc_packet_t g_vision_ipc_latest = {0};
 
 static vision_ipc_command_t g_core0_command_shadow;
 static uint32 g_core0_last_result_seq = 0U;
+static volatile uint8 g_core0_command_dirty = 0U;
 
 static void vision_ipc_core0_flush_command(void)
 {
@@ -40,6 +41,7 @@ void VisionIpc_Core0_Init(void)
     g_core0_command_shadow.enable_mask = 0U;
     g_core0_command_shadow.pvc_min_score_u16 = 580U;
     g_core0_command_shadow.seq = 1U;
+    g_core0_command_dirty = 0U;
     vision_ipc_core0_flush_command();
 }
 
@@ -48,7 +50,7 @@ void VisionIpc_Core0_SetTask(uint8 active_target, uint16 enable_mask)
     g_core0_command_shadow.active_target = active_target;
     g_core0_command_shadow.enable_mask = enable_mask;
     g_core0_command_shadow.seq++;
-    vision_ipc_core0_flush_command();
+    g_core0_command_dirty = 1U;
 }
 
 void VisionIpc_Core0_SetPvcEnable(uint8 enable)
@@ -61,6 +63,17 @@ void VisionIpc_Core0_SetPvcEnable(uint8 enable)
     {
         VisionIpc_Core0_SetTask(VISION_TARGET_NONE, 0U);
     }
+}
+
+void VisionIpc_Core0_Update_2ms(void)
+{
+    if (g_core0_command_dirty)
+    {
+        vision_ipc_core0_flush_command();
+        g_core0_command_dirty = 0U;
+    }
+
+    (void)VisionIpc_Core0_PollResult();
 }
 
 uint8 VisionIpc_Core0_PollResult(void)

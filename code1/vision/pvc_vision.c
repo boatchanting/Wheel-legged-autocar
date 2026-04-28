@@ -26,12 +26,13 @@ typedef struct
  *
  * 注意：
  * - visited/stack/components/candidates 都放在静态区，避免每帧在栈上申请大数组。
- * - stack 最大为 MT9V03X_IMAGE_SIZE，最坏情况下整幅图都是白色也不会溢出。
+ * - stack 最大为 PVC_IMAGE_SIZE，最坏情况下整幅图都是白色也不会溢出。
  */
 typedef struct
 {
-    uint8 visited[MT9V03X_IMAGE_SIZE];                       /* 连通域搜索访问标记。 */
-    uint16 stack[MT9V03X_IMAGE_SIZE];                        /* 非递归 flood fill 栈。 */
+    /* 【修改】使用解耦后的宏 PVC_IMAGE_SIZE */
+    uint8 visited[PVC_IMAGE_SIZE];                           /* 连通域搜索访问标记。 */
+    uint16 stack[PVC_IMAGE_SIZE];                            /* 非递归 flood fill 栈。 */
     pvc_component_t components[PVC_VISION_MAX_COMPONENTS];   /* 所有白色连通域，按面积排序。 */
     pvc_component_t candidates[PVC_VISION_MAX_COMPONENTS];   /* 通过基础过滤的候选，按 score 排序。 */
 } pvc_scratch_t;
@@ -40,6 +41,7 @@ typedef struct
 volatile runtime_profiler_t g_pvc_vision_cost_profiler = {0};
 volatile runtime_profiler_t g_pvc_vision_frame_profiler = {0};
 volatile pvc_vision_output_t g_pvc_vision_output = {0};
+volatile uint8 g_pvc_vision_output_write_busy = 0U;
 
 /* 内部状态。 */
 static pvc_scratch_t g_pvc_scratch;
@@ -75,24 +77,44 @@ static uint8 pvc_component_height(const pvc_component_t *component)
 static int16 pvc_estimate_forward_mm_from_row(uint8 row)
 {
     /*
-     * 距离估计占位函数。
+     * 前向距离估计，占位版。
      *
-     * 当前先用简单线性关系：图像越靠下，PVC 越近。
-     * 真车调参时应替换为 96x60 的 row->distance 查表，例如：
-     * forward_mm = pvc_row_distance_table[row];
+     * 输入：
+     * - row 是最佳 PVC 候选包围框的 ymax，也就是图像里最靠近车的一行白边。
+     *
+     * 当前做法：
+     * - 图像越靠下，说明 PVC 入口越近。
+     * - 先用 20mm/行的线性关系作为初始参数：
+     *   forward_mm = (59 - row) * 20。
+     *
+     * 后续实车建议：
+     * - 把车放在 PVC 前方 100/200/300/400/600/800mm 处，各采几帧。
+     * - 记录 entry_bottom_y 和真实距离，做 row->distance 查表。
+     * - 控制层最终只用 forward_mm，不需要知道图像行号。
      */
-    return (int16)((MT9V03X_H - 1U - row) * 20U);
+    return (int16)((PVC_IMAGE_H - 1U - row) * 20U);
 }
 
 static int16 pvc_estimate_lateral_mm_from_x(float x)
 {
     /*
-     * 横向偏差估计占位函数。
+     * 横向偏差估计，占位版。
      *
-     * 当前以图像中心为 0，像素偏差乘固定比例。
-     * 真车落地时建议用标定表或按 ROI 几何关系重算，不要长期依赖这个比例。
+     * 输入：
+     * - x 是最佳 PVC 候选白色区域的质心横坐标。
+     *
+     * 当前做法：
+     * - 图像中心为 0。
+     * - 白色区域质心在图像右侧时 lateral_mm 为正，左侧为负。
+     * - 初始比例是 8mm/像素，调车时重点看方向是否正确。
+     *
+     * 实车调试：
+     * - 如果车看到 PVC 偏右却向左修，先改 0 核
+     *   VISION_PVC_CONTROL_LATERAL_SIGN，不要先动这里。
+     * - 如果方向对但修正太弱/太猛，优先调 0 核
+     *   VISION_PVC_CONTROL_K_LAT_DEG_PER_MM。
      */
-    return (int16)((x - ((float)MT9V03X_W - 1.0f) * 0.5f) * 8.0f);
+    return (int16)((x - ((float)PVC_IMAGE_W - 1.0f) * 0.5f) * 8.0f);
 }
 
 static void pvc_clear_frame_result(pvc_vision_frame_result_t *result)
@@ -113,12 +135,16 @@ static float pvc_score_component(const pvc_component_t *component)
     /*
      * 候选评分，与 PC 版 Python/C 算法保持一致。
      *
-     * PVC 入口的典型特征：
-     * - 面积较大，不是零散反光点。
-     * - 宽高足够，能形成明显白边或白色区域。
-     * - 填充率较高，包围框内不是稀疏噪声。
-     * - 常常接触图像边界，因为入口是从视野边缘出现。
-     * - 平均亮度高，接近白色 PVC。
+     * 评分特征解释：
+     * - area_score：白色像素越多，越像一整块 PVC。
+     * - width_score：入口 PVC 一般横向较宽，过窄更像反光点。
+     * - height_score：入口进入视野后会形成一定高度，不只是单行白线。
+     * - fill_score：包围框内部越实，越不像破碎噪声。
+     * - border_score：入口阶段 PVC 常从图像下边缘或侧边进入，触边是强特征。
+     * - brightness_score：PVC 应该接近高亮白色。
+     *
+     * 权重初始值偏向“面积”和“触边”，因为入口检测的首要目标是可靠触发，
+     * 不是精确拟合边线。后续如果要做 PVC 内循迹，可以另写赛道线检测。
      */
     const float area_score = pvc_min_f((float)component->area / 600.0f, 1.0f);
     const float width_score = pvc_min_f((float)pvc_component_width(component) / 45.0f, 1.0f);
@@ -139,7 +165,6 @@ static float pvc_score_component(const pvc_component_t *component)
 
 static void pvc_sort_by_score(pvc_component_t *components, uint8 count)
 {
-    /* 连通域数量很少，插入排序足够快，并且代码简单，适合车机侧。 */
     for (uint8 i = 1U; i < count; i++)
     {
         pvc_component_t key = components[i];
@@ -155,7 +180,6 @@ static void pvc_sort_by_score(pvc_component_t *components, uint8 count)
 
 static void pvc_sort_by_area(pvc_component_t *components, uint8 count)
 {
-    /* 先按面积排序，便于调试时观察主要白色区域。最终决策仍按 score 排序。 */
     for (uint8 i = 1U; i < count; i++)
     {
         pvc_component_t key = components[i];
@@ -174,15 +198,16 @@ static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_compo
     /*
      * 4 邻域非递归 flood fill。
      *
-     * 为什么不用递归：
+     * 不用递归的原因：
      * - 车机栈空间有限，整块 PVC 白区可能包含几千个像素。
      * - 递归 DFS 最坏情况下会压爆栈。
-     * - 显式 stack 数组大小固定，行为可控。
+     * - 显式 stack 数组大小固定，最坏也只有 PVC_IMAGE_SIZE。
      */
     uint16 stack_top = 0U;
     uint16 area = 0U;
-    uint8 xmin = (uint8)(MT9V03X_W - 1U);
-    uint8 ymin = (uint8)(MT9V03X_H - 1U);
+    // 【修改】边界处理改为使用 PVC_IMAGE_W 和 PVC_IMAGE_H
+    uint8 xmin = (uint8)(PVC_IMAGE_W - 1U);
+    uint8 ymin = (uint8)(PVC_IMAGE_H - 1U);
     uint8 xmax = 0U;
     uint8 ymax = 0U;
     uint32 sum_x = 0U;
@@ -194,10 +219,10 @@ static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_compo
 
     while (stack_top > 0U)
     {
-        /* 弹出一个白色像素，累计面积、包围框、质心和平均灰度。 */
         const uint16 index = g_pvc_scratch.stack[--stack_top];
-        const uint8 y = (uint8)(index / MT9V03X_W);
-        const uint8 x = (uint8)(index - (uint16)y * MT9V03X_W);
+        // 【修改】取行和列时除以/取余的宽度改为 PVC_IMAGE_W
+        const uint8 y = (uint8)(index / PVC_IMAGE_W);
+        const uint8 x = (uint8)(index - (uint16)y * PVC_IMAGE_W);
 
         area++;
         sum_x += x;
@@ -212,17 +237,18 @@ static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_compo
         if (y > 0U)
         {
             /* 上邻居。 */
-            const uint16 ni = (uint16)(index - MT9V03X_W);
+            const uint16 ni = (uint16)(index - PVC_IMAGE_W);
             if ((g_pvc_scratch.visited[ni] == 0U) && (gray[ni] >= PVC_VISION_WHITE_THRESHOLD))
             {
                 g_pvc_scratch.visited[ni] = 1U;
                 g_pvc_scratch.stack[stack_top++] = ni;
             }
         }
-        if (y < (MT9V03X_H - 1U))
+        // 【修改】检测下边界使用 PVC_IMAGE_H
+        if (y < (PVC_IMAGE_H - 1U))
         {
             /* 下邻居。 */
-            const uint16 ni = (uint16)(index + MT9V03X_W);
+            const uint16 ni = (uint16)(index + PVC_IMAGE_W);
             if ((g_pvc_scratch.visited[ni] == 0U) && (gray[ni] >= PVC_VISION_WHITE_THRESHOLD))
             {
                 g_pvc_scratch.visited[ni] = 1U;
@@ -239,7 +265,8 @@ static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_compo
                 g_pvc_scratch.stack[stack_top++] = ni;
             }
         }
-        if (x < (MT9V03X_W - 1U))
+        // 【修改】检测右边界使用 PVC_IMAGE_W
+        if (x < (PVC_IMAGE_W - 1U))
         {
             /* 右邻居。 */
             const uint16 ni = (uint16)(index + 1U);
@@ -262,7 +289,8 @@ static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_compo
         out->centroid_x = (float)sum_x / (float)area;
         out->centroid_y = (float)sum_y / (float)area;
         out->fill_ratio = (float)area / (float)bbox_area;
-        out->touches_border = (uint8)((xmin == 0U) || (ymin == 0U) || (xmax == (MT9V03X_W - 1U)) || (ymax == (MT9V03X_H - 1U)));
+        // 【修改】判断触边条件使用新的宽和高宏
+        out->touches_border = (uint8)((xmin == 0U) || (ymin == 0U) || (xmax == (PVC_IMAGE_W - 1U)) || (ymax == (PVC_IMAGE_H - 1U)));
         out->mean_gray = (float)sum_gray / (float)area;
         out->score = 0.0f;
     }
@@ -275,8 +303,8 @@ static uint8 pvc_collect_components(const uint8 *gray)
     /* 每帧重新清空访问标记。 */
     memset(g_pvc_scratch.visited, 0, sizeof(g_pvc_scratch.visited));
 
-    /* 扫描整幅 96x60 图像，遇到未访问的白色像素就扩展成一个连通域。 */
-    for (uint16 i = 0U; i < MT9V03X_IMAGE_SIZE; i++)
+    /* 扫描整幅 94x60 图像。使用 PVC_IMAGE_SIZE 进行界定 */
+    for (uint16 i = 0U; i < PVC_IMAGE_SIZE; i++)
     {
         if ((g_pvc_scratch.visited[i] != 0U) || (gray[i] < PVC_VISION_WHITE_THRESHOLD))
         {
@@ -371,6 +399,13 @@ static void pvc_detect_frame(const uint8 *gray, pvc_vision_frame_result_t *resul
      * 2. 根据几何/亮度条件筛候选。
      * 3. 选择 score 最大的候选。
      * 4. score 超过阈值才给 raw detected。
+     *
+     * 输出给控制层的关键量：
+     * - detected：本帧是否可信。
+     * - bbox_xmin/ymin/xmax/ymax：用于计算“PVC 占画面比例”，接近时可停车。
+     * - forward_mm：入口距离估计，用于减速。
+     * - lateral_mm：入口横向偏差，用于转向。
+     * - confidence：现场调阈值时看这个值最直观。
      */
     const uint8 component_count = pvc_collect_components(gray);
     const uint8 candidate_count = pvc_filter_candidates(component_count);
@@ -480,7 +515,9 @@ static void pvc_update_filter(const pvc_vision_frame_result_t *raw)
 #endif
 
     g_pvc_output_shadow = next;
+    g_pvc_vision_output_write_busy = 1U;
     g_pvc_vision_output = next;
+    g_pvc_vision_output_write_busy = 0U;
 }
 
 void pvc_vision_init(void)
@@ -511,7 +548,9 @@ void pvc_vision_reset_filter(void)
     pvc_clear_frame_result(&empty.raw);
     pvc_clear_frame_result(&empty.stable);
     g_pvc_output_shadow = empty;
+    g_pvc_vision_output_write_busy = 1U;
     g_pvc_vision_output = empty;
+    g_pvc_vision_output_write_busy = 0U;
     g_pvc_smooth_inited = 0U;
     g_pvc_smooth_forward_mm = -1;
     g_pvc_smooth_lateral_mm = 0;
@@ -531,12 +570,20 @@ void pvc_vision_process_camera_frame(const uint8 *gray)
     /*
      * 每来一帧摄像头图像调用一次。
      *
-     * 建议调用位置：
+     * 当前工程建议调用位置在 1 核 main_cm7_1.c：
      * if(mt9v03x_finish_flag) {
      *     mt9v03x_finish_flag = 0;
      *     memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
-     *     pvc_vision_process_camera_frame(image_copy[0]);
+     *     compress_image_to_target();
+     *     if(VisionIpc_Core1_ShouldRunPvc()) {
+     *         pvc_vision_process_camera_frame(compressed_image_copy[0]);
+     *     }
      * }
+     *
+     * 注意：
+     * - gray 必须是 94x60 连续灰度数组，不能直接传 188x120 原图。
+     * - 算法只处理图像和更新 g_pvc_vision_output。
+     * - IPC 发布在 1 核 2ms 中断里做，控制在 0 核 2ms 中断里做。
      */
     pvc_vision_frame_result_t raw;
 

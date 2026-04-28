@@ -36,8 +36,6 @@ int flash_write = 0;      // flash写使能标志位
 int flash_write_flag = 0; // flash写标志位
 #include "wifi.h"
 #include "zf_common_headfile.h"
-// 【新增】引入 PVC 视觉模块头文件，以便获取 g_pvc_vision_output 数据
-#include "vision/pvc_vision.h"
 
 // 只有X边界
 uint8 xy_x1_boundary[BOUNDARY_NUM], xy_x2_boundary[BOUNDARY_NUM], xy_x3_boundary[BOUNDARY_NUM];
@@ -50,7 +48,38 @@ uint8 x1_boundary[MT9V03X_H], x2_boundary[MT9V03X_H], x3_boundary[MT9V03X_H];
 uint8 y1_boundary[MT9V03X_W], y2_boundary[MT9V03X_W], y3_boundary[MT9V03X_W];
 
 // 图像备份数组，在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
+// 【保持原样】这里是原图大小 188 * 120 的备份，其他不相干算法仍可以使用它
 uint8 image_copy[MT9V03X_H][MT9V03X_W];
+uint8 compressed_image_copy[PVC_IMAGE_H][PVC_IMAGE_W];
+
+// =================================================================================
+// ★★★ 新增：图像降采样压缩函数 ★★★
+// =================================================================================
+/**
+ * @brief  将 188*120 的原图压缩成 94*60 的图像 (2x2均值池化)
+ * @note   请在主循环(摄像头采集完成回调)中，memcpy 到 image_copy 后调用本函数，
+ *         然后在将 compressed_image_copy 传给算法和进行渲染
+ */
+void compress_image_to_target(void) 
+{
+    for (int y = 0; y < PVC_IMAGE_H; y++) 
+    {
+        int src_y = y * 2; // 原图 188x120 对应的起始行
+        for (int x = 0; x < PVC_IMAGE_W; x++) 
+        {
+            int src_x = x * 2; // 原图 188x120 对应的起始列
+            
+            // 获取 2x2 区域的 4 个像素灰度值，求和后右移 2 位实现快速求平均值
+            uint32 sum = image_copy[src_y][src_x] +
+                         image_copy[src_y][src_x + 1] +
+                         image_copy[src_y + 1][src_x] +
+                         image_copy[src_y + 1][src_x + 1];
+                         
+            compressed_image_copy[y][x] = (uint8)(sum >> 2); 
+        }
+    }
+}
+
 
 // 函数实现
 void wifi_init(void)
@@ -96,9 +125,8 @@ void wifi_camera_init(void)
     // 如果需要发送边线则还需调用seekfree_assistant_camera_boundary_config函数设置边线的信息
 
 #if(0 == INCLUDE_BOUNDARY_TYPE)
-    // 发送总钻风图像信息(仅包含原始图像信息)
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, image_copy[0], MT9V03X_W, MT9V03X_H);
-
+    // 【修改】发送的图像从 image_copy 更改为 compressed_image_copy (带有识别框的压缩图)，尺寸改为 PVC_IMAGE_W 和 PVC_IMAGE_H
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
 
 #elif(1 == INCLUDE_BOUNDARY_TYPE)
     // 发送总钻风图像信息(并且包含三条边界信息，边界信息只含有横轴坐标，纵轴坐标由图像高度得到，意味着每个边界在一行中只会有一个点)
@@ -109,9 +137,9 @@ void wifi_camera_init(void)
         x2_boundary[i] = MT9V03X_W / 2;
         x3_boundary[i] = 118 + (168 - 118) * i / MT9V03X_H;
     }
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, image_copy[0], MT9V03X_W, MT9V03X_H);
+    // 【修改】发送压缩后的图像
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
     seekfree_assistant_camera_boundary_config(X_BOUNDARY, MT9V03X_H, x1_boundary, x2_boundary, x3_boundary, NULL, NULL ,NULL);
-
 
 #elif(2 == INCLUDE_BOUNDARY_TYPE)
     // 发送总钻风图像信息(并且包含三条边界信息，边界信息只含有纵轴坐标，横轴坐标由图像宽度得到，意味着每个边界在一列中只会有一个点)
@@ -123,9 +151,9 @@ void wifi_camera_init(void)
         y2_boundary[i] = MT9V03X_H / 2;
         y3_boundary[i] = (MT9V03X_W - i) * MT9V03X_H / MT9V03X_W;
     }
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, image_copy[0], MT9V03X_W, MT9V03X_H);
+    // 【修改】发送压缩后的图像
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
     seekfree_assistant_camera_boundary_config(Y_BOUNDARY, MT9V03X_W, NULL, NULL ,NULL, y1_boundary, y2_boundary, y3_boundary);
-
 
 #elif(3 == INCLUDE_BOUNDARY_TYPE)
     // 发送总钻风图像信息(并且包含三条边界信息，边界信息含有横纵轴坐标)
@@ -172,9 +200,9 @@ void wifi_camera_init(void)
         xy_y3_boundary[j] = 30 + i / 2;
         j++;
     }
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, image_copy[0], MT9V03X_W, MT9V03X_H);
+    // 【修改】发送压缩后的图像
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
     seekfree_assistant_camera_boundary_config(XY_BOUNDARY, BOUNDARY_NUM, xy_x1_boundary, xy_x2_boundary, xy_x3_boundary, xy_y1_boundary, xy_y2_boundary, xy_y3_boundary);
-
 
 #elif(4 == INCLUDE_BOUNDARY_TYPE)
     // 发送总钻风图像信息(并且包含三条边界信息，边界信息只包含横轴坐标，纵轴坐标由图像高度得到，意味着每个边界在一行中只会有一个点)
@@ -185,9 +213,9 @@ void wifi_camera_init(void)
         x2_boundary[i] = MT9V03X_W / 2;
         x3_boundary[i] = 118 + (168 - 118) * i / MT9V03X_H;
     }
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, NULL, MT9V03X_W, MT9V03X_H);
+    // 【修改】由于原本发送 NULL，此处若无发图需求可不动，或者统一跟随
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, NULL, PVC_IMAGE_W, PVC_IMAGE_H);
     seekfree_assistant_camera_boundary_config(X_BOUNDARY, MT9V03X_H, x1_boundary, x2_boundary, x3_boundary, NULL, NULL ,NULL);
-
 
 #endif
 }
@@ -196,72 +224,23 @@ void wifi_camera_init(void)
 // =================================================================================
 // ★★★ 上位机参数调节映射 (PC -> MCU) ★★★
 // =================================================================================
-// 参数 0: 角速度环 Kp (pid_gyro.kp)
-// 参数 1: 角速度环 Kd (pid_gyro.kd)
-// 参数 2: 角度环   Kp (pid_angle.kp)
-// 参数 3: 角度环   Kd (pid_angle.kd)
-// 参数 4: 速度环   Kp (pid_speed.kp)
-// 参数 5: 速度环   Ki (pid_speed.ki)
-// 参数 6: 期望速度 (target_speed_set)
-// 参数 7: 电机使能 (g_motor_enable) -> 1.0f为使能, 0.0f为失能
-/**
- * @brief  检查并更新从上位机接收到的PID等参数
- * @param  void
- * @return void
- * @note   此函数应在主循环中被周期性调用
- */
 void wifi_update_pid_params(void)
 {
-    // 调用库函数，解析WiFi数据流
     seekfree_assistant_data_analysis();
-
-    // 遍历所有参数，检查是否有更新标志
     for(uint8_t i = 0; i < SEEKFREE_ASSISTANT_SET_PARAMETR_COUNT; i++)
     {
         if(seekfree_assistant_parameter_update_flag[i])
         {
-            // 清除更新标志，防止重复执行
             seekfree_assistant_parameter_update_flag[i] = 0;
-
-            // 根据参数索引(i)更新对应的全局变量
-            // 这个映射关系需要在逐飞助手软件上对应设置
             switch(i)
             {
-                // 参数 0: 角速度环 Kp (pid_gyro.kp)
-                // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
-                //参数 0: 期望速度 (target_speed_set) 目标速度，负数代表向前，和rpm数量级相当，参数为-60时小车大概以20m/s向前行驶
                 case 0: g_jump_profile.t_launch =  (uint32_t)seekfree_assistant_parameter[i]; break;
-                // 参数 1: 角度环Kp
                 case 1:g_jump_profile.t_flight   = (uint32_t)seekfree_assistant_parameter[i]; break;
-                // 参数 2: 角度环kd
                 case 2:g_jump_profile.t_landing  = (uint32_t)seekfree_assistant_parameter[i]; break;
-                    // 参数 3: 舵机速度控制环kp
-                    case 3:   g_jump_profile.t_recovery  = (uint32_t)seekfree_assistant_parameter[i]; break;
-                // 参数 4: 舵机速度控制环ki
+                case 3:   g_jump_profile.t_recovery  = (uint32_t)seekfree_assistant_parameter[i]; break;
                 case 4:g_jump_profile.offset_launch = (int32_t)seekfree_assistant_parameter[i]; break;
-                // 参数 5: 是否存储数据到 Flash 
-                // case 5: flash_write = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; 
-                //         if (flash_write_flag == 0&& flash_write == 1)
-                //         {
-                //             param_save_to_flash();
-                //             flash_write_flag = 1;
-                //         }
-                //         if (flash_write_flag == 1&& flash_write == 0)
-                //         {
-                //             flash_write_flag = 0;
-                //         }
-                //         break;
-                
-                
-                // 参数5: 转向角速度环kp
-                // case 5: pid_turn_gyro.kp = seekfree_assistant_parameter[i]; break;
-                // 参数5 :vision_detected_jump_point,跳跃测试
                 case 5:  g_jump_profile.offset_flight = (int32_t)seekfree_assistant_parameter[i]; break;
-                // 参数6: 转向角速度环kd
-                // case 6: pid_turn_gyro.kd = seekfree_assistant_parameter[i]; break;
-                // 参数6:  vision_detected_marker = 0/1;//雷区调用,测试用
                 case 6: g_jump_profile.offset_land  = (int32_t)seekfree_assistant_parameter[i]; break;
-                // 参数 7: 电机使能 (1.0f为使能, 0.0f为失能)
                 case 7:vision_detected_jump_point= (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;
             }
@@ -269,58 +248,45 @@ void wifi_update_pid_params(void)
     }
 }
 
-// 辅助函数：安全地将 double 拆分为两个 float（作为位容器）
-// 逐飞助手传输的是 float 型数据，如果想要传输 double 型数据，需要将其拆分为两个 float，请直接调用该函数，示例如下
-// encode_double_to_two_floats(gnss.latitude,
-//                            &seekfree_assistant_oscilloscope_data.data[1], // 纬度高32位 → 通道1
-//                            &seekfree_assistant_oscilloscope_data.data[2]); // 纬度低32位 → 通道2
 void encode_double_to_two_floats(double value, float* out_high, float* out_low) {
     uint64_t u64;
-    memcpy(&u64, &value, sizeof(double));          // 获取 double 的 64 位表示
+    memcpy(&u64, &value, sizeof(double));          
 
-    uint32_t high = (uint32_t)(u64 >> 32);         // 高 32 位
-    uint32_t low  = (uint32_t)(u64 & 0xFFFFFFFFU); // 低 32 位
+    uint32_t high = (uint32_t)(u64 >> 32);         
+    uint32_t low  = (uint32_t)(u64 & 0xFFFFFFFFU); 
 
-    memcpy(out_high, &high, sizeof(uint32_t));     // 将 high 的位模式写入 float
-    memcpy(out_low,  &low,  sizeof(uint32_t));     // 将 low 的位模式写入 float
+    memcpy(out_high, &high, sizeof(uint32_t));     
+    memcpy(out_low,  &low,  sizeof(uint32_t));     
 }
 
 
 // =================================================================================
-// ★★★ 图像渲染辅助函数 (用于在 image_copy 上绘制 PVC 检测框等，供上位机查看) ★★★
+// ★★★ 图像渲染辅助函数 (用于在 compressed_image_copy 上绘制 PVC 检测框等) ★★★
 // =================================================================================
 
 /**
- * @brief  在 image_copy 上安全画点 (防止越界导致异常)
+ * @brief  在 compressed_image_copy 上安全画点 (防止越界导致异常)
  * @param  x 图像 X 坐标
  * @param  y 图像 Y 坐标
  * @param  color 像素颜色（0 为纯黑，255 为纯白）
  */
 void draw_point_on_image(int x, int y, uint8 color) 
 {
-    if (x >= 0 && x < MT9V03X_W && y >= 0 && y < MT9V03X_H) 
+    // 【修改】边界检查从原图宽/高更改为压缩算法图宽高: PVC_IMAGE_W 和 PVC_IMAGE_H
+    if (x >= 0 && x < PVC_IMAGE_W && y >= 0 && y < PVC_IMAGE_H) 
     {
-        image_copy[y][x] = color;
+        // 【修改】渲染对象更改为 compressed_image_copy 
+        compressed_image_copy[y][x] = color;
     }
 }
 
-/**
- * @brief  在 image_copy 上画矩形框 (主要用于绘制 Bounding Box)
- * @param  x_min 左边界
- * @param  y_min 上边界
- * @param  x_max 右边界
- * @param  y_max 下边界
- * @param  color 像素颜色
- */
 void draw_rect_on_image(int x_min, int y_min, int x_max, int y_max, uint8 color) 
 {
-    // 画上下横线
     for (int x = x_min; x <= x_max; x++) 
     {
         draw_point_on_image(x, y_min, color);
         draw_point_on_image(x, y_max, color);
     }
-    // 画左右竖线
     for (int y = y_min; y <= y_max; y++) 
     {
         draw_point_on_image(x_min, y, color);
@@ -328,13 +294,6 @@ void draw_rect_on_image(int x_min, int y_min, int x_max, int y_max, uint8 color)
     }
 }
 
-/**
- * @brief  在 image_copy 上画十字星 (主要用于绘制质心点)
- * @param  x 十字中心 X 坐标
- * @param  y 十字中心 Y 坐标
- * @param  size 十字的臂长 (像素)
- * @param  color 像素颜色
- */
 void draw_cross_on_image(int x, int y, int size, uint8 color) 
 {
     for(int i = -size; i <= size; i++) 
@@ -345,9 +304,9 @@ void draw_cross_on_image(int x, int y, int size, uint8 color)
 }
 
 /**
- * @brief  将 PVC 视觉识别的结果直接渲染到 image_copy 图像数组中。
- * @note   务必在 memcpy 把原始图像拷贝到 image_copy 【之后】，WIFI 发送数据 【之前】调用本函数。
- *         这样上位机就能直接看到标定框，并且不会污染影响算法计算的原始图像数组。
+ * @brief  将 PVC 视觉识别的结果直接渲染到 compressed_image_copy 图像数组中。
+ * @note   由于当前算法就是基于 94x60 输出，我们也是把框画在 94x60 压缩图上供上位机显示，
+ *         因此此处坐标1:1对应，不再需要 *2 还原。
  */
 void render_pvc_vision_to_image(void) 
 {
@@ -358,12 +317,13 @@ void render_pvc_vision_to_image(void)
     if (pvc_out->stable_detected) 
     {
         // 1. 获取包围框 (Bounding Box) 坐标
+        // 【修改】不需要做 *2 映射！直接在 94x60 图上画
         uint8 xmin = pvc_out->stable.bbox_xmin;
         uint8 ymin = pvc_out->stable.bbox_ymin;
         uint8 xmax = pvc_out->stable.bbox_xmax;
         uint8 ymax = pvc_out->stable.bbox_ymax;
 
-        // 在图像上画一个纯黑色的矩形框（因为 PVC 是纯白色，黑框最醒目）
+        // 在图像上画一个纯黑色的矩形框
         draw_rect_on_image(xmin, ymin, xmax, ymax, 0);
 
         // 2. 获取目标质心坐标
@@ -374,9 +334,10 @@ void render_pvc_vision_to_image(void)
         draw_cross_on_image(cx, cy, 3, 0);
 
         // 3. （可选）绘制入口白边近端线 entry_bottom_y 
-        // 绘制一条横向贯穿画面的虚线，用于辅助检查入口距离判定点
         uint8 entry_y = pvc_out->stable.entry_bottom_y;
-        for (int x = 0; x < MT9V03X_W; x += 2) // 步长为 2 形成虚线效果
+        
+        // 【修改】循环上限从 MT9V03X_W 修改为算法宽度 PVC_IMAGE_W
+        for (int x = 0; x < PVC_IMAGE_W; x += 2) 
         { 
             draw_point_on_image(x, entry_y, 0);
         }

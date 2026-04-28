@@ -36,6 +36,7 @@
 
 
 #include "zf_common_headfile.h"
+#include "../code1/vision/vision_ipc_core1.h"
 // **************************** PIT中断函数 ****************************
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
@@ -54,6 +55,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
 void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务函数      
 {
     pit_isr_flag_clear(PIT_CH2);
+    VisionIpc_Core1_Update_2ms();
 		
 }
 

@@ -15,7 +15,11 @@ volatile vision_ipc_packet_t g_vision_ipc_result;
 
 static vision_ipc_command_t g_core1_command_shadow;
 static uint32 g_core1_result_seq = 0U;
-static uint8 g_core1_pvc_enabled = 0U;
+static volatile uint8 g_core1_pvc_enabled = 0U;
+static volatile uint8 g_core1_pvc_reset_request = 0U;
+static uint32 g_core1_last_published_frame_id = 0U;
+static uint32 g_core1_last_published_command_seq = 0U;
+static uint8 g_core1_last_published_enabled = 0U;
 
 static uint16 vision_confidence_to_u16(float confidence)
 {
@@ -44,6 +48,13 @@ static void vision_ipc_core1_write_packet(vision_ipc_packet_t *packet)
     SCB_CleanInvalidateDCache_by_Addr((void *)&g_vision_ipc_result, sizeof(g_vision_ipc_result));
 }
 
+static uint8 vision_ipc_core1_command_wants_pvc(const vision_ipc_command_t *cmd)
+{
+    const uint8 active_is_pvc = (uint8)(cmd->active_target == VISION_TARGET_PVC_ENTRY);
+    const uint8 mask_has_pvc = (uint8)((cmd->enable_mask & VISION_MASK_PVC_ENTRY) != 0U);
+    return (uint8)(active_is_pvc || mask_has_pvc);
+}
+
 void VisionIpc_Core1_Init(void)
 {
     memset(&g_core1_command_shadow, 0, sizeof(g_core1_command_shadow));
@@ -52,7 +63,47 @@ void VisionIpc_Core1_Init(void)
     g_core1_command_shadow.pvc_min_score_u16 = 580U;
     g_core1_result_seq = 0U;
     g_core1_pvc_enabled = 0U;
+    g_core1_pvc_reset_request = 0U;
+    g_core1_last_published_frame_id = 0U;
+    g_core1_last_published_command_seq = 0U;
+    g_core1_last_published_enabled = 0U;
     VisionIpc_Core1_PublishIdle();
+}
+
+void VisionIpc_Core1_Update_2ms(void)
+{
+    VisionIpc_Core1_PollCommand();
+
+    if (g_core1_pvc_enabled == 0U)
+    {
+        if (g_core1_last_published_enabled != 0U)
+        {
+            VisionIpc_Core1_PublishIdle();
+            g_core1_last_published_enabled = 0U;
+        }
+        return;
+    }
+
+    g_core1_last_published_enabled = 1U;
+
+    if (g_pvc_vision_output_write_busy != 0U)
+    {
+        return;
+    }
+
+    {
+        const volatile pvc_vision_output_t *output = pvc_vision_get_output();
+        const uint32 frame_id = output->frame_id;
+
+        if ((frame_id != 0U) &&
+            ((frame_id != g_core1_last_published_frame_id) ||
+             (g_core1_command_shadow.seq != g_core1_last_published_command_seq)))
+        {
+            VisionIpc_Core1_PublishPvc(output);
+            g_core1_last_published_frame_id = frame_id;
+            g_core1_last_published_command_seq = g_core1_command_shadow.seq;
+        }
+    }
 }
 
 void VisionIpc_Core1_PollCommand(void)
@@ -65,21 +116,35 @@ void VisionIpc_Core1_PollCommand(void)
 
     if (vision_ipc_command_is_valid(&cmd))
     {
+        if (cmd.seq == g_core1_command_shadow.seq)
+        {
+            return;
+        }
+
         g_core1_command_shadow = cmd;
-        next_pvc_enabled = VisionIpc_Core1_ShouldRunPvc();
+        next_pvc_enabled = vision_ipc_core1_command_wants_pvc(&g_core1_command_shadow);
         if (next_pvc_enabled != g_core1_pvc_enabled)
         {
-            pvc_vision_reset_filter();
+            g_core1_pvc_reset_request = 1U;
             g_core1_pvc_enabled = next_pvc_enabled;
+            g_core1_last_published_frame_id = 0U;
         }
     }
 }
 
 uint8 VisionIpc_Core1_ShouldRunPvc(void)
 {
-    const uint8 active_is_pvc = (uint8)(g_core1_command_shadow.active_target == VISION_TARGET_PVC_ENTRY);
-    const uint8 mask_has_pvc = (uint8)((g_core1_command_shadow.enable_mask & VISION_MASK_PVC_ENTRY) != 0U);
-    return (uint8)(active_is_pvc || mask_has_pvc);
+    return g_core1_pvc_enabled;
+}
+
+uint8 VisionIpc_Core1_TakePvcResetRequest(void)
+{
+    if (g_core1_pvc_reset_request)
+    {
+        g_core1_pvc_reset_request = 0U;
+        return 1U;
+    }
+    return 0U;
 }
 
 void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)

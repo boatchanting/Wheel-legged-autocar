@@ -39,6 +39,10 @@
 
 #include "zf_common_headfile.h"
 
+// 【新增】引入 PVC 视觉模块头文件
+// 目的：为了获取 PVC_IMAGE_W (94) 和 PVC_IMAGE_H (60) 的宏定义，用于压缩数组的大小声明
+#include "vision/pvc_vision.h"
+
 // *************************** 例程使用步骤说明 ***************************
 // 1.根据硬件连接说明连接好模块，使用电源供电(下载器供电会导致模块电压不足)
 //
@@ -101,7 +105,12 @@
 #define BOUNDARY_NUM            (MT9V03X_H * 3 / 2)
 
 //外部变量声明
-extern uint8 image_copy[MT9V03X_H][MT9V03X_W];// 图像备份，防止撕裂
+// 【保持原有】原始图像备份(188x120)，防止撕裂，供其它算法使用
+
+extern uint8 image_copy[MT9V03X_H][MT9V03X_W];
+// 【新增】压缩后的图像备份数组(94x60)，供 PVC 算法、渲染画框及 WIFI 发送使用
+extern uint8 compressed_image_copy[PVC_IMAGE_H][PVC_IMAGE_W];
+
 extern int g_motor_enable;
 
 // 函数声明
@@ -111,14 +120,17 @@ void wifi_camera_init(void);
 void wifi_update_pid_params(void);//检查并更新从上位机接收到的PID等参数
 void encode_double_to_two_floats(double value, float* out_high, float* out_low);//辅助函数：安全地将 double 拆分为两个 float（作为位容器）
 
+// 【新增】原图像降采样压缩函数声明 (188x120 -> 94x60)
+// 请在主循环/摄像头中断里：memcpy将原图像拷贝到 image_copy 之后调用此函数。
+void compress_image_to_target(void);
 
-// 【新增】图像渲染辅助函数，用于将检测指标画在 image_copy 上以便上位机观察
+// 【修改注释】图像渲染辅助函数，用于将检测指标画在 compressed_image_copy 上以便上位机观察
 void draw_point_on_image(int x, int y, uint8 color);
 void draw_rect_on_image(int x_min, int y_min, int x_max, int y_max, uint8 color);
 void draw_cross_on_image(int x, int y, int size, uint8 color);
 
-// 【新增】将 PVC 指标（BoundingBox，质心十字等）渲染在备份图像上。
-// 请在主循环/摄像头中断里：memcpy将原图像拷贝到image_copy之后、WIFI图像发送之前，调用此函数。
+// 【修改注释】将 PVC 指标（BoundingBox，质心十字等）渲染在压缩后的备份图像(compressed_image_copy)上。
+// 请在调用 compress_image_to_target 以及 pvc_vision_process_camera_frame 之后，WIFI发送之前调用。
 void render_pvc_vision_to_image(void);
 
 #endif // __WIFI_H__
