@@ -31,12 +31,24 @@ extern "C" {
  */
 
 #define VISION_PVC_CONTROL_ENABLE                 (1)
-#define VISION_PVC_CONTROL_DEFAULT_ACTIVE         (1)
+/*
+ * 检测默认常开：
+ * - 这里控制的是 0 核给 1 核的视觉任务选择，即 vision_ipc.h 里的
+ *   active_target=VISION_TARGET_PVC_ENTRY、enable_mask=VISION_MASK_PVC_ENTRY。
+ * - 测试时一般让 1 核一直检测 PVC，方便看图和看 IPC 数据。
+ */
+#define VISION_PVC_DETECT_DEFAULT_ACTIVE          (1)
+/*
+ * 控制默认关闭：
+ * - 这里只控制 0 核是否把 PVC 视觉结果写入 err_degree/target_speed_set。
+ * - 测试时在调试器或菜单里把 g_pvc_control_enable 改成 1，车才会受 PVC 视觉引导。
+ */
+#define VISION_PVC_CONTROL_DEFAULT_ACTIVE         (0)
 #define VISION_PVC_CONTROL_PROFILE_ENABLE         (1)
 #define VISION_PVC_CONTROL_PROFILE_TIMER          (TC_TIME2_CH0)
 
 /* 如果第一次实车测试发现车朝远离 PVC 中心的方向修正，把 1.0f 改成 -1.0f。 */
-#define VISION_PVC_CONTROL_LATERAL_SIGN           (1.0f)
+#define VISION_PVC_CONTROL_LATERAL_SIGN           (-1.0f)
 
 /* 画面尺寸必须和 1 核 pvc_vision.h 的 PVC_IMAGE_W/H 保持一致。 */
 #define VISION_PVC_CONTROL_IMAGE_W                (94U)
@@ -51,8 +63,8 @@ extern "C" {
  * - ARRIVE：到达/压到 PVC 区域后停车。
  */
 #define VISION_PVC_CONTROL_SEARCH_SPEED_SET       (-35.0f)
-#define VISION_PVC_CONTROL_TRACK_SPEED_SET        (-55.0f)
-#define VISION_PVC_CONTROL_CLOSE_SPEED_SET        (-25.0f)
+#define VISION_PVC_CONTROL_TRACK_SPEED_SET        (-200.0f)
+#define VISION_PVC_CONTROL_CLOSE_SPEED_SET        (-80.0f)
 #define VISION_PVC_CONTROL_ARRIVE_SPEED_SET       (0.0f)
 
 /*
@@ -108,6 +120,20 @@ typedef struct
 
 extern volatile vision_pvc_control_status_t g_vision_pvc_control_status;
 extern volatile runtime_profiler_t g_vision_pvc_control_profiler;
+/*
+ * PVC 控制开关，专门给测试使用。
+ *
+ * g_pvc_control_enable = 0：
+ * - 1 核 PVC 检测仍然常开。
+ * - 0 核只更新 g_vision_ipc_latest 和 g_vision_pvc_control_status。
+ * - 不覆盖 err_degree 和 target_speed_set。
+ *
+ * g_pvc_control_enable = 1：
+ * - 0 核使用 PVC 结果控制小车进入 PVC 区域。
+ * - 横向偏差写入 err_degree。
+ * - 搜索/跟踪/接近/到达速度写入 target_speed_set。
+ */
+extern volatile uint8 g_pvc_control_enable;
 
 void VisionPvcControl_Init(void);
 void VisionPvcControl_SetEnable(uint8 enable);

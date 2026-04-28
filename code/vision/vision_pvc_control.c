@@ -7,6 +7,7 @@ extern int g_motor_enable;
 
 volatile vision_pvc_control_status_t g_vision_pvc_control_status = {0};
 volatile runtime_profiler_t g_vision_pvc_control_profiler = {0};
+volatile uint8 g_pvc_control_enable = VISION_PVC_CONTROL_DEFAULT_ACTIVE;
 
 static vision_pvc_control_status_t g_pvc_ctrl_shadow;
 
@@ -89,7 +90,8 @@ static void vision_pvc_apply_idle_outputs(void)
 void VisionPvcControl_Init(void)
 {
     memset(&g_pvc_ctrl_shadow, 0, sizeof(g_pvc_ctrl_shadow));
-    g_pvc_ctrl_shadow.enabled = VISION_PVC_CONTROL_DEFAULT_ACTIVE;
+    g_pvc_control_enable = VISION_PVC_CONTROL_DEFAULT_ACTIVE;
+    g_pvc_ctrl_shadow.enabled = g_pvc_control_enable;
     g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_IDLE;
     g_vision_pvc_control_status = g_pvc_ctrl_shadow;
 
@@ -97,23 +99,27 @@ void VisionPvcControl_Init(void)
     RUNTIME_PROFILE_RESET(&g_vision_pvc_control_profiler);
 #endif
 
-    VisionIpc_Core0_SetPvcEnable(g_pvc_ctrl_shadow.enabled);
+    /*
+     * 检测任务选择和控制开关分离：
+     * - VisionIpc_Core0_SetPvcEnable(1) 只是在 IPC 命令里选择 1 核运行 PVC 检测。
+     * - g_pvc_control_enable 才决定 0 核是否接管 err_degree/target_speed_set。
+     */
+    VisionIpc_Core0_SetPvcEnable(VISION_PVC_DETECT_DEFAULT_ACTIVE);
 }
 
 void VisionPvcControl_SetEnable(uint8 enable)
 {
-    g_pvc_ctrl_shadow.enabled = enable ? 1U : 0U;
-    if (g_pvc_ctrl_shadow.enabled == 0U)
+    g_pvc_control_enable = enable ? 1U : 0U;
+    g_pvc_ctrl_shadow.enabled = g_pvc_control_enable;
+    if (g_pvc_control_enable == 0U)
     {
         vision_pvc_apply_idle_outputs();
     }
-
-    VisionIpc_Core0_SetPvcEnable(g_pvc_ctrl_shadow.enabled);
 }
 
 uint8 VisionPvcControl_IsEnabled(void)
 {
-    return g_pvc_ctrl_shadow.enabled;
+    return g_pvc_control_enable;
 }
 
 void VisionPvcControl_Update_2ms(void)
@@ -126,6 +132,12 @@ void VisionPvcControl_Update_2ms(void)
 #if VISION_PVC_CONTROL_PROFILE_ENABLE
     RUNTIME_PROFILE_BEGIN(g_vision_pvc_control_profiler, VISION_PVC_CONTROL_PROFILE_TIMER);
 #endif
+
+    /*
+     * 允许调试器/菜单直接改 g_pvc_control_enable，不强制必须调用
+     * VisionPvcControl_SetEnable()。
+     */
+    g_pvc_ctrl_shadow.enabled = g_pvc_control_enable ? 1U : 0U;
 
     if (g_pvc_ctrl_shadow.enabled == 0U)
     {

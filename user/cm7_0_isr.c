@@ -532,7 +532,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
 
     if ((g_replay_state != REPLAY_RUNNING) &&
         (!jump_stepup_three_stairs_test_is_active()) &&
-        (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时
+        (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
+        && g_pvc_control_enable ==0
+    )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
