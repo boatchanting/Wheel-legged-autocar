@@ -36,6 +36,8 @@ int flash_write = 0;      // flash写使能标志位
 int flash_write_flag = 0; // flash写标志位
 #include "wifi.h"
 #include "zf_common_headfile.h"
+// 【新增】引入 PVC 视觉模块头文件，以便获取 g_pvc_vision_output 数据
+#include "vision/pvc_vision.h"
 
 // 只有X边界
 uint8 xy_x1_boundary[BOUNDARY_NUM], xy_x2_boundary[BOUNDARY_NUM], xy_x3_boundary[BOUNDARY_NUM];
@@ -281,4 +283,102 @@ void encode_double_to_two_floats(double value, float* out_high, float* out_low) 
 
     memcpy(out_high, &high, sizeof(uint32_t));     // 将 high 的位模式写入 float
     memcpy(out_low,  &low,  sizeof(uint32_t));     // 将 low 的位模式写入 float
+}
+
+
+// =================================================================================
+// ★★★ 图像渲染辅助函数 (用于在 image_copy 上绘制 PVC 检测框等，供上位机查看) ★★★
+// =================================================================================
+
+/**
+ * @brief  在 image_copy 上安全画点 (防止越界导致异常)
+ * @param  x 图像 X 坐标
+ * @param  y 图像 Y 坐标
+ * @param  color 像素颜色（0 为纯黑，255 为纯白）
+ */
+void draw_point_on_image(int x, int y, uint8 color) 
+{
+    if (x >= 0 && x < MT9V03X_W && y >= 0 && y < MT9V03X_H) 
+    {
+        image_copy[y][x] = color;
+    }
+}
+
+/**
+ * @brief  在 image_copy 上画矩形框 (主要用于绘制 Bounding Box)
+ * @param  x_min 左边界
+ * @param  y_min 上边界
+ * @param  x_max 右边界
+ * @param  y_max 下边界
+ * @param  color 像素颜色
+ */
+void draw_rect_on_image(int x_min, int y_min, int x_max, int y_max, uint8 color) 
+{
+    // 画上下横线
+    for (int x = x_min; x <= x_max; x++) 
+    {
+        draw_point_on_image(x, y_min, color);
+        draw_point_on_image(x, y_max, color);
+    }
+    // 画左右竖线
+    for (int y = y_min; y <= y_max; y++) 
+    {
+        draw_point_on_image(x_min, y, color);
+        draw_point_on_image(x_max, y, color);
+    }
+}
+
+/**
+ * @brief  在 image_copy 上画十字星 (主要用于绘制质心点)
+ * @param  x 十字中心 X 坐标
+ * @param  y 十字中心 Y 坐标
+ * @param  size 十字的臂长 (像素)
+ * @param  color 像素颜色
+ */
+void draw_cross_on_image(int x, int y, int size, uint8 color) 
+{
+    for(int i = -size; i <= size; i++) 
+    {
+        draw_point_on_image(x + i, y, color);
+        draw_point_on_image(x, y + i, color);
+    }
+}
+
+/**
+ * @brief  将 PVC 视觉识别的结果直接渲染到 image_copy 图像数组中。
+ * @note   务必在 memcpy 把原始图像拷贝到 image_copy 【之后】，WIFI 发送数据 【之前】调用本函数。
+ *         这样上位机就能直接看到标定框，并且不会污染影响算法计算的原始图像数组。
+ */
+void render_pvc_vision_to_image(void) 
+{
+    // 读取视觉模块的输出
+    const volatile pvc_vision_output_t *pvc_out = &g_pvc_vision_output;
+
+    // 只有当稳定检测到 PVC 目标时才在屏幕上画图
+    if (pvc_out->stable_detected) 
+    {
+        // 1. 获取包围框 (Bounding Box) 坐标
+        uint8 xmin = pvc_out->stable.bbox_xmin;
+        uint8 ymin = pvc_out->stable.bbox_ymin;
+        uint8 xmax = pvc_out->stable.bbox_xmax;
+        uint8 ymax = pvc_out->stable.bbox_ymax;
+
+        // 在图像上画一个纯黑色的矩形框（因为 PVC 是纯白色，黑框最醒目）
+        draw_rect_on_image(xmin, ymin, xmax, ymax, 0);
+
+        // 2. 获取目标质心坐标
+        int cx = (int)pvc_out->stable.centroid_x;
+        int cy = (int)pvc_out->stable.centroid_y;
+
+        // 在质心位置画一个纯黑色的十字，臂长为 3 个像素
+        draw_cross_on_image(cx, cy, 3, 0);
+
+        // 3. （可选）绘制入口白边近端线 entry_bottom_y 
+        // 绘制一条横向贯穿画面的虚线，用于辅助检查入口距离判定点
+        uint8 entry_y = pvc_out->stable.entry_bottom_y;
+        for (int x = 0; x < MT9V03X_W; x += 2) // 步长为 2 形成虚线效果
+        { 
+            draw_point_on_image(x, entry_y, 0);
+        }
+    }
 }

@@ -111,4 +111,14 @@ void wifi_camera_init(void);
 void wifi_update_pid_params(void);//检查并更新从上位机接收到的PID等参数
 void encode_double_to_two_floats(double value, float* out_high, float* out_low);//辅助函数：安全地将 double 拆分为两个 float（作为位容器）
 
+
+// 【新增】图像渲染辅助函数，用于将检测指标画在 image_copy 上以便上位机观察
+void draw_point_on_image(int x, int y, uint8 color);
+void draw_rect_on_image(int x_min, int y_min, int x_max, int y_max, uint8 color);
+void draw_cross_on_image(int x, int y, int size, uint8 color);
+
+// 【新增】将 PVC 指标（BoundingBox，质心十字等）渲染在备份图像上。
+// 请在主循环/摄像头中断里：memcpy将原图像拷贝到image_copy之后、WIFI图像发送之前，调用此函数。
+void render_pvc_vision_to_image(void);
+
 #endif // __WIFI_H__

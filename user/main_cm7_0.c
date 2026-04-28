@@ -387,34 +387,34 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
                 // 4.【调节pvc识别】
                 // data[0] 左轮速度
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
 
-                // data[1] 右轮速度
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // // data[1] 右轮速度
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
 
-                // data[2] 航向误差 (PVC 第一版暂时为 0)
-                seekfree_assistant_oscilloscope_data.data[2] = (float)g_vision_ipc_latest.pvc_yaw_error_deg_x100 / 100.0f;
+                // // data[2] 航向误差 (PVC 第一版暂时为 0)
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)g_vision_ipc_latest.pvc_yaw_error_deg_x100 / 100.0f;
 
-                // data[3] 横向偏差
-                seekfree_assistant_oscilloscope_data.data[3] = (float)g_vision_ipc_latest.pvc_lateral_mm;
+                // // data[3] 横向偏差
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)g_vision_ipc_latest.pvc_lateral_mm;
 
-                // data[4] 目标速度
-                seekfree_assistant_oscilloscope_data.data[4] = (float)target_speed_set;
+                // // data[4] 目标速度
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)target_speed_set;
 
-                // data[5] 置信度 (0~1000)
-                seekfree_assistant_oscilloscope_data.data[5] = (float)g_vision_ipc_latest.pvc_confidence_u16;
+                // // data[5] 置信度 (0~1000)
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)g_vision_ipc_latest.pvc_confidence_u16;
 
-                // data[6] 近端白边行号
-                seekfree_assistant_oscilloscope_data.data[6] = (float)g_vision_ipc_latest.pvc_entry_bottom_y;
+                // // data[6] 近端白边行号
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)g_vision_ipc_latest.pvc_entry_bottom_y;
 
-                // data[7] 远端白边行号
-                seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
+                // // data[7] 远端白边行号
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                    // 4. 设置本次发送的通道数量 (一共8个数据)
-                    seekfree_assistant_oscilloscope_data.channel_num = 8;
+                //     // 4. 设置本次发送的通道数量 (一共8个数据)
+                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                    // 5. 调用发送函数
-                    seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                //     // 5. 调用发送函数
+                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
                 // 用于上位机向小车发送pid信息
                 //wifi_update_pid_params(); 
