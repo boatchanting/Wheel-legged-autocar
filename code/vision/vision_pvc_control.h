@@ -88,7 +88,7 @@ extern "C" {
  * err_degree = lateral_mm * K_LAT + yaw_error * K_YAW，最后限幅到 MAX_ERR_DEG。
  * 第一版 PVC 入口 yaw_error 通常为 0，主要靠 lateral_mm 控制。
  */
-#define VISION_PVC_CONTROL_K_LAT_DEG_PER_MM       (0.035f)
+#define VISION_PVC_CONTROL_K_LAT_DEG_PER_MM       (0.20f)
 #define VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG      (0.50f)
 #define VISION_PVC_CONTROL_MAX_ERR_DEG            (18.0f)
 
