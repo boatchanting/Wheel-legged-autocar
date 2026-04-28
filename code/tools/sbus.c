@@ -200,70 +200,77 @@ void Remote_Control_Process(void)
     static uint8 last_ch3_state = 0; 
     uint8 curr_ch3_state = (ch3_mark > RC_SW_THRESHOLD) ? 1 : 0;
 
+    if (curr_ch3_state ==1){
+        g_pvc_control_enable = 1;//进入pcv控制调试使用
+    }
+    else{
+        g_pvc_control_enable = 0;
+    }
+
     // 检测状态跳变进行打点 (当前状态 != 上一次状态)
     // 这意味着无论是从0变1(上升沿)还是从1变0(下降沿)，都会触发
-    if(ch3_mark ==0)
-    {
-        curr_ch3_state =last_ch3_state ;
-    }
-    if (curr_ch3_state != last_ch3_state )
-    {
-        vision_detected_jump_point = 1;//跳跃点调用,测试用
-        //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
-    //robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
-    // NAV_POINT_PATH = 0,     // 普通路径点
-    // NAV_POINT_CIRCLE = 1,   // 转圈点
-    // NAV_POINT_SLOPE = 2,    // 上坡点
-    // NAV_POINT_JUMP = 3,     // 跳跃点
-    // NAV_POINT_BRIDGE = 4,   // 单边桥点
-    // NAV_POINT_BUMP = 5      // 颠簸路段点
-        if (ch5_brake < RC_SW_THRESHOLD)
-        {
-            if (ch4_mode < RC_SW_MID_LOW)
-            {
-                robot_ctrl.point_type =0;//ch5 0 ch4 0
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_PATH\n");
-            #endif
-            }
-            else if (ch4_mode > RC_SW_MID_HIGH)
-            {
-                robot_ctrl.point_type =2;//ch5 0 ch4 2
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_SLOPE\n");
-            #endif
-            }
-            else
-            {
-                robot_ctrl.point_type =1;//ch5 0 ch4 1
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_CIRCLE\n");
-            #endif
-            }
-        }
-        else if(ch5_brake > RC_SW_THRESHOLD){
-            if (ch4_mode < RC_SW_MID_LOW)
-            {
-                robot_ctrl.point_type = 3;//ch5 1 ch4 0
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_JUMP\n");
-            #endif
-            }
-            else if (ch4_mode > RC_SW_MID_HIGH)
-            {
-                robot_ctrl.point_type = 5;//ch5 1 ch4 2
-                #if DEBUG_LOG_ENABLE
-                    printf("Point Type: NAV_POINT_BUMP\n");
-                #endif
-            }
-            else
-            {
-                robot_ctrl.point_type = 4;//ch5 1 ch4 1
-                #if DEBUG_LOG_ENABLE
-                    printf("Point Type: NAV_POINT_BRIDGE\n");
-                #endif
-            }
-        }
-    }
-    last_ch3_state = curr_ch3_state; 
+    // if(ch3_mark ==0)
+    // {
+    //     curr_ch3_state =last_ch3_state ;
+    // }
+    // if (curr_ch3_state != last_ch3_state )
+    // {
+    //     vision_detected_jump_point = 1;//跳跃点调用,测试用
+    //     //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
+    // //robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
+    // // NAV_POINT_PATH = 0,     // 普通路径点
+    // // NAV_POINT_CIRCLE = 1,   // 转圈点
+    // // NAV_POINT_SLOPE = 2,    // 上坡点
+    // // NAV_POINT_JUMP = 3,     // 跳跃点
+    // // NAV_POINT_BRIDGE = 4,   // 单边桥点
+    // // NAV_POINT_BUMP = 5      // 颠簸路段点
+    //     if (ch5_brake < RC_SW_THRESHOLD)
+    //     {
+    //         if (ch4_mode < RC_SW_MID_LOW)
+    //         {
+    //             robot_ctrl.point_type =0;//ch5 0 ch4 0
+    //         #if DEBUG_LOG_ENABLE
+    //             printf("Point Type: NAV_POINT_PATH\n");
+    //         #endif
+    //         }
+    //         else if (ch4_mode > RC_SW_MID_HIGH)
+    //         {
+    //             robot_ctrl.point_type =2;//ch5 0 ch4 2
+    //         #if DEBUG_LOG_ENABLE
+    //             printf("Point Type: NAV_POINT_SLOPE\n");
+    //         #endif
+    //         }
+    //         else
+    //         {
+    //             robot_ctrl.point_type =1;//ch5 0 ch4 1
+    //         #if DEBUG_LOG_ENABLE
+    //             printf("Point Type: NAV_POINT_CIRCLE\n");
+    //         #endif
+    //         }
+    //     }
+    //     else if(ch5_brake > RC_SW_THRESHOLD){
+    //         if (ch4_mode < RC_SW_MID_LOW)
+    //         {
+    //             robot_ctrl.point_type = 3;//ch5 1 ch4 0
+    //         #if DEBUG_LOG_ENABLE
+    //             printf("Point Type: NAV_POINT_JUMP\n");
+    //         #endif
+    //         }
+    //         else if (ch4_mode > RC_SW_MID_HIGH)
+    //         {
+    //             robot_ctrl.point_type = 5;//ch5 1 ch4 2
+    //             #if DEBUG_LOG_ENABLE
+    //                 printf("Point Type: NAV_POINT_BUMP\n");
+    //             #endif
+    //         }
+    //         else
+    //         {
+    //             robot_ctrl.point_type = 4;//ch5 1 ch4 1
+    //             #if DEBUG_LOG_ENABLE
+    //                 printf("Point Type: NAV_POINT_BRIDGE\n");
+    //             #endif
+    //         }
+    //     }
+    // }
+    // last_ch3_state = curr_ch3_state; 
 }
