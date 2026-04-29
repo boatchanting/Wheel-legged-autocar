@@ -40,6 +40,7 @@
 #include "plan/bumpy_road.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
+#include "vision/vision_task_area.h"
 
 // 声明外部函数
 
@@ -78,6 +79,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     {
         VisionIpc_Core0_Update_2ms();
         VisionPvcControl_Update_2ms();
+        VisionBridgeTask_Update_2ms();
     }
 
     imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用【优化点】
@@ -167,11 +169,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ------------------------------------------------------
     if (loop_counter % 10 == 3) {  // 10ms 一次
         // 颠簸状态机激活时，暂停导航复现，避免覆盖锁速目标
-        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U)) { NavReplay_Process(); } //复现控制
+        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) { NavReplay_Process(); } //复现控制
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
-        if(g_motor_enable){Bridge_Test_Triple_SingleSide_Inertial();
+        if(g_motor_enable && (VisionBridgeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
         } //复现控制
     };//【测试】抬高双腿
 
@@ -533,6 +535,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
     if ((g_replay_state != REPLAY_RUNNING) &&
         (!jump_stepup_three_stairs_test_is_active()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
+        && (VisionBridgeTask_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     {

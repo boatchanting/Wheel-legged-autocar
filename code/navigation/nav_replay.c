@@ -1,6 +1,7 @@
 #include "nav_replay.h"
 #include "../common.h"
 #include "nav_replay_route_table.h"
+#include "vision/vision_task_area.h"
 
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;
@@ -571,7 +572,7 @@ void NavReplay_Process(void)
                 // 位置到了，角度也转对了！正式触发状态机！
                 if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
                 else if (g_current_point_type == NAV_POINT_JUMP) vision_detected_three_jump_point = 1;
-                else if (g_current_point_type == NAV_POINT_BRIDGE) vision_detected_bridge_point = 1;
+                else if (g_current_point_type == NAV_POINT_BRIDGE) VisionBridgeTask_Start();
                 else if (g_current_point_type == NAV_POINT_BUMP) BumpyRoad_Trigger();
                 
                 g_special_action_trigger = 1;

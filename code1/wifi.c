@@ -343,3 +343,83 @@ void render_pvc_vision_to_image(void)
         }
     }
 }
+
+static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
+{
+    int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
+    int sx = (x0 < x1) ? 1 : -1;
+    int dy = (y1 > y0) ? (y0 - y1) : (y1 - y0);
+    int sy = (y0 < y1) ? 1 : -1;
+    int err = dx + dy;
+
+    while (1)
+    {
+        draw_point_on_image(x0, y0, color);
+        if ((x0 == x1) && (y0 == y1))
+        {
+            break;
+        }
+        {
+            int e2 = err * 2;
+            if (e2 >= dy)
+            {
+                err += dy;
+                x0 += sx;
+            }
+            if (e2 <= dx)
+            {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+}
+
+void render_line_vision_to_image(void)
+{
+    const volatile line_vision_output_t *line_out = &g_line_vision_output;
+    line_vision_frame_result_t result;
+    const int y_min = (int)((uint32)LINE_IMAGE_H * LINE_VISION_ROI_TOP_RATIO_X100 / 100U);
+    const int y_max = (int)(LINE_IMAGE_H - 2U);
+
+    if (line_out->stable_detected || line_out->bridge_stable_detected)
+    {
+        result = line_out->stable;
+    }
+    else
+    {
+        result = line_out->raw;
+    }
+
+    for (int x = 0; x < LINE_IMAGE_W; x += 2)
+    {
+        draw_point_on_image(x, y_min, 0);
+    }
+    for (int y = y_min; y <= y_max; y += 2)
+    {
+        draw_point_on_image(LINE_IMAGE_W / 2, y, 0);
+    }
+
+    if (line_out->bridge_stable_detected || line_out->bridge_raw_detected)
+    {
+        if (result.bridge_bbox_xmin != 0xFFU)
+        {
+            draw_rect_on_image(result.bridge_bbox_xmin,
+                               result.bridge_bbox_ymin,
+                               result.bridge_bbox_xmax,
+                               result.bridge_bbox_ymax,
+                               255U);
+        }
+    }
+
+    if (line_out->stable_detected)
+    {
+        int x_bottom = (int)(result.line_x_bottom + 0.5f);
+        int x_lookahead = (int)(result.line_x_lookahead + 0.5f);
+        const int lookahead_y = (int)((uint32)LINE_IMAGE_H * 62U / 100U);
+
+        draw_line_on_image(x_lookahead, lookahead_y, x_bottom, y_max, 0U);
+        draw_cross_on_image(x_bottom, y_max, 2, 0U);
+        draw_cross_on_image(x_lookahead, lookahead_y, 2, 0U);
+    }
+}

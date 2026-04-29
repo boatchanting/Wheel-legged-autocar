@@ -38,6 +38,7 @@
 #include "tools/runtime_profiler.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
+#include "vision/vision_task_area.h"
 
 
 // **************************** uart配置区域 **************************** 
@@ -269,6 +270,7 @@ Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 BumpyRoad_Init();//颠簸路段状态机初始化
 VisionIpc_Core0_Init();
 VisionPvcControl_Init(); // Bring-up: 0核通过2ms中断调度1核开启PVC入口检测，并用回传数据做入口引导
+VisionBridgeTask_Init(); // 科目三任务区：PVC进入 + 直线/单边桥视觉控制状态机
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
@@ -491,9 +493,9 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         if (vision_detected_bridge_point == 1) 
         {
             // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
-            if (!Bridge_Test_Triple_SingleSide_Is_Active()) 
+            if (!VisionBridgeTask_IsActive())
             {
-                Bridge_Test_Triple_SingleSide_Start(); // 启动单边桥测试状态机
+                VisionBridgeTask_Start(); // 启动视觉融合单边桥状态机
             }
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
         }

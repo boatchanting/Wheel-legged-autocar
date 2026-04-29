@@ -159,6 +159,10 @@ static void Smooth_Height_Control(float target_height, float step_size) {
     PID_Dynamic_Update_By_Height(servo_height);
 }
 
+void Bridge_Apply_Height_Control(float target_height, float step_size) {
+    Smooth_Height_Control(target_height, step_size);
+}
+
 static float Ramp_Float(float current, float target, float step) {
     if (current < target) {
         current += step;

@@ -65,6 +65,18 @@ void VisionIpc_Core0_SetPvcEnable(uint8 enable)
     }
 }
 
+void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
+{
+    if (enable)
+    {
+        VisionIpc_Core0_SetTask(VISION_TARGET_BRIDGE, VISION_MASK_BRIDGE);
+    }
+    else
+    {
+        VisionIpc_Core0_SetTask(VISION_TARGET_PVC_ENTRY, VISION_MASK_PVC_ENTRY);
+    }
+}
+
 void VisionIpc_Core0_Update_2ms(void)
 {
     if (g_core0_command_dirty)

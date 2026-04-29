@@ -150,8 +150,7 @@ void VisionPvcControl_Update_2ms(void)
 
     packet = VisionIpc_Core0_GetLatest();
     packet_new = (uint8)(packet->seq != g_pvc_ctrl_shadow.last_seq);
-    packet_is_pvc = (uint8)((packet->active_target == VISION_TARGET_PVC_ENTRY) &&
-                            ((packet->valid_mask & VISION_VALID_PVC) != 0U));
+    packet_is_pvc = (uint8)((packet->valid_mask & VISION_VALID_PVC) != 0U);
 
     g_pvc_ctrl_shadow.has_new_packet = packet_new;
     if (packet_new)

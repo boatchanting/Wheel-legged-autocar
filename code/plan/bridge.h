@@ -93,6 +93,8 @@ typedef struct {
     int32 servo_dec_bridge;
 } BridgeParams_t;
 
+extern BridgeParams_t bridge_params;
+
 // ============================================================================
 // 外部接口声明
 // ============================================================================
@@ -115,6 +117,7 @@ extern uint8_t debug_force_height_up;
 
 // 仅用于测试 PID 平滑升降的函数 (替代 Bridge_Update 放在 20ms 定时器中)
 void Bridge_Test_Smooth_PID(void);
+void Bridge_Apply_Height_Control(float target_height, float step_size);
 
 extern uint8_t debug_triple_bridge_test_enable;
 void Bridge_Test_Triple_SingleSide_Inertial(void);
