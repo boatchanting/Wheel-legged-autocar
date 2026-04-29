@@ -225,7 +225,7 @@ static uint8 s_is_aligning = 0;
 static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下降沿）
 
 /*这里注释了，保存的是Pure Pursuit 联合 特殊点直走 状态机*/
-/*
+
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING) return;
@@ -470,9 +470,8 @@ void NavReplay_Process(void)
         prev_speed_set = target_speed_set;
     }
 }
-*/
 
-
+/*
 // ============================================================================
 // 精准复刻处理逻辑 (点到点，先转再走，加入防震荡与平滑滤波)
 // 慢慢的跑科三
@@ -632,6 +631,7 @@ void NavReplay_Process(void)
         }
     }
 }
+*/    
 
 /*这里注释了，保存的是原有的到一个点停一次的控制逻辑，仅仅能实现最基本的到达，但它的控制距离是精准的，逻辑是完备的，后面所有的代码都在其基础上进行优化和尝试*/
 /*
