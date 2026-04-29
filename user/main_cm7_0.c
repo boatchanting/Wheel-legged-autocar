@@ -341,7 +341,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             //     ekf_print_div = 0;
             // }
             #if WIFI_USE
-                //wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
+                wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
 
                 //逐飞助手示波器发送代码        
                 //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
