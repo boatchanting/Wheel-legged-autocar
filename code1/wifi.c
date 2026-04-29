@@ -303,6 +303,166 @@ void draw_cross_on_image(int x, int y, int size, uint8 color)
     }
 }
 
+#if VISION_IMAGE_RENDER_ENABLE
+static int clamp_int_to_range(int value, int min_value, int max_value)
+{
+    if (value < min_value)
+    {
+        return min_value;
+    }
+    if (value > max_value)
+    {
+        return max_value;
+    }
+    return value;
+}
+
+static int abs_int_value(int value)
+{
+    return (value < 0) ? -value : value;
+}
+
+static void draw_hline_on_image(int x0, int x1, int y, uint8 color)
+{
+    int start = (x0 < x1) ? x0 : x1;
+    int end = (x0 < x1) ? x1 : x0;
+
+    for (int x = start; x <= end; x++)
+    {
+        draw_point_on_image(x, y, color);
+    }
+}
+
+static void draw_vline_on_image(int x, int y0, int y1, uint8 color)
+{
+    int start = (y0 < y1) ? y0 : y1;
+    int end = (y0 < y1) ? y1 : y0;
+
+    for (int y = start; y <= end; y++)
+    {
+        draw_point_on_image(x, y, color);
+    }
+}
+
+static void draw_bar_on_image(int x, int y, int width, int value, int full_value, uint8 color)
+{
+    int fill_width;
+
+    if (full_value <= 0)
+    {
+        return;
+    }
+
+    value = clamp_int_to_range(value, 0, full_value);
+    fill_width = (value * width + full_value / 2) / full_value;
+
+    draw_hline_on_image(x, x + width - 1, y, 180U);
+    if (fill_width > 0)
+    {
+        draw_hline_on_image(x, x + fill_width - 1, y, color);
+    }
+}
+
+static void draw_status_block_on_image(int x, int y, uint8 enabled, uint8 color)
+{
+    const uint8 off_color = 180U;
+    uint8 draw_color = enabled ? color : off_color;
+
+    draw_point_on_image(x,     y,     draw_color);
+    draw_point_on_image(x + 1, y,     draw_color);
+    draw_point_on_image(x,     y + 1, draw_color);
+    draw_point_on_image(x + 1, y + 1, draw_color);
+}
+
+#if VISION_IMAGE_RENDER_NUMERIC_ENABLE
+static const uint8 s_digit_3x5[10][5] =
+{
+    {7U, 5U, 5U, 5U, 7U},
+    {2U, 6U, 2U, 2U, 7U},
+    {7U, 1U, 7U, 4U, 7U},
+    {7U, 1U, 7U, 1U, 7U},
+    {5U, 5U, 7U, 1U, 1U},
+    {7U, 4U, 7U, 1U, 7U},
+    {7U, 4U, 7U, 5U, 7U},
+    {7U, 1U, 1U, 1U, 1U},
+    {7U, 5U, 7U, 5U, 7U},
+    {7U, 5U, 7U, 1U, 7U}
+};
+
+static int draw_digit3x5_on_image(int x, int y, uint8 digit, uint8 color)
+{
+    if (digit > 9U)
+    {
+        return x;
+    }
+
+    for (int row = 0; row < 5; row++)
+    {
+        uint8 bits = s_digit_3x5[digit][row];
+        for (int col = 0; col < 3; col++)
+        {
+            if ((bits & (uint8)(1U << (2 - col))) != 0U)
+            {
+                draw_point_on_image(x + col, y + row, color);
+            }
+        }
+    }
+    return x + 4;
+}
+
+static int draw_minus3x5_on_image(int x, int y, uint8 color)
+{
+    draw_hline_on_image(x, x + 2, y + 2, color);
+    return x + 4;
+}
+
+static int draw_uint3x5_on_image(int x, int y, uint32 value, uint8 color)
+{
+    char digits[10];
+    int count = 0;
+
+    if (value == 0U)
+    {
+        return draw_digit3x5_on_image(x, y, 0U, color);
+    }
+
+    while ((value > 0U) && (count < (int)sizeof(digits)))
+    {
+        digits[count++] = (char)('0' + (value % 10U));
+        value /= 10U;
+    }
+
+    while (count > 0)
+    {
+        count--;
+        x = draw_digit3x5_on_image(x, y, (uint8)(digits[count] - '0'), color);
+    }
+
+    return x;
+}
+
+static void draw_int3x5_on_image(int x, int y, int value, uint8 color)
+{
+    if (value < 0)
+    {
+        x = draw_minus3x5_on_image(x, y, color);
+    }
+    (void)draw_uint3x5_on_image(x, y, (uint32)abs_int_value(value), color);
+}
+#endif
+
+static void render_common_status_strip(uint8 raw_detected,
+                                       uint8 stable_detected,
+                                       uint8 aux_raw_detected,
+                                       uint8 aux_stable_detected)
+{
+    draw_status_block_on_image(PVC_IMAGE_W - 10, 0, raw_detected, 0U);
+    draw_status_block_on_image(PVC_IMAGE_W - 7, 0, stable_detected, 0U);
+    draw_status_block_on_image(PVC_IMAGE_W - 4, 0, aux_raw_detected, 255U);
+    draw_status_block_on_image(PVC_IMAGE_W - 1, 0, aux_stable_detected, 255U);
+}
+#endif
+
 /**
  * @brief  将 PVC 视觉识别的结果直接渲染到 compressed_image_copy 图像数组中。
  * @note   由于当前算法就是基于 94x60 输出，我们也是把框画在 94x60 压缩图上供上位机显示，
@@ -310,37 +470,76 @@ void draw_cross_on_image(int x, int y, int size, uint8 color)
  */
 void render_pvc_vision_to_image(void) 
 {
-    // 读取视觉模块的输出
     const volatile pvc_vision_output_t *pvc_out = &g_pvc_vision_output;
+    pvc_vision_frame_result_t result;
+    uint8 has_target = 0U;
 
-    // 只有当稳定检测到 PVC 目标时才在屏幕上画图
-    if (pvc_out->stable_detected) 
+#if VISION_IMAGE_RENDER_ENABLE
+    render_common_status_strip(pvc_out->raw_detected, pvc_out->stable_detected, 0U, 0U);
+#endif
+
+    if (pvc_out->stable_detected)
     {
-        // 1. 获取包围框 (Bounding Box) 坐标
-        // 【修改】不需要做 *2 映射！直接在 94x60 图上画
-        uint8 xmin = pvc_out->stable.bbox_xmin;
-        uint8 ymin = pvc_out->stable.bbox_ymin;
-        uint8 xmax = pvc_out->stable.bbox_xmax;
-        uint8 ymax = pvc_out->stable.bbox_ymax;
+        result = pvc_out->stable;
+        has_target = 1U;
+    }
+    else if (pvc_out->raw_detected)
+    {
+        result = pvc_out->raw;
+        has_target = 1U;
+    }
 
-        // 在图像上画一个纯黑色的矩形框
-        draw_rect_on_image(xmin, ymin, xmax, ymax, 0);
+#if VISION_IMAGE_RENDER_ENABLE
+    {
+        int conf_x1000 = clamp_int_to_range((int)(pvc_out->raw.confidence * 1000.0f), 0, 1000);
+        int bbox_ratio_x1000 = 0;
+        int cost_us = (int)g_pvc_vision_cost_profiler.last_us;
 
-        // 2. 获取目标质心坐标
-        int cx = (int)pvc_out->stable.centroid_x;
-        int cy = (int)pvc_out->stable.centroid_y;
+        if (has_target && result.bbox_xmin != 0xFFU)
+        {
+            int bbox_w = (int)result.bbox_xmax - (int)result.bbox_xmin + 1;
+            int bbox_h = (int)result.bbox_ymax - (int)result.bbox_ymin + 1;
+            bbox_ratio_x1000 = clamp_int_to_range((bbox_w * bbox_h * 1000) / (int)PVC_IMAGE_SIZE, 0, 1000);
+        }
 
-        // 在质心位置画一个纯黑色的十字，臂长为 3 个像素
-        draw_cross_on_image(cx, cy, 3, 0);
+        draw_bar_on_image(0, 0, 22, conf_x1000, 1000, 0U);
+        draw_bar_on_image(0, 2, 22, bbox_ratio_x1000, 1000, 0U);
+        draw_bar_on_image(0, 4, 22, clamp_int_to_range(cost_us, 0, 10000), 10000, 0U);
 
-        // 3. （可选）绘制入口白边近端线 entry_bottom_y 
-        uint8 entry_y = pvc_out->stable.entry_bottom_y;
-        
-        // 【修改】循环上限从 MT9V03X_W 修改为算法宽度 PVC_IMAGE_W
+#if VISION_IMAGE_RENDER_NUMERIC_ENABLE
+        (void)draw_uint3x5_on_image(0, 6, (uint32)conf_x1000, 0U);
+        if (has_target)
+        {
+            draw_int3x5_on_image(25, 6, (int)result.forward_mm, 0U);
+            draw_int3x5_on_image(55, 6, (int)result.lateral_mm, 0U);
+        }
+#endif
+    }
+#endif
+
+    if (has_target)
+    {
+        uint8 xmin = result.bbox_xmin;
+        uint8 ymin = result.bbox_ymin;
+        uint8 xmax = result.bbox_xmax;
+        uint8 ymax = result.bbox_ymax;
+        uint8 box_color = pvc_out->stable_detected ? 0U : 180U;
+        int cx = (int)result.centroid_x;
+        int cy = (int)result.centroid_y;
+        uint8 entry_y = result.entry_bottom_y;
+
+        draw_rect_on_image(xmin, ymin, xmax, ymax, box_color);
+        draw_cross_on_image(cx, cy, 3, 0U);
+
         for (int x = 0; x < PVC_IMAGE_W; x += 2) 
         { 
-            draw_point_on_image(x, entry_y, 0);
+            draw_point_on_image(x, entry_y, 0U);
         }
+
+#if VISION_IMAGE_RENDER_ENABLE
+        draw_vline_on_image(cx, ymax, PVC_IMAGE_H - 1, 0U);
+        draw_hline_on_image(PVC_IMAGE_W / 2 - 5, PVC_IMAGE_W / 2 + 5, PVC_IMAGE_H - 1, 0U);
+#endif
     }
 }
 
@@ -391,14 +590,49 @@ void render_line_vision_to_image(void)
         result = line_out->raw;
     }
 
+#if VISION_IMAGE_RENDER_ENABLE
+    render_common_status_strip(line_out->raw_detected,
+                               line_out->stable_detected,
+                               line_out->bridge_raw_detected,
+                               line_out->bridge_stable_detected);
+    {
+        int line_conf_x1000 = clamp_int_to_range((int)(result.confidence * 1000.0f), 0, 1000);
+        int bridge_conf_x1000 = clamp_int_to_range((int)(result.bridge_confidence * 1000.0f), 0, 1000);
+        int roi_white_x1000 = clamp_int_to_range((int)(result.roi_white_ratio * 1000.0f), 0, 1000);
+        int cost_us = (int)g_line_vision_cost_profiler.last_us;
+
+        draw_bar_on_image(0, 0, 22, line_conf_x1000, 1000, 0U);
+        draw_bar_on_image(0, 2, 22, bridge_conf_x1000, 1000, 0U);
+        draw_bar_on_image(0, 4, 22, roi_white_x1000, 1000, 0U);
+        draw_bar_on_image(24, 0, 16, clamp_int_to_range(cost_us, 0, 10000), 10000, 0U);
+
+#if VISION_IMAGE_RENDER_NUMERIC_ENABLE
+        (void)draw_uint3x5_on_image(0, 6, (uint32)line_conf_x1000, 0U);
+        draw_int3x5_on_image(25, 6, (int)result.yaw_error_deg, 0U);
+        draw_int3x5_on_image(45, 6, (int)result.lateral_error_px, 0U);
+        (void)draw_uint3x5_on_image(68, 6, (uint32)bridge_conf_x1000, 255U);
+#endif
+    }
+#endif
+
     for (int x = 0; x < LINE_IMAGE_W; x += 2)
     {
-        draw_point_on_image(x, y_min, 0);
+        draw_point_on_image(x, y_min, 0U);
     }
     for (int y = y_min; y <= y_max; y += 2)
     {
-        draw_point_on_image(LINE_IMAGE_W / 2, y, 0);
+        draw_point_on_image(LINE_IMAGE_W / 2, y, 0U);
     }
+
+#if VISION_IMAGE_RENDER_ENABLE
+    {
+        const int lookahead_y = (int)((uint32)LINE_IMAGE_H * 62U / 100U);
+        for (int x = 0; x < LINE_IMAGE_W; x += 3)
+        {
+            draw_point_on_image(x, lookahead_y, 180U);
+        }
+    }
+#endif
 
     if (line_out->bridge_stable_detected || line_out->bridge_raw_detected)
     {
@@ -421,5 +655,10 @@ void render_line_vision_to_image(void)
         draw_line_on_image(x_lookahead, lookahead_y, x_bottom, y_max, 0U);
         draw_cross_on_image(x_bottom, y_max, 2, 0U);
         draw_cross_on_image(x_lookahead, lookahead_y, 2, 0U);
+
+#if VISION_IMAGE_RENDER_ENABLE
+        draw_vline_on_image(x_bottom, y_max - 5, y_max, 0U);
+        draw_vline_on_image(x_lookahead, lookahead_y - 3, lookahead_y + 3, 0U);
+#endif
     }
 }

@@ -126,6 +126,9 @@ void encode_double_to_two_floats(double value, float* out_high, float* out_low);
 void compress_image_to_target(void);
 
 // 【修改注释】图像渲染辅助函数，用于将检测指标画在 compressed_image_copy 上以便上位机观察
+#define VISION_IMAGE_RENDER_ENABLE          (1)
+#define VISION_IMAGE_RENDER_NUMERIC_ENABLE  (1)
+
 void draw_point_on_image(int x, int y, uint8 color);
 void draw_rect_on_image(int x_min, int y_min, int x_max, int y_max, uint8 color);
 void draw_cross_on_image(int x, int y, int size, uint8 color);
