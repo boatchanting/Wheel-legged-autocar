@@ -12,8 +12,6 @@
 #if CURRENT_NAV_PLAN == 1 //科目一参数
 // ========================= 控制参数宏定义 =========================
 // 距离阈值 (单位: mm)
-#define NAV_DIST_FAR            300.0f  // 远距离界限，全速
-#define NAV_DIST_NEAR           150.0f  // 近距离界限，开始最低速 
 
 #define NAV_DIST_ARRIVE         20.0f   // 到达判定阈值
 #define NAV_YAW_TOLERANCE        1.0f    //转向阈值，先转再走
