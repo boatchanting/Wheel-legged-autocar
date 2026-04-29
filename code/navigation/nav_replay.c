@@ -241,7 +241,7 @@ void NavReplay_Process(void)
     // ==========================================
     // 🎯 灾后重建机制 (Recovery)：检测状态机刚刚结束的瞬间
     // ==========================================
-    // uint8 is_recovering = 0;
+    uint8 is_recovering = 0; // 【注】为保证下方函数调用不报错，将其声明放出
     // if (s_prev_trigger == 1 && g_special_action_trigger == 0) {
     //     is_recovering = 1;
     //     s_prev_trigger = 0;
@@ -271,152 +271,161 @@ void NavReplay_Process(void)
         return;
     }
 
-    // 2. 往前扫描，寻找即将到来的特殊点以及计算其真实距离
-    int special_idx = -1;
-    float dist_to_special = 99999.0f;
-    // 扫描范围 100个点(2000mm)
-    for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 100; i++) {
-        if (nav_ram_data.points[i].point_type != NAV_POINT_PATH || i == nav_ram_data.point_count - 1) {
-            special_idx = i;
-            dist_to_special = CalcDistance(inertial_nav.x, inertial_nav.y, 
-                                           nav_ram_data.points[i].x, nav_ram_data.points[i].y);
-            break;
-        }
-    }
+    // ====================================================================
+    // 👇 以下为寻找特殊点、去特殊点（模式A）和状态机的全部逻辑，已按要求整体注释
+    // ====================================================================
+
+    // // 2. 往前扫描，寻找即将到来的特殊点以及计算其真实距离
+    // int special_idx = -1;
+    // float dist_to_special = 99999.0f;
+    // // 扫描范围 100个点(2000mm)
+    // for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 100; i++) {
+    //     if (nav_ram_data.points[i].point_type != NAV_POINT_PATH || i == nav_ram_data.point_count - 1) {
+    //         special_idx = i;
+    //         dist_to_special = CalcDistance(inertial_nav.x, inertial_nav.y, 
+    //                                        nav_ram_data.points[i].x, nav_ram_data.points[i].y);
+    //         break;
+    //     }
+    // }
+
+    // // ====================================================================
+    // // 双模式自动切换：1000mm 内进入"先转再走"模式；否则执行"高速 Pure Pursuit"
+    // // ====================================================================
+    // if (special_idx != -1 && dist_to_special <= 1000.0f)
+    // {
+    //     // -------------------------------------------------------------
+    //     // 【模式A】精准逼近模式 (1000mm以内)：先转再走，绝对位置精准触发
+    //     // -------------------------------------------------------------
+    //     
+    //     // 航向瞄准点计算：为了不抄近道，距离大于300mm时依然看路径前方，极近时直接看特殊点
+    //     int aim_idx = base_idx + 15; // 往前看约300mm
+    //     if (aim_idx > special_idx) aim_idx = special_idx;
+    //     
+    //     float tx = nav_ram_data.points[aim_idx].x;
+    //     float ty = nav_ram_data.points[aim_idx].y;
+    //
+    //     float dx = tx - inertial_nav.x;
+    //     float dy = ty - inertial_nav.y;
+    //     float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
+    //     
+    //     // 精准模式下，角度不做滤波，要求直接打到目标角度
+    //     err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
+    //
+    //     if (!is_arrived) {//根据状态锁判断
+    //         // ==========================================
+    //         // 【核心修复】：引入宽容到达判定，防止高速穿透
+    //         // ==========================================
+    //         if (dist_to_special <= NAV_DIST_ARRIVE) {
+    //             is_arrived = 1; // 精确实达
+    //         } 
+    //         // 宽容判定：如果底层追踪索引已经被卡死在这个特殊点上了，
+    //         // 且物理距离在稍大范围内(如 60mm 内)，说明车子因为惯性稍微冲过了一点，强制判作到达！
+    //         // else if (base_idx == special_idx && dist_to_special <= NAV_DIST_ARRIVE + 40.0f) {
+    //         //     is_arrived = 1;
+    //         // }
+    //     }
+    //
+    //     if (is_arrived)
+    //     {
+    //         // --- 1. 到达特殊点：触发动作 ---
+    //         target_speed_set = NAV_SPEED_STOP;
+    //         g_current_point_type = nav_ram_data.points[special_idx].point_type;
+    //
+    //         #if DEBUG_LOG_ENABLE
+    //         printf("[Nav] Arrived Special Point[%d] Type[%d]\r\n", special_idx, g_current_point_type);
+    //         #endif
+    //
+    //         // 提取该特殊点记录的目标偏航角
+    //         float special_target_yaw = nav_ram_data.points[special_idx].target_yaw_deg;
+    //         
+    //         // 计算车身当前角度与目标角度的偏差
+    //         float special_yaw_err = NormalizeAngle(special_target_yaw - inertial_nav.relative_yaw);
+    //
+    //         // 判断角度是否对齐
+    //         if (fabsf(special_yaw_err) > NAV_YAW_TOLERANCE)
+    //         {
+    //             // 角度还没对齐！将特殊点的角度误差喂给底层，触发原地自转对齐
+    //             err_degree = special_yaw_err;
+    //             
+    //             #if DEBUG_LOG_ENABLE
+    //             // printf("[Nav] Aligning Yaw at Special Point... err: %.2f\r\n", special_yaw_err);
+    //             #endif
+    //         }
+    //         else
+    //         {
+    //             // 位置到了，角度也对齐了！正式触发状态机！
+    //             g_current_point_type = nav_ram_data.points[special_idx].point_type;
+    //
+    //             #if DEBUG_LOG_ENABLE
+    //             printf("[Nav] Arrived & Aligned Special Point[%d] Type[%d]\r\n", special_idx, g_current_point_type);
+    //             #endif
+    //
+    //             if (g_current_point_type != NAV_POINT_PATH)
+    //             {
+    //                 if (g_current_point_type == NAV_POINT_CIRCLE) {
+    //                     minefield_flag = 1;
+    //                 }
+    //                 if (g_current_point_type == NAV_POINT_JUMP) {
+    //                     vision_detected_three_jump_point = 1;//触发三级跳状态机
+    //                 }
+    //                 if (g_current_point_type == NAV_POINT_BRIDGE) {
+    //                     vision_detected_bridge_point = 1;//触发三桥桥状态机
+    //                 }
+    //                 if (g_current_point_type == NAV_POINT_BUMP) {
+    //                     BumpyRoad_Trigger();  // 触发颠簸路段状态机
+    //                 }
+    //                 g_special_action_trigger = 1;
+    //             }
+    //             
+    //             // 防死锁：动作触发后，强行跨过这个特殊点
+    //             g_target_idx = special_idx + 1;
+    //         }
+    //     }
+    //     else
+    //     {
+    //         // --- 2. 未到达特殊点：先转再走 ---
+    //         if (fabsf(err_degree) > NAV_YAW_TOLERANCE)
+    //         {
+    //             // 角度偏差较大，先原地/极低速旋转
+    //             target_speed_set = NAV_SPEED_STOP;
+    //             #if DEBUG_LOG_ENABLE
+    //             // printf("[Nav] Rotating to target, err: %.2f\r\n", err_degree);
+    //             #endif
+    //         }
+    //         else
+    //         {
+    //             // 角度基本对准，根据到特殊点的物理距离来规划速度
+    //             if (dist_to_special > NAV_DIST_FAR)
+    //             {
+    //                 target_speed_set = NAV_SPEED_FAST/5.0f;
+    //             }
+    //             else if (dist_to_special > NAV_DIST_NEAR)
+    //             {
+    //                 float ratio = (dist_to_special - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
+    //                 target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST/5.0f - NAV_SPEED_SLOW) * ratio;
+    //             }
+    //             else
+    //             {
+    //                 target_speed_set = NAV_SPEED_SLOW;
+    //             }
+    //         }
+    //     }
+    //     
+    //     // 同步滤波历史，防止切回高速模式时车辆猛抖
+    //     prev_err_degree = err_degree;
+    //     prev_speed_set = target_speed_set;
+    // }
+    // else
+    // {
 
     // ====================================================================
-    // 双模式自动切换：1000mm 内进入"先转再走"模式；否则执行"高速 Pure Pursuit"
+    // 👇 全程保持执行以下【模式B】高速 Pure Pursuit 寻迹模式代码
     // ====================================================================
-    if (special_idx != -1 && dist_to_special <= 1000.0f)
-    {
-        // -------------------------------------------------------------
-        // 【模式A】精准逼近模式 (1000mm以内)：先转再走，绝对位置精准触发
-        // -------------------------------------------------------------
-        
-        // 航向瞄准点计算：为了不抄近道，距离大于300mm时依然看路径前方，极近时直接看特殊点
-        int aim_idx = base_idx + 15; // 往前看约300mm
-        if (aim_idx > special_idx) aim_idx = special_idx;
-        
-        float tx = nav_ram_data.points[aim_idx].x;
-        float ty = nav_ram_data.points[aim_idx].y;
 
-        float dx = tx - inertial_nav.x;
-        float dy = ty - inertial_nav.y;
-        float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
-        
-        // 精准模式下，角度不做滤波，要求直接打到目标角度
-        err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
-
-        if (!is_arrived) {//根据状态锁判断
-            // ==========================================
-            // 【核心修复】：引入宽容到达判定，防止高速穿透
-            // ==========================================
-            if (dist_to_special <= NAV_DIST_ARRIVE) {
-                is_arrived = 1; // 精确到达
-            } 
-            // 宽容判定：如果底层追踪索引已经被卡死在这个特殊点上了，
-            // 且物理距离在稍大范围内(如 60mm 内)，说明车子因为惯性稍微冲过了一点，强制判作到达！
-            // else if (base_idx == special_idx && dist_to_special <= NAV_DIST_ARRIVE + 40.0f) {
-            //     is_arrived = 1;
-            // }
-        }
-
-        if (is_arrived)
-        {
-            // --- 1. 到达特殊点：触发动作 ---
-            target_speed_set = NAV_SPEED_STOP;
-            g_current_point_type = nav_ram_data.points[special_idx].point_type;
-
-            #if DEBUG_LOG_ENABLE
-            printf("[Nav] Arrived Special Point[%d] Type[%d]\r\n", special_idx, g_current_point_type);
-            #endif
-
-            // 提取该特殊点记录的目标偏航角
-            float special_target_yaw = nav_ram_data.points[special_idx].target_yaw_deg;
-            
-            // 计算车身当前角度与目标角度的偏差
-            float special_yaw_err = NormalizeAngle(special_target_yaw - inertial_nav.relative_yaw);
-
-            // 判断角度是否对齐
-            if (fabsf(special_yaw_err) > NAV_YAW_TOLERANCE)
-            {
-                // 角度还没对齐！将特殊点的角度误差喂给底层，触发原地自转对齐
-                err_degree = special_yaw_err;
-                
-                #if DEBUG_LOG_ENABLE
-                // printf("[Nav] Aligning Yaw at Special Point... err: %.2f\r\n", special_yaw_err);
-                #endif
-            }
-            else
-            {
-                // 位置到了，角度也对齐了！正式触发状态机！
-                g_current_point_type = nav_ram_data.points[special_idx].point_type;
-
-                #if DEBUG_LOG_ENABLE
-                printf("[Nav] Arrived & Aligned Special Point[%d] Type[%d]\r\n", special_idx, g_current_point_type);
-                #endif
-
-                if (g_current_point_type != NAV_POINT_PATH)
-                {
-                    if (g_current_point_type == NAV_POINT_CIRCLE) {
-                        minefield_flag = 1;
-                    }
-                    if (g_current_point_type == NAV_POINT_JUMP) {
-                        vision_detected_three_jump_point = 1;//触发三级跳状态机
-                    }
-                    if (g_current_point_type == NAV_POINT_BRIDGE) {
-                        vision_detected_bridge_point = 1;//触发三桥桥状态机
-                    }
-                    if (g_current_point_type == NAV_POINT_BUMP) {
-                        BumpyRoad_Trigger();  // 触发颠簸路段状态机
-                    }
-                    g_special_action_trigger = 1;
-                }
-                
-                // 防死锁：动作触发后，强行跨过这个特殊点
-                g_target_idx = special_idx + 1;
-            }
-        }
-        else
-        {
-            // --- 2. 未到达特殊点：先转再走 ---
-            if (fabsf(err_degree) > NAV_YAW_TOLERANCE)
-            {
-                // 角度偏差较大，先原地/极低速旋转
-                target_speed_set = NAV_SPEED_STOP;
-                #if DEBUG_LOG_ENABLE
-                // printf("[Nav] Rotating to target, err: %.2f\r\n", err_degree);
-                #endif
-            }
-            else
-            {
-                // 角度基本对准，根据到特殊点的物理距离来规划速度
-                if (dist_to_special > NAV_DIST_FAR)
-                {
-                    target_speed_set = NAV_SPEED_FAST/5.0f;
-                }
-                else if (dist_to_special > NAV_DIST_NEAR)
-                {
-                    float ratio = (dist_to_special - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
-                    target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST/5.0f - NAV_SPEED_SLOW) * ratio;
-                }
-                else
-                {
-                    target_speed_set = NAV_SPEED_SLOW;
-                }
-            }
-        }
-        
-        // 同步滤波历史，防止切回高速模式时车辆猛抖
-        prev_err_degree = err_degree;
-        prev_speed_set = target_speed_set;
-    }
-    else
-    {
-        // -------------------------------------------------------------
-        // 【模式B】高速 Pure Pursuit 寻迹模式 (距离特殊点 > 800mm 或无特殊点)
-        // -------------------------------------------------------------
-        
+    // -------------------------------------------------------------
+    // 【模式B】高速 Pure Pursuit 寻迹模式 (距离特殊点 > 800mm 或无特殊点)
+    // -------------------------------------------------------------
+    
         // 动态极限前瞻计算
         float lookahead_dist = PP_LD_MIN_CURVE + fabsf(prev_speed_set) * PP_LD_SPEED_GAIN;
         float lookahead_dist_sq = lookahead_dist * lookahead_dist;
@@ -470,7 +479,7 @@ void NavReplay_Process(void)
 
         prev_err_degree = err_degree;
         prev_speed_set = target_speed_set;
-    }
+    // }
 }
 #endif
 
