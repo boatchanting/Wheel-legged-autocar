@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Convert exported nav marker CSV to a C route table header."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-MAX_POINTS_DEFAULT = 166
+MAX_POINTS_DEFAULT = 500
 
 
 @dataclass
