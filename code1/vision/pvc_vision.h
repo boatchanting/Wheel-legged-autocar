@@ -1,6 +1,10 @@
 /*
+ * =================================================================================
  * 文件: pvc_vision.h
- * 作用: 1 核 PVC 入口检测模块的对外接口与配置。
+ * 作用: 1 核 (Core 1) PVC 入口检测模块的对外接口与配置。
+ * 说明: 这个文件就像是 PVC 视觉模块的“说明书”和“遥控器”。
+ *       里面定义了怎么调参、输出什么结果，以及供其他模块调用的函数。
+ * =================================================================================
  */
 #ifndef PVC_VISION_H
 #define PVC_VISION_H
@@ -13,153 +17,141 @@ extern "C" {
 #endif
 
 /*
- * PVC 入口视觉检测模块
+ * =================================================================================
+ * 【新手必读：PVC 入口视觉检测模块说明】
+ * =================================================================================
  *
- * 模块边界：
- * - 本文件只做“看见 PVC 白色入口区域，并估计入口相对车的前向距离和横向偏差”。
- * - 本文件不直接写 err_degree、target_speed_set，也不直接让车停车。
- * - 0 核控制层读取 IPC 回传结果后，再决定转向、前进、减速、停车。
+ * 模块边界（这个模块做什么，不做什么）：
+ * - 本文件只负责“看”：看见白色的 PVC 入口区域，并估算入口距离车有多远、偏左还是偏右。
+ * - 本文件不负责“开”：不直接控制车轮转向或电机减速。
+ * - 0 核的控制层会来读取这里算出的结果，然后再决定车该怎么开。
  *
  * 推荐使用流程：
- * 1. 惯导或路径状态机判断小车进入某个项目入口约 800mm 内。
- * 2. 0 核调用 VisionPvcControl_SetEnable(1)，通过 2ms IPC 命令让 1 核开启 PVC 检测。
- * 3. 1 核摄像头每来一帧：
- *    - 复制 mt9v03x_image，避免图像撕裂。
- *    - 调用 compress_image_to_target() 压缩到 94x60。
- *    - 调用 pvc_vision_process_camera_frame(compressed_image_copy[0])。
- * 4. 1 核 2ms 中断把 g_pvc_vision_output 中的 stable 摘要发布到共享内存。
- * 5. 0 核 2ms 中断读取共享内存，用 VisionPvcControl_Update_2ms() 生成：
- *    - err_degree：横向偏差换算出的转向角误差。
- *    - target_speed_set：搜索、跟踪、接近、到达时的目标速度。
+ * 1. 惯导或路径状态机判断小车进入某个项目入口约 800mm 内（也就是快到 PVC 入口了）。
+ * 2. 0 核告诉 1 核：“请开启 PVC 检测”。
+ * 3. 1 核摄像头每拍到一帧画面：
+ *    - 先把 188x120 的原图缩小（压缩）成 94x60。
+ *    - 把 94x60 的小图交给本模块处理。
+ * 4. 1 核定时把稳定的结果（比如偏差多少、距离多远）发送给 0 核。
+ * 5. 0 核根据结果计算方向盘打多少度、车速该降到多少。
  *
- * 到达区域的第一版判断：
- * - 当 PVC 稳定检测到，且白色区域的包围框面积超过整幅 94x60 图像的 90% 时，
- *   0 核控制层认为车已经进入/压到 PVC 区域，target_speed_set 置 0。
- * - 这个 90% 阈值在 code/vision/vision_pvc_control.h 里调：
- *   VISION_PVC_CONTROL_STOP_BBOX_RATIO_U16，900 表示 90.0%。
- *
- * 当前算法：
- * - 灰度阈值提取高亮白色 PVC 区域。
- * - 4 邻域连通域搜索，把相邻白色像素聚成连通域。
- * - 按面积、宽高、填充率、是否触边、平均亮度打分。
- * - 连续多帧确认后输出 stable_detected，避免单帧反光误触发。
- *
- * 初始调参建议：
- * - 如果现场曝光偏暗，PVC 经常识别不到：先把 PVC_VISION_WHITE_THRESHOLD 从 245 降到 235~240。
- * - 如果反光点误识别：提高 PVC_VISION_MIN_AREA，或把 PVC_VISION_CONFIRM_FRAMES 从 3 提到 4。
- * - 如果响应太慢：把 PVC_VISION_CONFIRM_FRAMES 从 3 降到 2。
- * - 如果图像轻微抖动导致 stable 断断续续：把 PVC_VISION_LOST_HOLD_FRAMES 从 2 提到 3。
+ * 初始调参建议（车在赛道上跑不好的时候看这里）：
+ * - 如果现场太暗，PVC 识别不到：把下面的 `PVC_VISION_WHITE_THRESHOLD` 从 245 降到 235~240（降低白色门槛）。
+ * - 如果地上的反光点被误认成了 PVC：把 `PVC_VISION_MIN_AREA` 变大（要求面积更大才算），或者把连续确认帧数 `PVC_VISION_CONFIRM_FRAMES` 变大。
+ * - 如果车反应太慢：把确认帧数 `PVC_VISION_CONFIRM_FRAMES` 从 3 降到 2。
+ * - 如果图像轻微抖动导致识别断断续续：把允许丢失的帧数 `PVC_VISION_LOST_HOLD_FRAMES` 提高。
+ * =================================================================================
  */
 
-/* ====================================================================
- * 【新增宏定义】 解耦摄像头原始分辨率，定义算法独立运行分辨率
- * 原图为 188x120，传入算法前经过 2x2 压缩变为 94x60
- * ==================================================================== */
-#define PVC_IMAGE_W                       (94U)
-#define PVC_IMAGE_H                       (60U)
-#define PVC_IMAGE_SIZE                    (PVC_IMAGE_W * PVC_IMAGE_H)
+/* --- 1. 图像尺寸定义 --- */
+/* 为了让计算更快，算法不处理原图，而是处理缩小后的图 */
+#define PVC_IMAGE_W                       (94U)   /* 图像宽度，单位：像素 */
+#define PVC_IMAGE_H                       (60U)   /* 图像高度，单位：像素 */
+#define PVC_IMAGE_SIZE                    (PVC_IMAGE_W * PVC_IMAGE_H) /* 图像总像素数 */
 
-/* 总开关：0 时不编译本模块主体，便于快速排除视觉代码对工程的影响。 */
-#define PVC_VISION_ENABLE                 (1)
-/* 性能统计开关：开启后使用 PVC_VISION_PROFILE_TIMER 统计单帧耗时和帧间隔。 */
-#define PVC_VISION_PROFILE_ENABLE         (1)
-/* 多帧平滑开关：开启后 raw 结果会经过连续帧确认和短时间丢帧保持。 */
-#define PVC_VISION_SMOOTH_ENABLE          (1)
-/* 1 核视觉默认使用 TC_TIME2_CH1。TC_TIME2_CH2 已被遥控接收占用，不建议改到 CH2。 */
-#define PVC_VISION_PROFILE_TIMER          (TC_TIME2_CH1)
-/* 串口调试打印周期。0 表示关闭；例如设为 50 表示每 50 帧打印一次。 */
-#define PVC_VISION_DEBUG_PRINT_EVERY      (0U)
+/* --- 2. 功能开关与硬件配置 --- */
+#define PVC_VISION_ENABLE                 (1)     /* 模块总开关：1 为开启编译，0 为关闭。遇到问题可以关掉排查 */
+#define PVC_VISION_PROFILE_ENABLE         (1)     /* 性能统计开关：1 为开启。开启后可以看算一帧要多久 */
+#define PVC_VISION_SMOOTH_ENABLE          (1)     /* 平滑开关：1 为开启。开启后可以过滤掉突然闪烁的反光，让结果更稳定 */
+#define PVC_VISION_PROFILE_TIMER          (TC_TIME2_CH1) /* 测时间用的硬件定时器。别和遥控器冲突 */
+#define PVC_VISION_DEBUG_PRINT_EVERY      (0U)    /* 串口打印周期。0 是不打印；50 表示每 50 帧在电脑上打印一次信息 */
 
+/* --- 3. 核心算法参数（调车时最常改的地方） --- */
 /*
- * 白色阈值，与 PC Python/C 版本保持一致：gray >= 245 认为是白色候选像素。
- *
- * 现场初始值：
- * - 室外强光、PVC 很亮：245。
- * - 阴天、曝光偏暗：235~240。
- * - 如果黑色单边桥/阴影被误判为白色，说明阈值过低。
+ * 亮度阈值：灰度值（0-255）大于等于这个数，才被认为是白色的 PVC
+ * 室内灯光亮就用 245，阴天或暗处用 235
  */
 #define PVC_VISION_WHITE_THRESHOLD        (245U)
+
 /*
- * 连通域基础过滤阈值，用于去掉反光小点和噪声。
- *
- * 初始值含义：
- * - MIN_AREA=120：94x60 图像里小于 120 像素的白块直接当噪声。
- * - MIN_WIDTH=12、MIN_HEIGHT=4：候选至少要有一段明显宽度和高度。
- * - MIN_FILL_RATIO=0.25：包围框内部至少 25% 是白色，太稀疏一般是噪声。
+ * 尺寸门槛：过滤掉太小、太窄、太稀疏的“假 PVC”
  */
-#define PVC_VISION_MIN_AREA               (120)
-#define PVC_VISION_MIN_WIDTH              (12)
-#define PVC_VISION_MIN_HEIGHT             (4)
-#define PVC_VISION_MIN_FILL_RATIO         (0.25f)
+#define PVC_VISION_MIN_AREA               (120)   /* 面积：白点少于 120 个不要 */
+#define PVC_VISION_MIN_WIDTH              (12)    /* 宽度：不够宽不要 */
+#define PVC_VISION_MIN_HEIGHT             (4)     /* 高度：不够高不要 */
+#define PVC_VISION_MIN_FILL_RATIO         (0.25f) /* 填充率：如果是零零散散的白点（不到 25%）也不要 */
+
 /*
- * 最终决策阈值，与 PC 版本保持一致。
- * 最佳候选 score >= 0.58 才认为 raw detected。
- * 如果候选框稳定画出来但 detected=0，可以先降到 0.52~0.55。
+ * 最终打分门槛：算法会给候选的 PVC 打分，分数 >= 0.58 才算真正看到了 PVC
  */
 #define PVC_VISION_MIN_DECISION_SCORE     (0.58f)
-/* 单帧最多保留的连通域数量。94x60 图像下 128 已足够，且内存占用可控。 */
-#define PVC_VISION_MAX_COMPONENTS         (128)
+#define PVC_VISION_MAX_COMPONENTS         (128)   /* 内存限制：画面里最多允许找 128 块白斑 */
 
 /*
- * stable_detected 需要连续检测到的帧数。
- * 3 帧是默认安全值；比赛提速可试 2 帧，但误触发概率会增加。
+ * 稳定策略参数：防抖动
  */
-#define PVC_VISION_CONFIRM_FRAMES         (3U)
-/*
- * stable_detected 允许短时间丢失的帧数。
- * 2 帧可以抗轻微曝光波动；如果车在颠簸入口抖动明显，可试 3 帧。
- */
-#define PVC_VISION_LOST_HOLD_FRAMES       (2U)
+#define PVC_VISION_CONFIRM_FRAMES         (3U)    /* 连续 3 帧都看到，才向 0 核汇报“看到了” */
+#define PVC_VISION_LOST_HOLD_FRAMES       (2U)    /* 偶尔 1、2 帧没看到，可以假装还看着，防止短时间闪烁导致停车 */
 
+/* --- 4. 数据结构定义 --- */
+
+/**
+ * @brief 单帧的检测结果（记录了一张照片里的 PVC 长啥样）
+ */
 typedef struct
 {
-    uint8 detected;              /* 本帧是否检测到 PVC。raw/stable 都使用这个字段表达有效性。 */
-    uint8 component_count;       /* 本帧白色连通域总数，用于调试阈值和噪声情况。 */
-    uint8 candidate_count;       /* 通过基础过滤的候选数量，用于判断是否过严/过松。 */
-    uint16 area;                 /* 最佳候选的像素面积。 */
-    uint8 bbox_xmin;             /* 最佳候选包围框左边界。无效时为 0xFF。 */
-    uint8 bbox_ymin;             /* 最佳候选包围框上边界。无效时为 0xFF。 */
-    uint8 bbox_xmax;             /* 最佳候选包围框右边界。无效时为 0xFF。 */
-    uint8 bbox_ymax;             /* 最佳候选包围框下边界。无效时为 0xFF。 */
-    uint8 entry_bottom_y;        /* 入口白边的近端行号，后续应查表换算 forward_mm。 */
-    uint8 entry_top_y;           /* 入口白边的远端行号，可用于判断白边展开程度。 */
-    float confidence;            /* 0~1 左右的评分，当前与 PC 版本 score 对齐。 */
-    float centroid_x;            /* 白色区域质心 x，后续可转成 lateral_mm。 */
-    float centroid_y;            /* 白色区域质心 y，主要用于调试。 */
-    float fill_ratio;            /* 连通域面积 / 包围框面积，低填充率一般是噪声或破碎区域。 */
-    float mean_gray;             /* 连通域平均灰度，便于现场看曝光是否合适。 */
-    int16 forward_mm;            /* 入口距离估计。当前是占位线性表，车机实测后应替换为标定表。 */
-    int16 lateral_mm;            /* 横向偏差估计。当前是占位线性表，后续应替换为标定表。 */
-    int16 yaw_error_deg_x100;    /* 航向误差，单位 0.01 度。PVC 入口第一版暂不计算，固定为 0。 */
+    uint8 detected;              /* 本帧有没有看到 PVC（1=看到，0=没看到） */
+    uint8 component_count;       /* 画面里一共有多少块白斑（用来看看噪声多不多） */
+    uint8 candidate_count;       /* 有多少块白斑通过了尺寸门槛（有潜力成为 PVC） */
+    uint16 area;                 /* 最像 PVC 的那一块的面积 */
+    uint8 bbox_xmin;             /* 包围框的左边位置 */
+    uint8 bbox_ymin;             /* 包围框的上边位置 */
+    uint8 bbox_xmax;             /* 包围框的右边位置 */
+    uint8 bbox_ymax;             /* 包围框的下边位置 */
+    uint8 entry_bottom_y;        /* PVC 最底下的行号（靠车越近行号越大） */
+    uint8 entry_top_y;           /* PVC 最上面的行号 */
+    float confidence;            /* 算法给它打的分数（满分 1.0） */
+    float centroid_x;            /* PVC 的中心横坐标 */
+    float centroid_y;            /* PVC 的中心纵坐标 */
+    float fill_ratio;            /* 填充率（面积/包围框面积） */
+    float mean_gray;             /* 平均亮度（255 是纯白） */
+    int16 forward_mm;            /* 估算离车还有多远（单位：毫米，-1表示不知道） */
+    int16 lateral_mm;            /* 估算车偏离了中心多少（单位：毫米，正数偏右，负数偏左） */
+    int16 yaw_error_deg_x100;    /* 角度偏差（当前先不用，填 0） */
 } pvc_vision_frame_result_t;
 
+/**
+ * @brief 整个模块最终对外的输出（包括原始结果和防抖处理后的结果）
+ */
 typedef struct
 {
-    uint32 frame_id;                 /* 视觉模块处理过的帧序号，从 1 开始递增。 */
-    uint8 raw_detected;              /* 当前单帧原始检测结果，响应快但可能抖动。 */
-    uint8 stable_detected;           /* 多帧确认后的稳定结果，控制层优先使用这个字段。 */
-    uint8 detected_streak;           /* 连续 raw_detected=1 的帧数。 */
-    uint8 lost_streak;               /* 连续 raw_detected=0 的帧数。 */
-    pvc_vision_frame_result_t raw;   /* 单帧直接检测结果，适合调试和观察算法响应。 */
-    pvc_vision_frame_result_t stable;/* 平滑后的结果，适合控制层和 0/1 核通信回传。 */
+    uint32 frame_id;                 /* 处理了多少帧了（序号） */
+    uint8 raw_detected;              /* 这一瞬间看没看到（容易抖） */
+    uint8 stable_detected;           /* 经过防抖处理后，算不算稳定看到（0 核用这个） */
+    uint8 detected_streak;           /* 连续看到的帧数 */
+    uint8 lost_streak;               /* 连续没看到的帧数 */
+    pvc_vision_frame_result_t raw;   /* 这一瞬间的具体数据 */
+    pvc_vision_frame_result_t stable;/* 防抖处理后的具体数据（0 核用这个） */
 } pvc_vision_output_t;
 
-/* 单帧检测耗时统计，单位 us：last/min/max/avg/count。 */
-extern volatile runtime_profiler_t g_pvc_vision_cost_profiler;
-/* 帧间隔统计，单位 us：可换算实际摄像头帧率。 */
-extern volatile runtime_profiler_t g_pvc_vision_frame_profiler;
-/* 模块统一输出。后续 0/1 核通信建议只搬运这个结构中的 stable 摘要字段。 */
-extern volatile pvc_vision_output_t g_pvc_vision_output;
-/* 输出结构写入保护标志。1 核 2ms ISR 发布 IPC 时看到该标志会跳过本次发布。 */
-extern volatile uint8 g_pvc_vision_output_write_busy;
+/* --- 5. 全局变量声明 --- */
+extern volatile runtime_profiler_t g_pvc_vision_cost_profiler;     /* 测算算法花了多少微秒 */
+extern volatile runtime_profiler_t g_pvc_vision_frame_profiler;    /* 测算两帧之间隔了多久 */
+extern volatile pvc_vision_output_t g_pvc_vision_output;           /* 最终要交出去的作业（数据） */
+extern volatile uint8 g_pvc_vision_output_write_busy;              /* 防冲突锁：正在写数据时变成 1，别人别来读 */
 
-/* 初始化视觉模块、清空滤波状态、启动运行时间统计定时器。 */
+/* --- 6. 对外函数接口 --- */
+
+/**
+ * @brief 初始化 PVC 视觉模块
+ */
 void pvc_vision_init(void);
-/* 清空连续帧确认和平滑状态。状态机切换项目时建议调用一次。 */
+
+/**
+ * @brief 重置防抖状态（每次重新进入项目时调用，忘掉过去的记忆）
+ */
 void pvc_vision_reset_filter(void);
-/* 获取输出指针。当前 1 核内使用可直接读；跨核读取需要配合 DCache 同步。 */
+
+/**
+ * @brief 获取最终结果的指针
+ * @return const volatile pvc_vision_output_t* 指向结果的指针
+ */
 const volatile pvc_vision_output_t *pvc_vision_get_output(void);
-/* 处理一帧 MT9V03X 灰度图。gray 应指向压缩后的 94x60 连续灰度数组。 */
+
+/**
+ * @brief 处理摄像头送来的一张新照片
+ * @param gray 压缩好的 94x60 的黑白照片数据
+ */
 void pvc_vision_process_camera_frame(const uint8 *gray);
 
 #ifdef __cplusplus
