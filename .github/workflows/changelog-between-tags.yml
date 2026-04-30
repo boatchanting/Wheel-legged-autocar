@@ -1,0 +1,46 @@
+name: Generate Changelog Between Tags
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_tag:
+        description: "起始 tag（不含）"
+        required: true
+        type: string
+      to_tag:
+        description: "结束 tag（含）"
+        required: true
+        type: string
+      markdown:
+        description: "是否输出 Markdown"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Generate changelog
+        run: |
+          cmd=(python3 tools/05_通用数据处理工具/changelog_between_tags.py "${{ inputs.from_tag }}" "${{ inputs.to_tag }}")
+          if [ "${{ inputs.markdown }}" = "true" ]; then
+            cmd+=(--markdown)
+          fi
+          "${cmd[@]}" | tee changelog.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-${{ inputs.from_tag }}-to-${{ inputs.to_tag }}
+          path: changelog.txt
