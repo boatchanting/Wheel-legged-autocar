@@ -1,3 +1,8 @@
+/*
+ * 文件: line_vision.c
+ * 作用: 1 核桥任务直线视觉检测实现。
+ * 说明: 输出直线偏差、航向误差及黑桥块检测信息供 0 核控制使用。
+ */
 #include "line_vision.h"
 
 #if LINE_VISION_ENABLE
@@ -39,21 +44,41 @@ static line_scratch_t g_line_scratch;
 static line_vision_output_t g_line_output_shadow;
 static uint32 g_line_last_frame_time_us = 0U;
 
+/*
+ * 函数: line_abs_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float line_abs_f(float value)
 {
     return (value < 0.0f) ? -value : value;
 }
 
+/*
+ * 函数: line_min_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float line_min_f(float a, float b)
 {
     return (a < b) ? a : b;
 }
 
+/*
+ * 函数: line_max_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float line_max_f(float a, float b)
 {
     return (a > b) ? a : b;
 }
 
+/*
+ * 函数: line_constrain_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float line_constrain_f(float value, float min_value, float max_value)
 {
     if (value < min_value)
@@ -67,6 +92,11 @@ static float line_constrain_f(float value, float min_value, float max_value)
     return value;
 }
 
+/*
+ * 函数: line_clear_frame_result
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void line_clear_frame_result(line_vision_frame_result_t *result)
 {
     memset(result, 0, sizeof(*result));
@@ -76,6 +106,11 @@ static void line_clear_frame_result(line_vision_frame_result_t *result)
     result->bridge_bbox_ymax = 0xFFU;
 }
 
+/*
+ * 函数: line_percentile_from_hist
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 line_percentile_from_hist(const uint16 *hist, uint16 total, uint16 percent)
 {
     uint16 target = (uint16)((uint32)total * (uint32)percent / 100U);
@@ -97,6 +132,11 @@ static uint8 line_percentile_from_hist(const uint16 *hist, uint16 total, uint16 
     return 255U;
 }
 
+/*
+ * 函数: line_build_near_white_mask
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void line_build_near_white_mask(const uint8 *gray, uint8 y_min, uint8 y_max, float *white_ratio)
 {
     uint32 white_count = 0U;
@@ -142,6 +182,11 @@ static void line_build_near_white_mask(const uint8 *gray, uint8 y_min, uint8 y_m
     *white_ratio = (roi_count > 0U) ? ((float)white_count / (float)roi_count) : 0.0f;
 }
 
+/*
+ * 函数: line_extract_center_points
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 line_extract_center_points(uint8 y_min, uint8 y_max, uint8 *out_y_span, float *out_mean_width)
 {
     uint8 point_count = 0U;
@@ -388,6 +433,11 @@ static void line_flood_dark_component(const uint8 *gray,
     }
 }
 
+/*
+ * 函数: line_score_bridge_component
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float line_score_bridge_component(const line_bridge_component_t *component)
 {
     const uint8 comp_w = (uint8)(component->xmax - component->xmin + 1U);
@@ -401,6 +451,11 @@ static float line_score_bridge_component(const line_bridge_component_t *componen
     return 0.38f * area_score + 0.28f * size_score + 0.22f * dark_score + 0.12f * top_score;
 }
 
+/*
+ * 函数: line_detect_dark_bridge
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 line_detect_dark_bridge(const uint8 *gray, line_vision_frame_result_t *result)
 {
     const uint8 y_min = (uint8)((uint32)LINE_IMAGE_H * 3U / 100U);
@@ -473,6 +528,11 @@ static uint8 line_detect_dark_bridge(const uint8 *gray, line_vision_frame_result
     return 0U;
 }
 
+/*
+ * 函数: line_detect_frame
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void line_detect_frame(const uint8 *gray, line_vision_frame_result_t *result)
 {
     const uint8 y_min = (uint8)((uint32)LINE_IMAGE_H * LINE_VISION_ROI_TOP_RATIO_X100 / 100U);
@@ -544,6 +604,11 @@ static void line_detect_frame(const uint8 *gray, line_vision_frame_result_t *res
     }
 }
 
+/*
+ * 函数: line_update_filter
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void line_update_filter(const line_vision_frame_result_t *raw)
 {
     line_vision_output_t next = g_line_output_shadow;
@@ -617,6 +682,11 @@ static void line_update_filter(const line_vision_frame_result_t *raw)
         next.stable.target_speed_hint = LINE_VISION_BRIDGE_SPEED_HINT;
         next.stable_detected = 0U;
     }
+/*
+ * 函数: if
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
     else if (next.stable_detected)
     {
         if (raw->detected)
@@ -637,6 +707,11 @@ static void line_update_filter(const line_vision_frame_result_t *raw)
     g_line_vision_output_write_busy = 0U;
 }
 
+/*
+ * 函数: line_vision_init
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void line_vision_init(void)
 {
     line_vision_reset_filter();
@@ -647,6 +722,11 @@ void line_vision_init(void)
 #endif
 }
 
+/*
+ * 函数: line_vision_reset_filter
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void line_vision_reset_filter(void)
 {
     line_vision_output_t empty;
@@ -665,6 +745,11 @@ const volatile line_vision_output_t *line_vision_get_output(void)
     return &g_line_vision_output;
 }
 
+/*
+ * 函数: line_vision_process_camera_frame
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void line_vision_process_camera_frame(const uint8 *gray)
 {
     line_vision_frame_result_t raw;

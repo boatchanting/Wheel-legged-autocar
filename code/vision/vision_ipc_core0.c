@@ -1,3 +1,8 @@
+/*
+ * 文件: vision_ipc_core0.c
+ * 作用: 0 核侧 IPC 驱动实现。
+ * 职责: 发送视觉任务命令、轮询 1 核回传结果、维护最新可用结果快照。
+ */
 #include "vision/vision_ipc_core0.h"
 
 #if defined(__ICCARM__)
@@ -19,6 +24,11 @@ static vision_ipc_command_t g_core0_command_shadow;
 static uint32 g_core0_last_result_seq = 0U;
 static volatile uint8 g_core0_command_dirty = 0U;
 
+/*
+ * 函数: vision_ipc_core0_flush_command
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_ipc_core0_flush_command(void)
 {
     g_core0_command_shadow.magic = VISION_IPC_CMD_MAGIC;
@@ -31,6 +41,11 @@ static void vision_ipc_core0_flush_command(void)
     SCB_CleanInvalidateDCache_by_Addr((void *)&g_vision_ipc_command, sizeof(g_vision_ipc_command));
 }
 
+/*
+ * 函数: VisionIpc_Core0_Init
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core0_Init(void)
 {
     memset(&g_core0_command_shadow, 0, sizeof(g_core0_command_shadow));
@@ -45,6 +60,11 @@ void VisionIpc_Core0_Init(void)
     vision_ipc_core0_flush_command();
 }
 
+/*
+ * 函数: VisionIpc_Core0_SetTask
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core0_SetTask(uint8 active_target, uint16 enable_mask)
 {
     g_core0_command_shadow.active_target = active_target;
@@ -53,6 +73,11 @@ void VisionIpc_Core0_SetTask(uint8 active_target, uint16 enable_mask)
     g_core0_command_dirty = 1U;
 }
 
+/*
+ * 函数: VisionIpc_Core0_SetPvcEnable
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core0_SetPvcEnable(uint8 enable)
 {
     if (enable)
@@ -65,6 +90,11 @@ void VisionIpc_Core0_SetPvcEnable(uint8 enable)
     }
 }
 
+/*
+ * 函数: VisionIpc_Core0_SetBridgeLineEnable
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
 {
     if (enable)
@@ -77,6 +107,11 @@ void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
     }
 }
 
+/*
+ * 函数: VisionIpc_Core0_Update_2ms
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core0_Update_2ms(void)
 {
     if (g_core0_command_dirty)
@@ -88,6 +123,11 @@ void VisionIpc_Core0_Update_2ms(void)
     (void)VisionIpc_Core0_PollResult();
 }
 
+/*
+ * 函数: VisionIpc_Core0_PollResult
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 uint8 VisionIpc_Core0_PollResult(void)
 {
     vision_ipc_packet_t packet;

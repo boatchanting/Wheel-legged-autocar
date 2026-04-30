@@ -1,3 +1,7 @@
+/*
+ * 文件: vision_task_area.h
+ * 作用: 桥任务视觉控制模块类型定义、参数和外部接口。
+ */
 #ifndef VISION_TASK_AREA_H
 #define VISION_TASK_AREA_H
 

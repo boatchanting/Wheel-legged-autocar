@@ -1,3 +1,8 @@
+/*
+ * 文件: vision_ipc_core1.c
+ * 作用: 1 核 IPC 驱动实现。
+ * 说明: 同步命令、调度各视觉模块并将结果打包发布。
+ */
 #include "vision_ipc_core1.h"
 
 #if defined(__ICCARM__)
@@ -24,6 +29,11 @@ static uint32 g_core1_last_published_line_frame_id = 0U;
 static uint32 g_core1_last_published_command_seq = 0U;
 static uint16 g_core1_last_published_enable_mask = 0U;
 
+/*
+ * 函数: vision_confidence_to_u16
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint16 vision_confidence_to_u16(float confidence)
 {
     if (confidence <= 0.0f)
@@ -37,6 +47,11 @@ static uint16 vision_confidence_to_u16(float confidence)
     return (uint16)(confidence * 1000.0f);
 }
 
+/*
+ * 函数: vision_float_to_i16_x100
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static int16 vision_float_to_i16_x100(float value)
 {
     if (value > 327.67f)
@@ -50,11 +65,21 @@ static int16 vision_float_to_i16_x100(float value)
     return (int16)(value * 100.0f);
 }
 
+/*
+ * 函数: vision_max_u32
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint32 vision_max_u32(uint32 a, uint32 b)
 {
     return (a > b) ? a : b;
 }
 
+/*
+ * 函数: vision_ipc_core1_write_packet
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_ipc_core1_write_packet(vision_ipc_packet_t *packet)
 {
     packet->magic = VISION_IPC_RESULT_MAGIC;
@@ -69,6 +94,11 @@ static void vision_ipc_core1_write_packet(vision_ipc_packet_t *packet)
     SCB_CleanInvalidateDCache_by_Addr((void *)&g_vision_ipc_result, sizeof(g_vision_ipc_result));
 }
 
+/*
+ * 函数: vision_ipc_core1_command_wants_pvc
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 vision_ipc_core1_command_wants_pvc(const vision_ipc_command_t *cmd)
 {
     const uint8 active_is_pvc = (uint8)(cmd->active_target == VISION_TARGET_PVC_ENTRY);
@@ -76,6 +106,11 @@ static uint8 vision_ipc_core1_command_wants_pvc(const vision_ipc_command_t *cmd)
     return (uint8)(active_is_pvc || mask_has_pvc);
 }
 
+/*
+ * 函数: vision_ipc_core1_command_wants_line
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 vision_ipc_core1_command_wants_line(const vision_ipc_command_t *cmd)
 {
     const uint8 active_is_bridge = (uint8)(cmd->active_target == VISION_TARGET_BRIDGE);
@@ -167,6 +202,11 @@ static void vision_ipc_core1_fill_line(vision_ipc_packet_t *packet,
     packet->bridge_center_err = packet->line_lateral_px_x100;
 }
 
+/*
+ * 函数: VisionIpc_Core1_Init
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core1_Init(void)
 {
     memset(&g_core1_command_shadow, 0, sizeof(g_core1_command_shadow));
@@ -185,6 +225,11 @@ void VisionIpc_Core1_Init(void)
     VisionIpc_Core1_PublishIdle();
 }
 
+/*
+ * 函数: VisionIpc_Core1_Update_2ms
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core1_Update_2ms(void)
 {
     uint32 pvc_frame_id = 0U;
@@ -235,6 +280,11 @@ void VisionIpc_Core1_Update_2ms(void)
     }
 }
 
+/*
+ * 函数: VisionIpc_Core1_PollCommand
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core1_PollCommand(void)
 {
     vision_ipc_command_t cmd;
@@ -270,11 +320,21 @@ void VisionIpc_Core1_PollCommand(void)
     }
 }
 
+/*
+ * 函数: VisionIpc_Core1_ShouldRunPvc
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 uint8 VisionIpc_Core1_ShouldRunPvc(void)
 {
     return g_core1_pvc_enabled;
 }
 
+/*
+ * 函数: VisionIpc_Core1_TakePvcResetRequest
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 uint8 VisionIpc_Core1_TakePvcResetRequest(void)
 {
     if (g_core1_pvc_reset_request)
@@ -285,11 +345,21 @@ uint8 VisionIpc_Core1_TakePvcResetRequest(void)
     return 0U;
 }
 
+/*
+ * 函数: VisionIpc_Core1_ShouldRunBridgeLine
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 uint8 VisionIpc_Core1_ShouldRunBridgeLine(void)
 {
     return g_core1_line_enabled;
 }
 
+/*
+ * 函数: VisionIpc_Core1_TakeLineResetRequest
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 uint8 VisionIpc_Core1_TakeLineResetRequest(void)
 {
     if (g_core1_line_reset_request)
@@ -300,6 +370,11 @@ uint8 VisionIpc_Core1_TakeLineResetRequest(void)
     return 0U;
 }
 
+/*
+ * 函数: VisionIpc_Core1_PublishPvc
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
 {
     vision_ipc_packet_t packet;
@@ -322,6 +397,11 @@ void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
     vision_ipc_core1_write_packet(&packet);
 }
 
+/*
+ * 函数: VisionIpc_Core1_PublishCurrent
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core1_PublishCurrent(void)
 {
     vision_ipc_packet_t packet;
@@ -373,6 +453,11 @@ void VisionIpc_Core1_PublishCurrent(void)
     vision_ipc_core1_write_packet(&packet);
 }
 
+/*
+ * 函数: VisionIpc_Core1_PublishIdle
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionIpc_Core1_PublishIdle(void)
 {
     vision_ipc_packet_t packet;
