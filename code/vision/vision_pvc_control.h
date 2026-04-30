@@ -1,3 +1,7 @@
+/*
+ * 文件: vision_pvc_control.h
+ * 作用: PVC 入口控制模块配置、状态定义与接口声明。
+ */
 #ifndef VISION_PVC_CONTROL_H
 #define VISION_PVC_CONTROL_H
 

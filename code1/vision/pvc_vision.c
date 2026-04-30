@@ -1,4 +1,9 @@
-﻿#include "pvc_vision.h"
+/*
+ * 文件: pvc_vision.c
+ * 作用: 1 核 PVC 入口视觉检测实现。
+ * 说明: 完成阈值分割、连通域提取、评分、稳定化及结果发布。
+ */
+#include "pvc_vision.h"
 
 #if PVC_VISION_ENABLE
 
@@ -54,26 +59,51 @@ static int16 g_pvc_smooth_lateral_mm = 0;
 /* 上一帧处理开始时间，用于统计帧间隔。 */
 static uint32 g_pvc_last_frame_time_us = 0U;
 
+/*
+ * 函数: pvc_min_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float pvc_min_f(float a, float b)
 {
     return (a < b) ? a : b;
 }
 
+/*
+ * 函数: pvc_max_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float pvc_max_f(float a, float b)
 {
     return (a > b) ? a : b;
 }
 
+/*
+ * 函数: pvc_component_width
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 pvc_component_width(const pvc_component_t *component)
 {
     return (uint8)(component->xmax - component->xmin + 1U);
 }
 
+/*
+ * 函数: pvc_component_height
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 pvc_component_height(const pvc_component_t *component)
 {
     return (uint8)(component->ymax - component->ymin + 1U);
 }
 
+/*
+ * 函数: pvc_estimate_forward_mm_from_row
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static int16 pvc_estimate_forward_mm_from_row(uint8 row)
 {
     /*
@@ -95,6 +125,11 @@ static int16 pvc_estimate_forward_mm_from_row(uint8 row)
     return (int16)((PVC_IMAGE_H - 1U - row) * 20U);
 }
 
+/*
+ * 函数: pvc_estimate_lateral_mm_from_x
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static int16 pvc_estimate_lateral_mm_from_x(float x)
 {
     /*
@@ -117,6 +152,11 @@ static int16 pvc_estimate_lateral_mm_from_x(float x)
     return (int16)((x - ((float)PVC_IMAGE_W - 1.0f) * 0.5f) * 8.0f);
 }
 
+/*
+ * 函数: pvc_clear_frame_result
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void pvc_clear_frame_result(pvc_vision_frame_result_t *result)
 {
     /* 无效结果统一写 0xFF/-1，方便调试时一眼区分“没有候选”和“候选在 0 行/0 列”。 */
@@ -130,6 +170,11 @@ static void pvc_clear_frame_result(pvc_vision_frame_result_t *result)
     result->forward_mm = -1;
 }
 
+/*
+ * 函数: pvc_score_component
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float pvc_score_component(const pvc_component_t *component)
 {
     /*
@@ -163,6 +208,11 @@ static float pvc_score_component(const pvc_component_t *component)
          + 0.05f * brightness_score;
 }
 
+/*
+ * 函数: pvc_sort_by_score
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void pvc_sort_by_score(pvc_component_t *components, uint8 count)
 {
     for (uint8 i = 1U; i < count; i++)
@@ -178,6 +228,11 @@ static void pvc_sort_by_score(pvc_component_t *components, uint8 count)
     }
 }
 
+/*
+ * 函数: pvc_sort_by_area
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void pvc_sort_by_area(pvc_component_t *components, uint8 count)
 {
     for (uint8 i = 1U; i < count; i++)
@@ -193,6 +248,11 @@ static void pvc_sort_by_area(pvc_component_t *components, uint8 count)
     }
 }
 
+/*
+ * 函数: pvc_flood_component
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_component_t *out)
 {
     /*
@@ -296,6 +356,11 @@ static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_compo
     }
 }
 
+/*
+ * 函数: pvc_collect_components
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 pvc_collect_components(const uint8 *gray)
 {
     uint8 component_count = 0U;
@@ -330,6 +395,11 @@ static uint8 pvc_collect_components(const uint8 *gray)
     return component_count;
 }
 
+/*
+ * 函数: pvc_filter_candidates
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint8 pvc_filter_candidates(uint8 component_count)
 {
     uint8 candidate_count = 0U;
@@ -371,6 +441,11 @@ static uint8 pvc_filter_candidates(uint8 component_count)
     return candidate_count;
 }
 
+/*
+ * 函数: pvc_copy_best_to_result
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void pvc_copy_best_to_result(const pvc_component_t *best, pvc_vision_frame_result_t *result)
 {
     /* 把内部候选转换成模块对外输出结构。 */
@@ -391,6 +466,11 @@ static void pvc_copy_best_to_result(const pvc_component_t *best, pvc_vision_fram
     result->yaw_error_deg_x100 = 0;
 }
 
+/*
+ * 函数: pvc_detect_frame
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void pvc_detect_frame(const uint8 *gray, pvc_vision_frame_result_t *result)
 {
     /*
@@ -426,6 +506,11 @@ static void pvc_detect_frame(const uint8 *gray, pvc_vision_frame_result_t *resul
     }
 }
 
+/*
+ * 函数: pvc_update_filter
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void pvc_update_filter(const pvc_vision_frame_result_t *raw)
 {
     /*
@@ -520,6 +605,11 @@ static void pvc_update_filter(const pvc_vision_frame_result_t *raw)
     g_pvc_vision_output_write_busy = 0U;
 }
 
+/*
+ * 函数: pvc_vision_init
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void pvc_vision_init(void)
 {
     /* 初始化时清空历史状态，防止上电残留值影响第一帧判断。 */
@@ -534,6 +624,11 @@ void pvc_vision_init(void)
 #endif
 }
 
+/*
+ * 函数: pvc_vision_reset_filter
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void pvc_vision_reset_filter(void)
 {
     /*
@@ -565,6 +660,11 @@ const volatile pvc_vision_output_t *pvc_vision_get_output(void)
     return &g_pvc_vision_output;
 }
 
+/*
+ * 函数: pvc_vision_process_camera_frame
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void pvc_vision_process_camera_frame(const uint8 *gray)
 {
     /*

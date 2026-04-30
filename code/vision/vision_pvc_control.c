@@ -1,3 +1,8 @@
+/*
+ * 文件: vision_pvc_control.c
+ * 作用: 0 核 PVC 入口控制闭环实现。
+ * 说明: 根据 1 核回传的 PVC 检测结果，计算转向误差与目标速度。
+ */
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_ipc_core0.h"
 
@@ -11,11 +16,21 @@ volatile uint8 g_pvc_control_enable = VISION_PVC_CONTROL_DEFAULT_ACTIVE;
 
 static vision_pvc_control_status_t g_pvc_ctrl_shadow;
 
+/*
+ * 函数: vision_pvc_abs_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_pvc_abs_f(float value)
 {
     return (value < 0.0f) ? -value : value;
 }
 
+/*
+ * 函数: vision_pvc_constrain_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_pvc_constrain_f(float value, float min_value, float max_value)
 {
     if (value < min_value)
@@ -29,6 +44,11 @@ static float vision_pvc_constrain_f(float value, float min_value, float max_valu
     return value;
 }
 
+/*
+ * 函数: vision_pvc_calc_err_degree
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
     const float lateral_deg =
@@ -42,6 +62,11 @@ static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *pack
                                   VISION_PVC_CONTROL_MAX_ERR_DEG);
 }
 
+/*
+ * 函数: vision_pvc_calc_bbox_ratio_u16
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static uint16 vision_pvc_calc_bbox_ratio_u16(const volatile vision_ipc_packet_t *packet)
 {
     /*
@@ -79,6 +104,11 @@ static uint16 vision_pvc_calc_bbox_ratio_u16(const volatile vision_ipc_packet_t 
     return (uint16)((bbox_area * 1000U) / VISION_PVC_CONTROL_IMAGE_AREA);
 }
 
+/*
+ * 函数: vision_pvc_apply_idle_outputs
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_pvc_apply_idle_outputs(void)
 {
     g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_IDLE;
@@ -87,6 +117,11 @@ static void vision_pvc_apply_idle_outputs(void)
     g_vision_pvc_control_status = g_pvc_ctrl_shadow;
 }
 
+/*
+ * 函数: VisionPvcControl_Init
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionPvcControl_Init(void)
 {
     memset(&g_pvc_ctrl_shadow, 0, sizeof(g_pvc_ctrl_shadow));
@@ -107,6 +142,11 @@ void VisionPvcControl_Init(void)
     VisionIpc_Core0_SetPvcEnable(VISION_PVC_DETECT_DEFAULT_ACTIVE);
 }
 
+/*
+ * 函数: VisionPvcControl_SetEnable
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionPvcControl_SetEnable(uint8 enable)
 {
     g_pvc_control_enable = enable ? 1U : 0U;
@@ -117,11 +157,21 @@ void VisionPvcControl_SetEnable(uint8 enable)
     }
 }
 
+/*
+ * 函数: VisionPvcControl_IsEnabled
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 uint8 VisionPvcControl_IsEnabled(void)
 {
     return g_pvc_control_enable;
 }
 
+/*
+ * 函数: VisionPvcControl_Update_2ms
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionPvcControl_Update_2ms(void)
 {
 #if VISION_PVC_CONTROL_ENABLE
@@ -158,6 +208,11 @@ void VisionPvcControl_Update_2ms(void)
         g_pvc_ctrl_shadow.last_seq = packet->seq;
         g_pvc_ctrl_shadow.stale_ticks = 0U;
     }
+/*
+ * 函数: if
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
     else if (g_pvc_ctrl_shadow.stale_ticks < 0xFFFFU)
     {
         g_pvc_ctrl_shadow.stale_ticks++;
@@ -217,6 +272,11 @@ void VisionPvcControl_Update_2ms(void)
             g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_ARRIVED;
             g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_ARRIVE_SPEED_SET;
         }
+/*
+ * 函数: if
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
         else if ((forward_mm >= 0) && (forward_mm <= VISION_PVC_CONTROL_CLOSE_FORWARD_MM))
         {
             g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK;
@@ -230,6 +290,11 @@ void VisionPvcControl_Update_2ms(void)
 
         target_speed_set = g_pvc_ctrl_shadow.speed_cmd;
     }
+/*
+ * 函数: if
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
     else if (packet->pvc_detected)
     {
         const float turn_err = vision_pvc_calc_err_degree(packet);

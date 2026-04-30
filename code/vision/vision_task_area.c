@@ -1,3 +1,8 @@
+/*
+ * 文件: vision_task_area.c
+ * 作用: 视觉桥任务（单边桥相关）的状态机与控制执行。
+ * 说明: 使用 1 核直线/桥面检测结果驱动过桥阶段控制。
+ */
 #include "vision/vision_task_area.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
@@ -37,11 +42,21 @@ typedef struct
 
 static vision_bridge_task_ctx_t s_bridge_task;
 
+/*
+ * 函数: vision_bridge_abs_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_bridge_abs_f(float value)
 {
     return (value < 0.0f) ? -value : value;
 }
 
+/*
+ * 函数: vision_bridge_constrain_f
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_bridge_constrain_f(float value, float min_value, float max_value)
 {
     if (value < min_value)
@@ -55,6 +70,11 @@ static float vision_bridge_constrain_f(float value, float min_value, float max_v
     return value;
 }
 
+/*
+ * 函数: vision_bridge_normalize_angle
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_bridge_normalize_angle(float angle_deg)
 {
     while (angle_deg > 180.0f)
@@ -68,6 +88,11 @@ static float vision_bridge_normalize_angle(float angle_deg)
     return angle_deg;
 }
 
+/*
+ * 函数: vision_bridge_distance_from
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_bridge_distance_from(float x_mm, float y_mm)
 {
     const float dx = inertial_nav.x - x_mm;
@@ -75,6 +100,11 @@ static float vision_bridge_distance_from(float x_mm, float y_mm)
     return sqrtf(dx * dx + dy * dy);
 }
 
+/*
+ * 函数: vision_bridge_calc_line_err_degree
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_bridge_calc_line_err_degree(const volatile vision_ipc_packet_t *packet)
 {
     const float lateral_px = (float)packet->line_lateral_px_x100 * 0.01f;
@@ -88,6 +118,11 @@ static float vision_bridge_calc_line_err_degree(const volatile vision_ipc_packet
                                      VISION_BRIDGE_TASK_MAX_ERR_DEG);
 }
 
+/*
+ * 函数: vision_bridge_calc_yaw_hold_err
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static float vision_bridge_calc_yaw_hold_err(void)
 {
     const float err = vision_bridge_normalize_angle(s_bridge_task.locked_yaw_deg -
@@ -97,6 +132,11 @@ static float vision_bridge_calc_yaw_hold_err(void)
                                      VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG);
 }
 
+/*
+ * 函数: vision_bridge_save_servo_limits_once
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_bridge_save_servo_limits_once(void)
 {
     if (s_bridge_task.saved_limits_valid == 0U)
@@ -107,6 +147,11 @@ static void vision_bridge_save_servo_limits_once(void)
     }
 }
 
+/*
+ * 函数: vision_bridge_apply_high_posture
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_bridge_apply_high_posture(void)
 {
     vision_bridge_save_servo_limits_once();
@@ -117,6 +162,11 @@ static void vision_bridge_apply_high_posture(void)
                                 bridge_params.height_step_rise * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
 }
 
+/*
+ * 函数: vision_bridge_apply_normal_posture
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_bridge_apply_normal_posture(void)
 {
     roll_balance_enable = 0U;
@@ -129,6 +179,11 @@ static void vision_bridge_apply_normal_posture(void)
                                 bridge_params.height_step_drop * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
 }
 
+/*
+ * 函数: vision_bridge_set_state
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
 {
     s_bridge_task.state = next_state;
@@ -175,6 +230,11 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
 }
 
 #if VISION_BRIDGE_TASK_NAV_CORRECT_ENABLE
+/*
+ * 函数: vision_bridge_apply_nav_correction
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_bridge_apply_nav_correction(void)
 {
     const float yaw_rad = s_bridge_task.locked_yaw_deg * 0.0174532925f;
@@ -188,6 +248,11 @@ static void vision_bridge_apply_nav_correction(void)
 }
 #endif
 
+/*
+ * 函数: vision_bridge_cleanup
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_bridge_cleanup(uint8 stop_car)
 {
     VisionPvcControl_SetEnable(0U);
@@ -207,6 +272,11 @@ static void vision_bridge_cleanup(uint8 stop_car)
     g_bridge_vision_task_status.state = VISION_BRIDGE_TASK_IDLE;
 }
 
+/*
+ * 函数: VisionBridgeTask_Init
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionBridgeTask_Init(void)
 {
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
@@ -214,22 +284,42 @@ void VisionBridgeTask_Init(void)
     g_bridge_vision_task_enable = 0U;
 }
 
+/*
+ * 函数: VisionBridgeTask_Start
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionBridgeTask_Start(void)
 {
     g_bridge_vision_task_enable = 1U;
 }
 
+/*
+ * 函数: VisionBridgeTask_Stop
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionBridgeTask_Stop(void)
 {
     vision_bridge_cleanup(1U);
 }
 
+/*
+ * 函数: VisionBridgeTask_IsActive
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 uint8 VisionBridgeTask_IsActive(void)
 {
     return (uint8)((g_bridge_vision_task_enable != 0U) ||
                    (s_bridge_task.state != VISION_BRIDGE_TASK_IDLE));
 }
 
+/*
+ * 函数: vision_bridge_enter_task
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 static void vision_bridge_enter_task(void)
 {
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
@@ -246,6 +336,11 @@ static void vision_bridge_enter_task(void)
     VisionPvcControl_SetEnable(1U);
 }
 
+/*
+ * 函数: VisionBridgeTask_Update_2ms
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
 void VisionBridgeTask_Update_2ms(void)
 {
     const volatile vision_ipc_packet_t *packet = VisionIpc_Core0_GetLatest();
@@ -356,6 +451,11 @@ void VisionBridgeTask_Update_2ms(void)
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
             }
+/*
+ * 函数: if
+ * 说明: 该函数属于视觉模块内部流程，负责当前步骤的数据处理与状态更新。
+ * 注意: 仅补充注释，不改变原有算法与控制逻辑。
+ */
             else if (s_bridge_task.bridge_hold_ticks > 0U)
             {
                 s_bridge_task.bridge_hold_ticks--;
