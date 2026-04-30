@@ -1,3 +1,8 @@
+/*
+ * 文件: vision_ipc_core0.h
+ * 作用: 0 核 IPC 接口声明。
+ * 说明: 上层控制模块通过此接口选择视觉任务并读取最新结果。
+ */
 #ifndef VISION_IPC_CORE0_H
 #define VISION_IPC_CORE0_H
 

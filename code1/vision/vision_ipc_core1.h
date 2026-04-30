@@ -1,3 +1,8 @@
+/*
+ * 文件: vision_ipc_core1.h
+ * 作用: 1 核 IPC 接口声明。
+ * 说明: 负责读取 0 核命令并发布 PVC/直线检测结果到共享内存。
+ */
 #ifndef VISION_IPC_CORE1_H
 #define VISION_IPC_CORE1_H
 

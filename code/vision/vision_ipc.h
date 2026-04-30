@@ -1,3 +1,8 @@
+/*
+ * 文件: vision_ipc.h
+ * 作用: 定义 0 核与 1 核之间视觉共享内存 IPC 协议。
+ * 内容: 地址、魔数、版本号、命令包/结果包结构体及 CRC 校验工具函数。
+ */
 #ifndef VISION_IPC_H
 #define VISION_IPC_H
 

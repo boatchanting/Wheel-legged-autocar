@@ -1,4 +1,8 @@
-﻿#ifndef PVC_VISION_H
+/*
+ * 文件: pvc_vision.h
+ * 作用: 1 核 PVC 入口检测模块的对外接口与配置。
+ */
+#ifndef PVC_VISION_H
 #define PVC_VISION_H
 
 #include "zf_common_headfile.h"

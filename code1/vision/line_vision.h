@@ -1,3 +1,7 @@
+/*
+ * 文件: line_vision.h
+ * 作用: 1 核桥任务直线视觉检测模块配置与接口。
+ */
 #ifndef LINE_VISION_H
 #define LINE_VISION_H
 
