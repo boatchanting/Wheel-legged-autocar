@@ -42,6 +42,7 @@
 // 【新增】引入 PVC 视觉模块头文件
 // 目的：为了获取 PVC_IMAGE_W (94) 和 PVC_IMAGE_H (60) 的宏定义，用于压缩数组的大小声明
 #include "vision/pvc_vision.h"
+#include "vision/playgroud_line_detector.h"
 #include "vision/line_vision.h"
 
 // *************************** 例程使用步骤说明 ***************************
@@ -136,6 +137,7 @@ void draw_cross_on_image(int x, int y, int size, uint8 color);
 // 【修改注释】将 PVC 指标（BoundingBox，质心十字等）渲染在压缩后的备份图像(compressed_image_copy)上。
 // 请在调用 compress_image_to_target 以及 pvc_vision_process_camera_frame 之后，WIFI发送之前调用。
 void render_pvc_vision_to_image(void);
+void render_playgroud_line_detector_to_image(void);
 void render_line_vision_to_image(void);
 
 #endif // __CODE1_WIFI_H__

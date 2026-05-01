@@ -159,55 +159,87 @@ static uint8 vision_ipc_core1_command_wants_line(const vision_ipc_command_t *cmd
 }
 
 /**
+ * @brief 将 0 核下发的操场线时序参数应用到算法模块
+ * @note  命令参数单位:
+ *        - smooth_alpha_u16: alpha * 1000
+ *        - min_temporal_score_u16: score * 1000
+ */
+static void vision_ipc_core1_apply_playgroud_params(const vision_ipc_command_t *cmd)
+{
+    float smooth_alpha = (float)cmd->playgroud_smooth_alpha_u16 / 1000.0f;
+    float min_temporal_score = (float)cmd->playgroud_min_temporal_score_u16 / 1000.0f;
+
+    playgroud_line_detector_set_temporal_params(cmd->playgroud_max_lost, smooth_alpha, min_temporal_score);
+}
+
+/**
  * @brief 将 PVC 的视觉检测结果提取并填充到 IPC 数据包中
  * 
  * @param packet 将要发送给 0 核的数据包
  * @param pvc_output 当前最新的 PVC 检测输出结果
  */
 static void vision_ipc_core1_fill_pvc(vision_ipc_packet_t *packet,
-                                      const volatile pvc_vision_output_t *pvc_output)
+                                      const volatile playgroud_line_detector_output_t *playgroud_output)
 {
-    pvc_vision_output_t pvc;
-    const pvc_vision_frame_result_t *ctrl;
+    playgroud_line_detector_output_t playgroud;
+    const playgroud_line_detector_frame_result_t *ctrl;
 
     /* 如果输出为空或者还没有处理出有效帧 (frame_id 为 0)，直接返回，不填充 */
-    if ((pvc_output == NULL) || (pvc_output->frame_id == 0U))
+    if ((playgroud_output == NULL) || (playgroud_output->frame_id == 0U))
     {
         return;
     }
 
     /* 拷贝当前结果，防止在中途被其他中断修改 */
-    pvc = *pvc_output;
+    playgroud = *playgroud_output;
     /* 
      * 判断选用哪个结果：
      * 如果检测稳定 (stable_detected)，就用稳定结果；否则用原始结果 (raw) 
      */
-    ctrl = pvc.stable_detected ? &pvc.stable : &pvc.raw;
+    ctrl = playgroud.stable_detected ? &playgroud.stable : &playgroud.raw;
 
     /* 更新数据包中的有效掩码，标记里面包含 PVC 数据和性能分析数据 */
     packet->valid_mask = (uint16)(packet->valid_mask | VISION_VALID_PVC | VISION_VALID_PROFILE);
     /* 记录当前最大的帧 ID */
-    packet->frame_id = vision_max_u32(packet->frame_id, pvc.frame_id);
+    packet->frame_id = vision_max_u32(packet->frame_id, playgroud.frame_id);
     /* 记录上一帧的用时（微秒），用于性能分析 */
-    packet->frame_dt_us = (uint16)g_pvc_vision_frame_profiler.last_us;
-    packet->cost_us = (uint16)g_pvc_vision_cost_profiler.last_us;
+    packet->frame_dt_us = (uint16)g_playgroud_line_detector_frame_profiler.last_us;
+    packet->cost_us = (uint16)g_playgroud_line_detector_cost_profiler.last_us;
 
     /* 将具体的 PVC 参数如实填充进数据包，例如前向距离、横向偏差、包围框等 */
-    packet->pvc_detected = pvc.raw.detected;
-    packet->pvc_stable_detected = pvc.stable_detected;
-    packet->pvc_confidence_u16 = vision_confidence_to_u16(ctrl->confidence);
-    packet->pvc_forward_mm = ctrl->forward_mm;
-    packet->pvc_lateral_mm = ctrl->lateral_mm;
-    packet->pvc_yaw_error_deg_x100 = ctrl->yaw_error_deg_x100;
-    packet->pvc_entry_bottom_y = ctrl->entry_bottom_y;
-    packet->pvc_entry_top_y = ctrl->entry_top_y;
-    packet->pvc_bbox_xmin = ctrl->bbox_xmin;
-    packet->pvc_bbox_ymin = ctrl->bbox_ymin;
-    packet->pvc_bbox_xmax = ctrl->bbox_xmax;
-    packet->pvc_bbox_ymax = ctrl->bbox_ymax;
-    packet->pvc_area = ctrl->area;
-    packet->pvc_component_count = ctrl->component_count;
-    packet->pvc_candidate_count = ctrl->candidate_count;
+    packet->playgroud_detected = playgroud.raw_detected;
+    packet->playgroud_stable_detected = playgroud.stable_detected;
+    packet->playgroud_mode = playgroud.mode;
+    packet->playgroud_accepted = playgroud.accepted;
+    packet->playgroud_confidence_u16 = vision_confidence_to_u16(ctrl->confidence);
+    packet->playgroud_lateral_px_x100 = vision_float_to_i16_x100(ctrl->lateral_error_px);
+    packet->playgroud_yaw_error_deg_x100 = vision_float_to_i16_x100(ctrl->line_yaw_deg);
+    packet->playgroud_x_bottom_x100 = vision_float_to_i16_x100(ctrl->line_x_bottom);
+    packet->playgroud_x_lookahead_x100 = vision_float_to_i16_x100(ctrl->line_x_lookahead);
+    packet->playgroud_bbox_xmin = ctrl->bbox_xmin;
+    packet->playgroud_bbox_ymin = ctrl->bbox_ymin;
+    packet->playgroud_bbox_xmax = ctrl->bbox_xmax;
+    packet->playgroud_bbox_ymax = ctrl->bbox_ymax;
+    packet->playgroud_component_count = ctrl->component_count;
+    packet->playgroud_candidate_count = ctrl->candidate_count;
+    packet->playgroud_line_point_rows = ctrl->line_point_rows;
+    packet->playgroud_lost_count = playgroud.lost_count;
+
+    packet->pvc_detected = packet->playgroud_detected;
+    packet->pvc_stable_detected = packet->playgroud_stable_detected;
+    packet->pvc_confidence_u16 = packet->playgroud_confidence_u16;
+    packet->pvc_forward_mm = -1;
+    packet->pvc_lateral_mm = packet->playgroud_lateral_px_x100;
+    packet->pvc_yaw_error_deg_x100 = packet->playgroud_yaw_error_deg_x100;
+    packet->pvc_entry_bottom_y = packet->playgroud_bbox_ymax;
+    packet->pvc_entry_top_y = packet->playgroud_bbox_ymin;
+    packet->pvc_bbox_xmin = packet->playgroud_bbox_xmin;
+    packet->pvc_bbox_ymin = packet->playgroud_bbox_ymin;
+    packet->pvc_bbox_xmax = packet->playgroud_bbox_xmax;
+    packet->pvc_bbox_ymax = packet->playgroud_bbox_ymax;
+    packet->pvc_area = 0U;
+    packet->pvc_component_count = packet->playgroud_component_count;
+    packet->pvc_candidate_count = packet->playgroud_candidate_count;
 }
 
 /**
@@ -289,6 +321,10 @@ void VisionIpc_Core1_Init(void)
     g_core1_command_shadow.active_target = VISION_TARGET_NONE;
     g_core1_command_shadow.enable_mask = 0U;
     g_core1_command_shadow.pvc_min_score_u16 = 580U;
+    g_core1_command_shadow.playgroud_max_lost = PLAYGROUD_LINE_DEFAULT_MAX_LOST;
+    g_core1_command_shadow.playgroud_smooth_alpha_u16 = 450U;
+    g_core1_command_shadow.playgroud_min_temporal_score_u16 = 200U;
+    vision_ipc_core1_apply_playgroud_params(&g_core1_command_shadow);
     
     /* 清零所有状态变量 */
     g_core1_result_seq = 0U;
@@ -337,9 +373,9 @@ void VisionIpc_Core1_Update_2ms(void)
 
     /* 3. 获取各视觉模块最新产生的数据帧 ID */
     /* 获取 PVC 的帧 ID (前提是没在被写入) */
-    if ((g_core1_pvc_enabled != 0U) && (g_pvc_vision_output_write_busy == 0U))
+    if ((g_core1_pvc_enabled != 0U) && (g_playgroud_line_detector_output_write_busy == 0U))
     {
-        pvc_frame_id = pvc_vision_get_output()->frame_id;
+        pvc_frame_id = playgroud_line_detector_get_output()->frame_id;
     }
     /* 获取直线的帧 ID (前提是没在被写入) */
     if ((g_core1_line_enabled != 0U) && (g_line_vision_output_write_busy == 0U))
@@ -402,6 +438,7 @@ void VisionIpc_Core1_PollCommand(void)
 
         /* 发现新命令，更新缓存 */
         g_core1_command_shadow = cmd;
+        vision_ipc_core1_apply_playgroud_params(&g_core1_command_shadow);
         
         /* 根据新命令解析需要开启的模块 */
         next_pvc_enabled = vision_ipc_core1_command_wants_pvc(&g_core1_command_shadow);
@@ -434,6 +471,11 @@ uint8 VisionIpc_Core1_ShouldRunPvc(void)
     return g_core1_pvc_enabled;
 }
 
+uint8 VisionIpc_Core1_ShouldRunPlaygroud(void)
+{
+    return VisionIpc_Core1_ShouldRunPvc();
+}
+
 /**
  * @brief 获取并清除 PVC 重置请求
  * 
@@ -448,6 +490,11 @@ uint8 VisionIpc_Core1_TakePvcResetRequest(void)
         return 1U;
     }
     return 0U;
+}
+
+uint8 VisionIpc_Core1_TakePlaygroudResetRequest(void)
+{
+    return VisionIpc_Core1_TakePvcResetRequest();
 }
 
 /**
@@ -481,7 +528,7 @@ uint8 VisionIpc_Core1_TakeLineResetRequest(void)
  * @param pvc_output 传入的 PVC 输出数据
  * @note 组装一个只含 PVC 结果的数据包发给 0 核。
  */
-void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
+void VisionIpc_Core1_PublishPvc(const volatile playgroud_line_detector_output_t *playgroud_output)
 {
     vision_ipc_packet_t packet;
 
@@ -491,7 +538,7 @@ void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
     packet.valid_mask = VISION_VALID_COMMON;
     
     /* 填充具体的 PVC 参数 */
-    vision_ipc_core1_fill_pvc(&packet, pvc_output);
+    vision_ipc_core1_fill_pvc(&packet, playgroud_output);
     
     /* 如果检测稳定，则确认稳定目标为 PVC */
     if (packet.pvc_stable_detected)
@@ -510,6 +557,11 @@ void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
     vision_ipc_core1_write_packet(&packet);
 }
 
+void VisionIpc_Core1_PublishPlaygroud(const volatile playgroud_line_detector_output_t *playgroud_output)
+{
+    VisionIpc_Core1_PublishPvc(playgroud_output);
+}
+
 /**
  * @brief 发布当前的综合检测结果 (包含被开启的所有视觉模块数据)
  * 
@@ -525,9 +577,9 @@ void VisionIpc_Core1_PublishCurrent(void)
     packet.valid_mask = VISION_VALID_COMMON;
 
     /* 分别获取已开启且未被占用的模块数据 */
-    if ((g_core1_pvc_enabled != 0U) && (g_pvc_vision_output_write_busy == 0U))
+    if ((g_core1_pvc_enabled != 0U) && (g_playgroud_line_detector_output_write_busy == 0U))
     {
-        vision_ipc_core1_fill_pvc(&packet, pvc_vision_get_output());
+        vision_ipc_core1_fill_pvc(&packet, playgroud_line_detector_get_output());
     }
     if ((g_core1_line_enabled != 0U) && (g_line_vision_output_write_busy == 0U))
     {

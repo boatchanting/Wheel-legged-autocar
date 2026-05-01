@@ -72,6 +72,9 @@ void VisionIpc_Core0_Init(void)
     g_core0_command_shadow.active_target = VISION_TARGET_NONE;
     g_core0_command_shadow.enable_mask = 0U;
     g_core0_command_shadow.pvc_min_score_u16 = 580U;
+    g_core0_command_shadow.playgroud_max_lost = 30U;
+    g_core0_command_shadow.playgroud_smooth_alpha_u16 = 450U;
+    g_core0_command_shadow.playgroud_min_temporal_score_u16 = 200U;
     g_core0_command_shadow.seq = 1U; /* 命令编号从 1 开始 */
     g_core0_command_dirty = 0U;
     

@@ -23,7 +23,7 @@ extern "C" {
 typedef enum
 {
     VISION_TARGET_NONE = 0,
-    VISION_TARGET_PVC_ENTRY = 1,
+    VISION_TARGET_PLAYGROUD_LINE = 1, /* 红色操场线任务 */
     VISION_TARGET_BRIDGE = 2,
     VISION_TARGET_BUMPY = 3,
     VISION_TARGET_STAIR_UP = 4,
@@ -32,7 +32,7 @@ typedef enum
 } vision_target_e;
 
 #define VISION_TARGET_MASK(_target)     ((uint16)(1U << (uint16)(_target)))
-#define VISION_MASK_PVC_ENTRY           VISION_TARGET_MASK(VISION_TARGET_PVC_ENTRY)
+#define VISION_MASK_PLAYGROUD_LINE      VISION_TARGET_MASK(VISION_TARGET_PLAYGROUD_LINE)
 #define VISION_MASK_BRIDGE              VISION_TARGET_MASK(VISION_TARGET_BRIDGE)
 #define VISION_MASK_BUMPY               VISION_TARGET_MASK(VISION_TARGET_BUMPY)
 #define VISION_MASK_STAIR_UP            VISION_TARGET_MASK(VISION_TARGET_STAIR_UP)
@@ -40,12 +40,17 @@ typedef enum
 #define VISION_MASK_GRASS               VISION_TARGET_MASK(VISION_TARGET_GRASS)
 
 #define VISION_VALID_COMMON             (1U << 0)
-#define VISION_VALID_PVC                (1U << 1)
+#define VISION_VALID_PLAYGROUD          (1U << 1)
 #define VISION_VALID_BRIDGE             (1U << 2)
 #define VISION_VALID_BUMPY              (1U << 3)
 #define VISION_VALID_STAIR              (1U << 4)
 #define VISION_VALID_GRASS              (1U << 5)
 #define VISION_VALID_PROFILE            (1U << 6)
+
+/* 兼容旧命名：历史代码仍可继续使用 PVC 宏名 */
+#define VISION_TARGET_PVC_ENTRY         VISION_TARGET_PLAYGROUD_LINE
+#define VISION_MASK_PVC_ENTRY           VISION_MASK_PLAYGROUD_LINE
+#define VISION_VALID_PVC                VISION_VALID_PLAYGROUD
 
 typedef struct
 {
@@ -57,8 +62,11 @@ typedef struct
     uint32 seq;
     uint32 flags;
 
-    uint16 pvc_min_score_u16;
-    uint16 reserved0;
+    uint16 pvc_min_score_u16; /* 兼容字段，保留给旧控制代码 */
+    uint8 playgroud_max_lost;             /* 操场线时序最大容忍丢帧，默认30 */
+    uint8 playgroud_reserved0;
+    uint16 playgroud_smooth_alpha_u16;    /* 操场线平滑系数(alpha*1000)，默认450即0.45 */
+    uint16 playgroud_min_temporal_score_u16; /* 操场线最小时序分(score*1000)，默认200即0.20 */
 
     /* Reserved for later: ROI, mode flags, per-target enable windows. */
     int16 roi_xmin;
@@ -110,6 +118,25 @@ typedef struct
     uint16 pvc_area;
     uint8 pvc_component_count;
     uint8 pvc_candidate_count;
+
+    /* 红色操场线结果（新协议字段） */
+    uint8 playgroud_detected;            /* 原始帧检测是否成立 */
+    uint8 playgroud_stable_detected;     /* 时序稳定后是否成立 */
+    uint8 playgroud_mode;                /* 0=lost, 1=detected, 2=predicted */
+    uint8 playgroud_accepted;            /* detected模式下本帧是否通过时序门控 */
+    uint16 playgroud_confidence_u16;     /* 置信度，范围[0,1000] */
+    int16 playgroud_lateral_px_x100;     /* 横向误差(像素*100) */
+    int16 playgroud_yaw_error_deg_x100;  /* 航向误差(角度*100) */
+    int16 playgroud_x_bottom_x100;       /* 近处拟合x坐标(像素*100) */
+    int16 playgroud_x_lookahead_x100;    /* 前瞻拟合x坐标(像素*100) */
+    uint8 playgroud_bbox_xmin;           /* 目标包围框左边界 */
+    uint8 playgroud_bbox_ymin;           /* 目标包围框上边界 */
+    uint8 playgroud_bbox_xmax;           /* 目标包围框右边界 */
+    uint8 playgroud_bbox_ymax;           /* 目标包围框下边界 */
+    uint8 playgroud_component_count;     /* 连通域总数 */
+    uint8 playgroud_candidate_count;     /* 候选连通域数 */
+    uint8 playgroud_line_point_rows;     /* 参与拟合的有效行数 */
+    uint8 playgroud_lost_count;          /* 当前连续丢失计数 */
 
     /* Reserved: bridge. */
     uint8 bridge_detected;

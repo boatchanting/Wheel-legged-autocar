@@ -468,50 +468,48 @@ static void render_common_status_strip(uint8 raw_detected,
  * @note   由于当前算法就是基于 94x60 输出，我们也是把框画在 94x60 压缩图上供上位机显示，
  *         因此此处坐标1:1对应，不再需要 *2 还原。
  */
+static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color);
+
 void render_pvc_vision_to_image(void) 
 {
-    const volatile pvc_vision_output_t *pvc_out = &g_pvc_vision_output;
-    pvc_vision_frame_result_t result;
+    const volatile playgroud_line_detector_output_t *playgroud_out = &g_playgroud_line_detector_output;
+    playgroud_line_detector_frame_result_t result;
     uint8 has_target = 0U;
 
 #if VISION_IMAGE_RENDER_ENABLE
-    render_common_status_strip(pvc_out->raw_detected, pvc_out->stable_detected, 0U, 0U);
+    render_common_status_strip(playgroud_out->raw_detected,
+                               playgroud_out->stable_detected,
+                               (uint8)(playgroud_out->mode == PLAYGROUD_LINE_MODE_PREDICTED),
+                               (uint8)(playgroud_out->mode == PLAYGROUD_LINE_MODE_DETECTED));
 #endif
 
-    if (pvc_out->stable_detected)
+    if (playgroud_out->stable_detected)
     {
-        result = pvc_out->stable;
+        result = playgroud_out->stable;
         has_target = 1U;
     }
-    else if (pvc_out->raw_detected)
+    else if (playgroud_out->raw_detected)
     {
-        result = pvc_out->raw;
+        result = playgroud_out->raw;
         has_target = 1U;
     }
 
 #if VISION_IMAGE_RENDER_ENABLE
     {
-        int conf_x1000 = clamp_int_to_range((int)(pvc_out->raw.confidence * 1000.0f), 0, 1000);
-        int bbox_ratio_x1000 = 0;
-        int cost_us = (int)g_pvc_vision_cost_profiler.last_us;
-
-        if (has_target && result.bbox_xmin != 0xFFU)
-        {
-            int bbox_w = (int)result.bbox_xmax - (int)result.bbox_xmin + 1;
-            int bbox_h = (int)result.bbox_ymax - (int)result.bbox_ymin + 1;
-            bbox_ratio_x1000 = clamp_int_to_range((bbox_w * bbox_h * 1000) / (int)PVC_IMAGE_SIZE, 0, 1000);
-        }
+        int conf_x1000 = clamp_int_to_range((int)(playgroud_out->raw.confidence * 1000.0f), 0, 1000);
+        int temporal_x1000 = clamp_int_to_range((int)(result.temporal_score * 1000.0f), 0, 1000);
+        int cost_us = (int)g_playgroud_line_detector_cost_profiler.last_us;
 
         draw_bar_on_image(0, 0, 22, conf_x1000, 1000, 0U);
-        draw_bar_on_image(0, 2, 22, bbox_ratio_x1000, 1000, 0U);
+        draw_bar_on_image(0, 2, 22, temporal_x1000, 1000, 0U);
         draw_bar_on_image(0, 4, 22, clamp_int_to_range(cost_us, 0, 10000), 10000, 0U);
 
 #if VISION_IMAGE_RENDER_NUMERIC_ENABLE
         (void)draw_uint3x5_on_image(0, 6, (uint32)conf_x1000, 0U);
         if (has_target)
         {
-            draw_int3x5_on_image(25, 6, (int)result.forward_mm, 0U);
-            draw_int3x5_on_image(55, 6, (int)result.lateral_mm, 0U);
+            draw_int3x5_on_image(25, 6, (int)result.line_yaw_deg, 0U);
+            draw_int3x5_on_image(45, 6, (int)result.lateral_error_px, 0U);
         }
 #endif
     }
@@ -519,28 +517,31 @@ void render_pvc_vision_to_image(void)
 
     if (has_target)
     {
-        uint8 xmin = result.bbox_xmin;
-        uint8 ymin = result.bbox_ymin;
-        uint8 xmax = result.bbox_xmax;
-        uint8 ymax = result.bbox_ymax;
-        uint8 box_color = pvc_out->stable_detected ? 0U : 180U;
-        int cx = (int)result.centroid_x;
-        int cy = (int)result.centroid_y;
-        uint8 entry_y = result.entry_bottom_y;
+        int x_bottom = (int)(result.line_x_bottom + 0.5f);
+        int x_lookahead = (int)(result.line_x_lookahead + 0.5f);
+        const int y_bottom = (int)((float)PLAYGROUD_IMAGE_H * 0.93f);
+        const int y_lookahead = (int)((float)PLAYGROUD_IMAGE_H * 0.72f);
+        uint8 color = (playgroud_out->mode == PLAYGROUD_LINE_MODE_PREDICTED) ? 180U : 0U;
 
-        draw_rect_on_image(xmin, ymin, xmax, ymax, box_color);
-        draw_cross_on_image(cx, cy, 3, 0U);
-
-        for (int x = 0; x < PVC_IMAGE_W; x += 2) 
-        { 
-            draw_point_on_image(x, entry_y, 0U);
+        if (result.bbox_xmin != 0xFFU)
+        {
+            draw_rect_on_image(result.bbox_xmin, result.bbox_ymin,
+                               result.bbox_xmax, result.bbox_ymax, color);
         }
 
+        draw_line_on_image(x_lookahead, y_lookahead, x_bottom, y_bottom, color);
+        draw_cross_on_image(x_bottom, y_bottom, 2, color);
+        draw_cross_on_image(x_lookahead, y_lookahead, 2, color);
+
 #if VISION_IMAGE_RENDER_ENABLE
-        draw_vline_on_image(cx, ymax, PVC_IMAGE_H - 1, 0U);
-        draw_hline_on_image(PVC_IMAGE_W / 2 - 5, PVC_IMAGE_W / 2 + 5, PVC_IMAGE_H - 1, 0U);
+        draw_hline_on_image(PLAYGROUD_IMAGE_W / 2 - 5, PLAYGROUD_IMAGE_W / 2 + 5, PLAYGROUD_IMAGE_H - 1, 0U);
 #endif
     }
+}
+
+void render_playgroud_line_detector_to_image(void)
+{
+    render_pvc_vision_to_image();
 }
 
 static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)

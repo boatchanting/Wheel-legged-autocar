@@ -10,7 +10,7 @@
 #ifndef VISION_IPC_CORE1_H
 #define VISION_IPC_CORE1_H
 
-#include "pvc_vision.h"
+#include "playgroud_line_detector.h"
 #include "line_vision.h"
 #include "vision/vision_ipc.h"
 
@@ -45,12 +45,14 @@ void VisionIpc_Core1_PollCommand(void);
  * @return 1: 开启, 0: 关闭
  */
 uint8 VisionIpc_Core1_ShouldRunPvc(void);
+uint8 VisionIpc_Core1_ShouldRunPlaygroud(void);
 
 /**
  * @brief 检查是否需要重置 PVC 检测状态，读取后自动清除请求
  * @return 1: 需要重置, 0: 不需要
  */
 uint8 VisionIpc_Core1_TakePvcResetRequest(void);
+uint8 VisionIpc_Core1_TakePlaygroudResetRequest(void);
 
 /**
  * @brief 检查当前是否需要运行 直线/桥梁 检测
@@ -70,7 +72,8 @@ uint8 VisionIpc_Core1_TakeLineResetRequest(void);
  * @brief 专门发布一次 PVC 检测结果到共享内存
  * @param pvc_output 指向当前最新的 PVC 结果
  */
-void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output);
+void VisionIpc_Core1_PublishPvc(const volatile playgroud_line_detector_output_t *playgroud_output);
+void VisionIpc_Core1_PublishPlaygroud(const volatile playgroud_line_detector_output_t *playgroud_output);
 
 /**
  * @brief 整合并发布当前所有激活模块的检测结果
