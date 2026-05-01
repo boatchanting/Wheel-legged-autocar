@@ -261,6 +261,7 @@ InertialNav_Init();//惯性导航初始化
 #endif
 
 gnss_init(TAU1201);//gnss导航初始化
+Gnss_Transform_Init();//GNSS经纬度投影为相对平面坐标，供纯GPS打点/复刻使用
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;
@@ -585,6 +586,31 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
         Buzzer_Beep_By_PointType(2);//beep x3
     }
+    // ---------------------------------------------------------
+    //  【gps-nav】静态点表模式：开始纯GPS复刻
+    // ---------------------------------------------------------
+    if (g_motor_enable == 1 && g_replay_start_request == 1)
+    {
+        g_replay_start_request = 0;
+        Gnss_Transform_Reset_Origin();
+        GpsNavReplay_Start();
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Starting pure GPS replay...\r\n");
+        #endif
+        Buzzer_Beep_By_PointType(2);
+    }
+
+    // ---------------------------------------------------------
+    //  【gps-nav】停止纯GPS复刻
+    // ---------------------------------------------------------
+    if (g_replay_stop_request == 1)
+    {
+        g_replay_stop_request = 0;
+        GpsNavReplay_Stop();
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Pure GPS replay stopped.\r\n");
+        #endif
+    }
         // 此处编写需要循环执行的代码
     }
 }
@@ -603,4 +629,6 @@ void uart_rx_interrupt_handler (void)
         fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // 将数据写入 fifo 中
     }
 }
+
+
 

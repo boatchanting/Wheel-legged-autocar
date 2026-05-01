@@ -7,6 +7,19 @@
 
 // 1: use compile-time route table generated from CSV (no flash dependency)
 #define NAV_REPLAY_USE_STATIC_ROUTE_TABLE   1
+#define GPS_NAV_REPLAY_USE_STATIC_ROUTE_TABLE 1
+
+#define GPS_NAV_MIN_SAT_USED              4U
+#define GPS_NAV_SEARCH_AHEAD_POINTS       80U
+#define GPS_NAV_LOOKAHEAD_MIN             400.0f
+#define GPS_NAV_LOOKAHEAD_MAX             1800.0f
+#define GPS_NAV_LOOKAHEAD_SPEED_GAIN      180.0f
+#define GPS_NAV_DIST_ARRIVE               120.0f
+#define GPS_NAV_DIST_NEAR                 800.0f
+#define GPS_NAV_DIST_FAR                  2200.0f
+#define GPS_NAV_SPEED_FAST                NAV_SPEED_FAST
+#define GPS_NAV_SPEED_SLOW                NAV_SPEED_SLOW
+#define GPS_NAV_SPEED_STOP                NAV_SPEED_STOP
 
 
 #if CURRENT_NAV_PLAN == 1 //科目一参数
@@ -138,6 +151,9 @@ typedef enum
 extern NavReplayState_e g_replay_state;         // 当前复现状态
 extern uint8 g_current_point_type;              // 当前正在前往/到达的点的类型
 extern uint8 g_special_action_trigger;          // 特殊动作触发标志 (1: 到达特殊点，请执行动作)
+extern NavReplayState_e g_gps_replay_state;
+extern uint8 g_gps_current_point_type;
+extern uint8 g_gps_special_action_trigger;
 
 // ========================= 函数接口 =========================
 
@@ -166,5 +182,9 @@ void NavReplay_Process(void);
  * @return loaded point count
  */
 uint16 NavReplay_LoadStaticRouteToRam(void);
+uint16 GpsNavReplay_LoadStaticRouteToRam(void);
+void GpsNavReplay_Start(void);
+void GpsNavReplay_Stop(void);
+void GpsNavReplay_Process(void);
 
 #endif

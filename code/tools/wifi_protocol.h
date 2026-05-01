@@ -16,6 +16,8 @@
 // Host control payload command IDs
 #define WIFI_HOST_CTRL_CLEAR_TRAJECTORY   0x01
 #define WIFI_HOST_CTRL_START_CAR          0x02
+#define WIFI_HOST_CTRL_START_GPS_REPLAY   0x03
+#define WIFI_HOST_CTRL_STOP_GPS_REPLAY    0x04
 
 // Host control ACK status
 #define WIFI_HOST_ACK_ACCEPTED            0x00

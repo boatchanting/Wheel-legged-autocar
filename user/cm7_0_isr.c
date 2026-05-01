@@ -160,6 +160,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
         if (gnss_flag) {
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
+            Gnss_Transform_Update();     //更新纯GPS导航坐标
         } // GNSS更新
     }
 
@@ -169,7 +170,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     // ------------------------------------------------------
     if (loop_counter % 10 == 3) {  // 10ms 一次
         // 颠簸状态机激活时，暂停导航复现，避免覆盖锁速目标
-        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) { NavReplay_Process(); } //复现控制
+        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) { NavReplay_Process(); GpsNavReplay_Process(); } //复现控制
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
@@ -394,6 +395,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
                 // 彻底关闭电机使能，可以取消下面这行的注释
                 //g_motor_enable = 0; 
                 NavReplay_Stop();//【nav】复现停止
+                GpsNavReplay_Stop();//【gps-nav】复现停止
             }
         }
             
@@ -410,6 +412,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
             //     printf("ISR: Motor disabled, replay stopped.\r\n");
             // }
             NavReplay_Stop();//【nav】复现停止
+            GpsNavReplay_Stop();//【gps-nav】复现停止
         }
     }
     
@@ -532,7 +535,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         err_degree = 0.0f;
     }
 
-    if ((g_replay_state != REPLAY_RUNNING) &&
+    if ((g_replay_state != REPLAY_RUNNING) && (g_gps_replay_state != REPLAY_RUNNING) &&
         (!jump_stepup_three_stairs_test_is_active()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
