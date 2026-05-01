@@ -25,22 +25,6 @@
 #define K_STEER_INC     0.00225f  // 转向灵敏度
 #define K_SPEED_INC     0.005f  // 速度灵敏度
 
-// --- 线控转向参数(随车速自适应) ---
-// 速度分界点（单位与左右轮速一致，建议先按编码器标定）
-#define STEER_SPEED_LOW_BOUND      250.0f   // 低速阈值：低于此值使用最大转向倍率
-#define STEER_SPEED_HIGH_BOUND     1200.0f  // 高速阈值：高于此值使用最小转向倍率
-// 转向倍率（倍率越大，同样摇杆输入下角度变化越快）
-#define STEER_GAIN_MAX             1.80f    // 低速最大转向倍率
-#define STEER_GAIN_MIN             0.55f    // 高速最小转向倍率
-// 一阶平滑时间常数（秒）：越大越“稳”，越小越“灵”
-#define STEER_SMOOTH_TAU_S         0.18f
-// 遥控处理周期（秒）：按实际任务周期填写，通常10ms
-#define REMOTE_PROCESS_DT_S        0.01f
-// 防抖参数：连续满足阈值次数后才认为摇杆有效
-#define STEER_DEBOUNCE_CNT_MAX     2
-// 单周期最大角度步进保护，避免突变（单位：与 target_angle 同量纲）
-#define STEER_MAX_STEP_PER_CYCLE   2.2f
-
 // 积分限幅
 #define MAX_STEER_ANGLE 45.0f   // 最大转向角度 (例如 +/- 45度)
 #define MAX_SPEED_VAL   3000.0f  // 最大速度目标值 (对应 target_speed_set)
@@ -53,9 +37,6 @@ static uint8 throttle_locked = 0; // 油门锁标记：0=正常接受指令, 1=�
 // 2. 全局变量定义
 // ==========================================
 robot_ctrl_t robot_ctrl;
-// 线控转向内部状态量：仅在本文件可见，避免影响现有接口
-static float steer_gain_filtered = 1.0f;   // 平滑后的转向倍率
-static uint8 steer_valid_cnt = 0;          // 转向防抖计数器
 
 // ==========================================
 // 3. 函数实现
@@ -69,8 +50,6 @@ void Remote_Control_Init(void)
     robot_ctrl.mark_trigger = 0;
     robot_ctrl.motor_enable = 1;  //1=使能,0=急停
     robot_ctrl.point_type = 0;
-    steer_gain_filtered = STEER_GAIN_MAX; // 上电默认按低速灵敏
-    steer_valid_cnt = 0;
     // 模式枚举 (对应 CH4 三态开关和CH5开关的组合状态，使用ch3开关进行触发)
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点
@@ -142,64 +121,20 @@ void Remote_Control_Process(void)
     // Step 4: 处理转向 (CH1)
     // --------------------------------------------------------
     int16 diff_steer = ch1_steer - RC_CH1_MID;
-    // 1) 估算当前车速（左右轮速平均绝对值），用于“线控转向”增益调度
-    //    低速更灵敏，高速更钝化，避免高速蛇形
-    float left_abs_speed  = ABS(motor_value.receive_left_speed_data);
-    float right_abs_speed = ABS(motor_value.receive_right_speed_data);
-    float vehicle_speed_abs = 0.5f * (left_abs_speed + right_abs_speed);
-
-    // 2) 分段线性插值：低速=最大倍率，高速=最小倍率，中间平滑过渡
-    float steer_gain_target = STEER_GAIN_MIN;
-    if (vehicle_speed_abs <= STEER_SPEED_LOW_BOUND)
+    
+    if (abs(diff_steer) > RC_DEADZONE)
     {
-        steer_gain_target = STEER_GAIN_MAX;
+        // 积分计算
+        robot_ctrl.target_angle += (float)diff_steer * K_STEER_INC;
+        
+        // // 限幅逻辑
+        // if (robot_ctrl.target_angle > MAX_STEER_ANGLE) 
+        //     robot_ctrl.target_angle = MAX_STEER_ANGLE;
+        
+        // if (robot_ctrl.target_angle < -MAX_STEER_ANGLE) 
+        //     robot_ctrl.target_angle = -MAX_STEER_ANGLE;
+        // printf("Target Angle: %.2f\n", robot_ctrl.target_angle);
     }
-    else if (vehicle_speed_abs >= STEER_SPEED_HIGH_BOUND)
-    {
-        steer_gain_target = STEER_GAIN_MIN;
-    }
-    else
-    {
-        float ratio = (vehicle_speed_abs - STEER_SPEED_LOW_BOUND) /
-                      (STEER_SPEED_HIGH_BOUND - STEER_SPEED_LOW_BOUND);
-        steer_gain_target = STEER_GAIN_MAX + ratio * (STEER_GAIN_MIN - STEER_GAIN_MAX);
-    }
-
-    // 3) 对倍率做一阶低通平滑，防止速度噪声直接引发转向手感跳变
-    //    y += alpha*(x-y), alpha = dt/(tau+dt)
-    float alpha = REMOTE_PROCESS_DT_S / (STEER_SMOOTH_TAU_S + REMOTE_PROCESS_DT_S);
-    steer_gain_filtered += alpha * (steer_gain_target - steer_gain_filtered);
-    // 极值保护，确保倍率始终在合理范围
-    if (steer_gain_filtered > STEER_GAIN_MAX) steer_gain_filtered = STEER_GAIN_MAX;
-    if (steer_gain_filtered < STEER_GAIN_MIN) steer_gain_filtered = STEER_GAIN_MIN;
-
-    // 4) 摇杆防抖：连续若干周期超过死区才执行转向积分
-    if (ABS(diff_steer) > RC_DEADZONE)
-    {
-        if (steer_valid_cnt < STEER_DEBOUNCE_CNT_MAX) steer_valid_cnt++;
-    }
-    else
-    {
-        steer_valid_cnt = 0;
-    }
-
-    if (steer_valid_cnt >= STEER_DEBOUNCE_CNT_MAX)
-    {
-        // 5) 增益调度后的积分增量
-        float steer_step = (float)diff_steer * K_STEER_INC * steer_gain_filtered;
-
-        // 6) 单周期步进保护，抑制突变（例如遥控瞬时毛刺、强干扰）
-        if (steer_step > STEER_MAX_STEP_PER_CYCLE) steer_step = STEER_MAX_STEP_PER_CYCLE;
-        else if (steer_step < -STEER_MAX_STEP_PER_CYCLE) steer_step = -STEER_MAX_STEP_PER_CYCLE;
-
-        robot_ctrl.target_angle += steer_step;
-    }
-
-    // 7) 最终角度极值保护，防止累计失控
-    if (robot_ctrl.target_angle > MAX_STEER_ANGLE) 
-        robot_ctrl.target_angle = MAX_STEER_ANGLE;
-    if (robot_ctrl.target_angle < -MAX_STEER_ANGLE) 
-        robot_ctrl.target_angle = -MAX_STEER_ANGLE;
 
 
 
