@@ -23,8 +23,8 @@
 
 // --- 线控转向倍率参数 (随车速动态调整) ---
 // 说明：低速时转向倍率高，高速时转向倍率低
-#define STEER_GAIN_MAX         1.35f    // 最大发电倍率（低速）
-#define STEER_GAIN_MIN         0.65f    // 最小转向倍率（高速）
+#define STEER_GAIN_MAX         1.00f    // 最大发电倍率（低速）
+#define STEER_GAIN_MIN         0.30f    // 最小转向倍率（高速）
 #define STEER_SPEED_BREAK_LOW  350.0f   // 低速分界点（单位：与轮速反馈一致）
 #define STEER_SPEED_BREAK_HIGH 1300.0f  // 高速分界点（单位：与轮速反馈一致）
 // 说明: 每次调用 Process 函数增加的数值 = (摇杆偏差值) * 系数
