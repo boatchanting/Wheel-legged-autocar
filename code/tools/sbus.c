@@ -87,6 +87,7 @@ void Remote_Control_Init(void)
     robot_ctrl.target_speed = 0.0f;
     robot_ctrl.mark_trigger = 0;
     robot_ctrl.motor_enable = 1;  //1=使能,0=急停
+    robot_ctrl.brake_active = 0;
     robot_ctrl.point_type = 0;
     // 模式枚举 (对应 CH4 三态开关和CH5开关的组合状态，使用ch3开关进行触发)
     // NAV_POINT_PATH = 0,     // 普通路径点
@@ -119,6 +120,7 @@ void Remote_Control_Process(void)
     else
     {
         // printf("Remote control is disconnected. ");
+        robot_ctrl.brake_active = 0;
         robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 失控则不进行后续处理
 
@@ -140,11 +142,13 @@ void Remote_Control_Process(void)
     // 1792 (>1000) 为关电机状态
     if(ch1_steer == 0 && ch2_thro == 0 && ch3_mark == 0 && ch4_mode == 0 && ch5_brake == 0 && ch6_off == 0)
     {
+        robot_ctrl.brake_active = 0;
         robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 遥控器完全回中且总开关关闭，则不进行后续处理
     }
     if (ch6_off > RC_SW_THRESHOLD) 
     {
+        robot_ctrl.brake_active = 0;
         robot_ctrl.motor_enable = 0;
         // printf("Motor disabled by CH6 switch\n");
         // 关机状态下，不进行增量计算，防止后台积分
@@ -183,6 +187,8 @@ void Remote_Control_Process(void)
     // --------------------------------------------------------
     // Step 5: 处理刹车/油门/急停 (CH5 & CH2)
     // --------------------------------------------------------
+
+    robot_ctrl.brake_active = (ch5_brake > RC_SW_THRESHOLD) ? 1U : 0U;
 
     if (ch5_brake > RC_SW_THRESHOLD)// 开关刹车
     {
