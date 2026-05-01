@@ -10,13 +10,11 @@
 #define GPS_NAV_REPLAY_USE_STATIC_ROUTE_TABLE 1
 
 #define GPS_NAV_MIN_SAT_USED              4U
-#define GPS_NAV_SEARCH_AHEAD_POINTS       80U
-#define GPS_NAV_LOOKAHEAD_MIN             400.0f
-#define GPS_NAV_LOOKAHEAD_MAX             1800.0f
-#define GPS_NAV_LOOKAHEAD_SPEED_GAIN      180.0f
-#define GPS_NAV_DIST_ARRIVE               120.0f
-#define GPS_NAV_DIST_NEAR                 800.0f
-#define GPS_NAV_DIST_FAR                  2200.0f
+#define GPS_NAV_DIST_ARRIVE               800.0f
+#define GPS_NAV_DIST_NEAR                 2200.0f
+#define GPS_NAV_DIST_FAR                  5000.0f
+#define GPS_NAV_YAW_TOLERANCE             8.0f
+#define GPS_NAV_HEADING_OFFSET_DEG        0.0f
 #define GPS_NAV_SPEED_FAST                NAV_SPEED_FAST
 #define GPS_NAV_SPEED_SLOW                NAV_SPEED_SLOW
 #define GPS_NAV_SPEED_STOP                NAV_SPEED_STOP

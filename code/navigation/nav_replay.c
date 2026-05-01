@@ -1120,23 +1120,12 @@ uint8 g_gps_current_point_type = NAV_POINT_PATH;
 uint8 g_gps_special_action_trigger = 0;
 
 static uint16 g_gps_target_idx = 0;
-static float g_gps_prev_err_degree = 0.0f;
-static float g_gps_prev_speed_set = 0.0f;
-static float g_gps_last_valid_course = 0.0f;
-static uint8 g_gps_course_valid = 0;
 
 static float GpsNormalizeCourse360(float angle)
 {
     while (angle >= 360.0f) angle -= 360.0f;
     while (angle < 0.0f) angle += 360.0f;
     return angle;
-}
-
-static float GpsCalcDistanceSq(float x1, float y1, float x2, float y2)
-{
-    float dx = x1 - x2;
-    float dy = y1 - y2;
-    return dx * dx + dy * dy;
 }
 
 // Bearing measured clockwise from north, in degree.
@@ -1157,156 +1146,15 @@ static float GpsNavCurrentYmm(void)
     return gnss_trans.y * 1000.0f;
 }
 
-static uint16 GpsNav_FindClosestPointForward(uint16 current_idx, uint16 search_ahead)
+static float GpsNav_GetCurrentHeadingDeg(void)
 {
-    uint16 i = 0;
-    uint16 end_idx = 0;
-    uint16 closest_idx = 0;
-    float min_dist_sq = 0.0f;
-
-    if (nav_ram_data.point_count == 0U)
-    {
-        return 0U;
-    }
-
-    end_idx = current_idx + search_ahead;
-    if (end_idx >= nav_ram_data.point_count)
-    {
-        end_idx = (uint16)(nav_ram_data.point_count - 1U);
-    }
-
-    closest_idx = current_idx;
-    min_dist_sq = 1e30f;
-    for (i = current_idx; i <= end_idx; ++i)
-    {
-        float d_sq = GpsCalcDistanceSq(
-            GpsNavCurrentXmm(),
-            GpsNavCurrentYmm(),
-            nav_ram_data.points[i].x,
-            nav_ram_data.points[i].y);
-        if (d_sq < min_dist_sq)
-        {
-            min_dist_sq = d_sq;
-            closest_idx = i;
-        }
-    }
-    return closest_idx;
-}
-
-static uint16 GpsNav_FindLookaheadPoint(uint16 base_idx, float lookahead_dist)
-{
-    uint16 i = 0;
-    uint16 end_idx = 0;
-    uint16 target_idx = 0;
-    float lookahead_dist_sq = lookahead_dist * lookahead_dist;
-
-    if (nav_ram_data.point_count == 0U)
-    {
-        return 0U;
-    }
-
-    end_idx = base_idx + GPS_NAV_SEARCH_AHEAD_POINTS;
-    if (end_idx >= nav_ram_data.point_count)
-    {
-        end_idx = (uint16)(nav_ram_data.point_count - 1U);
-    }
-
-    target_idx = end_idx;
-    for (i = base_idx; i <= end_idx; ++i)
-    {
-        float d_sq = GpsCalcDistanceSq(
-            GpsNavCurrentXmm(),
-            GpsNavCurrentYmm(),
-            nav_ram_data.points[i].x,
-            nav_ram_data.points[i].y);
-        target_idx = i;
-        if (d_sq >= lookahead_dist_sq || nav_ram_data.points[i].point_type != NAV_POINT_PATH)
-        {
-            break;
-        }
-    }
-    return target_idx;
-}
-
-static float GpsNav_GetCurrentCourseDeg(uint16 base_idx)
-{
-    float course = g_gps_last_valid_course;
-    if (gnss.state == 1U && gnss.satellite_used >= GPS_NAV_MIN_SAT_USED && gnss.speed > 0.05f)
-    {
-        course = GpsNormalizeCourse360(gnss.direction);
-        g_gps_last_valid_course = course;
-        g_gps_course_valid = 1U;
-        return course;
-    }
-
-    if (base_idx + 1U < nav_ram_data.point_count)
-    {
-        float x0 = nav_ram_data.points[base_idx].x;
-        float y0 = nav_ram_data.points[base_idx].y;
-        float x1 = nav_ram_data.points[base_idx + 1U].x;
-        float y1 = nav_ram_data.points[base_idx + 1U].y;
-        course = GpsCalcBearingDegFromNorth(x0, y0, x1, y1);
-        g_gps_last_valid_course = course;
-        g_gps_course_valid = 1U;
-        return course;
-    }
-
-    if (!g_gps_course_valid)
-    {
-        g_gps_last_valid_course = 0.0f;
-        course = 0.0f;
-    }
-    return course;
-}
-
-static float GpsNav_CalcRemainingDistance(uint16 base_idx, uint16 *stop_idx)
-{
-    uint16 i = 0;
-    uint16 scan_end = 0;
-    float remain_mm = 0.0f;
-    float prev_x = 0.0f;
-    float prev_y = 0.0f;
-
-    if (nav_ram_data.point_count == 0U)
-    {
-        if (stop_idx != NULL)
-        {
-            *stop_idx = 0U;
-        }
-        return 0.0f;
-    }
-
-    scan_end = (uint16)(nav_ram_data.point_count - 1U);
-    for (i = base_idx; i < nav_ram_data.point_count; ++i)
-    {
-        if (nav_ram_data.points[i].point_type != NAV_POINT_PATH)
-        {
-            scan_end = i;
-            break;
-        }
-    }
-
-    if (stop_idx != NULL)
-    {
-        *stop_idx = scan_end;
-    }
-
-    prev_x = GpsNavCurrentXmm();
-    prev_y = GpsNavCurrentYmm();
-    for (i = base_idx; i <= scan_end; ++i)
-    {
-        float px = nav_ram_data.points[i].x;
-        float py = nav_ram_data.points[i].y;
-        remain_mm += CalcDistance(prev_x, prev_y, px, py);
-        prev_x = px;
-        prev_y = py;
-        if (i == scan_end)
-        {
-            break;
-        }
-    }
-
-    return remain_mm;
+    float heading_deg = 0.0f;
+#if IMU_CATEGORY == 3
+    heading_deg = heading;
+#else
+    heading_deg = gnss.direction;
+#endif
+    return GpsNormalizeCourse360(heading_deg + GPS_NAV_HEADING_OFFSET_DEG);
 }
 
 uint16 GpsNavReplay_LoadStaticRouteToRam(void)
@@ -1347,11 +1195,8 @@ void GpsNavReplay_Start(void)
     NavReplay_Stop();
 
     g_gps_target_idx = 0U;
-    g_gps_prev_err_degree = 0.0f;
-    g_gps_prev_speed_set = 0.0f;
     g_gps_special_action_trigger = 0U;
     g_gps_current_point_type = NAV_POINT_PATH;
-    g_gps_course_valid = 0U;
     g_gps_replay_state = REPLAY_RUNNING;
     target_speed_set = GPS_NAV_SPEED_STOP;
     err_degree = 0.0f;
@@ -1372,8 +1217,6 @@ void GpsNavReplay_Stop(void)
     err_degree = 0.0f;
     g_gps_replay_state = REPLAY_IDLE;
     g_gps_special_action_trigger = 0U;
-    g_gps_prev_err_degree = 0.0f;
-    g_gps_prev_speed_set = 0.0f;
 
 #if DEBUG_LOG_ENABLE
     printf("[GPS-NAV] Replay STOPPED.\r\n");
@@ -1382,19 +1225,12 @@ void GpsNavReplay_Stop(void)
 
 void GpsNavReplay_Process(void)
 {
-    uint16 base_idx = 0U;
-    uint16 target_idx = 0U;
-    uint16 stop_idx = 0U;
-    float lookahead_dist = 0.0f;
     float tx = 0.0f;
     float ty = 0.0f;
     float target_bearing = 0.0f;
-    float current_course = 0.0f;
+    float current_heading = 0.0f;
     float raw_err_degree = 0.0f;
-    float remain_dist = 0.0f;
-    float raw_speed = GPS_NAV_SPEED_STOP;
-    float dist_to_base = 0.0f;
-    float dist_to_stop = 0.0f;
+    float dist = 0.0f;
 
     if (g_gps_replay_state != REPLAY_RUNNING || g_gps_special_action_trigger == 1U)
     {
@@ -1416,80 +1252,48 @@ void GpsNavReplay_Process(void)
         return;
     }
 
-    base_idx = GpsNav_FindClosestPointForward(g_gps_target_idx, GPS_NAV_SEARCH_AHEAD_POINTS);
-    g_gps_target_idx = base_idx;
+    tx = nav_ram_data.points[g_gps_target_idx].x;
+    ty = nav_ram_data.points[g_gps_target_idx].y;
+    g_gps_current_point_type = nav_ram_data.points[g_gps_target_idx].point_type;
+    dist = CalcDistance(GpsNavCurrentXmm(), GpsNavCurrentYmm(), tx, ty);
 
-    lookahead_dist = GPS_NAV_LOOKAHEAD_MIN + fabsf(gnss.speed) * GPS_NAV_LOOKAHEAD_SPEED_GAIN;
-    if (lookahead_dist > GPS_NAV_LOOKAHEAD_MAX)
+    if (dist <= GPS_NAV_DIST_ARRIVE)
     {
-        lookahead_dist = GPS_NAV_LOOKAHEAD_MAX;
-    }
-
-    target_idx = GpsNav_FindLookaheadPoint(base_idx, lookahead_dist);
-    tx = nav_ram_data.points[target_idx].x;
-    ty = nav_ram_data.points[target_idx].y;
-    g_gps_current_point_type = nav_ram_data.points[target_idx].point_type;
-
-    target_bearing = GpsCalcBearingDegFromNorth(GpsNavCurrentXmm(), GpsNavCurrentYmm(), tx, ty);
-    current_course = GpsNav_GetCurrentCourseDeg(base_idx);
-    raw_err_degree = NormalizeAngle(current_course - target_bearing);
-
-    remain_dist = GpsNav_CalcRemainingDistance(base_idx, &stop_idx);
-    if (remain_dist > GPS_NAV_DIST_FAR)
-    {
-        raw_speed = GPS_NAV_SPEED_FAST;
-    }
-    else if (remain_dist > GPS_NAV_DIST_NEAR)
-    {
-        float ratio = (remain_dist - GPS_NAV_DIST_NEAR) / (GPS_NAV_DIST_FAR - GPS_NAV_DIST_NEAR);
-        raw_speed = GPS_NAV_SPEED_SLOW + (GPS_NAV_SPEED_FAST - GPS_NAV_SPEED_SLOW) * ratio;
-    }
-    else if (remain_dist > GPS_NAV_DIST_ARRIVE)
-    {
-        float ratio = remain_dist / GPS_NAV_DIST_NEAR;
-        raw_speed = GPS_NAV_SPEED_SLOW * ratio;
-    }
-
-    if (fabsf(raw_err_degree) > 60.0f)
-    {
-        raw_speed *= 0.55f;
-    }
-    if (fabsf(raw_err_degree) > 90.0f)
-    {
-        raw_speed = GPS_NAV_SPEED_STOP;
-    }
-
-    err_degree = 0.45f * raw_err_degree + 0.55f * g_gps_prev_err_degree;
-    target_speed_set = 0.35f * raw_speed + 0.65f * g_gps_prev_speed_set;
-    g_gps_prev_err_degree = err_degree;
-    g_gps_prev_speed_set = target_speed_set;
-
-    dist_to_base = CalcDistance(
-        GpsNavCurrentXmm(),
-        GpsNavCurrentYmm(),
-        nav_ram_data.points[base_idx].x,
-        nav_ram_data.points[base_idx].y);
-    if (dist_to_base <= GPS_NAV_DIST_ARRIVE && base_idx < nav_ram_data.point_count - 1U)
-    {
-        g_gps_target_idx = (uint16)(base_idx + 1U);
-    }
-
-    dist_to_stop = CalcDistance(
-        GpsNavCurrentXmm(),
-        GpsNavCurrentYmm(),
-        nav_ram_data.points[stop_idx].x,
-        nav_ram_data.points[stop_idx].y);
-    if (stop_idx >= nav_ram_data.point_count - 1U && dist_to_stop <= GPS_NAV_DIST_ARRIVE)
-    {
-        g_gps_replay_state = REPLAY_FINISHED;
         target_speed_set = GPS_NAV_SPEED_STOP;
         err_degree = 0.0f;
+
+        if (g_gps_current_point_type != NAV_POINT_PATH)
+        {
+            if (g_gps_current_point_type == NAV_POINT_CIRCLE)
+            {
+                minefield_flag = 1;
+            }
+            g_gps_special_action_trigger = 1U;
+        }
+
+        g_gps_target_idx++;
         return;
     }
 
-    if (nav_ram_data.points[stop_idx].point_type != NAV_POINT_PATH && dist_to_stop <= GPS_NAV_DIST_ARRIVE)
+    // Pure point-to-point logic: rotate in place first, then move straight.
+    target_bearing = GpsCalcBearingDegFromNorth(GpsNavCurrentXmm(), GpsNavCurrentYmm(), tx, ty);
+    current_heading = GpsNav_GetCurrentHeadingDeg();
+    raw_err_degree = NormalizeAngle(target_bearing - current_heading);
+    err_degree = raw_err_degree;
+
+    if (fabsf(err_degree) > GPS_NAV_YAW_TOLERANCE)
     {
-        g_gps_special_action_trigger = 1U;
         target_speed_set = GPS_NAV_SPEED_STOP;
+        return;
     }
+
+    if (dist > GPS_NAV_DIST_NEAR)
+    {
+        target_speed_set = GPS_NAV_SPEED_FAST;
+    }
+    else
+    {
+        target_speed_set = GPS_NAV_SPEED_SLOW;
+    }
+
 }
