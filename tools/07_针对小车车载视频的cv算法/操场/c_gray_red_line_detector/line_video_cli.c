@@ -23,7 +23,9 @@
 #define LINE_MAX_FRAMES 20000
 #define LINE_PATH_MAX 1024
 
-typedef struct { char name[256]; } FrameName;
+typedef struct {
+    char name[256];
+} FrameName;
 
 typedef struct {
     char pgm_dir[LINE_PATH_MAX];
@@ -31,12 +33,18 @@ typedef struct {
     char output_csv[LINE_PATH_MAX];
     int max_frames;
     int debug_every;
+    int max_lost;
+    float smooth_alpha;
+    float min_temporal_score;
 } CliOptions;
 
 typedef struct {
     int frame_index;
     char frame_name[256];
+    LineDetectResult detection_raw;
     LineDetectResult detection;
+    LineTemporalDecision temporal;
+    int temporal_lost_count;
     double elapsed_us;
 } FrameResult;
 
@@ -102,7 +110,6 @@ static int read_next_token(FILE *fp, char *out, size_t out_size)
             while (c != '\n' && c != EOF) c = fgetc(fp);
         }
     } while (c != EOF && isspace(c));
-
     if (c == EOF) return 0;
     while (c != EOF && !isspace(c)) {
         if (n + 1 < out_size) out[n++] = (char)c;
@@ -157,6 +164,9 @@ static void options_init(CliOptions *opt)
     memset(opt, 0, sizeof(*opt));
     snprintf(opt->output_json, sizeof(opt->output_json), "line_c_summary.json");
     snprintf(opt->output_csv, sizeof(opt->output_csv), "line_c_summary.csv");
+    opt->max_lost = 30;
+    opt->smooth_alpha = 0.45f;
+    opt->min_temporal_score = 0.20f;
 }
 
 static int parse_args(int argc, char **argv, CliOptions *opt)
@@ -168,6 +178,9 @@ static int parse_args(int argc, char **argv, CliOptions *opt)
         else if (strcmp(argv[i], "--output-csv") == 0 && i + 1 < argc) snprintf(opt->output_csv, sizeof(opt->output_csv), "%s", argv[++i]);
         else if (strcmp(argv[i], "--max-frames") == 0 && i + 1 < argc) opt->max_frames = atoi(argv[++i]);
         else if (strcmp(argv[i], "--debug-every") == 0 && i + 1 < argc) opt->debug_every = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--max-lost") == 0 && i + 1 < argc) opt->max_lost = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--smooth-alpha") == 0 && i + 1 < argc) opt->smooth_alpha = (float)atof(argv[++i]);
+        else if (strcmp(argv[i], "--min-temporal-score") == 0 && i + 1 < argc) opt->min_temporal_score = (float)atof(argv[++i]);
         else return -1;
     }
     if (opt->pgm_dir[0] == '\0') return -1;
@@ -191,6 +204,8 @@ static int write_json(
     const FrameResult *rows,
     int n_rows,
     int n_detected,
+    int n_predicted,
+    int n_lost,
     double total_us,
     double min_us,
     double max_us)
@@ -203,6 +218,11 @@ static int write_json(
     fprintf(fp, ",\n");
     fprintf(fp, "    \"frame_count\": %d,\n", n_rows);
     fprintf(fp, "    \"detected_count\": %d,\n", n_detected);
+    fprintf(fp, "    \"predicted_count\": %d,\n", n_predicted);
+    fprintf(fp, "    \"lost_count\": %d,\n", n_lost);
+    fprintf(fp, "    \"max_lost\": %d,\n", opt->max_lost);
+    fprintf(fp, "    \"smooth_alpha\": %.3f,\n", opt->smooth_alpha);
+    fprintf(fp, "    \"min_temporal_score\": %.3f,\n", opt->min_temporal_score);
     fprintf(fp, "    \"timing\": {\n");
     fprintf(fp, "      \"total_us\": %.2f,\n", total_us);
     fprintf(fp, "      \"avg_us\": %.2f,\n", n_rows > 0 ? total_us / (double)n_rows : 0.0);
@@ -215,7 +235,9 @@ static int write_json(
         const LineDetectResult *r = &rows[i].detection;
         fprintf(fp, "    {\"frame\": %d, \"frame_name\": ", rows[i].frame_index);
         json_write_string(fp, rows[i].frame_name);
-        fprintf(fp, ", \"detected\": %s, \"score\": %.5f, ", r->detected ? "true" : "false", r->confidence);
+        fprintf(fp, ", \"mode\": %d, \"accepted\": %d, \"lost_count\": %d, \"temporal_score\": %.5f, ",
+            (int)rows[i].temporal.mode, (int)rows[i].temporal.accepted, rows[i].temporal_lost_count, rows[i].temporal.temporal_score);
+        fprintf(fp, "\"detected\": %s, \"score\": %.5f, ", r->detected ? "true" : "false", r->confidence);
         fprintf(fp, "\"line_x_bottom\": %.5f, \"line_x_lookahead\": %.5f, ", r->line_x_bottom, r->line_x_lookahead);
         fprintf(fp, "\"line_yaw_deg\": %.5f, \"lateral_error_px\": %.5f, ", r->line_yaw_deg, r->lateral_error_px);
         fprintf(fp, "\"component_count\": %d, \"candidate_count\": %d, \"elapsed_us\": %.3f}", r->component_count, r->candidate_count, rows[i].elapsed_us);
@@ -230,13 +252,25 @@ static int write_csv(const char *path, const FrameResult *rows, int n_rows)
 {
     FILE *fp = fopen(path, "wb");
     if (!fp) return -1;
-    fprintf(fp, "frame_index,frame_name,detected,score,line_x_bottom,line_x_lookahead,line_yaw_deg,lateral_error_px,component_count,candidate_count,elapsed_us\n");
+    fprintf(fp, "frame_index,frame_name,mode,accepted,lost_count,temporal_score,detected,score,line_x_bottom,line_x_lookahead,line_yaw_deg,lateral_error_px,component_count,candidate_count,elapsed_us\n");
     for (int i = 0; i < n_rows; i++) {
         const LineDetectResult *r = &rows[i].detection;
-        fprintf(fp, "%d,%s,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.3f\n",
-            rows[i].frame_index, rows[i].frame_name, r->detected ? 1 : 0, r->confidence,
-            r->line_x_bottom, r->line_x_lookahead, r->line_yaw_deg, r->lateral_error_px,
-            r->component_count, r->candidate_count, rows[i].elapsed_us);
+        fprintf(fp, "%d,%s,%d,%d,%d,%.6f,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%.3f\n",
+            rows[i].frame_index,
+            rows[i].frame_name,
+            (int)rows[i].temporal.mode,
+            (int)rows[i].temporal.accepted,
+            rows[i].temporal_lost_count,
+            rows[i].temporal.temporal_score,
+            r->detected ? 1 : 0,
+            r->confidence,
+            r->line_x_bottom,
+            r->line_x_lookahead,
+            r->line_yaw_deg,
+            r->lateral_error_px,
+            r->component_count,
+            r->candidate_count,
+            rows[i].elapsed_us);
     }
     fclose(fp);
     return 0;
@@ -249,26 +283,26 @@ int main(int argc, char **argv)
     FrameResult *rows = NULL;
     uint8_t *gray = NULL;
     LineDetectScratch *scratch = NULL;
+    LineTemporalState temporal_state;
     int frame_count;
     int width = 0, height = 0;
     int n_detected = 0;
+    int n_predicted = 0;
+    int n_lost = 0;
     double total_us = 0.0, min_us = 1e30, max_us = 0.0;
 
     if (parse_args(argc, argv, &opt) != 0) {
-        fprintf(stderr, "usage: %s --pgm-dir DIR [--output-json FILE] [--output-csv FILE] [--max-frames N] [--debug-every N]\n", argv[0]);
+        fprintf(stderr, "usage: %s --pgm-dir DIR [--output-json FILE] [--output-csv FILE] [--max-frames N] [--debug-every N] [--max-lost N]\n", argv[0]);
         return 2;
     }
 
     names = (FrameName *)calloc((size_t)LINE_MAX_FRAMES, sizeof(FrameName));
-    if (!names) {
-        return 10;
-    }
+    if (!names) return 10;
     gray = (uint8_t *)malloc((size_t)LINE_MAX_PIXELS);
     if (!gray) {
         free(names);
         return 11;
     }
-
     frame_count = list_pgm_frames(opt.pgm_dir, names, LINE_MAX_FRAMES);
     if (frame_count <= 0) {
         fprintf(stderr, "no pgm frames found: %s\n", opt.pgm_dir);
@@ -291,6 +325,7 @@ int main(int argc, char **argv)
         free(names);
         return 9;
     }
+    line_temporal_state_init(&temporal_state, opt.max_lost, opt.smooth_alpha, opt.min_temporal_score);
 
     for (int i = 0; i < frame_count; i++) {
         char path[LINE_PATH_MAX];
@@ -300,61 +335,64 @@ int main(int argc, char **argv)
         ret = read_pgm_p5(path, gray, &width, &height);
         if (ret != 0) {
             fprintf(stderr, "read_pgm failed %s (ret=%d)\n", path, ret);
-            free(scratch);
-            free(rows);
-            free(gray);
-            free(names);
+            free(scratch); free(rows); free(gray); free(names);
             return 5;
         }
 #if LINE_PC_ENABLE_TIMING
         t0 = now_us();
 #endif
-        ret = line_detect_frame_gray(gray, width, height, scratch, &rows[i].detection);
+        ret = line_detect_frame_gray(gray, width, height, scratch, &rows[i].detection_raw);
 #if LINE_PC_ENABLE_TIMING
         t1 = now_us();
         dt = t1 - t0;
 #endif
         if (ret != 0) {
             fprintf(stderr, "line_detect_frame_gray failed frame=%d ret=%d\n", i + 1, ret);
-            free(scratch);
-            free(rows);
-            free(gray);
-            free(names);
+            free(scratch); free(rows); free(gray); free(names);
             return 6;
         }
+        rows[i].temporal = line_temporal_update(&temporal_state, width, &rows[i].detection_raw, &rows[i].detection);
+        rows[i].temporal_lost_count = temporal_state.lost_count;
         rows[i].frame_index = i + 1;
         snprintf(rows[i].frame_name, sizeof(rows[i].frame_name), "%s", names[i].name);
         rows[i].elapsed_us = dt;
-        if (rows[i].detection.detected) n_detected++;
+
+        if (rows[i].temporal.mode == LINE_TEMPORAL_MODE_DETECTED) n_detected++;
+        else if (rows[i].temporal.mode == LINE_TEMPORAL_MODE_PREDICTED) n_predicted++;
+        else n_lost++;
+
         total_us += dt;
         if (dt < min_us) min_us = dt;
         if (dt > max_us) max_us = dt;
         if (opt.debug_every > 0 && ((i + 1) % opt.debug_every) == 0) {
-            printf("processed %d/%d detected=%d score=%.3f\n", i + 1, frame_count, rows[i].detection.detected ? 1 : 0, rows[i].detection.confidence);
+            printf("processed %d/%d mode=%d lost=%d score=%.3f\n",
+                i + 1,
+                frame_count,
+                (int)rows[i].temporal.mode,
+                rows[i].temporal_lost_count,
+                rows[i].detection.confidence);
         }
     }
 
-    if (write_json(opt.output_json, &opt, rows, frame_count, n_detected, total_us, min_us, max_us) != 0) {
-        free(scratch);
-        free(rows);
-        free(gray);
-        free(names);
+    if (write_json(opt.output_json, &opt, rows, frame_count, n_detected, n_predicted, n_lost, total_us, min_us, max_us) != 0) {
+        free(scratch); free(rows); free(gray); free(names);
         return 7;
     }
 #if LINE_PC_WRITE_CSV
     if (write_csv(opt.output_csv, rows, frame_count) != 0) {
-        free(scratch);
-        free(rows);
-        free(gray);
-        free(names);
+        free(scratch); free(rows); free(gray); free(names);
         return 8;
     }
 #endif
-    printf("frames=%d detected=%d avg_us=%.3f fps=%.2f\n",
+
+    printf("frames=%d detected=%d predicted=%d lost=%d avg_us=%.3f fps=%.2f\n",
         frame_count,
         n_detected,
+        n_predicted,
+        n_lost,
         frame_count > 0 ? total_us / (double)frame_count : 0.0,
         total_us > 0.0 ? (double)frame_count * 1000000.0 / total_us : 0.0);
+
     free(scratch);
     free(rows);
     free(gray);

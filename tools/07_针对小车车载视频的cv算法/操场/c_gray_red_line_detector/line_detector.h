@@ -12,6 +12,9 @@ extern "C" {
 #define LINE_MAX_PIXELS      (LINE_MAX_WIDTH * LINE_MAX_HEIGHT)
 #define LINE_MAX_COMPONENTS  512
 #define LINE_MIN_DECISION_SCORE 0.35f
+#define LINE_TEMPORAL_MODE_LOST      0
+#define LINE_TEMPORAL_MODE_DETECTED  1
+#define LINE_TEMPORAL_MODE_PREDICTED 2
 
 typedef struct {
     int area;
@@ -46,6 +49,24 @@ typedef struct {
 } LineDetectResult;
 
 typedef struct {
+    uint8_t active;
+    int lost_count;
+    int max_lost;
+    float smooth_alpha;
+    float min_temporal_score;
+    float bottom_x;
+    float lookahead_x;
+    float yaw_deg;
+    float confidence;
+} LineTemporalState;
+
+typedef struct {
+    uint8_t mode;       /* LINE_TEMPORAL_MODE_* */
+    uint8_t accepted;   /* 1 when raw frame accepted by temporal gating */
+    float temporal_score;
+} LineTemporalDecision;
+
+typedef struct {
     uint8_t gray_blur[LINE_MAX_PIXELS];
     uint8_t mask[LINE_MAX_PIXELS];
     uint8_t visited[LINE_MAX_PIXELS];
@@ -64,6 +85,14 @@ int line_detect_frame_gray(
     int height,
     LineDetectScratch *scratch,
     LineDetectResult *result);
+
+void line_temporal_state_init(LineTemporalState *state, int max_lost, float smooth_alpha, float min_temporal_score);
+
+LineTemporalDecision line_temporal_update(
+    LineTemporalState *state,
+    int image_width,
+    const LineDetectResult *raw,
+    LineDetectResult *out);
 
 #ifdef __cplusplus
 }

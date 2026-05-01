@@ -374,3 +374,112 @@ int line_detect_frame_gray(
     }
     return 0;
 }
+
+void line_temporal_state_init(LineTemporalState *state, int max_lost, float smooth_alpha, float min_temporal_score)
+{
+    if (state == NULL) return;
+    memset(state, 0, sizeof(*state));
+    state->active = 0;
+    state->lost_count = 0;
+    state->max_lost = max_lost > 0 ? max_lost : 30;
+    state->smooth_alpha = (smooth_alpha > 0.0f && smooth_alpha <= 1.0f) ? smooth_alpha : 0.45f;
+    state->min_temporal_score = min_temporal_score;
+}
+
+LineTemporalDecision line_temporal_update(
+    LineTemporalState *state,
+    int image_width,
+    const LineDetectResult *raw,
+    LineDetectResult *out)
+{
+    LineTemporalDecision d;
+    d.mode = LINE_TEMPORAL_MODE_LOST;
+    d.accepted = 0;
+    d.temporal_score = -1.0f;
+
+    if (state == NULL || raw == NULL || out == NULL) {
+        line_detect_result_clear(out);
+        return d;
+    }
+
+    *out = *raw;
+
+    if (!raw->detected) {
+        if (state->active) {
+            state->lost_count++;
+            if (state->lost_count <= state->max_lost) {
+                d.mode = LINE_TEMPORAL_MODE_PREDICTED;
+                out->detected = 1;
+                out->line_x_bottom = state->bottom_x;
+                out->line_x_lookahead = state->lookahead_x;
+                out->line_yaw_deg = state->yaw_deg;
+                out->lateral_error_px = state->lookahead_x - (float)image_width * 0.5f;
+                out->confidence = state->confidence;
+                return d;
+            }
+            state->active = 0;
+        }
+        line_detect_result_clear(out);
+        return d;
+    }
+
+    if (!state->active) {
+        state->active = 1;
+        state->lost_count = 0;
+        state->bottom_x = raw->line_x_bottom;
+        state->lookahead_x = raw->line_x_lookahead;
+        state->yaw_deg = raw->line_yaw_deg;
+        state->confidence = raw->confidence;
+        d.accepted = 1;
+        d.mode = LINE_TEMPORAL_MODE_DETECTED;
+        d.temporal_score = raw->confidence;
+        return d;
+    }
+
+    {
+        const float dx_bottom = fabsf(raw->line_x_bottom - state->bottom_x);
+        const float dx_look = fabsf(raw->line_x_lookahead - state->lookahead_x);
+        const float dyaw = fabsf(raw->line_yaw_deg - state->yaw_deg);
+        const float denom = max_f(1.0f, (float)image_width * 0.22f);
+        const float pos_penalty = min_f(1.0f, (0.65f * dx_look + 0.35f * dx_bottom) / denom);
+        const float yaw_penalty = min_f(1.0f, dyaw / 28.0f);
+        const float temporal_score = raw->confidence - 0.42f * pos_penalty - 0.18f * yaw_penalty;
+        d.temporal_score = temporal_score;
+
+        if (temporal_score >= state->min_temporal_score) {
+            const float a = state->smooth_alpha;
+            state->bottom_x = a * raw->line_x_bottom + (1.0f - a) * state->bottom_x;
+            state->lookahead_x = a * raw->line_x_lookahead + (1.0f - a) * state->lookahead_x;
+            state->yaw_deg = a * raw->line_yaw_deg + (1.0f - a) * state->yaw_deg;
+            state->confidence = a * raw->confidence + (1.0f - a) * state->confidence;
+            state->lost_count = 0;
+
+            out->detected = 1;
+            out->line_x_bottom = state->bottom_x;
+            out->line_x_lookahead = state->lookahead_x;
+            out->line_yaw_deg = state->yaw_deg;
+            out->lateral_error_px = state->lookahead_x - (float)image_width * 0.5f;
+            out->confidence = state->confidence;
+
+            d.accepted = 1;
+            d.mode = LINE_TEMPORAL_MODE_DETECTED;
+            return d;
+        }
+    }
+
+    state->lost_count++;
+    if (state->lost_count <= state->max_lost) {
+        out->detected = 1;
+        out->line_x_bottom = state->bottom_x;
+        out->line_x_lookahead = state->lookahead_x;
+        out->line_yaw_deg = state->yaw_deg;
+        out->lateral_error_px = state->lookahead_x - (float)image_width * 0.5f;
+        out->confidence = state->confidence;
+        d.mode = LINE_TEMPORAL_MODE_PREDICTED;
+        return d;
+    }
+
+    state->active = 0;
+    line_detect_result_clear(out);
+    return d;
+}
