@@ -1,4 +1,7 @@
 import base64
+import csv
+import re
+import struct
 import threading
 import time
 from collections import deque
@@ -18,6 +21,19 @@ FRAME_KEY = 1
 FRAME_DIFF = 0
 FRAME_SKIP = 2
 
+OSC_SYNC0 = 0x55
+OSC_SYNC1 = 0xAA
+OSC_VERSION = 1
+OSC_CMD = 0x30
+OSC_CHANNELS = 8
+OSC_FRAME_SIZE = 43
+OSC_RECORD_MAX = 50000
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+TELEMETRY_MAP_FILE = PROJECT_ROOT / "code" / "vision" / "telemetry_ipc_core0.c"
+TELEMETRY_MAP_FUNC = "TelemetryIpc_Core0_PublishPvcDefault"
+DEFAULT_OSC_NAMES = [f"CH{i}" for i in range(OSC_CHANNELS)]
+
 
 def le_u16(buf: bytes, off: int) -> int:
     return buf[off] | (buf[off + 1] << 8)
@@ -25,6 +41,41 @@ def le_u16(buf: bytes, off: int) -> int:
 
 def le_u32(buf: bytes, off: int) -> int:
     return buf[off] | (buf[off + 1] << 8) | (buf[off + 2] << 16) | (buf[off + 3] << 24)
+
+
+def le_f32(buf: bytes, off: int) -> float:
+    return struct.unpack_from("<f", buf, off)[0]
+
+
+def _clean_channel_expr(expr: str) -> str:
+    text = expr.strip()
+    text = re.sub(r"\(float\)\s*", "", text)
+    text = re.sub(r"\s+", "", text)
+    return text or "unknown"
+
+
+def _load_osc_names_from_source() -> list[str]:
+    names = DEFAULT_OSC_NAMES[:]
+    if not TELEMETRY_MAP_FILE.exists():
+        return names
+
+    try:
+        text = TELEMETRY_MAP_FILE.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        text = TELEMETRY_MAP_FILE.read_text(encoding="gbk", errors="ignore")
+    except Exception:
+        return names
+
+    pattern = re.compile(r"g_telemetry_shadow\.data\[(\d+)\]\s*=\s*(.+?);")
+    for raw_line in text.splitlines():
+        line = raw_line.split("//", 1)[0]
+        match = pattern.search(line)
+        if not match:
+            continue
+        idx = int(match.group(1))
+        if 0 <= idx < OSC_CHANNELS:
+            names[idx] = _clean_channel_expr(match.group(2))
+    return names
 
 
 class DiffHostApi:
@@ -37,7 +88,7 @@ class DiffHostApi:
         self.port = 8086
         self.fps_hint = 120.0
 
-        self.output_root = Path(__file__).resolve().parent / "output_realtime"
+        self.output_root = self._default_output_root()
         self.frames_dir = self.output_root / "frames"
         self.videos_dir = self.output_root / "videos"
         self.output_root.mkdir(parents=True, exist_ok=True)
@@ -75,6 +126,8 @@ class DiffHostApi:
 
         self.preview_serial = -1
         self.preview_data_uri = ""
+        self.last_preview_encode_ts = 0.0
+        self.preview_encode_interval = 1.0 / 15.0
 
         self.recording = False
         self.recording_pending = False
@@ -84,6 +137,42 @@ class DiffHostApi:
         self.record_codec = ""
 
         self.logs: list[str] = []
+
+        self.osc_seq = 0
+        self.osc_channel_count = OSC_CHANNELS
+        self.osc_latest = [0.0] * OSC_CHANNELS
+        self.osc_last_time = 0.0
+        self.osc_times = deque()
+        self.osc_records = deque(maxlen=OSC_RECORD_MAX)
+        self.osc_names_mtime = 0.0
+        self.osc_names = DEFAULT_OSC_NAMES[:]
+        self._refresh_osc_names_if_needed(force=True)
+
+    def _default_output_root(self) -> Path:
+        # 固定相对路径：当前脚本目录下 output_realtime
+        return Path(__file__).resolve().parent / "output_realtime"
+
+    def _refresh_output_dirs(self) -> None:
+        self.output_root = self._default_output_root()
+        self.frames_dir = self.output_root / "frames"
+        self.videos_dir = self.output_root / "videos"
+        self.output_root.mkdir(parents=True, exist_ok=True)
+        self.frames_dir.mkdir(parents=True, exist_ok=True)
+        self.videos_dir.mkdir(parents=True, exist_ok=True)
+
+    def _refresh_osc_names_if_needed(self, force: bool = False) -> None:
+        try:
+            mtime = TELEMETRY_MAP_FILE.stat().st_mtime
+        except OSError:
+            mtime = 0.0
+
+        if not force and mtime <= self.osc_names_mtime:
+            return
+
+        names = _load_osc_names_from_source()
+        with self.lock:
+            self.osc_names = names
+            self.osc_names_mtime = mtime
 
     def _log(self, msg: str) -> None:
         ts = time.strftime("%H:%M:%S")
@@ -114,11 +203,18 @@ class DiffHostApi:
         self.start_ts = time.time()
         self.preview_serial = -1
         self.preview_data_uri = ""
+        self.last_preview_encode_ts = 0.0
         self.last_error = ""
         self.last_frame_ts = 0.0
         self.frame_times.clear()
         self.net_times.clear()
         self.net_bytes_window = 0
+        self.osc_seq = 0
+        self.osc_channel_count = OSC_CHANNELS
+        self.osc_latest = [0.0] * OSC_CHANNELS
+        self.osc_last_time = 0.0
+        self.osc_times.clear()
+        self.osc_records.clear()
 
     def _stop_record_writer(self) -> None:
         if self.record_writer is not None:
@@ -134,37 +230,26 @@ class DiffHostApi:
 
         ts = time.strftime("%Y%m%d_%H%M%S")
         base_name = f"realtime_record_{ts}"
-        fallback_root = Path.cwd() / "output_realtime_ascii" / "videos"
-        fallback_root.mkdir(parents=True, exist_ok=True)
-        base_candidates = [
-            self.videos_dir / base_name,
-            fallback_root / base_name,
-        ]
-        # Prioritize broadly playable codecs first, then quality-oriented fallback.
         codec_candidates = [
             ("MJPG", ".avi"),
             ("mp4v", ".mp4"),
             ("XVID", ".avi"),
         ]
-        for base in base_candidates:
-            for codec, ext in codec_candidates:
-                out_path = str(base.with_suffix(ext))
-                fourcc = cv2.VideoWriter_fourcc(*codec)
-                writer = cv2.VideoWriter(out_path, fourcc, self.fps_hint, (self.frame_w, self.frame_h), True)
-                if writer.isOpened():
-                    try:
-                        # Best-effort quality hint for backends that support it.
-                        writer.set(cv2.VIDEOWRITER_PROP_QUALITY, 95)
-                    except Exception:
-                        pass
-                    return writer, out_path, codec
-                writer.release()
+        for codec, ext in codec_candidates:
+            out_path = str((self.videos_dir / base_name).with_suffix(ext))
+            fourcc = cv2.VideoWriter_fourcc(*codec)
+            writer = cv2.VideoWriter(out_path, fourcc, self.fps_hint, (self.frame_w, self.frame_h), True)
+            if writer.isOpened():
+                try:
+                    writer.set(cv2.VIDEOWRITER_PROP_QUALITY, 95)
+                except Exception:
+                    pass
+                return writer, out_path, codec
+            writer.release()
         return None, "", ""
 
     def _open_record_writer_if_needed(self) -> None:
-        if not self.recording:
-            return
-        if self.record_writer is not None:
+        if not self.recording or self.record_writer is not None:
             return
         if self.frame_w <= 0 or self.frame_h <= 0:
             return
@@ -198,6 +283,12 @@ class DiffHostApi:
             _, old_size = self.net_times.popleft()
             self.net_bytes_window -= old_size
 
+    def _mark_osc_tick(self) -> None:
+        now = time.time()
+        self.osc_times.append(now)
+        while self.osc_times and (now - self.osc_times[0] > 1.0):
+            self.osc_times.popleft()
+
     def _write_record_frame(self, frame_gray: np.ndarray) -> None:
         with self.lock:
             if not self.recording:
@@ -220,7 +311,7 @@ class DiffHostApi:
                 self._stop_record_writer()
             self._log(self.last_error)
 
-    def _handle_packet(self, pkt: bytes) -> None:
+    def _handle_video_packet(self, pkt: bytes) -> None:
         h = pkt[:HEADER_SIZE]
         frame_type = h[3]
         frame_id = le_u32(h, 4)
@@ -284,42 +375,71 @@ class DiffHostApi:
         if frame_for_record is not None:
             self._write_record_frame(frame_for_record)
 
-    def _parse_packets(self, buf: bytearray) -> list[bytes]:
-        packets = []
-        i = 0
-        n = len(buf)
-        while i + HEADER_SIZE + 1 <= n:
-            if buf[i] != SYNC0 or buf[i + 1] != SYNC1:
-                i += 1
-                continue
-            if buf[i + 2] not in (VERSION, 0):
-                with self.lock:
-                    self.bad_versions += 1
-                i += 1
-                continue
+    def _handle_osc_packet(self, pkt: bytes) -> None:
+        seq = le_u32(pkt, 4)
+        channel_count = min(pkt[8], OSC_CHANNELS)
+        values = [le_f32(pkt, 9 + 4 * i) for i in range(OSC_CHANNELS)]
+        now = time.time()
 
-            payload_len = le_u32(buf, i + 20)
-            if payload_len > 300000:
-                i += 1
-                continue
+        with self.lock:
+            self.osc_seq = seq
+            self.osc_channel_count = channel_count
+            self.osc_latest = values
+            self.osc_last_time = now
+            self._mark_osc_tick()
+            self.osc_records.append(
+                {
+                    "time": now,
+                    "seq": seq,
+                    "values": values[:],
+                }
+            )
 
-            total_len = HEADER_SIZE + payload_len + 1
-            if i + total_len > n:
-                break
+    def _parse_stream(self, buf: bytearray) -> None:
+        while buf:
+            if len(buf) >= 2 and buf[0] == SYNC0 and buf[1] == SYNC1:
+                if len(buf) < HEADER_SIZE + 1:
+                    break
+                if buf[2] not in (VERSION, 0):
+                    with self.lock:
+                        self.bad_versions += 1
+                    del buf[0]
+                    continue
 
-            pkt = bytes(buf[i:i + total_len])
-            checksum = sum(pkt[:-1]) & 0xFF
-            if checksum == pkt[-1]:
-                packets.append(pkt)
-                i += total_len
-            else:
+                payload_len = le_u32(buf, 20)
+                if payload_len > 300000:
+                    del buf[0]
+                    continue
+
+                total_len = HEADER_SIZE + payload_len + 1
+                if len(buf) < total_len:
+                    break
+
+                pkt = bytes(buf[:total_len])
+                checksum = sum(pkt[:-1]) & 0xFF
+                if checksum == pkt[-1]:
+                    del buf[:total_len]
+                    self._handle_video_packet(pkt)
+                    continue
+
                 with self.lock:
                     self.bad_checksums += 1
-                i += 1
+                del buf[0]
+                continue
 
-        if i > 0:
-            del buf[:i]
-        return packets
+            if len(buf) >= 2 and buf[0] == OSC_SYNC0 and buf[1] == OSC_SYNC1:
+                if len(buf) < OSC_FRAME_SIZE:
+                    break
+                pkt = bytes(buf[:OSC_FRAME_SIZE])
+                checksum = sum(pkt[:-2]) & 0xFF
+                if pkt[2] == OSC_VERSION and pkt[3] == OSC_CMD and pkt[-2] == checksum and pkt[-1] == 0x0D:
+                    del buf[:OSC_FRAME_SIZE]
+                    self._handle_osc_packet(pkt)
+                    continue
+                del buf[0]
+                continue
+
+            del buf[0]
 
     def _close_sockets(self) -> None:
         if self.conn_sock is not None:
@@ -382,8 +502,7 @@ class DiffHostApi:
                         self.raw_chunks += 1
                         self._mark_net_tick(len(chunk))
                     buf.extend(chunk)
-                    for pkt in self._parse_packets(buf):
-                        self._handle_packet(pkt)
+                    self._parse_stream(buf)
             except Exception as exc:
                 with self.lock:
                     self.last_error = str(exc)
@@ -407,19 +526,15 @@ class DiffHostApi:
         self._log("receiver stopped")
 
     def start_receive(self, host: str, port: int, fps: float, output_dir: str):
+        del output_dir
+        self._refresh_osc_names_if_needed(force=True)
         with self.lock:
             if self.running:
                 return {"ok": False, "message": "already running"}
             self.host = (host or "0.0.0.0").strip()
             self.port = int(port)
             self.fps_hint = float(fps) if float(fps) > 0 else 120.0
-            if output_dir and output_dir.strip():
-                self.output_root = Path(output_dir).expanduser().resolve()
-                self.frames_dir = self.output_root / "frames"
-                self.videos_dir = self.output_root / "videos"
-            self.output_root.mkdir(parents=True, exist_ok=True)
-            self.frames_dir.mkdir(parents=True, exist_ok=True)
-            self.videos_dir.mkdir(parents=True, exist_ok=True)
+            self._refresh_output_dirs()
             self._reset_stream_stats()
             self.recording = False
             self.recording_pending = False
@@ -496,38 +611,67 @@ class DiffHostApi:
             enc.tofile(str(out))
         except Exception as exc:
             return {"ok": False, "message": f"save frame failed: {exc}"}
-        if (not out.exists()) or out.stat().st_size <= 0:
-            return {"ok": False, "message": "save frame failed: file not written"}
         self._log(f"frame saved: {out}")
         return {"ok": True, "message": "frame saved", "path": str(out)}
+
+    def save_osc_data(self):
+        with self.lock:
+            rows = list(self.osc_records)
+            names = self.osc_names[:]
+            output_root = self.output_root
+        if not rows:
+            return {"ok": False, "message": "no oscilloscope data available"}
+
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        out_path = output_root / f"oscilloscope_data_{ts}.csv"
+        try:
+            with out_path.open("w", encoding="utf-8-sig", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["time", "seq"] + names)
+                for row in rows:
+                    values = row["values"]
+                    writer.writerow(
+                        [f"{row['time']:.6f}", int(row["seq"])]
+                        + [f"{float(values[i]):.6f}" for i in range(OSC_CHANNELS)]
+                    )
+        except Exception as exc:
+            return {"ok": False, "message": f"save oscilloscope data failed: {exc}"}
+
+        self._log(f"oscilloscope data saved: {out_path}")
+        return {"ok": True, "message": "oscilloscope data saved", "path": str(out_path), "rows": len(rows)}
 
     def clear_logs(self):
         with self.lock:
             self.logs.clear()
-        return {"ok": True}
+        return {"ok": True, "message": "logs cleared"}
 
     def get_state(self):
+        self._refresh_osc_names_if_needed()
         preview_frame = None
         preview_target_serial = -1
 
         with self.lock:
             now = time.time()
-            _elapsed = max(now - self.start_ts, 1e-6) if self.start_ts > 0 else 0.0
             while self.frame_times and (now - self.frame_times[0] > 1.0):
                 self.frame_times.popleft()
             while self.net_times and (now - self.net_times[0][0] > 1.0):
                 _, old_size = self.net_times.popleft()
                 self.net_bytes_window -= old_size
+            while self.osc_times and (now - self.osc_times[0] > 1.0):
+                self.osc_times.popleft()
 
-            if (self.last_frame_ts <= 0.0) or (now - self.last_frame_ts > 1.2):
-                fps = 0.0
-            else:
-                fps = float(len(self.frame_times))
+            fps = 0.0 if (self.last_frame_ts <= 0.0 or now - self.last_frame_ts > 1.2) else float(len(self.frame_times))
             kbps = (max(self.net_bytes_window, 0) * 8.0) / 1000.0
+            stream_elapsed_s = (now - self.start_ts) if self.running else 0.0
 
-            if self.frame_gray is not None and self.preview_serial != self.frame_serial:
+            if (
+                self.frame_gray is not None
+                and self.preview_serial != self.frame_serial
+                and now - self.last_preview_encode_ts >= self.preview_encode_interval
+            ):
                 preview_frame = self.frame_gray.copy()
                 preview_target_serial = self.frame_serial
+                self.last_preview_encode_ts = now
 
             state = {
                 "running": self.running,
@@ -558,13 +702,24 @@ class DiffHostApi:
                 "record_path": self.record_path,
                 "recorded_frames": self.recorded_frames,
                 "last_error": self.last_error,
+                "start_ts": self.start_ts,
+                "stream_elapsed_s": round(stream_elapsed_s, 3),
                 "protocol_hint": (
-                    "已收到TCP数据但未解析出差分帧，可能下位机仍在发送其它协议"
+                    "已收到 TCP 数据但尚未解析出图像帧，请确认下位机图传协议是否匹配。"
                     if (self.connected and self.raw_bytes > 2048 and self.total_packets == 0)
                     else ""
                 ),
                 "preview": self.preview_data_uri,
-                "logs": self.logs[-40:],
+                "logs": self.logs[-60:],
+                "osc_seq": self.osc_seq,
+                "osc_count": self.osc_channel_count,
+                "osc_latest": self.osc_latest[:],
+                "osc_names": self.osc_names[:],
+                "osc_hz": len(self.osc_times),
+                "osc_rows": len(self.osc_records),
+                "osc_last_time": self.osc_last_time,
+                "osc_mapping_file": str(TELEMETRY_MAP_FILE),
+                "osc_mapping_func": TELEMETRY_MAP_FUNC,
             }
 
         if preview_frame is not None:
@@ -590,9 +745,9 @@ def main() -> None:
         "实时图传上位机",
         html=html,
         js_api=api,
-        width=1320,
-        height=860,
-        min_size=(1000, 700),
+        width=1500,
+        height=960,
+        min_size=(1220, 780),
     )
     webview.start(debug=False)
 

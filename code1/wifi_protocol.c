@@ -1,13 +1,19 @@
 #include "wifi_protocol.h"
 #include "wifi.h"
+#include "vision/telemetry_ipc_core1.h"
+#include <string.h>
 
 #define WIFI_RX_READ_CHUNK   128U
 #define WIFI_RX_STREAM_SIZE  512U
 #define WIFI_FRAME_MIN_SIZE  6U
 #define WIFI_ACK_PAYLOAD_LEN 2U
+#define WIFI_OSC_SYNC0       0x55U
+#define WIFI_OSC_SYNC1       0xAAU
+#define WIFI_OSC_TAIL        0x0DU
 
 static uint8_t rx_stream[WIFI_RX_STREAM_SIZE];
 static uint16_t rx_len = 0U;
+static uint32_t g_last_telemetry_seq = 0U;
 
 static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
 {
@@ -201,4 +207,44 @@ void wifi_protocol_poll_rx(void)
     }
 
     wifi_protocol_parse_stream();
+}
+
+void wifi_protocol_send_oscilloscope(void)
+{
+    telemetry_ipc_packet_t packet;
+    uint8_t frame[43];
+    uint16_t idx = 0U;
+    uint8_t check_sum = 0U;
+
+    if (TelemetryIpc_Core1_ReadLatest(&packet) == 0U)
+    {
+        return;
+    }
+    if (packet.seq == g_last_telemetry_seq)
+    {
+        return;
+    }
+
+    frame[idx++] = WIFI_OSC_SYNC0;
+    frame[idx++] = WIFI_OSC_SYNC1;
+    frame[idx++] = TELEMETRY_IPC_VERSION;
+    frame[idx++] = C1_WIFI_CMD_OSCILLOSCOPE;
+    frame[idx++] = (uint8_t)(packet.seq & 0xFFU);
+    frame[idx++] = (uint8_t)((packet.seq >> 8) & 0xFFU);
+    frame[idx++] = (uint8_t)((packet.seq >> 16) & 0xFFU);
+    frame[idx++] = (uint8_t)((packet.seq >> 24) & 0xFFU);
+    frame[idx++] = packet.channel_count;
+
+    memcpy(&frame[idx], packet.data, TELEMETRY_IPC_CHANNELS * sizeof(float));
+    idx = (uint16_t)(idx + TELEMETRY_IPC_CHANNELS * sizeof(float));
+
+    for (uint16_t i = 0U; i < idx; i++)
+    {
+        check_sum = (uint8_t)(check_sum + frame[i]);
+    }
+    frame[idx++] = check_sum;
+    frame[idx++] = WIFI_OSC_TAIL;
+
+    wifi_spi_send_buffer(frame, idx);
+    g_last_telemetry_seq = packet.seq;
 }

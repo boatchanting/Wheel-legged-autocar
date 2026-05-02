@@ -6,61 +6,100 @@
   <title>实时图传上位机</title>
   <style>
     :root {
-      --bg: #0a0f16;
-      --panel: #101a27;
-      --panel2: #131f30;
-      --line: #223349;
-      --text: #e9f1ff;
-      --muted: #9db2cf;
-      --ok: #3ecf8e;
-      --warn: #ffd166;
-      --err: #ff6b6b;
-      --btn: #2f7dff;
-      --btn2: #1e5ccc;
+      --line: #22374f;
+      --panel: #111d2d;
+      --panel-soft: #132338;
+      --text: #eef4ff;
+      --muted: #9ab1cf;
+      --blue: #3d88ff;
+      --blue-deep: #235fd2;
+      --red: #d84a4a;
+      --red-deep: #a53131;
+      --gold: #b88419;
+      --gold-deep: #845d0d;
+      --slate: #425979;
+      --slate-deep: #31445e;
+      --ok: #36d08a;
+      --warn: #f6c65b;
+      --err: #ff7676;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
+      min-height: 100vh;
       color: var(--text);
-      background: radial-gradient(circle at 20% -10%, #1e3457 0%, #0a0f16 38%, #070b10 100%);
+      background:
+        radial-gradient(circle at top left, rgba(56, 105, 185, 0.28), transparent 28%),
+        radial-gradient(circle at 90% 0%, rgba(28, 53, 91, 0.40), transparent 22%),
+        linear-gradient(180deg, #09131f 0%, #060d16 100%);
       font: 14px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;
     }
     .page {
-      max-width: 1280px;
-      margin: 20px auto;
-      padding: 0 16px 16px;
+      max-width: 1540px;
+      margin: 10px auto;
+      padding: 0 10px 10px;
       display: grid;
-      grid-template-columns: 1.1fr 1fr;
-      gap: 14px;
+      grid-template-columns: minmax(510px, 1fr) minmax(580px, 1fr);
+      gap: 10px;
+      align-items: start;
+    }
+    .column {
+      display: grid;
+      gap: 10px;
     }
     .card {
       border: 1px solid var(--line);
       border-radius: 14px;
-      background: linear-gradient(180deg, rgba(18,30,47,.98), rgba(11,19,30,.98));
-      box-shadow: 0 10px 24px rgba(0,0,0,.32);
+      background: linear-gradient(180deg, rgba(17, 29, 45, 0.98), rgba(10, 18, 28, 0.98));
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+      overflow: hidden;
     }
     .head {
-      padding: 14px 16px;
+      padding: 10px 14px;
       border-bottom: 1px solid var(--line);
       display: flex;
       align-items: center;
       justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
     }
-    .head h2 { margin: 0; font-size: 18px; }
-    .content { padding: 14px 16px; }
+    .head h2 {
+      margin: 0;
+      font-size: 18px;
+      letter-spacing: 0.3px;
+    }
+    .head-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .content {
+      padding: 10px 12px 12px;
+    }
     .grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 10px;
+      gap: 8px;
     }
-    .field label { color: var(--muted); display:block; margin-bottom: 4px; font-size: 12px; }
+    .field label {
+      display: block;
+      margin-bottom: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
     .field input {
       width: 100%;
-      padding: 9px 10px;
+      padding: 8px 10px;
       border-radius: 9px;
       border: 1px solid var(--line);
-      background: #0c1420;
+      background: #0b1420;
       color: var(--text);
+      outline: none;
+    }
+    .field input[readonly] {
+      color: #c8daf7;
+      background: #0a1220;
     }
     .btns {
       margin-top: 10px;
@@ -71,49 +110,57 @@
     button {
       border: 0;
       border-radius: 10px;
-      background: linear-gradient(180deg, var(--btn), var(--btn2));
+      background: linear-gradient(180deg, var(--blue), var(--blue-deep));
       color: #fff;
-      padding: 9px 14px;
+      padding: 9px 12px;
       cursor: pointer;
-      font-weight: 600;
+      font-weight: 700;
+      letter-spacing: 0.1px;
+      white-space: nowrap;
     }
     button:disabled {
       opacity: 0.45;
       cursor: not-allowed;
     }
-    button.warn { background: linear-gradient(180deg, #9b6a16, #6d4a11); }
-    button.stop { background: linear-gradient(180deg, #c53e3e, #9b2c2c); }
-    button.ghost { background: linear-gradient(180deg, #3b4e6d, #2e3f57); }
+    button.warn { background: linear-gradient(180deg, var(--gold), var(--gold-deep)); }
+    button.stop { background: linear-gradient(180deg, var(--red), var(--red-deep)); }
+    button.ghost { background: linear-gradient(180deg, var(--slate), var(--slate-deep)); }
+    button.compact {
+      padding: 7px 10px;
+      font-size: 12px;
+      border-radius: 9px;
+    }
     .facts {
-      margin-top: 12px;
+      margin-top: 10px;
       display: grid;
-      grid-template-columns: repeat(3, minmax(0,1fr));
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
     }
     .fact {
       border: 1px solid var(--line);
-      background: var(--panel2);
+      background: var(--panel-soft);
       border-radius: 10px;
-      padding: 8px 9px;
+      padding: 8px;
+      min-height: 68px;
     }
     .k { color: var(--muted); font-size: 12px; }
-    .v { font-size: 19px; font-weight: 700; margin-top: 3px; }
-    .status-line {
-      margin-top: 10px;
+    .v { margin-top: 4px; font-size: 16px; font-weight: 700; }
+    .status-line, .meta-line {
+      margin-top: 8px;
       border: 1px solid var(--line);
-      border-radius: 10px;
-      padding: 9px 10px;
+      border-radius: 9px;
+      padding: 8px;
       color: var(--muted);
-      min-height: 40px;
       white-space: pre-wrap;
+      font-size: 12px;
     }
     .preview-wrap {
       position: relative;
       width: 100%;
-      aspect-ratio: 16 / 10;
+      aspect-ratio: 16 / 9;
       border: 1px solid var(--line);
-      border-radius: 12px;
-      background: #05080d;
+      border-radius: 10px;
+      background: #03070c;
       overflow: hidden;
     }
     .preview {
@@ -123,34 +170,118 @@
       image-rendering: pixelated;
       display: none;
     }
-    .preview-empty {
+    .preview-empty, .osc-empty {
       position: absolute;
       inset: 0;
       display: grid;
       place-items: center;
       color: var(--muted);
-      font-size: 14px;
-    }
-    .meta {
-      margin-top: 8px;
-      color: var(--muted);
       font-size: 13px;
-      white-space: pre-wrap;
+      pointer-events: none;
     }
     .logs {
-      margin-top: 10px;
       width: 100%;
-      height: 280px;
-      border-radius: 10px;
+      height: 250px;
+      border-radius: 9px;
       border: 1px solid var(--line);
-      background: #091220;
+      background: #08111c;
       color: #d3e5ff;
-      resize: vertical;
-      padding: 10px;
+      resize: none;
+      padding: 8px;
       font: 12px/1.45 Consolas, "Courier New", monospace;
     }
+    .osc-wrap {
+      display: grid;
+      gap: 8px;
+    }
+    .osc-canvas-wrap {
+      position: relative;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(16, 25, 38, 0.95), rgba(6, 10, 18, 0.98));
+      overflow: hidden;
+    }
+    .osc-canvas {
+      width: 100%;
+      height: 290px;
+      display: block;
+    }
+    .osc-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 1px 1px 0;
+    }
+    .osc-toolbar-left {
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .toggle-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .toggle-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      background: #0b1522;
+      padding: 7px 9px;
+    }
+    .toggle-left {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .legend-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      flex: 0 0 auto;
+    }
+    .toggle-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .toggle-value {
+      min-width: 86px;
+      text-align: right;
+      color: var(--text);
+      font: 12px/1.2 Consolas, "Courier New", monospace;
+    }
+    .toggle-check {
+      accent-color: var(--blue);
+      width: 15px;
+      height: 15px;
+      cursor: pointer;
+      margin: 0;
+    }
+    .hint-box {
+      border: 1px dashed #315172;
+      border-radius: 9px;
+      background: rgba(12, 22, 35, 0.7);
+      padding: 8px 9px;
+      font-size: 12px;
+      color: #c8daf7;
+      line-height: 1.5;
+    }
+    .hint-path {
+      color: #87b7ff;
+      word-break: break-all;
+      font-family: Consolas, "Courier New", monospace;
+    }
     .dot {
-      display:inline-block;
+      display: inline-block;
       width: 10px;
       height: 10px;
       border-radius: 50%;
@@ -160,54 +291,99 @@
     .ok { background: var(--ok); }
     .warn-dot { background: var(--warn); }
     .err-dot { background: var(--err); }
-    @media (max-width: 1080px) {
+    @media (max-width: 1320px) {
       .page { grid-template-columns: 1fr; }
-      .facts { grid-template-columns: repeat(2, minmax(0,1fr)); }
+      .osc-canvas { height: 270px; }
+      .logs { height: 240px; }
+    }
+    @media (max-width: 760px) {
+      .grid, .facts, .toggle-grid {
+        grid-template-columns: 1fr;
+      }
+      .osc-canvas { height: 245px; }
     }
   </style>
 </head>
 <body>
   <div class="page">
-    <div class="card">
-      <div class="head"><h2>接收控制</h2></div>
-      <div class="content">
-        <div class="grid">
-          <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
-          <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
-          <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" step="1" /></div>
-          <div class="field"><label>输出目录</label><input id="output" /></div>
-        </div>
-        <div class="btns">
-          <button id="startBtn">开始接收</button>
-          <button class="stop" id="stopBtn">停止接收</button>
-          <button class="warn" id="recordStartBtn">开始保存视频</button>
-          <button class="stop" id="recordStopBtn">停止并保存视频</button>
-          <button class="ghost" id="saveFrameBtn">保存当前帧图片</button>
-          <button class="ghost" id="clearLogBtn">清空日志</button>
-        </div>
+    <div class="column">
+      <div class="card">
+        <div class="head"><h2>接收控制</h2></div>
+        <div class="content">
+          <div class="grid">
+            <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
+            <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
+            <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" step="1" /></div>
+            <div class="field"><label>输出目录(自动定位)</label><input id="output" readonly /></div>
+          </div>
 
-        <div class="facts">
-          <div class="fact"><div class="k">连接状态</div><div class="v" id="connState">-</div></div>
-          <div class="fact"><div class="k">当前帧率</div><div class="v" id="fpsNow">0</div></div>
-          <div class="fact"><div class="k">当前带宽</div><div class="v" id="kbpsNow">0</div></div>
-          <div class="fact"><div class="k">接收帧数</div><div class="v" id="framesNow">0</div></div>
-          <div class="fact"><div class="k">关键帧/差分/跳帧</div><div class="v" id="kdsNow">0/0/0</div></div>
-          <div class="fact"><div class="k">分辨率</div><div class="v" id="sizeNow">-</div></div>
-        </div>
+          <div class="btns">
+            <button id="startBtn">开始接收</button>
+            <button class="stop" id="stopBtn">停止接收</button>
+            <button class="warn" id="recordStartBtn">开始保存视频</button>
+            <button class="stop" id="recordStopBtn">停止并保存视频</button>
+            <button class="ghost" id="saveFrameBtn">保存当前帧图片</button>
+            <button class="ghost" id="clearLogBtn">清空日志</button>
+          </div>
 
-        <div class="status-line" id="statusText">等待 pywebview 后端注入...</div>
+          <div class="facts">
+            <div class="fact"><div class="k">连接状态</div><div class="v" id="connState">-</div></div>
+            <div class="fact"><div class="k">当前帧率</div><div class="v" id="fpsNow">0</div></div>
+            <div class="fact"><div class="k">当前带宽</div><div class="v" id="kbpsNow">0</div></div>
+            <div class="fact"><div class="k">接收帧数</div><div class="v" id="framesNow">0</div></div>
+            <div class="fact"><div class="k">关键/差分/跳帧</div><div class="v" id="kdsNow">0/0/0</div></div>
+            <div class="fact"><div class="k">分辨率</div><div class="v" id="sizeNow">-</div></div>
+          </div>
+
+          <div class="status-line" id="statusText">等待 pywebview 后端注入...</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="head">
+          <h2>示波器</h2>
+          <div class="head-actions">
+            <button class="ghost compact" id="saveDataBtn">保存示波器数据</button>
+          </div>
+        </div>
+        <div class="content">
+          <div class="osc-wrap">
+            <div class="osc-toolbar">
+              <div class="osc-toolbar-left" id="oscMeta">采样率 0 Hz | 时间窗 10.0s</div>
+              <div class="osc-toolbar-left" id="oscRows">已缓存 0 行</div>
+            </div>
+            <div class="osc-canvas-wrap">
+              <canvas class="osc-canvas" id="oscCanvas"></canvas>
+              <div class="osc-empty" id="oscEmpty">等待示波器数据...</div>
+            </div>
+            <div class="toggle-grid" id="oscLegend"></div>
+            <div class="hint-box">
+              通道修改位置：在 <span class="hint-path" id="mapFile">code/vision/telemetry_ipc_core0.c</span> 的
+              <span class="hint-path" id="mapFunc">TelemetryIpc_Core0_PublishPvcDefault()</span> 中，
+              修改 <span class="hint-path">g_telemetry_shadow.data[0..7]</span> 对应变量即可。上位机会自动读取并刷新通道名。
+            </div>
+          </div>
+        </div>
       </div>
     </div>
 
-    <div class="card">
-      <div class="head"><h2>实时图像与日志</h2></div>
-      <div class="content">
-        <div class="preview-wrap">
-          <img class="preview" id="preview" alt="frame preview" />
-          <div class="preview-empty" id="previewEmpty">等待视频帧...</div>
+    <div class="column">
+      <div class="card">
+        <div class="head"><h2>实时图像</h2></div>
+        <div class="content">
+          <div class="preview-wrap">
+            <img class="preview" id="preview" alt="frame preview" />
+            <div class="preview-empty" id="previewEmpty">等待视频帧...</div>
+          </div>
+          <div class="meta-line" id="metaText">暂无图像</div>
         </div>
-        <div class="meta" id="metaText">暂无图像</div>
-        <textarea class="logs" id="logs" readonly></textarea>
+      </div>
+
+      <div class="card">
+        <div class="head"><h2>日志</h2></div>
+        <div class="content">
+          <textarea class="logs" id="logs" readonly></textarea>
+        </div>
       </div>
     </div>
   </div>
@@ -217,7 +393,6 @@
     const portEl = document.getElementById("port");
     const fpsEl = document.getElementById("fps");
     const outputEl = document.getElementById("output");
-
     const statusText = document.getElementById("statusText");
     const connState = document.getElementById("connState");
     const fpsNow = document.getElementById("fpsNow");
@@ -229,19 +404,41 @@
     const previewEmpty = document.getElementById("previewEmpty");
     const metaText = document.getElementById("metaText");
     const logs = document.getElementById("logs");
+    const oscCanvas = document.getElementById("oscCanvas");
+    const oscEmpty = document.getElementById("oscEmpty");
+    const oscLegend = document.getElementById("oscLegend");
+    const oscMeta = document.getElementById("oscMeta");
+    const oscRows = document.getElementById("oscRows");
+    const mapFile = document.getElementById("mapFile");
+    const mapFunc = document.getElementById("mapFunc");
+
+    const oscColors = ["#58a6ff", "#ff9f43", "#5eead4", "#ff6b81", "#ffd166", "#7bd88f", "#c792ea", "#f78fb3"];
+    const oscVisible = Array.from({ length: 8 }, () => true);
+    const oscSeries = Array.from({ length: 8 }, () => []);
+    const oscNames = Array.from({ length: 8 }, (_, i) => `CH${i}`);
+
+    const OSC_WINDOW_SEC = 10.0;
+    const OSC_Y_TICKS = 6;
+    const OSC_X_TICKS = 10;
+    const OSC_MAX_POINTS = 4000;
+    const OSC_RENDER_MS = 33;
+    const REFRESH_MS = 66;
 
     let apiReady = false;
     let timerId = null;
-    const REFRESH_MS = 16;
+    let oscSeq = -1;
+    let oscHz = 0;
+    let oscRowCount = 0;
+    let streamStartTs = 0;
+    let runningState = false;
+    let lastRenderMs = 0;
 
     function hasApi() {
       return !!(window.pywebview && window.pywebview.api);
     }
 
     function setButtonsEnabled(enabled) {
-      document.querySelectorAll("button").forEach((btn) => {
-        btn.disabled = !enabled;
-      });
+      document.querySelectorAll("button").forEach((btn) => { btn.disabled = !enabled; });
     }
 
     function setStatus(msg) {
@@ -260,6 +457,219 @@
       }
     }
 
+    function stateBadge(connected, running) {
+      if (connected) return '<span class="dot ok"></span>已连接';
+      if (running) return '<span class="dot warn-dot"></span>等待连接';
+      return '<span class="dot err-dot"></span>未运行';
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;");
+    }
+
+    function rebuildLegend(names) {
+      oscLegend.innerHTML = "";
+      names.forEach((name, idx) => {
+        const item = document.createElement("label");
+        item.className = "toggle-item";
+        item.innerHTML = `
+          <div class="toggle-left">
+            <input class="toggle-check" type="checkbox" id="oscCheck${idx}" ${oscVisible[idx] ? "checked" : ""} />
+            <span class="legend-dot" style="background:${oscColors[idx]}"></span>
+            <span class="toggle-name" title="${escapeHtml(name)}">${idx}. ${escapeHtml(name)}</span>
+          </div>
+          <span class="toggle-value" id="legendValue${idx}">0.000</span>
+        `;
+        oscLegend.appendChild(item);
+        const check = item.querySelector(`#oscCheck${idx}`);
+        check.addEventListener("change", (e) => {
+          oscVisible[idx] = !!e.target.checked;
+        });
+      });
+    }
+
+    function updateLegend(values) {
+      values.forEach((value, idx) => {
+        const el = document.getElementById(`legendValue${idx}`);
+        if (el) el.textContent = Number(value || 0).toFixed(3);
+      });
+    }
+
+    function pruneSeries(nowSec) {
+      const minT = nowSec - OSC_WINDOW_SEC - 2.0;
+      for (let i = 0; i < oscSeries.length; i++) {
+        const series = oscSeries[i];
+        let firstKeep = 0;
+        while (firstKeep < series.length && series[firstKeep].t < minT) {
+          firstKeep += 1;
+        }
+        if (firstKeep > 0) {
+          series.splice(0, firstKeep);
+        }
+        if (series.length > OSC_MAX_POINTS) {
+          series.splice(0, series.length - OSC_MAX_POINTS);
+        }
+      }
+    }
+
+    function pushOscSample(values, names, seq, hz, rows, sampleTs) {
+      if (Array.isArray(names) && names.length) {
+        let changed = false;
+        for (let i = 0; i < 8; i++) {
+          const n = names[i] || `CH${i}`;
+          if (oscNames[i] !== n) {
+            oscNames[i] = n;
+            changed = true;
+          }
+        }
+        if (changed) rebuildLegend(oscNames);
+      }
+
+      oscHz = Number(hz || 0);
+      oscRowCount = Number(rows || 0);
+      oscRows.textContent = `已缓存 ${oscRowCount} 行`;
+
+      if (seq === oscSeq) {
+        updateLegend(values || []);
+        return;
+      }
+
+      oscSeq = seq;
+      const t = Number(sampleTs || 0) > 0 ? Number(sampleTs) : (Date.now() / 1000.0);
+      for (let i = 0; i < 8; i++) {
+        const v = Number((values || [])[i] ?? 0);
+        if (Number.isFinite(v)) {
+          oscSeries[i].push({ t, v });
+        }
+      }
+      updateLegend(values || []);
+      pruneSeries(t);
+      oscEmpty.style.display = "none";
+    }
+
+    function drawOscilloscope() {
+      const dpr = window.devicePixelRatio || 1;
+      const width = oscCanvas.clientWidth || 640;
+      const height = oscCanvas.clientHeight || 290;
+      oscCanvas.width = Math.floor(width * dpr);
+      oscCanvas.height = Math.floor(height * dpr);
+      const ctx = oscCanvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      const nowSec = Date.now() / 1000.0;
+      pruneSeries(nowSec);
+
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = "#06101a";
+      ctx.fillRect(0, 0, width, height);
+
+      const leftPad = 54;
+      const rightPad = 10;
+      const topPad = 10;
+      const bottomPad = 24;
+      const plotW = Math.max(10, width - leftPad - rightPad);
+      const plotH = Math.max(10, height - topPad - bottomPad);
+      const plotX = leftPad;
+      const plotY = topPad;
+      const xToPix = (xNorm) => plotX + xNorm * plotW;
+      const yToPix = (yNorm) => plotY + (1 - yNorm) * plotH;
+
+      const activeValues = [];
+      for (let i = 0; i < 8; i++) {
+        if (!oscVisible[i]) continue;
+        for (const p of oscSeries[i]) {
+          if (p.t >= nowSec - OSC_WINDOW_SEC && Number.isFinite(p.v)) activeValues.push(p.v);
+        }
+      }
+
+      let minV = -1;
+      let maxV = 1;
+      if (activeValues.length > 0) {
+        minV = Math.min(...activeValues);
+        maxV = Math.max(...activeValues);
+        if (Math.abs(maxV - minV) < 1e-6) {
+          maxV += 1;
+          minV -= 1;
+        }
+        const margin = (maxV - minV) * 0.12;
+        maxV += margin;
+        minV -= margin;
+      }
+
+      ctx.strokeStyle = "rgba(120, 154, 192, 0.18)";
+      ctx.lineWidth = 1;
+      ctx.font = '11px Consolas, "Courier New", monospace';
+      ctx.fillStyle = "#9fb9da";
+
+      for (let i = 0; i <= OSC_Y_TICKS; i++) {
+        const yNorm = i / OSC_Y_TICKS;
+        const y = yToPix(yNorm);
+        ctx.beginPath();
+        ctx.moveTo(plotX, y);
+        ctx.lineTo(plotX + plotW, y);
+        ctx.stroke();
+
+        const v = maxV - (maxV - minV) * yNorm;
+        ctx.fillText(v.toFixed(2), 4, y + 4);
+      }
+
+      const elapsed = Math.max(0, (runningState && streamStartTs > 0) ? (nowSec - streamStartTs) : 0);
+      const tStart = elapsed - OSC_WINDOW_SEC;
+      for (let i = 0; i <= OSC_X_TICKS; i++) {
+        const xNorm = i / OSC_X_TICKS;
+        const x = xToPix(xNorm);
+        ctx.beginPath();
+        ctx.moveTo(x, plotY);
+        ctx.lineTo(x, plotY + plotH);
+        ctx.stroke();
+
+        const labelTime = Math.max(0, tStart + xNorm * OSC_WINDOW_SEC);
+        ctx.fillText(`${labelTime.toFixed(1)}s`, x - 14, plotY + plotH + 16);
+      }
+
+      for (let i = 0; i < 8; i++) {
+        if (!oscVisible[i]) continue;
+        const series = oscSeries[i];
+        if (!series.length) continue;
+        ctx.strokeStyle = oscColors[i];
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        let started = false;
+        for (const p of series) {
+          const dt = nowSec - p.t;
+          if (dt < 0 || dt > OSC_WINDOW_SEC) continue;
+          const xNorm = 1 - (dt / OSC_WINDOW_SEC);
+          const yNorm = (p.v - minV) / (maxV - minV);
+          const px = xToPix(xNorm);
+          const py = yToPix(yNorm);
+          if (!started) {
+            ctx.moveTo(px, py);
+            started = true;
+          } else {
+            ctx.lineTo(px, py);
+          }
+        }
+        if (started) ctx.stroke();
+      }
+
+      const hasAnyData = oscSeries.some((series) => series.length > 0);
+      oscEmpty.style.display = hasAnyData ? "none" : "grid";
+      oscMeta.textContent =
+        `采样率 ${oscHz} Hz | 时间窗 ${OSC_WINDOW_SEC.toFixed(1)}s | Y范围 ${minV.toFixed(2)}~${maxV.toFixed(2)} | 运行时间 ${elapsed.toFixed(1)}s`;
+    }
+
+    function renderLoop(ts) {
+      if (!lastRenderMs || (ts - lastRenderMs) >= OSC_RENDER_MS) {
+        drawOscilloscope();
+        lastRenderMs = ts;
+      }
+      window.requestAnimationFrame(renderLoop);
+    }
+
     async function callApi(fn, ...args) {
       if (!apiReady || !hasApi()) {
         setStatus("等待 pywebview 后端就绪...");
@@ -267,11 +677,8 @@
       }
       try {
         const r = await window.pywebview.api[fn](...args);
-        if (!r || !r.ok) {
-          setStatus((r && r.message) ? r.message : `${fn} failed`);
-        } else {
-          setStatus(r.message || `${fn} ok`);
-        }
+        if (!r || !r.ok) setStatus((r && r.message) ? r.message : `${fn} failed`);
+        else setStatus(r.message || `${fn} ok`);
         return r;
       } catch (e) {
         setStatus(`${fn} error: ${e}`);
@@ -283,20 +690,15 @@
       "start_receive",
       hostEl.value.trim(),
       Number(portEl.value || 8086),
-      Number(fpsEl.value || 50),
-      outputEl.value.trim()
+      Number(fpsEl.value || 120),
+      ""
     );
     document.getElementById("stopBtn").onclick = () => callApi("stop_receive");
     document.getElementById("recordStartBtn").onclick = () => callApi("start_record_video");
     document.getElementById("recordStopBtn").onclick = () => callApi("stop_record_video");
     document.getElementById("saveFrameBtn").onclick = () => callApi("save_current_frame");
+    document.getElementById("saveDataBtn").onclick = () => callApi("save_osc_data");
     document.getElementById("clearLogBtn").onclick = () => callApi("clear_logs");
-
-    function stateBadge(connected, running) {
-      if (connected) return `<span class="dot ok"></span>已连接`;
-      if (running) return `<span class="dot warn-dot"></span>等待连接`;
-      return `<span class="dot err-dot"></span>未运行`;
-    }
 
     async function refresh() {
       if (!apiReady || !hasApi()) return;
@@ -310,12 +712,27 @@
         kdsNow.textContent = `${s.keyframes || 0}/${s.diffframes || 0}/${s.skipframes || 0}`;
         sizeNow.textContent = (s.width && s.height) ? `${s.width}x${s.height}` : "-";
 
+        runningState = !!s.running;
+        streamStartTs = Number(s.start_ts || 0);
+        mapFile.textContent = s.osc_mapping_file || "code/vision/telemetry_ipc_core0.c";
+        mapFunc.textContent = (s.osc_mapping_func || "TelemetryIpc_Core0_PublishPvcDefault") + "()";
+
         setPreview(s.preview || "");
         metaText.textContent =
           `client=${s.client_addr || "-"} | frame_id=${s.frame_id || 0} | packets=${s.packets || 0} | bytes=${s.bytes || 0} | raw=${s.raw_bytes || 0}B/${s.raw_chunks || 0}chunks | badCk=${s.bad_checksums || 0} badVer=${s.bad_versions || 0} beforeKey=${s.frames_before_key || 0} | recording=${s.recording ? "on" : "off"}`;
         if (s.protocol_hint) setStatus(s.protocol_hint);
         logs.value = (s.logs || []).join("\n");
         logs.scrollTop = logs.scrollHeight;
+
+        const names = (s.osc_names || []).slice(0, 8);
+        pushOscSample(
+          (s.osc_latest || []).slice(0, 8),
+          names,
+          Number(s.osc_seq || 0),
+          Number(s.osc_hz || 0),
+          Number(s.osc_rows || 0),
+          Number(s.osc_last_time || 0)
+        );
       } catch (e) {
         setStatus(`state refresh error: ${e}`);
       }
@@ -323,6 +740,9 @@
 
     setButtonsEnabled(false);
     setPreview("");
+    rebuildLegend(oscNames);
+    window.addEventListener("resize", drawOscilloscope);
+    window.requestAnimationFrame(renderLoop);
 
     window.addEventListener("pywebviewready", () => {
       apiReady = true;

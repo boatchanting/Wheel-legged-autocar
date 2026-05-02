@@ -40,6 +40,7 @@
 #include "../code1/vision/pvc_vision.h"
 #include "../code1/vision/bumpy_vision.h"
 #include "../code1/vision/vision_ipc_core1.h"
+#include "../code1/vision/telemetry_ipc_core1.h"
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
 // 第二步 project->clean  等待下方进度条走完
@@ -80,6 +81,7 @@ int main(void)
     while(true)
     {
         wifi_protocol_poll_rx();
+        wifi_protocol_send_oscilloscope();
         // 此处编写需要循环执行的代码
                 // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
