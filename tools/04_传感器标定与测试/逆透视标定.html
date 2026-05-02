@@ -1,0 +1,459 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>车辆逆透视(IPM)标定与亚像素微调工具 (修复版)</title>
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 0; padding: 20px; background-color: #f0f2f5; }
+        .container { display: flex; flex-direction: column; gap: 15px; max-width: 1500px; margin: 0 auto; }
+        .header, .batch-panel { background: #fff; padding: 15px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .controls { display: flex; gap: 15px; align-items: center; flex-wrap: wrap; background: #eef2f5; padding: 10px; border-radius: 6px; border: 1px solid #cdd5df;}
+        .controls label { font-size: 14px; font-weight: bold; color: #333; }
+        input[type="number"] { width: 75px; padding: 5px; border: 1px solid #ccc; border-radius: 4px; font-family: monospace;}
+        button { padding: 8px 16px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; transition: 0.2s; font-weight: bold;}
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #cccccc; cursor: not-allowed; }
+        .btn-success { background-color: #28a745; }
+        .btn-success:hover { background-color: #218838; }
+        .btn-warning { background-color: #ffc107; color: #212529; }
+        .btn-warning:hover { background-color: #e0a800; }
+        
+        .points-panel { display: flex; gap: 15px; align-items: center; background: #fff3cd; padding: 10px; border-radius: 6px; border: 1px solid #ffeeba; margin-top: 10px; flex-wrap: wrap;}
+        .pt-edit-group { display: flex; align-items: center; gap: 5px; background: #fff; padding: 4px 8px; border-radius: 4px; border: 1px solid #ffdf7e;}
+        .pt-edit-group b { color: #856404; font-size: 13px; width: 65px;}
+        .pt-edit-group input { width: 60px; font-size: 13px; padding: 3px; }
+        
+        .main-workspace { display: flex; gap: 20px; height: 500px; }
+        .canvas-container { 
+            flex: 1; background: #fff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
+            display: flex; flex-direction: column; overflow: hidden; position: relative;
+        }
+        .canvas-title { padding: 10px; background: #e9ecef; font-weight: bold; border-bottom: 1px solid #ddd; display: flex; justify-content: space-between; align-items: center;}
+        
+        #dropZone {
+            position: absolute; top: 41px; left: 0; right: 0; bottom: 0;
+            display: flex; align-items: center; justify-content: center;
+            background: rgba(250, 250, 250, 0.9); border: 3px dashed #ccc; z-index: 10; transition: 0.3s;
+            font-size: 18px; color: #555;
+        }
+        #dropZone.dragover { background: rgba(220, 235, 255, 0.9); border-color: #007bff; }
+        
+        canvas { flex: 1; display: block; width: 100%; height: calc(100% - 41px); image-rendering: pixelated;}
+        #canvasSrc { cursor: crosshair; }
+        #canvasDst { cursor: default; background-color: #1a1a1a;}
+
+        .coord-display { font-family: monospace; font-size: 16px; color: #d9534f; font-weight: bold; }
+        
+        .batch-panel h3 { margin-top: 0; color: #333; }
+        .gallery { display: flex; flex-wrap: wrap; gap: 15px; margin-top: 15px; }
+        .gallery-item { border: 1px solid #ddd; border-radius: 8px; overflow: hidden; background: #1a1a1a; display: flex; flex-direction: column; width: 300px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .gallery-item canvas { width: 100%; height: auto; border-bottom: 1px solid #333; display: block; image-rendering: pixelated;}
+        .gallery-item-info { padding: 10px; display: flex; justify-content: space-between; align-items: center; background: #fff;}
+        .gallery-item-name { font-size: 13px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px;}
+        
+        #loading { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(255,255,255,0.9); z-index: 999; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 20px; font-weight: bold; color:#333;}
+        .desc { font-size: 13px; color: #666; margin-top: 8px; margin-bottom: 0; line-height: 1.5; }
+    </style>
+    <script async src="https://docs.opencv.org/4.8.0/opencv.js" onload="onOpenCvReady();"></script>
+</head>
+<body>
+
+<div id="loading"><div>正在加载 OpenCV.js，请稍候...</div></div>
+
+<div class="container">
+    <div class="header">
+        <h2>车辆逆透视(IPM)标定与亚像素微调工具 <span style="font-size: 14px; color: #28a745;">(底层数学修复版)</span></h2>
+        <div class="controls">
+            <label>标定框宽(W): <input type="number" id="physW" value="1000"> mm</label>
+            <label>标定框高(H): <input type="number" id="physH" value="1500"> mm</label>
+            <label style="color: #d9534f;">框距车头(D): <input type="number" id="physD" value="500"> mm</label>
+            
+            <span style="flex-grow: 1;"></span>
+            <button id="btnResetPts" style="background-color: #6c757d;">重置图像/点</button>
+            <button id="btnCalc" disabled>1. 计算透视参数</button>
+            <button id="btnExport" class="btn-warning" disabled>2. 导出 int16 极速查表</button>
+        </div>
+
+        <div id="pointsPanel" class="points-panel">
+            <span style="color:#856404; font-size: 14px;">请拖入图片，并在左图依次点击 4 个角点 (左上→右上→右下→左下)</span>
+        </div>
+    </div>
+
+    <div class="main-workspace">
+        <div class="canvas-container">
+            <div class="canvas-title">
+                <span>标定图选点 (<span id="imgRes">--x--</span>)</span>
+                <span id="mouseCoord" class="coord-display">物理坐标: 待计算</span>
+            </div>
+            <div id="dropZone">拖拽图片到这里 (例如 96x60)</div>
+            <canvas id="canvasSrc"></canvas>
+        </div>
+
+        <div class="canvas-container">
+            <div class="canvas-title">
+                <span>逆透视 BEV 实时验证 (1米网格)</span>
+            </div>
+            <canvas id="canvasDst"></canvas>
+        </div>
+    </div>
+
+    <div class="batch-panel">
+        <h3>批量应用转换测试</h3>
+        <input type="file" id="batchUpload" multiple accept="image/*" style="display: none;">
+        <button id="btnTriggerBatch" disabled class="btn-success" onclick="document.getElementById('batchUpload').click();">选择多张图片生成鸟瞰图</button>
+        <div id="gallery" class="gallery"></div>
+    </div>
+</div>
+
+<script>
+    let cvReady = false;
+    function onOpenCvReady() {
+        cvReady = true;
+        document.getElementById('loading').style.display = 'none';
+    }
+
+    let img = new Image();
+    let srcPoints = [];
+    let transformMatrix = null; 
+    let globalRenderMat = null, globalRenderSize = { width: 0, height: 0 }, globalRenderContext = { scale: 1, cx: 0, cy: 0, w: 0, h: 0, d: 0 }; 
+
+    let ctxSrc = document.getElementById('canvasSrc').getContext('2d');
+    let canvasSrc = document.getElementById('canvasSrc');
+    let view = { x: 0, y: 0, scale: 1 };
+    let isDragging = false, dragStart = { x: 0, y: 0 }, didPan = false;
+
+    const dropZone = document.getElementById('dropZone');
+    const btnCalc = document.getElementById('btnCalc');
+    const btnExport = document.getElementById('btnExport');
+    const btnTriggerBatch = document.getElementById('btnTriggerBatch');
+    const batchUpload = document.getElementById('batchUpload');
+    const mouseCoordDisplay = document.getElementById('mouseCoord');
+    const imgResDisplay = document.getElementById('imgRes');
+    const pointsPanel = document.getElementById('pointsPanel');
+
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault(); dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            let reader = new FileReader();
+            reader.onload = function(event) {
+                img.onload = function() {
+                    dropZone.style.display = 'none';
+                    imgResDisplay.innerText = `${img.width}x${img.height}`;
+                    let cw = canvasSrc.clientWidth, ch = canvasSrc.clientHeight;
+                    view.scale = Math.min(cw / img.width, ch / img.height) * 0.9;
+                    if(view.scale < 1) view.scale = 1;
+                    view.x = (cw - img.width * view.scale) / 2;
+                    view.y = (ch - img.height * view.scale) / 2;
+                    resetState();
+                    resizeCanvas();
+                }
+                img.src = event.target.result;
+            }
+            reader.readAsDataURL(e.dataTransfer.files[0]);
+        }
+    });
+
+    window.addEventListener('resize', resizeCanvas);
+    function resizeCanvas() { canvasSrc.width = canvasSrc.clientWidth; canvasSrc.height = canvasSrc.clientHeight; drawSrc(); }
+
+    function drawSrc() {
+        if (!img.src) return;
+        ctxSrc.imageSmoothingEnabled = false;
+        ctxSrc.clearRect(0, 0, canvasSrc.width, canvasSrc.height);
+        ctxSrc.save(); ctxSrc.translate(view.x, view.y); ctxSrc.scale(view.scale, view.scale);
+        ctxSrc.drawImage(img, 0, 0);
+        
+        let ptSize = Math.max(0.5, 3 / view.scale);
+        srcPoints.forEach((p, i) => {
+            ctxSrc.beginPath(); ctxSrc.arc(p.x, p.y, ptSize, 0, 2 * Math.PI);
+            ctxSrc.fillStyle = '#ff3b30'; ctxSrc.fill();
+            ctxSrc.lineWidth = 1 / view.scale; ctxSrc.strokeStyle = 'white'; ctxSrc.stroke();
+            ctxSrc.font = `${Math.max(8, 14 / view.scale)}px Arial`; ctxSrc.fillStyle = '#34c759';
+            ctxSrc.fillText(`P${i+1}`, p.x + 2/view.scale, p.y - 2/view.scale);
+        });
+
+        if (srcPoints.length > 1) {
+            ctxSrc.beginPath(); ctxSrc.moveTo(srcPoints[0].x, srcPoints[0].y);
+            for (let i = 1; i < srcPoints.length; i++) ctxSrc.lineTo(srcPoints[i].x, srcPoints[i].y);
+            if (srcPoints.length === 4) ctxSrc.closePath();
+            ctxSrc.lineWidth = 1 / view.scale; ctxSrc.strokeStyle = 'rgba(52, 199, 89, 0.8)'; ctxSrc.stroke();
+        }
+        ctxSrc.restore();
+    }
+
+    function screenToImg(sx, sy) { return { x: (sx - view.x) / view.scale, y: (sy - view.y) / view.scale }; }
+
+    canvasSrc.addEventListener('mousedown', (e) => { isDragging = true; didPan = false; dragStart = { x: e.offsetX - view.x, y: e.offsetY - view.y }; });
+    canvasSrc.addEventListener('mousemove', (e) => {
+        if (isDragging) { view.x = e.offsetX - dragStart.x; view.y = e.offsetY - dragStart.y; didPan = true; drawSrc(); }
+        let p = screenToImg(e.offsetX, e.offsetY);
+        if (p.x >= 0 && p.x <= img.width && p.y >= 0 && p.y <= img.height) {
+            if (transformMatrix) {
+                let r = applyTransform(p.x, p.y, transformMatrix);
+                if (r.valid) mouseCoordDisplay.innerText = `X: ${r.x.toFixed(0)}, Y: ${r.y.toFixed(0)} mm`;
+                else mouseCoordDisplay.innerText = `天空区域 (无限远)`;
+            } else { mouseCoordDisplay.innerText = `像素: (${p.x.toFixed(1)}, ${p.y.toFixed(1)})`; }
+        } else { mouseCoordDisplay.innerText = '超出原图范围'; }
+    });
+    canvasSrc.addEventListener('mouseup', (e) => {
+        isDragging = false;
+        if (!didPan && img.src && srcPoints.length < 4) {
+            let p = screenToImg(e.offsetX, e.offsetY);
+            if (p.x >= 0 && p.x <= img.width && p.y >= 0 && p.y <= img.height) {
+                srcPoints.push({ x: parseFloat(p.x.toFixed(2)), y: parseFloat(p.y.toFixed(2)) }); 
+                drawSrc();
+                renderPointEditor();
+                if (srcPoints.length === 4) btnCalc.disabled = false;
+            }
+        }
+    });
+    canvasSrc.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoom = Math.exp((e.deltaY < 0 ? 1 : -1) * 0.1);
+        view.x = e.offsetX - (e.offsetX - view.x) * zoom;
+        view.y = e.offsetY - (e.offsetY - view.y) * zoom;
+        view.scale *= zoom;
+        drawSrc();
+    });
+
+    document.getElementById('btnResetPts').addEventListener('click', () => { resetState(); resizeCanvas(); });
+
+    function renderPointEditor() {
+        if (srcPoints.length === 0) {
+            pointsPanel.innerHTML = '<span style="color:#856404; font-size: 14px;">请在左图依次点击 4 个角点 (左上→右上→右下→左下)</span>';
+            return;
+        }
+        let html = '<span style="color:#856404; font-size: 14px; font-weight:bold; margin-right: 10px;">微调坐标(亚像素):</span>';
+        const labels = ['左上', '右上', '右下', '左下'];
+        srcPoints.forEach((p, i) => {
+            html += `<div class="pt-edit-group">
+                <b>P${i+1}(${labels[i]})</b>
+                X: <input type="number" step="0.5" value="${p.x}" oninput="updatePt(${i}, 'x', this.value)">
+                Y: <input type="number" step="0.5" value="${p.y}" oninput="updatePt(${i}, 'y', this.value)">
+            </div>`;
+        });
+        pointsPanel.innerHTML = html;
+    }
+
+    window.updatePt = function(index, axis, val) {
+        let num = parseFloat(val);
+        if(isNaN(num)) return;
+        srcPoints[index][axis] = num;
+        drawSrc();
+        if (srcPoints.length === 4 && cvReady) btnCalc.click();
+        else { transformMatrix = null; btnExport.disabled = true; document.getElementById('canvasDst').getContext('2d').clearRect(0, 0, 10000, 10000); }
+    }
+
+    function resetState() {
+        srcPoints = []; transformMatrix = null; 
+        btnCalc.disabled = true; btnExport.disabled = true; btnTriggerBatch.disabled = true; batchUpload.disabled = true; 
+        document.getElementById('gallery').innerHTML = "";
+        if(globalRenderMat) { globalRenderMat.delete(); globalRenderMat = null; }
+        mouseCoordDisplay.innerText = "物理坐标: 待计算";
+        renderPointEditor();
+        document.getElementById('canvasDst').getContext('2d').clearRect(0, 0, 10000, 10000);
+    }
+
+    // ==========================================
+    // 核心修复区域：纯粹依靠计算结果Y判定合法性
+    // ==========================================
+    function applyTransform(x, y, M) {
+        let Z = M[6] * x + M[7] * y + M[8];
+        // 仅拦截除以 0 的情况
+        if (Math.abs(Z) < 1e-9) return { x: 0, y: 0, valid: false };
+        
+        let pX = (M[0] * x + M[1] * y + M[2]) / Z;
+        let pY = (M[3] * x + M[4] * y + M[5]) / Z;
+
+        // 真实性判断：车头是Y=0向前方为正。
+        // 如果算出的距离在 -5米(-5000mm) 到 80米(80000mm) 之间，说明是地面的有效坐标。
+        // 超出这个范围的通常是天空投影翻转的极限噪点。
+        let isValid = (pY > -5000 && pY < 80000);
+        
+        return { x: pX, y: pY, valid: isValid };
+    }
+
+    btnCalc.addEventListener('click', () => {
+        if (!cvReady || srcPoints.length !== 4) return;
+        let physW = parseFloat(document.getElementById('physW').value);
+        let physH = parseFloat(document.getElementById('physH').value);
+        let physD = parseFloat(document.getElementById('physD').value);
+
+        let ptTL = { x: -physW / 2, y: physD + physH };
+        let ptTR = { x:  physW / 2, y: physD + physH };
+        let ptBR = { x:  physW / 2, y: physD };
+        let ptBL = { x: -physW / 2, y: physD };
+
+        let srcMat = cv.matFromArray(4, 1, cv.CV_32FC2, [ srcPoints[0].x, srcPoints[0].y, srcPoints[1].x, srcPoints[1].y, srcPoints[2].x, srcPoints[2].y, srcPoints[3].x, srcPoints[3].y ]);
+        let dstMat = cv.matFromArray(4, 1, cv.CV_32FC2, [ ptTL.x, ptTL.y, ptTR.x, ptTR.y, ptBR.x, ptBR.y, ptBL.x, ptBL.y ]);
+        
+        let M = cv.getPerspectiveTransform(srcMat, dstMat);
+        transformMatrix = [];
+        for (let i = 0; i < 9; i++) transformMatrix.push(M.doublePtr(Math.floor(i/3), i%3)[0]);
+
+        // 动态计算渲染边界
+        let maxX = physW * 3, maxY = (physD + physH) * 2; 
+        for (let x = 0; x <= img.width; x += 5) {
+            for (let y = 0; y <= img.height; y += 5) {
+                let p = applyTransform(x, y, transformMatrix);
+                // 仅采纳合理视野内的极值用于绘制 BEV
+                if (p.valid && p.y > 0 && p.y < 30000) maxY = Math.max(maxY, p.y);
+                if (p.valid && Math.abs(p.x) < 20000) maxX = Math.max(maxX, Math.abs(p.x));
+            }
+        }
+        maxY *= 1.05; maxX *= 1.10;
+
+        let canvasDst = document.getElementById('canvasDst');
+        let CW = canvasDst.parentElement.clientWidth, CH = canvasDst.parentElement.clientHeight - 41;
+        canvasDst.width = CW; canvasDst.height = CH;
+
+        let scaleX = CW / (maxX * 2), scaleY = CH / maxY;
+        let scale = Math.min(scaleX, scaleY);
+        let cx = CW / 2, cy = CH; 
+
+        let M_render = new cv.Mat(3, 3, cv.CV_64F);
+        for (let i = 0; i < 3; i++) {
+            M_render.doublePtr(0, i)[0] = scale * transformMatrix[i] + cx * transformMatrix[6+i];
+            M_render.doublePtr(1, i)[0] = -scale * transformMatrix[3+i] + cy * transformMatrix[6+i];
+            M_render.doublePtr(2, i)[0] = transformMatrix[6+i];
+        }
+
+        if (globalRenderMat) globalRenderMat.delete();
+        globalRenderMat = M_render.clone();
+        globalRenderSize = { width: CW, height: CH };
+        globalRenderContext = { scale, cx, cy, w: physW, h: physH, d: physD };
+
+        processAndDrawImage(img, canvasDst, true);
+        srcMat.delete(); dstMat.delete(); M.delete(); M_render.delete();
+
+        btnExport.disabled = false; btnTriggerBatch.disabled = false; batchUpload.disabled = false;
+    });
+
+    function processAndDrawImage(sourceImgElement, targetCanvas, drawGuides = true) {
+        let cvImgSrc = cv.imread(sourceImgElement);
+        let cvImgDst = new cv.Mat();
+        let bgColor = new cv.Scalar(20, 20, 20, 255);
+        cv.warpPerspective(cvImgSrc, cvImgDst, globalRenderMat, new cv.Size(globalRenderSize.width, globalRenderSize.height), cv.INTER_LINEAR, cv.BORDER_CONSTANT, bgColor);
+        cv.imshow(targetCanvas, cvImgDst);
+        cvImgSrc.delete(); cvImgDst.delete();
+
+        if (drawGuides) {
+            let ctx = targetCanvas.getContext('2d');
+            let C = globalRenderContext;
+            const mapPt = (X, Y) => ({ x: C.cx + X * C.scale, y: C.cy - Y * C.scale });
+
+            ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; ctx.fillStyle = 'rgba(255, 255, 255, 0.4)'; ctx.font = '10px Arial';
+            ctx.beginPath();
+            let maxRenderY = targetCanvas.height / C.scale, maxRenderX = (targetCanvas.width / 2) / C.scale;
+
+            for (let y = 1000; y <= maxRenderY; y += 1000) {
+                let pL = mapPt(-maxRenderX, y), pR = mapPt(maxRenderX, y);
+                ctx.moveTo(pL.x, pL.y); ctx.lineTo(pR.x, pR.y);
+                ctx.fillText((y/1000) + 'm', C.cx + 5, pL.y - 5); 
+            }
+            for (let x = 0; x <= maxRenderX; x += 1000) {
+                let pt1 = mapPt(x, 0), pt2 = mapPt(x, maxRenderY);
+                ctx.moveTo(pt1.x, pt1.y); ctx.lineTo(pt2.x, pt2.y);
+                if (x > 0) { let pt1L = mapPt(-x, 0), pt2L = mapPt(-x, maxRenderY); ctx.moveTo(pt1L.x, pt1L.y); ctx.lineTo(pt2L.x, pt2L.y); }
+            }
+            ctx.stroke();
+
+            let boxPts = [ mapPt(-C.w/2, C.d + C.h), mapPt(C.w/2, C.d + C.h), mapPt(C.w/2, C.d), mapPt(-C.w/2, C.d) ];
+            ctx.beginPath(); ctx.moveTo(boxPts[0].x, boxPts[0].y);
+            for(let i=1; i<4; i++) ctx.lineTo(boxPts[i].x, boxPts[i].y);
+            ctx.closePath();
+            ctx.lineWidth = 2; ctx.strokeStyle = '#32cd32'; ctx.setLineDash([5, 5]); ctx.stroke();
+            ctx.setLineDash([]); 
+
+            let origin = mapPt(0, 0), topMid = mapPt(0, maxRenderY);
+            ctx.beginPath(); ctx.moveTo(origin.x, origin.y); ctx.lineTo(topMid.x, topMid.y);
+            ctx.lineWidth = 1; ctx.strokeStyle = 'rgba(255, 69, 58, 0.8)'; ctx.setLineDash([10, 5]); ctx.stroke();
+            ctx.setLineDash([]);
+            
+            ctx.beginPath(); ctx.arc(origin.x, origin.y, 6, 0, 2 * Math.PI);
+            ctx.fillStyle = '#ff453a'; ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+            ctx.font = '14px Arial'; ctx.fillStyle = '#ff453a'; ctx.fillText('车头(0,0)', origin.x + 10, origin.y - 10);
+        }
+    }
+
+    batchUpload.addEventListener('change', (e) => {
+        const files = e.target.files;
+        if (!files.length || !globalRenderMat) return;
+        for (let i = 0; i < files.length; i++) {
+            let file = files[i]; let reader = new FileReader();
+            reader.onload = (event) => {
+                let newImg = new Image();
+                newImg.onload = () => {
+                    let itemDiv = document.createElement('div'); itemDiv.className = 'gallery-item';
+                    let tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = globalRenderSize.width; tempCanvas.height = globalRenderSize.height;
+                    let infoDiv = document.createElement('div'); infoDiv.className = 'gallery-item-info';
+                    let nameSpan = document.createElement('span'); nameSpan.className = 'gallery-item-name';
+                    nameSpan.innerText = file.name; nameSpan.title = file.name;
+
+                    let downloadBtn = document.createElement('button');
+                    downloadBtn.innerText = "保存"; downloadBtn.style.padding = "4px 8px"; downloadBtn.style.fontSize = "12px";
+                    downloadBtn.onclick = () => {
+                        const link = document.createElement('a'); link.download = `BEV_${file.name}`;
+                        link.href = tempCanvas.toDataURL('image/jpeg', 0.9); link.click();
+                    };
+
+                    infoDiv.appendChild(nameSpan); infoDiv.appendChild(downloadBtn);
+                    itemDiv.appendChild(tempCanvas); itemDiv.appendChild(infoDiv); gallery.appendChild(itemDiv);
+                    processAndDrawImage(newImg, tempCanvas, true);
+                };
+                newImg.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+        batchUpload.value = ""; 
+    });
+
+    btnExport.addEventListener('click', () => {
+        if (!transformMatrix) return;
+        let w = img.width, h = img.height;
+        
+        const loader = document.getElementById('loading');
+        loader.children[0].innerText = `正在生成 ${w} x ${h} int16 查表代码...`;
+        loader.style.display = 'flex';
+
+        setTimeout(() => {
+            let code = `/**\n * 车辆逆透视全像素映射查找表 (IPM LUT) - int16极速版\n`;
+            let memKb = (w * h * 2 * 2) / 1024;
+            code += ` * 分辨率: ${w}x${h} | Flash 占用: ${memKb.toFixed(1)} KB\n`;
+            code += ` * - ipm_table[y][x][0] = X (mm)\n`;
+            code += ` * - ipm_table[y][x][1] = Y (mm)\n`;
+            code += ` * - 值为 32767 表示超出视野(天空)\n */\n\n`;
+            code += `#include <stdint.h>\n\n`;
+            code += `const int16_t ipm_table[${h}][${w}][2] = {\n`;
+
+            for (let y = 0; y < h; y++) {
+                let rowStrs = [];
+                for (let x = 0; x < w; x++) {
+                    let p = applyTransform(x, y, transformMatrix);
+                    if (p.valid) {
+                        let ix = Math.max(-32767, Math.min(32766, Math.round(p.x)));
+                        let iy = Math.max(-32767, Math.min(32766, Math.round(p.y)));
+                        rowStrs.push(`{${ix}, ${iy}}`);
+                    } else {
+                        rowStrs.push(`{32767, 32767}`);
+                    }
+                }
+                code += `    { ${rowStrs.join(', ')} }${y < h - 1 ? ',' : ''}\n`;
+            }
+            code += `};\n`;
+
+            const blob = new Blob([code], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href = url; a.download = `ipm_table_int16_${w}x${h}.h`;
+            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            loader.style.display = 'none';
+        }, 100);
+    });
+</script>
+</body>
+</html>
