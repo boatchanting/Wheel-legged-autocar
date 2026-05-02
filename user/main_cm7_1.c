@@ -35,6 +35,8 @@
 
 #include "zf_common_headfile.h"
 #include "../code1/wifi.h"
+#include "../code1/wifi_diff_stream.h"
+#include "../code1/wifi_protocol.h"
 #include "../code1/vision/pvc_vision.h"
 #include "../code1/vision/bumpy_vision.h"
 #include "../code1/vision/vision_ipc_core1.h"
@@ -64,6 +66,7 @@ int main(void)
 
     // 初始化摄像头和逐飞助手
     wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
+    wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 100U, 2U);                 // init realtime diff stream
     // mt9v03x_init();//初始化摄像头
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     line_vision_init();                                                         // 初始化任务区直线/单边桥视觉检测
@@ -76,6 +79,7 @@ int main(void)
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
     {
+        wifi_protocol_poll_rx();
         // 此处编写需要循环执行的代码
                 // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
@@ -118,7 +122,7 @@ int main(void)
                 render_bumpy_vision_to_image();
             }
             // 发送图像
-            seekfree_assistant_camera_send();
+            wifi_diff_stream_send_gray_frame((const uint8 *)compressed_image_copy[0]);
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
             // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
             // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节

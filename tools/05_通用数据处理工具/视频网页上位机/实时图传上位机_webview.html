@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>实时图传上位机</title>
+  <style>
+    :root {
+      --bg: #0a0f16;
+      --panel: #101a27;
+      --panel2: #131f30;
+      --line: #223349;
+      --text: #e9f1ff;
+      --muted: #9db2cf;
+      --ok: #3ecf8e;
+      --warn: #ffd166;
+      --err: #ff6b6b;
+      --btn: #2f7dff;
+      --btn2: #1e5ccc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: radial-gradient(circle at 20% -10%, #1e3457 0%, #0a0f16 38%, #070b10 100%);
+      font: 14px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;
+    }
+    .page {
+      max-width: 1280px;
+      margin: 20px auto;
+      padding: 0 16px 16px;
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 14px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, rgba(18,30,47,.98), rgba(11,19,30,.98));
+      box-shadow: 0 10px 24px rgba(0,0,0,.32);
+    }
+    .head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .head h2 { margin: 0; font-size: 18px; }
+    .content { padding: 14px 16px; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .field label { color: var(--muted); display:block; margin-bottom: 4px; font-size: 12px; }
+    .field input {
+      width: 100%;
+      padding: 9px 10px;
+      border-radius: 9px;
+      border: 1px solid var(--line);
+      background: #0c1420;
+      color: var(--text);
+    }
+    .btns {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    button {
+      border: 0;
+      border-radius: 10px;
+      background: linear-gradient(180deg, var(--btn), var(--btn2));
+      color: #fff;
+      padding: 9px 14px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+    button.warn { background: linear-gradient(180deg, #9b6a16, #6d4a11); }
+    button.stop { background: linear-gradient(180deg, #c53e3e, #9b2c2c); }
+    button.ghost { background: linear-gradient(180deg, #3b4e6d, #2e3f57); }
+    .facts {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0,1fr));
+      gap: 8px;
+    }
+    .fact {
+      border: 1px solid var(--line);
+      background: var(--panel2);
+      border-radius: 10px;
+      padding: 8px 9px;
+    }
+    .k { color: var(--muted); font-size: 12px; }
+    .v { font-size: 19px; font-weight: 700; margin-top: 3px; }
+    .status-line {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 9px 10px;
+      color: var(--muted);
+      min-height: 40px;
+      white-space: pre-wrap;
+    }
+    .preview-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 10;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #05080d;
+      overflow: hidden;
+    }
+    .preview {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      image-rendering: pixelated;
+      display: none;
+    }
+    .preview-empty {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .meta {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      white-space: pre-wrap;
+    }
+    .logs {
+      margin-top: 10px;
+      width: 100%;
+      height: 280px;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: #091220;
+      color: #d3e5ff;
+      resize: vertical;
+      padding: 10px;
+      font: 12px/1.45 Consolas, "Courier New", monospace;
+    }
+    .dot {
+      display:inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 7px;
+      background: #5a6a80;
+    }
+    .ok { background: var(--ok); }
+    .warn-dot { background: var(--warn); }
+    .err-dot { background: var(--err); }
+    @media (max-width: 1080px) {
+      .page { grid-template-columns: 1fr; }
+      .facts { grid-template-columns: repeat(2, minmax(0,1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="card">
+      <div class="head"><h2>接收控制</h2></div>
+      <div class="content">
+        <div class="grid">
+          <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
+          <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
+          <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" step="1" /></div>
+          <div class="field"><label>输出目录</label><input id="output" /></div>
+        </div>
+        <div class="btns">
+          <button id="startBtn">开始接收</button>
+          <button class="stop" id="stopBtn">停止接收</button>
+          <button class="warn" id="recordStartBtn">开始保存视频</button>
+          <button class="stop" id="recordStopBtn">停止并保存视频</button>
+          <button class="ghost" id="saveFrameBtn">保存当前帧图片</button>
+          <button class="ghost" id="clearLogBtn">清空日志</button>
+        </div>
+
+        <div class="facts">
+          <div class="fact"><div class="k">连接状态</div><div class="v" id="connState">-</div></div>
+          <div class="fact"><div class="k">当前帧率</div><div class="v" id="fpsNow">0</div></div>
+          <div class="fact"><div class="k">当前带宽</div><div class="v" id="kbpsNow">0</div></div>
+          <div class="fact"><div class="k">接收帧数</div><div class="v" id="framesNow">0</div></div>
+          <div class="fact"><div class="k">关键帧/差分/跳帧</div><div class="v" id="kdsNow">0/0/0</div></div>
+          <div class="fact"><div class="k">分辨率</div><div class="v" id="sizeNow">-</div></div>
+        </div>
+
+        <div class="status-line" id="statusText">等待 pywebview 后端注入...</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="head"><h2>实时图像与日志</h2></div>
+      <div class="content">
+        <div class="preview-wrap">
+          <img class="preview" id="preview" alt="frame preview" />
+          <div class="preview-empty" id="previewEmpty">等待视频帧...</div>
+        </div>
+        <div class="meta" id="metaText">暂无图像</div>
+        <textarea class="logs" id="logs" readonly></textarea>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const hostEl = document.getElementById("host");
+    const portEl = document.getElementById("port");
+    const fpsEl = document.getElementById("fps");
+    const outputEl = document.getElementById("output");
+
+    const statusText = document.getElementById("statusText");
+    const connState = document.getElementById("connState");
+    const fpsNow = document.getElementById("fpsNow");
+    const kbpsNow = document.getElementById("kbpsNow");
+    const framesNow = document.getElementById("framesNow");
+    const kdsNow = document.getElementById("kdsNow");
+    const sizeNow = document.getElementById("sizeNow");
+    const preview = document.getElementById("preview");
+    const previewEmpty = document.getElementById("previewEmpty");
+    const metaText = document.getElementById("metaText");
+    const logs = document.getElementById("logs");
+
+    let apiReady = false;
+    let timerId = null;
+    const REFRESH_MS = 16;
+
+    function hasApi() {
+      return !!(window.pywebview && window.pywebview.api);
+    }
+
+    function setButtonsEnabled(enabled) {
+      document.querySelectorAll("button").forEach((btn) => {
+        btn.disabled = !enabled;
+      });
+    }
+
+    function setStatus(msg) {
+      statusText.textContent = msg;
+    }
+
+    function setPreview(src) {
+      if (src) {
+        preview.src = src;
+        preview.style.display = "block";
+        previewEmpty.style.display = "none";
+      } else {
+        preview.removeAttribute("src");
+        preview.style.display = "none";
+        previewEmpty.style.display = "grid";
+      }
+    }
+
+    async function callApi(fn, ...args) {
+      if (!apiReady || !hasApi()) {
+        setStatus("等待 pywebview 后端就绪...");
+        return { ok: false, message: "pywebview api not ready" };
+      }
+      try {
+        const r = await window.pywebview.api[fn](...args);
+        if (!r || !r.ok) {
+          setStatus((r && r.message) ? r.message : `${fn} failed`);
+        } else {
+          setStatus(r.message || `${fn} ok`);
+        }
+        return r;
+      } catch (e) {
+        setStatus(`${fn} error: ${e}`);
+        return { ok: false, message: String(e) };
+      }
+    }
+
+    document.getElementById("startBtn").onclick = () => callApi(
+      "start_receive",
+      hostEl.value.trim(),
+      Number(portEl.value || 8086),
+      Number(fpsEl.value || 50),
+      outputEl.value.trim()
+    );
+    document.getElementById("stopBtn").onclick = () => callApi("stop_receive");
+    document.getElementById("recordStartBtn").onclick = () => callApi("start_record_video");
+    document.getElementById("recordStopBtn").onclick = () => callApi("stop_record_video");
+    document.getElementById("saveFrameBtn").onclick = () => callApi("save_current_frame");
+    document.getElementById("clearLogBtn").onclick = () => callApi("clear_logs");
+
+    function stateBadge(connected, running) {
+      if (connected) return `<span class="dot ok"></span>已连接`;
+      if (running) return `<span class="dot warn-dot"></span>等待连接`;
+      return `<span class="dot err-dot"></span>未运行`;
+    }
+
+    async function refresh() {
+      if (!apiReady || !hasApi()) return;
+      try {
+        const s = await window.pywebview.api.get_state();
+        outputEl.value = s.output_root || "";
+        connState.innerHTML = stateBadge(s.connected, s.running);
+        fpsNow.textContent = Number(s.fps || 0).toFixed(2);
+        kbpsNow.textContent = `${Number(s.kbps || 0).toFixed(1)} kbps`;
+        framesNow.textContent = String(s.frames || 0);
+        kdsNow.textContent = `${s.keyframes || 0}/${s.diffframes || 0}/${s.skipframes || 0}`;
+        sizeNow.textContent = (s.width && s.height) ? `${s.width}x${s.height}` : "-";
+
+        setPreview(s.preview || "");
+        metaText.textContent =
+          `client=${s.client_addr || "-"} | frame_id=${s.frame_id || 0} | packets=${s.packets || 0} | bytes=${s.bytes || 0} | raw=${s.raw_bytes || 0}B/${s.raw_chunks || 0}chunks | badCk=${s.bad_checksums || 0} badVer=${s.bad_versions || 0} beforeKey=${s.frames_before_key || 0} | recording=${s.recording ? "on" : "off"}`;
+        if (s.protocol_hint) setStatus(s.protocol_hint);
+        logs.value = (s.logs || []).join("\n");
+        logs.scrollTop = logs.scrollHeight;
+      } catch (e) {
+        setStatus(`state refresh error: ${e}`);
+      }
+    }
+
+    setButtonsEnabled(false);
+    setPreview("");
+
+    window.addEventListener("pywebviewready", () => {
+      apiReady = true;
+      setButtonsEnabled(true);
+      setStatus("后端已就绪");
+      if (timerId === null) timerId = setInterval(refresh, REFRESH_MS);
+      refresh();
+    });
+  </script>
+</body>
+</html>
