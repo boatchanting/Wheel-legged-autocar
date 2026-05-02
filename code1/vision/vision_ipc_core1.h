@@ -12,6 +12,7 @@
 
 #include "pvc_vision.h"
 #include "line_vision.h"
+#include "bumpy_vision.h"
 #include "vision/vision_ipc.h"
 
 #ifdef __cplusplus
@@ -63,6 +64,8 @@ uint8 VisionIpc_Core1_ShouldRunBridgeLine(void);
  * @return 1: 需要重置, 0: 不需要
  */
 uint8 VisionIpc_Core1_TakeLineResetRequest(void);
+uint8 VisionIpc_Core1_ShouldRunBumpy(void);
+uint8 VisionIpc_Core1_TakeBumpyResetRequest(void);
 
 /* --- 数据发布接口 --- */
 

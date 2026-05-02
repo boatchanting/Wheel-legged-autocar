@@ -40,6 +40,7 @@
 #include "plan/bumpy_road.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
+#include "vision/vision_bumpy_control.h"
 #include "vision/vision_task_area.h"
 
 // 声明外部函数
@@ -79,6 +80,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数
     {
         VisionIpc_Core0_Update_2ms();
         VisionPvcControl_Update_2ms();
+        VisionBumpyControl_Update_2ms();
         VisionBridgeTask_Update_2ms();
     }
 
@@ -991,3 +993,4 @@ void uart4_isr (void)
     }
 }
 // **************************** 串口中断函数 ****************************
+

@@ -124,6 +124,18 @@ void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
     }
 }
 
+void VisionIpc_Core0_SetBumpyEnable(uint8 enable)
+{
+    if (enable)
+    {
+        VisionIpc_Core0_SetTask(VISION_TARGET_BUMPY, VISION_MASK_BUMPY);
+    }
+    else
+    {
+        VisionIpc_Core0_SetTask(VISION_TARGET_NONE, 0U);
+    }
+}
+
 /**
  * @brief 0 核的通信定时任务（每 2 毫秒调用一次）
  * @note  如果有新命令没发，就发出去。然后去看看有没有新数据收回来。
