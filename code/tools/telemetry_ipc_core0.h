@@ -1,7 +1,7 @@
 #ifndef TELEMETRY_IPC_CORE0_H
 #define TELEMETRY_IPC_CORE0_H
 
-#include "vision/telemetry_ipc.h"
+#include "tools/telemetry_ipc.h"
 
 #ifdef __cplusplus
 extern "C" {

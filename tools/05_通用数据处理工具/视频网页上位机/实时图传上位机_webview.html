@@ -3,413 +3,405 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>实时图传上位机</title>
+  <title>实时图传上位机 Pro</title>
   <style>
+    /* 核心主题变量定义 */
     :root {
-      --line: #22374f;
-      --panel: #111d2d;
-      --panel-soft: #132338;
+      /* ====== 暗黑模式 (默认) ====== */
+      --bg-main: #050914;
+      --card-bg: rgba(17, 25, 40, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-head-bg: rgba(255, 255, 255, 0.02);
+      --line: #2a3a52;
       --text: #eef4ff;
-      --muted: #9ab1cf;
-      --blue: #3d88ff;
-      --blue-deep: #235fd2;
-      --red: #d84a4a;
-      --red-deep: #a53131;
-      --gold: #b88419;
-      --gold-deep: #845d0d;
-      --slate: #425979;
-      --slate-deep: #31445e;
-      --ok: #36d08a;
-      --warn: #f6c65b;
-      --err: #ff7676;
+      --muted: #8b9bb4;
+      --input-bg: #0b1120;
+      --panel-soft: rgba(0, 0, 0, 0.2);
+      
+      --osc-bg: #040811;
+      --osc-grid: rgba(255, 255, 255, 0.08);
+      --osc-text: #8b9bb4;
+
+      /* 通用功能色 */
+      --blue: #3b82f6; --blue-hover: #60a5fa;
+      --red: #ef4444;  --red-hover: #f87171;
+      --gold: #f59e0b; --gold-hover: #fbbf24;
+      --slate: #475569;--slate-hover: #64748b;
+      --ok: #10b981; --warn: #f59e0b; --err: #ef4444;
+      
+      --resizer-color: rgba(255,255,255, 0.05);
+      --resizer-hover: var(--blue);
     }
+
+    /* ====== 亮色模式 ====== */
+    body.light-mode {
+      --bg-main: #f1f5f9;
+      --card-bg: rgba(255, 255, 255, 0.95);
+      --card-border: rgba(0, 0, 0, 0.1);
+      --card-head-bg: rgba(0, 0, 0, 0.02);
+      --line: #cbd5e1;
+      --text: #1e293b;
+      --muted: #64748b;
+      --input-bg: #ffffff;
+      --panel-soft: rgba(0, 0, 0, 0.04);
+      
+      --osc-bg: #f8fafc;
+      --osc-grid: rgba(0, 0, 0, 0.08);
+      --osc-text: #64748b;
+      
+      --resizer-color: rgba(0,0,0, 0.05);
+    }
+
     * { box-sizing: border-box; }
+
     body {
-      margin: 0;
-      min-height: 100vh;
+      margin: 0; padding: 0;
+      width: 100vw; height: 100vh;
+      overflow: hidden;
       color: var(--text);
-      background:
-        radial-gradient(circle at top left, rgba(56, 105, 185, 0.28), transparent 28%),
-        radial-gradient(circle at 90% 0%, rgba(28, 53, 91, 0.40), transparent 22%),
-        linear-gradient(180deg, #09131f 0%, #060d16 100%);
-      font: 14px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;
+      background: var(--bg-main);
+      font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+      transition: background 0.3s, color 0.3s;
     }
-    .page {
-      max-width: 1540px;
-      margin: 10px auto;
-      padding: 0 10px 10px;
-      display: grid;
-      grid-template-columns: minmax(510px, 1fr) minmax(580px, 1fr);
-      gap: 10px;
-      align-items: start;
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+    /* ====== 全局拖拽布局外壳 ====== */
+    .app-container {
+      display: flex;
+      flex-direction: row;
+      width: 100%; height: 100%;
+      padding: 8px;
+      gap: 2px;
     }
-    .column {
-      display: grid;
-      gap: 10px;
+
+    .col {
+      display: flex;
+      flex-direction: column;
+      min-width: 250px;
+      height: 100%;
+      gap: 2px;
     }
+
+    /* 卡片槽位：用于 Drag & Drop 内容交换而不断开 Resizer */
+    .slot {
+      display: flex;
+      flex-direction: column;
+      min-height: 150px;
+    }
+
+    /* 分割线控制柄 */
+    .resizer {
+      background: var(--resizer-color);
+      z-index: 10;
+      transition: background 0.2s;
+    }
+    .resizer:hover, .resizer.active { background: var(--resizer-hover); }
+    .v-resizer { width: 8px; cursor: col-resize; margin: 0 2px; border-radius: 4px; }
+    .h-resizer { height: 8px; cursor: row-resize; margin: 2px 0; border-radius: 4px; }
+
+    /* ====== 卡片主体 ====== */
     .card {
-      border: 1px solid var(--line);
-      border-radius: 14px;
-      background: linear-gradient(180deg, rgba(17, 29, 45, 0.98), rgba(10, 18, 28, 0.98));
-      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.28);
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      background: var(--card-bg);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
       overflow: hidden;
+      transition: border-color 0.3s, background 0.3s;
     }
+
+    /* 可拖拽的头部标题栏 */
     .head {
-      padding: 10px 14px;
+      padding: 8px 14px;
       border-bottom: 1px solid var(--line);
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      flex-wrap: wrap;
+      background: var(--card-head-bg);
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: grab;
+      user-select: none;
     }
-    .head h2 {
-      margin: 0;
-      font-size: 18px;
-      letter-spacing: 0.3px;
-    }
-    .head-actions {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
+    .head:active { cursor: grabbing; }
+    .head h2 { margin: 0; font-size: 14px; font-weight: 600; pointer-events: none; }
+    
     .content {
-      padding: 10px 12px 12px;
+      padding: 12px;
+      display: flex; flex-direction: column; gap: 10px;
+      flex: 1; min-height: 0; overflow: auto;
     }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }
-    .field label {
-      display: block;
-      margin-bottom: 3px;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .field input {
-      width: 100%;
-      padding: 8px 10px;
-      border-radius: 9px;
-      border: 1px solid var(--line);
-      background: #0b1420;
-      color: var(--text);
-      outline: none;
-    }
-    .field input[readonly] {
-      color: #c8daf7;
-      background: #0a1220;
-    }
-    .btns {
-      margin-top: 10px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-    }
-    button {
-      border: 0;
-      border-radius: 10px;
-      background: linear-gradient(180deg, var(--blue), var(--blue-deep));
-      color: #fff;
-      padding: 9px 12px;
-      cursor: pointer;
-      font-weight: 700;
-      letter-spacing: 0.1px;
-      white-space: nowrap;
-    }
-    button:disabled {
-      opacity: 0.45;
-      cursor: not-allowed;
-    }
-    button.warn { background: linear-gradient(180deg, var(--gold), var(--gold-deep)); }
-    button.stop { background: linear-gradient(180deg, var(--red), var(--red-deep)); }
-    button.ghost { background: linear-gradient(180deg, var(--slate), var(--slate-deep)); }
-    button.compact {
-      padding: 7px 10px;
-      font-size: 12px;
-      border-radius: 9px;
-    }
-    .facts {
-      margin-top: 10px;
-      display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 8px;
-    }
-    .fact {
-      border: 1px solid var(--line);
-      background: var(--panel-soft);
-      border-radius: 10px;
-      padding: 8px;
-      min-height: 68px;
-    }
-    .k { color: var(--muted); font-size: 12px; }
-    .v { margin-top: 4px; font-size: 16px; font-weight: 700; }
-    .status-line, .meta-line {
-      margin-top: 8px;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      padding: 8px;
-      color: var(--muted);
-      white-space: pre-wrap;
-      font-size: 12px;
-    }
+
+    /* 杂项样式 */
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+    .field input { width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--input-bg); color: var(--text); outline: none; transition: border-color 0.2s; }
+    .field input:focus { border-color: var(--blue); }
+    .field input[readonly] { color: var(--muted); cursor: default; }
+
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button { border: none; border-radius: 6px; background: var(--blue); color: #fff; padding: 8px 12px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+    button:hover:not(:disabled) { background: var(--blue-hover); transform: translateY(-1px); }
+    button:active:not(:disabled) { transform: translateY(0); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(100%); }
+    button.warn { background: var(--gold); } button.warn:hover:not(:disabled) { background: var(--gold-hover); }
+    button.stop { background: var(--red); } button.stop:hover:not(:disabled) { background: var(--red-hover); }
+    button.ghost { background: var(--slate); } button.ghost:hover:not(:disabled) { background: var(--slate-hover); }
+    button.compact { padding: 4px 8px; font-size: 12px; font-weight: normal; }
+
+    /* 状态面板 */
+    .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .fact { border: 1px solid var(--line); background: var(--panel-soft); border-radius: 6px; padding: 6px 8px; }
+    .k { color: var(--muted); font-size: 11px; margin-bottom: 2px;}
+    .v { font-size: 14px; font-weight: 600; font-family: Consolas, monospace;}
+    .status-line { border-radius: 6px; padding: 8px 10px; background: var(--panel-soft); color: var(--muted); font-size: 12px; word-break: break-all; }
+
+    /* ====== 视频和图表区 ====== */
     .preview-wrap {
-      position: relative;
-      width: 100%;
-      aspect-ratio: 16 / 9;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: #03070c;
-      overflow: hidden;
+      flex: 1; position: relative; width: 100%; min-height: 0;
+      border: 1px solid var(--line); border-radius: 8px;
+      background: #000; overflow: hidden;
     }
     .preview {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      image-rendering: pixelated;
+      width: 100%; height: 100%;
+      /* 对于94x60，contain加pixelated能保证完美的硬边像素放大缩放 */
+      object-fit: contain; 
+      image-rendering: pixelated; 
       display: none;
     }
-    .preview-empty, .osc-empty {
-      position: absolute;
-      inset: 0;
-      display: grid;
-      place-items: center;
-      color: var(--muted);
-      font-size: 13px;
-      pointer-events: none;
-    }
-    .logs {
-      width: 100%;
-      height: 250px;
-      border-radius: 9px;
-      border: 1px solid var(--line);
-      background: #08111c;
-      color: #d3e5ff;
-      resize: none;
-      padding: 8px;
-      font: 12px/1.45 Consolas, "Courier New", monospace;
-    }
-    .osc-wrap {
-      display: grid;
-      gap: 8px;
-    }
-    .osc-canvas-wrap {
-      position: relative;
-      border: 1px solid var(--line);
-      border-radius: 10px;
-      background: linear-gradient(180deg, rgba(16, 25, 38, 0.95), rgba(6, 10, 18, 0.98));
-      overflow: hidden;
-    }
-    .osc-canvas {
-      width: 100%;
-      height: 290px;
-      display: block;
-    }
-    .osc-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      flex-wrap: wrap;
-      padding: 1px 1px 0;
-    }
-    .osc-toolbar-left {
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .osc-toolbar-right {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      flex-wrap: wrap;
-    }
-    .osc-select {
-      min-width: 230px;
-      border: 1px solid var(--line);
-      border-radius: 8px;
-      background: #0b1522;
-      color: var(--text);
-      padding: 5px 8px;
-      font-size: 12px;
-      outline: none;
-    }
-    .toggle-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 8px;
-    }
-    .toggle-item {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      background: #0b1522;
-      padding: 7px 9px;
-    }
-    .toggle-left {
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      min-width: 0;
-      flex: 1 1 auto;
-    }
-    .legend-dot {
-      width: 9px;
-      height: 9px;
-      border-radius: 50%;
-      flex: 0 0 auto;
-    }
-    .toggle-name {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      color: var(--muted);
-      font-size: 12px;
-    }
-    .toggle-value {
-      min-width: 86px;
-      text-align: right;
-      color: var(--text);
-      font: 12px/1.2 Consolas, "Courier New", monospace;
-    }
-    .toggle-check {
-      accent-color: var(--blue);
-      width: 15px;
-      height: 15px;
-      cursor: pointer;
-      margin: 0;
-    }
-    .hint-box {
-      border: 1px dashed #315172;
-      border-radius: 9px;
-      background: rgba(12, 22, 35, 0.7);
-      padding: 8px 9px;
-      font-size: 12px;
-      color: #c8daf7;
-      line-height: 1.5;
-    }
-    .hint-path {
-      color: #87b7ff;
-      word-break: break-all;
-      font-family: Consolas, "Courier New", monospace;
-    }
-    .dot {
-      display: inline-block;
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      margin-right: 7px;
-      background: #5a6a80;
-    }
-    .ok { background: var(--ok); }
-    .warn-dot { background: var(--warn); }
-    .err-dot { background: var(--err); }
-    @media (max-width: 1320px) {
-      .page { grid-template-columns: 1fr; }
-      .osc-canvas { height: 270px; }
-      .logs { height: 240px; }
-    }
-    @media (max-width: 760px) {
-      .grid, .facts, .toggle-grid {
-        grid-template-columns: 1fr;
-      }
-      .osc-canvas { height: 245px; }
+    .empty-text { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; }
+
+    .logs { width: 100%; height: 100%; border-radius: 6px; border: 1px solid var(--line); background: var(--input-bg); color: #a5b4cb; resize: none; padding: 8px; font: 12px/1.5 Consolas, monospace; outline: none; }
+    body.light-mode .logs { color: #334155; }
+
+    .osc-wrap { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    .osc-canvas-wrap { flex: 1; position: relative; border: 1px solid var(--line); border-radius: 8px; background: var(--osc-bg); overflow: hidden; min-height: 120px; transition: background 0.3s; }
+    .osc-canvas { width: 100%; height: 100%; display: block; }
+    
+    .osc-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;}
+    .osc-select { border: 1px solid var(--line); border-radius: 6px; background: var(--input-bg); color: var(--text); padding: 4px 8px; font-size: 12px; outline: none; }
+
+    .toggle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+    .toggle-item { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-soft); padding: 4px 8px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .toggle-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; margin-left:6px; flex:1;}
+    .toggle-value { color: var(--text); font: 12px/1 Consolas, monospace; }
+    .toggle-check { accent-color: var(--blue); cursor: pointer; margin: 0; }
+
+    /* 主题切换悬浮按钮 */
+    .theme-btn {
+      position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 100; border-radius: 20px; padding: 4px 12px; font-size: 16px;
+      background: var(--card-bg); border: 1px solid var(--line); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      color: var(--text); backdrop-filter: blur(8px);
     }
   </style>
 </head>
 <body>
-  <div class="page">
-    <div class="column">
-      <div class="card">
-        <div class="head"><h2>接收控制</h2></div>
-        <div class="content">
-          <div class="grid">
-            <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
-            <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
-            <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" step="1" /></div>
-            <div class="field"><label>输出目录(自动定位)</label><input id="output" readonly /></div>
-          </div>
 
-          <div class="btns">
-            <button id="startBtn">开始接收</button>
-            <button class="stop" id="stopBtn">停止接收</button>
-            <button class="warn" id="recordStartBtn">开始保存视频</button>
-            <button class="stop" id="recordStopBtn">停止并保存视频</button>
-            <button class="ghost" id="saveFrameBtn">保存当前帧图片</button>
-            <button class="ghost" id="clearLogBtn">清空日志</button>
-          </div>
+  <!-- 主题切换开关 -->
+  <button id="themeToggle" class="theme-btn" title="切换夜间/白天模式">🌙 / ☀️</button>
 
-          <div class="facts">
-            <div class="fact"><div class="k">连接状态</div><div class="v" id="connState">-</div></div>
-            <div class="fact"><div class="k">当前帧率</div><div class="v" id="fpsNow">0</div></div>
-            <div class="fact"><div class="k">当前带宽</div><div class="v" id="kbpsNow">0</div></div>
-            <div class="fact"><div class="k">接收帧数</div><div class="v" id="framesNow">0</div></div>
-            <div class="fact"><div class="k">关键/差分/跳帧</div><div class="v" id="kdsNow">0/0/0</div></div>
-            <div class="fact"><div class="k">分辨率</div><div class="v" id="sizeNow">-</div></div>
-          </div>
-
-          <div class="status-line" id="statusText">等待 pywebview 后端注入...</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="head">
-          <h2>示波器</h2>
-          <div class="head-actions">
-            <button class="ghost compact" id="saveDataBtn">保存示波器数据</button>
-          </div>
-        </div>
-        <div class="content">
-          <div class="osc-wrap">
-            <div class="osc-toolbar">
-              <div class="osc-toolbar-left" id="oscMeta">采样率 0 Hz | 时间窗 10.0s</div>
-              <div class="osc-toolbar-left" id="oscRows">已缓存 0 行</div>
-              <div class="osc-toolbar-right">
-                <button class="ghost compact" id="oscTimeBtn">时间运行</button>
-                <select class="osc-select" id="oscRateSource"></select>
+  <div class="app-container">
+    
+    <!-- 左侧容器 -->
+    <div class="col" id="colLeft" style="width: 360px;">
+      <!-- 槽位 1 -->
+      <div class="slot" style="flex: 1.5;">
+        <div class="card" id="cardCtrl">
+          <div class="head" draggable="true"><h2>⚙️ 接收控制</h2></div>
+          <div class="content">
+            <div class="grid">
+              <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
+              <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
+              <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" /></div>
+              <div class="field"><label>输出目录</label><input id="output" readonly /></div>
+            </div>
+            <div class="btns">
+              <button id="startBtn">开始接收</button>
+              <button class="stop" id="stopBtn">停止接收</button>
+              <button class="warn" id="recordStartBtn">保存视频</button>
+              <button class="stop" id="recordStopBtn">停止保存</button>
+              <button class="ghost" id="saveFrameBtn">保存单帧</button>
+              <button class="ghost" id="clearLogBtn">清空日志</button>
+            </div>
+            <div class="facts">
+              <div class="fact"><div class="k">连接状态</div><div class="v" id="connState">-</div></div>
+              <div class="fact"><div class="k">实时帧率</div><div class="v" id="fpsNow">0</div></div>
+              <div class="fact"><div class="k">当前带宽</div><div class="v" id="kbpsNow">0</div></div>
+              <div class="fact"><div class="k">分辨率</div><div class="v" id="sizeNow">-</div></div>
+              <div class="fact" style="grid-column: span 2;">
+                <div class="k">接收帧数 | 关键/差分/跳帧</div>
+                <div class="v"><span id="framesNow">0</span> | <span id="kdsNow">0/0/0</span></div>
               </div>
             </div>
-            <div class="osc-canvas-wrap">
-              <canvas class="osc-canvas" id="oscCanvas"></canvas>
-              <div class="osc-empty" id="oscEmpty">等待示波器数据...</div>
+            <div class="status-line" id="statusText">等待后端注入...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 横向分割线 (调整上下高度) -->
+      <div class="resizer h-resizer"></div>
+
+      <!-- 槽位 2 -->
+      <div class="slot" style="flex: 1;">
+        <div class="card" id="cardLog">
+          <div class="head" draggable="true"><h2>📝 运行日志</h2></div>
+          <div class="content" style="padding: 10px;">
+            <textarea class="logs" id="logs" readonly></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 纵向分割线 (调整左右宽度) -->
+    <div class="resizer v-resizer"></div>
+
+    <!-- 右侧容器 -->
+    <div class="col" id="colRight" style="flex: 1;">
+      <!-- 槽位 3 -->
+      <div class="slot" style="flex: 1.2;">
+        <div class="card" id="cardVideo">
+          <div class="head" draggable="true"><h2>🖥️ 实时图像 (94x60 像素缩放)</h2></div>
+          <div class="content">
+            <div class="preview-wrap">
+              <img class="preview" id="preview" />
+              <div class="empty-text" id="previewEmpty">等待视频帧...</div>
             </div>
-            <div class="toggle-grid" id="oscLegend"></div>
-            <div class="hint-box">
-              通道修改位置：在 <span class="hint-path" id="mapFile">code/vision/telemetry_ipc_core0.c</span> 的
-              <span class="hint-path" id="mapFunc">TelemetryIpc_Core0_PublishPvcDefault()</span> 中，
-              修改 <span class="hint-path">g_telemetry_shadow.data[0..7]</span> 对应变量即可。上位机会自动读取并刷新通道名。
-              暂停时间后支持鼠标左键拖动查看历史，滚轮缩放时间轴；“频率变量来源”可选择某通道值做频率显示。
+            <div class="status-line" id="metaText" style="margin-top: 6px;">暂无图像</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 横向分割线 (调整上下高度) -->
+      <div class="resizer h-resizer"></div>
+
+      <!-- 槽位 4 -->
+      <div class="slot" style="flex: 1;">
+        <div class="card" id="cardOsc">
+          <div class="head" draggable="true">
+            <h2>📈 示波器</h2>
+            <button class="ghost compact" id="saveDataBtn" style="pointer-events: auto;">保存数据</button>
+          </div>
+          <div class="content">
+            <div class="osc-wrap">
+              <div class="osc-toolbar">
+                <div style="color:var(--muted); font-size:12px;" id="oscMeta">采样率 0 Hz | 时间窗 10.0s</div>
+                <div style="display:flex; gap:8px;">
+                  <button class="ghost compact" id="oscTimeBtn">时间运行</button>
+                  <select class="osc-select" id="oscRateSource"></select>
+                </div>
+              </div>
+              <div class="osc-canvas-wrap">
+                <canvas class="osc-canvas" id="oscCanvas"></canvas>
+                <div class="empty-text" id="oscEmpty">等待示波器数据...</div>
+              </div>
+              <div class="toggle-grid" id="oscLegend"></div>
             </div>
           </div>
         </div>
       </div>
     </div>
 
-    <div class="column">
-      <div class="card">
-        <div class="head"><h2>实时图像</h2></div>
-        <div class="content">
-          <div class="preview-wrap">
-            <img class="preview" id="preview" alt="frame preview" />
-            <div class="preview-empty" id="previewEmpty">等待视频帧...</div>
-          </div>
-          <div class="meta-line" id="metaText">暂无图像</div>
-        </div>
-      </div>
-
-      <div class="card">
-        <div class="head"><h2>日志</h2></div>
-        <div class="content">
-          <textarea class="logs" id="logs" readonly></textarea>
-        </div>
-      </div>
-    </div>
   </div>
 
   <script>
+    // ==========================================
+    // 1. UI 交互功能扩展：主题切换 & 拖拽调节
+    // ==========================================
+    
+    // -- 主题切换 --
+    let isLightMode = false;
+    const themeBtn = document.getElementById("themeToggle");
+    themeBtn.onclick = () => {
+      isLightMode = !isLightMode;
+      if (isLightMode) document.body.classList.add("light-mode");
+      else document.body.classList.remove("light-mode");
+    };
+
+    function getThemeColor(varName) {
+      return getComputedStyle(document.body).getPropertyValue(varName).trim();
+    }
+
+    // -- 卡片位置互换 (Drag & Drop) --
+    let draggedCard = null;
+    document.querySelectorAll('.card').forEach(card => {
+      const head = card.querySelector('.head');
+      
+      head.addEventListener('dragstart', (e) => {
+        draggedCard = card;
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => card.style.opacity = '0.4', 0); // 视觉反馈
+      });
+      
+      head.addEventListener('dragend', () => {
+        draggedCard.style.opacity = '1';
+        draggedCard = null;
+      });
+
+      card.addEventListener('dragover', (e) => {
+        e.preventDefault(); // 允许放置
+      });
+
+      card.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (draggedCard && draggedCard !== card) {
+          // 巧妙逻辑：只交换内部的 card，而不交换 slot 和 resizer，这样分割线永远不会乱！
+          const slotA = draggedCard.parentNode;
+          const slotB = card.parentNode;
+          slotA.appendChild(card);
+          slotB.appendChild(draggedCard);
+          window.dispatchEvent(new Event('resize')); // 触发图表重绘
+        }
+      });
+    });
+
+    // -- 面板大小调节 (Resizer) --
+    document.querySelectorAll('.resizer').forEach(resizer => {
+      let isDragging = false;
+      let startPos, startSize;
+      const isV = resizer.classList.contains('v-resizer');
+      // 分割线控制的元素是它前面的那个 slot / col
+      const prevEl = resizer.previousElementSibling;
+
+      resizer.addEventListener('mousedown', e => {
+        isDragging = true;
+        resizer.classList.add('active');
+        startPos = isV ? e.clientX : e.clientY;
+        startSize = isV ? prevEl.getBoundingClientRect().width : prevEl.getBoundingClientRect().height;
+        document.body.style.cursor = isV ? 'col-resize' : 'row-resize';
+        document.body.style.userSelect = 'none'; // 防遮挡
+      });
+
+      window.addEventListener('mousemove', e => {
+        if (!isDragging) return;
+        const currentPos = isV ? e.clientX : e.clientY;
+        const newSize = startSize + (currentPos - startPos);
+        if (isV) {
+          prevEl.style.width = `${newSize}px`;
+        } else {
+          prevEl.style.height = `${newSize}px`;
+        }
+        prevEl.style.flex = 'none'; // 解除按比例分配，锁定绝对像素大小
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          resizer.classList.remove('active');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          window.dispatchEvent(new Event('resize')); // 手松开时触发Canvas重绘
+        }
+      });
+    });
+
+    // ==========================================
+    // 2. 原有核心业务逻辑 (兼容原代码)
+    // ==========================================
+    
     const hostEl = document.getElementById("host");
     const portEl = document.getElementById("port");
     const fpsEl = document.getElementById("fps");
@@ -425,15 +417,13 @@
     const previewEmpty = document.getElementById("previewEmpty");
     const metaText = document.getElementById("metaText");
     const logs = document.getElementById("logs");
+    
     const oscCanvas = document.getElementById("oscCanvas");
     const oscEmpty = document.getElementById("oscEmpty");
     const oscLegend = document.getElementById("oscLegend");
     const oscMeta = document.getElementById("oscMeta");
-    const oscRows = document.getElementById("oscRows");
     const oscTimeBtn = document.getElementById("oscTimeBtn");
     const oscRateSource = document.getElementById("oscRateSource");
-    const mapFile = document.getElementById("mapFile");
-    const mapFunc = document.getElementById("mapFunc");
 
     const oscColors = ["#58a6ff", "#ff9f43", "#5eead4", "#ff6b81", "#ffd166", "#7bd88f", "#c792ea", "#f78fb3"];
     const oscVisible = Array.from({ length: 8 }, () => true);
@@ -442,201 +432,68 @@
     const oscNames = Array.from({ length: 8 }, (_, i) => `CH${i}`);
 
     const OSC_WINDOW_SEC = 10.0;
-    const OSC_WINDOW_MIN_SEC = 1.0;
-    const OSC_WINDOW_MAX_SEC = 120.0;
-    const OSC_Y_TICKS = 6;
-    const OSC_X_TICKS = 10;
     const OSC_MAX_POINTS = 10000;
-    const OSC_RENDER_MS = 33;
-    const REFRESH_MS = 66;
-    const OSC_PAD_LEFT = 54;
-    const OSC_PAD_RIGHT = 10;
-    const OSC_PAD_TOP = 10;
-    const OSC_PAD_BOTTOM = 24;
+    let apiReady = false; let timerId = null; let oscSeq = -1; let oscHz = 0;
+    let streamStartTs = 0; let oscTimeRunning = false; let oscViewWindowSec = OSC_WINDOW_SEC;
+    let oscViewNowSec = 0; let oscDragActive = false; let oscDragStartX = 0; let oscDragStartViewNow = 0;
+    let lastConnected = false;
 
-    let apiReady = false;
-    let timerId = null;
-    let oscSeq = -1;
-    let oscHz = 0;
-    let oscRowCount = 0;
-    let streamStartTs = 0;
-    let runningState = false;
-    let lastRenderMs = 0;
-    let oscRenderHz = 0;
-    let oscRenderCount = 0;
-    let oscRenderStatTs = 0;
-    let oscTimeRunning = true;
-    let oscViewWindowSec = OSC_WINDOW_SEC;
-    let oscViewNowSec = 0;
-    let oscDragActive = false;
-    let oscDragStartX = 0;
-    let oscDragStartViewNow = 0;
-
-    function hasApi() {
-      return !!(window.pywebview && window.pywebview.api);
-    }
-
-    function clamp(v, min, max) {
-      return Math.max(min, Math.min(max, v));
-    }
-
-    function getPlotWidthPx() {
-      const w = oscCanvas.clientWidth || 640;
-      return Math.max(10, w - OSC_PAD_LEFT - OSC_PAD_RIGHT);
-    }
-
-    function getViewNowSec(nowSec) {
-      if (!oscViewNowSec) oscViewNowSec = nowSec;
-      if (oscTimeRunning) {
-        oscViewNowSec = nowSec;
-      }
-      return oscViewNowSec;
-    }
+    function hasApi() { return !!(window.pywebview && window.pywebview.api); }
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
 
     function updateOscTimeBtn() {
       oscTimeBtn.textContent = oscTimeRunning ? "时间运行" : "时间暂停";
       oscTimeBtn.classList.toggle("warn", !oscTimeRunning);
-      if (oscDragActive) {
-        oscCanvas.style.cursor = "grabbing";
-      } else {
-        oscCanvas.style.cursor = oscTimeRunning ? "default" : "grab";
-      }
+      oscCanvas.style.cursor = oscDragActive ? "grabbing" : (oscTimeRunning ? "default" : "grab");
     }
 
     function rebuildRateSourceOptions(names) {
       const prev = oscRateSource.value || "auto";
-      const options = ['<option value="auto">频率变量来源: 自动(链路Hz)</option>'];
-      for (let i = 0; i < 8; i++) {
-        const name = escapeHtml(names[i] || `CH${i}`);
-        options.push(`<option value="ch${i}">频率变量来源: CH${i} (${name})</option>`);
-      }
-      oscRateSource.innerHTML = options.join("");
-      if ([...oscRateSource.options].some((opt) => opt.value === prev)) {
-        oscRateSource.value = prev;
-      }
+      let html = '<option value="auto">自动(链路Hz)</option>';
+      names.forEach((name, i) => { html += `<option value="ch${i}">CH${i} (${name || `CH${i}`})</option>`; });
+      oscRateSource.innerHTML = html;
+      oscRateSource.value = [...oscRateSource.options].some(o => o.value === prev) ? prev : "auto";
     }
 
-    function getConfiguredRateHz() {
-      const mode = oscRateSource.value || "auto";
-      if (mode === "auto") return Number(oscHz || 0);
-      const m = /^ch(\d+)$/.exec(mode);
-      if (!m) return Number(oscHz || 0);
-      const idx = Number(m[1]);
-      if (idx < 0 || idx > 7) return Number(oscHz || 0);
-      return Number(oscLatestValues[idx] || 0);
-    }
-
-    function getConfiguredRateLabel() {
-      const mode = oscRateSource.value || "auto";
-      if (mode === "auto") return "自动";
-      const m = /^ch(\d+)$/.exec(mode);
-      if (!m) return "自动";
-      return `CH${Number(m[1])}`;
-    }
-
-    function setButtonsEnabled(enabled) {
-      document.querySelectorAll("button").forEach((btn) => { btn.disabled = !enabled; });
-    }
-
-    function setStatus(msg) {
-      statusText.textContent = msg;
-    }
-
+    function setStatus(msg) { statusText.textContent = msg; }
     function setPreview(src) {
-      if (src) {
-        preview.src = src;
-        preview.style.display = "block";
-        previewEmpty.style.display = "none";
-      } else {
-        preview.removeAttribute("src");
-        preview.style.display = "none";
-        previewEmpty.style.display = "grid";
-      }
-    }
-
-    function stateBadge(connected, running) {
-      if (connected) return '<span class="dot ok"></span>已连接';
-      if (running) return '<span class="dot warn-dot"></span>等待连接';
-      return '<span class="dot err-dot"></span>未运行';
-    }
-
-    function escapeHtml(text) {
-      return String(text)
-        .replaceAll("&", "&amp;")
-        .replaceAll("<", "&lt;")
-        .replaceAll(">", "&gt;")
-        .replaceAll('"', "&quot;");
+      if (src) { preview.src = src; preview.style.display = "block"; previewEmpty.style.display = "none"; }
+      else { preview.removeAttribute("src"); preview.style.display = "none"; previewEmpty.style.display = "grid"; }
     }
 
     function rebuildLegend(names) {
       oscLegend.innerHTML = "";
       rebuildRateSourceOptions(names);
       names.forEach((name, idx) => {
-        const item = document.createElement("label");
-        item.className = "toggle-item";
-        item.innerHTML = `
-          <div class="toggle-left">
-            <input class="toggle-check" type="checkbox" id="oscCheck${idx}" ${oscVisible[idx] ? "checked" : ""} />
-            <span class="legend-dot" style="background:${oscColors[idx]}"></span>
-            <span class="toggle-name" title="${escapeHtml(name)}">${idx}. ${escapeHtml(name)}</span>
-          </div>
+        const d = document.createElement('div');
+        d.className = 'toggle-item';
+        d.innerHTML = `
+          <input class="toggle-check" type="checkbox" id="oscCheck${idx}" ${oscVisible[idx]?'checked':''} />
+          <span class="legend-dot" style="background:${oscColors[idx]}"></span>
+          <span class="toggle-name" title="${name}">${idx}. ${name}</span>
           <span class="toggle-value" id="legendValue${idx}">0.000</span>
         `;
-        oscLegend.appendChild(item);
-        const check = item.querySelector(`#oscCheck${idx}`);
-        check.addEventListener("change", (e) => {
-          oscVisible[idx] = !!e.target.checked;
-        });
+        oscLegend.appendChild(d);
+        d.querySelector(`#oscCheck${idx}`).onchange = e => { oscVisible[idx] = !!e.target.checked; };
       });
     }
 
     function updateLegend(values) {
-      values.forEach((value, idx) => {
-        const el = document.getElementById(`legendValue${idx}`);
-        if (el) el.textContent = Number(value || 0).toFixed(3);
+      values.forEach((v, i) => {
+        const el = document.getElementById(`legendValue${i}`);
+        if(el) el.textContent = Number(v||0).toFixed(3);
       });
     }
 
-    function pruneSeries(nowSec) {
-      const keepSec = Math.max(oscViewWindowSec * 2.0, 20.0);
-      const minT = nowSec - keepSec;
-      for (let i = 0; i < oscSeries.length; i++) {
-        const series = oscSeries[i];
-        let firstKeep = 0;
-        while (firstKeep < series.length && series[firstKeep].t < minT) {
-          firstKeep += 1;
-        }
-        if (firstKeep > 0) {
-          series.splice(0, firstKeep);
-        }
-        if (series.length > OSC_MAX_POINTS) {
-          series.splice(0, series.length - OSC_MAX_POINTS);
-        }
-      }
-    }
-
     function pushOscSample(values, names, seq, hz, rows, sampleTs) {
-      if (Array.isArray(names) && names.length) {
-        let changed = false;
-        for (let i = 0; i < 8; i++) {
-          const n = names[i] || `CH${i}`;
-          if (oscNames[i] !== n) {
-            oscNames[i] = n;
-            changed = true;
-          }
-        }
-        if (changed) rebuildLegend(oscNames);
+      let changed = false;
+      for (let i = 0; i < 8; i++) {
+        if (oscNames[i] !== (names[i] || `CH${i}`)) { oscNames[i] = names[i] || `CH${i}`; changed = true; }
       }
-
+      if (changed) rebuildLegend(oscNames);
       oscHz = Number(hz || 0);
-      oscRowCount = Number(rows || 0);
-      oscRows.textContent = `已缓存 ${oscRowCount} 行`;
 
-      if (seq === oscSeq) {
-        updateLegend(values || []);
-        return;
-      }
-
+      if (seq === oscSeq) { updateLegend(values || []); return; }
       oscSeq = seq;
       const t = Number(sampleTs || 0) > 0 ? Number(sampleTs) : (Date.now() / 1000.0);
       for (let i = 0; i < 8; i++) {
@@ -644,269 +501,156 @@
         oscLatestValues[i] = v;
         if (Number.isFinite(v)) {
           oscSeries[i].push({ t, v });
+          if(oscSeries[i].length > OSC_MAX_POINTS) oscSeries[i].shift();
         }
       }
       updateLegend(values || []);
-      pruneSeries(t);
-      oscEmpty.style.display = "none";
     }
 
     function drawOscilloscope() {
+      // 动态读取 CSS 变量颜色以支持主题切换
+      const bgColor = getThemeColor('--osc-bg') || '#040811';
+      const gridColor = getThemeColor('--osc-grid') || 'rgba(255, 255, 255, 0.08)';
+      const textColor = getThemeColor('--osc-text') || '#8b9bb4';
+
       const dpr = window.devicePixelRatio || 1;
       const width = oscCanvas.clientWidth || 640;
-      const height = oscCanvas.clientHeight || 290;
-      oscCanvas.width = Math.floor(width * dpr);
-      oscCanvas.height = Math.floor(height * dpr);
+      const height = oscCanvas.clientHeight || 150;
+      oscCanvas.width = width * dpr; oscCanvas.height = height * dpr;
       const ctx = oscCanvas.getContext("2d");
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-      const nowSec = Date.now() / 1000.0;
-      pruneSeries(nowSec);
-
-      ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = "#06101a";
+      ctx.fillStyle = bgColor;
       ctx.fillRect(0, 0, width, height);
 
-      const plotW = Math.max(10, width - OSC_PAD_LEFT - OSC_PAD_RIGHT);
-      const plotH = Math.max(10, height - OSC_PAD_TOP - OSC_PAD_BOTTOM);
-      const plotX = OSC_PAD_LEFT;
-      const plotY = OSC_PAD_TOP;
-      const xToPix = (xNorm) => plotX + xNorm * plotW;
-      const yToPix = (yNorm) => plotY + (1 - yNorm) * plotH;
+      const PAD = {L: 45, R: 10, T: 10, B: 20};
+      const plotW = Math.max(10, width - PAD.L - PAD.R);
+      const plotH = Math.max(10, height - PAD.T - PAD.B);
+      
+      const nowSec = Date.now() / 1000.0;
+      if (oscTimeRunning) oscViewNowSec = nowSec;
+      const viewStart = oscViewNowSec - oscViewWindowSec;
 
-      const viewNow = getViewNowSec(nowSec);
-      const viewStart = viewNow - oscViewWindowSec;
-
-      const activeValues = [];
+      let minV = -1, maxV = 1, active = [];
       for (let i = 0; i < 8; i++) {
         if (!oscVisible[i]) continue;
         for (const p of oscSeries[i]) {
-          if (p.t >= viewStart && p.t <= viewNow && Number.isFinite(p.v)) activeValues.push(p.v);
+          if (p.t >= viewStart && p.t <= oscViewNowSec) active.push(p.v);
         }
       }
-
-      let minV = -1;
-      let maxV = 1;
-      if (activeValues.length > 0) {
-        minV = Math.min(...activeValues);
-        maxV = Math.max(...activeValues);
-        if (Math.abs(maxV - minV) < 1e-6) {
-          maxV += 1;
-          minV -= 1;
-        }
-        const margin = (maxV - minV) * 0.12;
-        maxV += margin;
-        minV -= margin;
+      if (active.length > 0) {
+        minV = Math.min(...active); maxV = Math.max(...active);
+        if (Math.abs(maxV - minV) < 1e-6) { maxV += 1; minV -= 1; }
+        const m = (maxV - minV) * 0.1; maxV += m; minV -= m;
       }
 
-      ctx.strokeStyle = "rgba(120, 154, 192, 0.18)";
+      ctx.strokeStyle = gridColor;
+      ctx.fillStyle = textColor;
+      ctx.font = '10px Consolas';
       ctx.lineWidth = 1;
-      ctx.font = '11px Consolas, "Courier New", monospace';
-      ctx.fillStyle = "#9fb9da";
-
-      for (let i = 0; i <= OSC_Y_TICKS; i++) {
-        const yNorm = i / OSC_Y_TICKS;
-        const y = yToPix(yNorm);
-        ctx.beginPath();
-        ctx.moveTo(plotX, y);
-        ctx.lineTo(plotX + plotW, y);
-        ctx.stroke();
-
-        const v = maxV - (maxV - minV) * yNorm;
-        ctx.fillText(v.toFixed(2), 4, y + 4);
+      
+      // Y轴网格
+      for (let i = 0; i <= 5; i++) {
+        const y = PAD.T + (1 - i/5)*plotH;
+        ctx.beginPath(); ctx.moveTo(PAD.L, y); ctx.lineTo(PAD.L+plotW, y); ctx.stroke();
+        ctx.fillText((maxV - (maxV-minV)*(1-i/5)).toFixed(2), 2, y + 4);
+      }
+      // X轴网格
+      for (let i = 0; i <= 8; i++) {
+        const x = PAD.L + (i/8)*plotW;
+        ctx.beginPath(); ctx.moveTo(x, PAD.T); ctx.lineTo(x, PAD.T+plotH); ctx.stroke();
+        ctx.fillText(`${(viewStart + (i/8)*oscViewWindowSec - streamStartTs).toFixed(1)}s`, x - 10, PAD.T + plotH + 14);
       }
 
-      const baseTs = streamStartTs > 0 ? streamStartTs : viewStart;
-      for (let i = 0; i <= OSC_X_TICKS; i++) {
-        const xNorm = i / OSC_X_TICKS;
-        const x = xToPix(xNorm);
-        ctx.beginPath();
-        ctx.moveTo(x, plotY);
-        ctx.lineTo(x, plotY + plotH);
-        ctx.stroke();
-
-        const labelAbs = viewStart + xNorm * oscViewWindowSec;
-        const labelTime = Math.max(0, labelAbs - baseTs);
-        ctx.fillText(`${labelTime.toFixed(1)}s`, x - 14, plotY + plotH + 16);
-      }
-
+      // 绘制曲线
       for (let i = 0; i < 8; i++) {
-        if (!oscVisible[i]) continue;
-        const series = oscSeries[i];
-        if (!series.length) continue;
-        ctx.strokeStyle = oscColors[i];
-        ctx.lineWidth = 1.8;
-        ctx.beginPath();
+        if (!oscVisible[i] || !oscSeries[i].length) continue;
+        ctx.strokeStyle = oscColors[i]; ctx.lineWidth = 2; ctx.beginPath();
         let started = false;
-        for (const p of series) {
-          if (p.t < viewStart || p.t > viewNow) continue;
-          const xNorm = (p.t - viewStart) / oscViewWindowSec;
-          const yNorm = (p.v - minV) / (maxV - minV);
-          const px = xToPix(xNorm);
-          const py = yToPix(yNorm);
-          if (!started) {
-            ctx.moveTo(px, py);
-            started = true;
-          } else {
-            ctx.lineTo(px, py);
-          }
+        for (const p of oscSeries[i]) {
+          if (p.t < viewStart || p.t > oscViewNowSec) continue;
+          const x = PAD.L + ((p.t - viewStart) / oscViewWindowSec) * plotW;
+          const y = PAD.T + (1 - (p.v - minV) / (maxV - minV)) * plotH;
+          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
         }
         if (started) ctx.stroke();
       }
 
-      const hasAnyData = oscSeries.some((series) => series.length > 0);
-      oscEmpty.style.display = hasAnyData ? "none" : "grid";
-      const elapsed = Math.max(0, viewNow - baseTs);
-      const rateHz = getConfiguredRateHz();
-      oscMeta.textContent =
-        `链路 ${oscHz.toFixed(1)} Hz | 刷新 ${oscRenderHz.toFixed(1)} Hz | 频率变量(${getConfiguredRateLabel()}) ${rateHz.toFixed(2)} Hz | 时间窗 ${oscViewWindowSec.toFixed(1)}s | 运行时间 ${elapsed.toFixed(1)}s`;
+      oscEmpty.style.display = active.length ? "none" : "grid";
+      oscMeta.textContent = `链路 ${oscHz.toFixed(1)}Hz | 时间窗 ${oscViewWindowSec.toFixed(1)}s`;
     }
 
-    function renderLoop(ts) {
-      oscRenderCount += 1;
-      if (!oscRenderStatTs) oscRenderStatTs = ts;
-      if (ts - oscRenderStatTs >= 1000) {
-        oscRenderHz = (oscRenderCount * 1000.0) / (ts - oscRenderStatTs);
-        oscRenderCount = 0;
-        oscRenderStatTs = ts;
-      }
-      if (!lastRenderMs || (ts - lastRenderMs) >= OSC_RENDER_MS) {
-        drawOscilloscope();
-        lastRenderMs = ts;
-      }
-      window.requestAnimationFrame(renderLoop);
-    }
+    function renderLoop() { drawOscilloscope(); window.requestAnimationFrame(renderLoop); }
 
     async function callApi(fn, ...args) {
-      if (!apiReady || !hasApi()) {
-        setStatus("等待 pywebview 后端就绪...");
-        return { ok: false, message: "pywebview api not ready" };
-      }
+      if (!apiReady || !hasApi()) return { ok: false };
       try {
         const r = await window.pywebview.api[fn](...args);
-        if (!r || !r.ok) setStatus((r && r.message) ? r.message : `${fn} failed`);
-        else setStatus(r.message || `${fn} ok`);
-        return r;
-      } catch (e) {
-        setStatus(`${fn} error: ${e}`);
-        return { ok: false, message: String(e) };
-      }
+        setStatus(r.message || `${fn} done`);
+      } catch (e) { setStatus(`Error: ${e}`); }
     }
 
-    document.getElementById("startBtn").onclick = () => callApi(
-      "start_receive",
-      hostEl.value.trim(),
-      Number(portEl.value || 8086),
-      Number(fpsEl.value || 120),
-      ""
-    );
+    // 事件绑定
+    document.getElementById("startBtn").onclick = () => callApi("start_receive", hostEl.value, Number(portEl.value), Number(fpsEl.value), "");
     document.getElementById("stopBtn").onclick = () => callApi("stop_receive");
     document.getElementById("recordStartBtn").onclick = () => callApi("start_record_video");
     document.getElementById("recordStopBtn").onclick = () => callApi("stop_record_video");
     document.getElementById("saveFrameBtn").onclick = () => callApi("save_current_frame");
     document.getElementById("saveDataBtn").onclick = () => callApi("save_osc_data");
     document.getElementById("clearLogBtn").onclick = () => callApi("clear_logs");
-    oscTimeBtn.onclick = () => {
-      const nowSec = Date.now() / 1000.0;
-      if (oscTimeRunning) {
-        oscViewNowSec = nowSec;
-        oscTimeRunning = false;
-      } else {
-        oscTimeRunning = true;
-        oscViewNowSec = nowSec;
-      }
-      updateOscTimeBtn();
+    
+    oscTimeBtn.onclick = () => { oscTimeRunning = !oscTimeRunning; updateOscTimeBtn(); };
+
+    // 图表鼠标事件交互 (拖拽 / 滚轮缩放)
+    oscCanvas.onmousedown = e => { if(oscTimeRunning) return; oscDragActive = true; oscDragStartX = e.clientX; oscDragStartViewNow = oscViewNowSec; updateOscTimeBtn(); };
+    window.onmousemove = e => { if(!oscDragActive) return; oscViewNowSec = oscDragStartViewNow - (e.clientX - oscDragStartX)*(oscViewWindowSec/Math.max(10, oscCanvas.clientWidth-55)); };
+    window.onmouseup = () => { if(oscDragActive){ oscDragActive=false; updateOscTimeBtn(); } };
+    oscCanvas.onwheel = e => {
+      if(oscTimeRunning) return; e.preventDefault();
+      const rect = oscCanvas.getBoundingClientRect();
+      const ratio = clamp((e.clientX - rect.left - 45) / Math.max(10, rect.width - 55), 0, 1);
+      const anchorTime = oscViewNowSec - oscViewWindowSec + ratio * oscViewWindowSec;
+      oscViewWindowSec = clamp(oscViewWindowSec * (e.deltaY < 0 ? 0.8 : 1.2), 1.0, 120.0);
+      oscViewNowSec = anchorTime + (1 - ratio) * oscViewWindowSec;
     };
 
     async function refresh() {
       if (!apiReady || !hasApi()) return;
-      try {
-        const s = await window.pywebview.api.get_state();
-        outputEl.value = s.output_root || "";
-        connState.innerHTML = stateBadge(s.connected, s.running);
-        fpsNow.textContent = Number(s.fps || 0).toFixed(2);
-        kbpsNow.textContent = `${Number(s.kbps || 0).toFixed(1)} kbps`;
-        framesNow.textContent = String(s.frames || 0);
-        kdsNow.textContent = `${s.keyframes || 0}/${s.diffframes || 0}/${s.skipframes || 0}`;
-        sizeNow.textContent = (s.width && s.height) ? `${s.width}x${s.height}` : "-";
-
-        runningState = !!s.running;
-        streamStartTs = Number(s.start_ts || 0);
-        mapFile.textContent = s.osc_mapping_file || "code/vision/telemetry_ipc_core0.c";
-        mapFunc.textContent = (s.osc_mapping_func || "TelemetryIpc_Core0_PublishPvcDefault") + "()";
-
-        setPreview(s.preview || "");
-        metaText.textContent =
-          `client=${s.client_addr || "-"} | frame_id=${s.frame_id || 0} | packets=${s.packets || 0} | bytes=${s.bytes || 0} | raw=${s.raw_bytes || 0}B/${s.raw_chunks || 0}chunks | badCk=${s.bad_checksums || 0} badVer=${s.bad_versions || 0} beforeKey=${s.frames_before_key || 0} | recording=${s.recording ? "on" : "off"}`;
-        if (s.protocol_hint) setStatus(s.protocol_hint);
-        logs.value = (s.logs || []).join("\n");
-        logs.scrollTop = logs.scrollHeight;
-
-        const names = (s.osc_names || []).slice(0, 8);
-        pushOscSample(
-          (s.osc_latest || []).slice(0, 8),
-          names,
-          Number(s.osc_seq || 0),
-          Number(s.osc_hz || 0),
-          Number(s.osc_rows || 0),
-          Number(s.osc_last_time || 0)
-        );
-      } catch (e) {
-        setStatus(`state refresh error: ${e}`);
+      const s = await window.pywebview.api.get_state();
+      outputEl.value = s.output_root || "";
+      connState.innerHTML = s.connected ? '🟢 已连接' : (s.running ? '🟡 监听中' : '🔴 未运行');
+      if (s.connected && !lastConnected) {
+        oscTimeRunning = true;
+        oscViewNowSec = Date.now() / 1000.0;
+        updateOscTimeBtn();
+      } else if (!s.connected && lastConnected) {
+        oscTimeRunning = false;
+        updateOscTimeBtn();
       }
+      lastConnected = !!s.connected;
+      fpsNow.textContent = Number(s.fps || 0).toFixed(2);
+      kbpsNow.textContent = `${Number(s.kbps || 0).toFixed(1)} kbps`;
+      framesNow.textContent = String(s.frames || 0);
+      kdsNow.textContent = `${s.keyframes||0}/${s.diffframes||0}/${s.skipframes||0}`;
+      sizeNow.textContent = (s.width && s.height) ? `${s.width}x${s.height}` : "-";
+      streamStartTs = Number(s.start_ts || 0);
+      
+      setPreview(s.preview || "");
+      metaText.textContent = `raw=${s.raw_bytes||0}B | badCk=${s.bad_checksums||0} badVer=${s.bad_versions||0} | record=${s.recording?"on":"off"}`;
+      logs.value = (s.logs || []).join("\n");
+      logs.scrollTop = logs.scrollHeight;
+
+      pushOscSample((s.osc_latest||[]), (s.osc_names||[]), Number(s.osc_seq||0), Number(s.osc_hz||0), 0, Number(s.osc_last_time||0));
     }
 
-    oscCanvas.addEventListener("mousedown", (e) => {
-      if (oscTimeRunning || e.button !== 0) return;
-      oscDragActive = true;
-      oscDragStartX = e.clientX;
-      oscDragStartViewNow = oscViewNowSec || (Date.now() / 1000.0);
-      updateOscTimeBtn();
-      e.preventDefault();
-    });
-
-    window.addEventListener("mousemove", (e) => {
-      if (!oscDragActive || oscTimeRunning) return;
-      const dx = e.clientX - oscDragStartX;
-      const secPerPx = oscViewWindowSec / getPlotWidthPx();
-      oscViewNowSec = oscDragStartViewNow - dx * secPerPx;
-      e.preventDefault();
-    });
-
-    window.addEventListener("mouseup", () => {
-      if (!oscDragActive) return;
-      oscDragActive = false;
-      updateOscTimeBtn();
-    });
-
-    oscCanvas.addEventListener("wheel", (e) => {
-      if (oscTimeRunning) return;
-      const rect = oscCanvas.getBoundingClientRect();
-      const x = clamp(e.clientX - rect.left, OSC_PAD_LEFT, rect.width - OSC_PAD_RIGHT);
-      const ratio = clamp((x - OSC_PAD_LEFT) / getPlotWidthPx(), 0, 1);
-      const viewNow = oscViewNowSec || (Date.now() / 1000.0);
-      const viewStart = viewNow - oscViewWindowSec;
-      const anchorTime = viewStart + ratio * oscViewWindowSec;
-      const zoom = e.deltaY < 0 ? 0.85 : 1.15;
-      const newWin = clamp(oscViewWindowSec * zoom, OSC_WINDOW_MIN_SEC, OSC_WINDOW_MAX_SEC);
-      oscViewWindowSec = newWin;
-      oscViewNowSec = anchorTime + (1 - ratio) * newWin;
-      e.preventDefault();
-    }, { passive: false });
-
-    setButtonsEnabled(false);
-    setPreview("");
     rebuildLegend(oscNames);
     updateOscTimeBtn();
-    window.addEventListener("resize", drawOscilloscope);
     window.requestAnimationFrame(renderLoop);
 
     window.addEventListener("pywebviewready", () => {
-      apiReady = true;
-      setButtonsEnabled(true);
-      setStatus("后端已就绪");
-      if (timerId === null) timerId = setInterval(refresh, REFRESH_MS);
-      refresh();
+      apiReady = true; setStatus("后端已就绪");
+      document.querySelectorAll("button").forEach(b => b.disabled = false);
+      if (!timerId) timerId = setInterval(refresh, 66);
     });
   </script>
 </body>

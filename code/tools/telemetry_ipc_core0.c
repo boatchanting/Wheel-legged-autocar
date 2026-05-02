@@ -1,4 +1,4 @@
-#include "vision/telemetry_ipc_core0.h"
+#include "tools/telemetry_ipc_core0.h"
 #include "vision/vision_ipc_core0.h"
 #include "small_driver_uart_control.h"
 #include "calculate/pid-new.h"

@@ -37,7 +37,7 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
 #include "vision/vision_ipc_core0.h"
-#include "vision/telemetry_ipc_core0.h"
+#include "tools/telemetry_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_task_area.h"
