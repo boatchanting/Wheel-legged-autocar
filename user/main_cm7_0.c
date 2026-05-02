@@ -39,7 +39,7 @@
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
-#include "vision/vision_task_area.h"
+#include "vision/vision_bridge_control.h"
 
 
 // **************************** uart≈‰÷√«¯”Ú **************************** 
