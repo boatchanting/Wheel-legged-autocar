@@ -174,7 +174,7 @@
         <div class="grid">
           <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
           <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
-          <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="50" step="1" /></div>
+          <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" step="1" /></div>
           <div class="field"><label>输出目录</label><input id="output" /></div>
         </div>
         <div class="btns">
@@ -232,6 +232,7 @@
 
     let apiReady = false;
     let timerId = null;
+    const REFRESH_MS = 16;
 
     function hasApi() {
       return !!(window.pywebview && window.pywebview.api);
@@ -327,7 +328,7 @@
       apiReady = true;
       setButtonsEnabled(true);
       setStatus("后端已就绪");
-      if (timerId === null) timerId = setInterval(refresh, 250);
+      if (timerId === null) timerId = setInterval(refresh, REFRESH_MS);
       refresh();
     });
   </script>

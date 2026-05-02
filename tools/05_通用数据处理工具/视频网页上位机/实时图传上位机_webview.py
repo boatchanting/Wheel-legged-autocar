@@ -1,6 +1,7 @@
 import base64
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -28,12 +29,14 @@ def le_u32(buf: bytes, off: int) -> int:
 
 class DiffHostApi:
     def __init__(self) -> None:
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+
         self.running = False
         self.connected = False
         self.host = "0.0.0.0"
         self.port = 8086
-        self.fps_hint = 50.0
+        self.fps_hint = 120.0
+
         self.output_root = Path(__file__).resolve().parent / "output_realtime"
         self.frames_dir = self.output_root / "frames"
         self.videos_dir = self.output_root / "videos"
@@ -65,6 +68,10 @@ class DiffHostApi:
         self.frames_before_key = 0
         self.start_ts = 0.0
         self.last_error = ""
+        self.last_frame_ts = 0.0
+        self.frame_times = deque()
+        self.net_times = deque()
+        self.net_bytes_window = 0
 
         self.preview_serial = -1
         self.preview_data_uri = ""
@@ -74,6 +81,7 @@ class DiffHostApi:
         self.record_writer = None
         self.record_path = ""
         self.recorded_frames = 0
+        self.record_codec = ""
 
         self.logs: list[str] = []
 
@@ -107,11 +115,51 @@ class DiffHostApi:
         self.preview_serial = -1
         self.preview_data_uri = ""
         self.last_error = ""
+        self.last_frame_ts = 0.0
+        self.frame_times.clear()
+        self.net_times.clear()
+        self.net_bytes_window = 0
 
     def _stop_record_writer(self) -> None:
         if self.record_writer is not None:
-            self.record_writer.release()
+            try:
+                self.record_writer.release()
+            except Exception:
+                pass
             self.record_writer = None
+
+    def _open_video_writer_auto(self):
+        if self.frame_w <= 0 or self.frame_h <= 0:
+            return None, "", ""
+
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        base_name = f"realtime_record_{ts}"
+        fallback_root = Path.cwd() / "output_realtime_ascii" / "videos"
+        fallback_root.mkdir(parents=True, exist_ok=True)
+        base_candidates = [
+            self.videos_dir / base_name,
+            fallback_root / base_name,
+        ]
+        # Prioritize broadly playable codecs first, then quality-oriented fallback.
+        codec_candidates = [
+            ("MJPG", ".avi"),
+            ("mp4v", ".mp4"),
+            ("XVID", ".avi"),
+        ]
+        for base in base_candidates:
+            for codec, ext in codec_candidates:
+                out_path = str(base.with_suffix(ext))
+                fourcc = cv2.VideoWriter_fourcc(*codec)
+                writer = cv2.VideoWriter(out_path, fourcc, self.fps_hint, (self.frame_w, self.frame_h), True)
+                if writer.isOpened():
+                    try:
+                        # Best-effort quality hint for backends that support it.
+                        writer.set(cv2.VIDEOWRITER_PROP_QUALITY, 95)
+                    except Exception:
+                        pass
+                    return writer, out_path, codec
+                writer.release()
+        return None, "", ""
 
     def _open_record_writer_if_needed(self) -> None:
         if not self.recording:
@@ -121,31 +169,56 @@ class DiffHostApi:
         if self.frame_w <= 0 or self.frame_h <= 0:
             return
 
-        if not self.record_path:
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            self.record_path = str(self.videos_dir / f"diff_stream_{ts}.mp4")
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(self.record_path, fourcc, self.fps_hint, (self.frame_w, self.frame_h), True)
-        if not writer.isOpened():
-            self.last_error = f"cannot open video writer: {self.record_path}"
+        writer, out_path, codec = self._open_video_writer_auto()
+        if writer is None:
+            self.last_error = "cannot open any video writer codec"
             self._log(self.last_error)
             self.recording = False
             self.recording_pending = False
             return
-        self.record_writer = writer
-        self.recording_pending = False
-        self._log(f"start recording: {self.record_path}")
 
-    def _write_frame_if_recording(self) -> None:
-        if not self.recording:
+        self.record_writer = writer
+        self.record_path = out_path
+        self.record_codec = codec
+        self.recording_pending = False
+        self._log(f"start recording: {self.record_path} (codec={self.record_codec})")
+
+    def _mark_frame_tick(self) -> None:
+        now = time.time()
+        self.last_frame_ts = now
+        self.frame_times.append(now)
+        while self.frame_times and (now - self.frame_times[0] > 1.0):
+            self.frame_times.popleft()
+
+    def _mark_net_tick(self, chunk_size: int) -> None:
+        now = time.time()
+        self.net_times.append((now, chunk_size))
+        self.net_bytes_window += chunk_size
+        while self.net_times and (now - self.net_times[0][0] > 1.0):
+            _, old_size = self.net_times.popleft()
+            self.net_bytes_window -= old_size
+
+    def _write_record_frame(self, frame_gray: np.ndarray) -> None:
+        with self.lock:
+            if not self.recording:
+                return
+            self._open_record_writer_if_needed()
+            writer = self.record_writer
+        if writer is None:
             return
-        self._open_record_writer_if_needed()
-        if self.record_writer is None or self.frame_gray is None:
-            return
-        bgr = cv2.cvtColor(self.frame_gray, cv2.COLOR_GRAY2BGR)
-        self.record_writer.write(bgr)
-        self.recorded_frames += 1
+
+        try:
+            bgr = cv2.cvtColor(frame_gray, cv2.COLOR_GRAY2BGR)
+            writer.write(bgr)
+            with self.lock:
+                self.recorded_frames += 1
+        except Exception as exc:
+            with self.lock:
+                self.last_error = f"record write failed: {exc}"
+                self.recording = False
+                self.recording_pending = False
+                self._stop_record_writer()
+            self._log(self.last_error)
 
     def _handle_packet(self, pkt: bytes) -> None:
         h = pkt[:HEADER_SIZE]
@@ -160,6 +233,7 @@ class DiffHostApi:
         payload_len = le_u32(h, 20)
         payload = pkt[HEADER_SIZE: HEADER_SIZE + payload_len]
 
+        frame_for_record = None
         with self.lock:
             self.total_packets += 1
             self.total_bytes += len(pkt)
@@ -177,6 +251,7 @@ class DiffHostApi:
                 self.keyframes += 1
                 self.output_frames += 1
                 self.frame_serial += 1
+                self._mark_frame_tick()
             elif frame_type == FRAME_DIFF:
                 if self.frame_gray is None:
                     self.frames_before_key += 1
@@ -191,6 +266,7 @@ class DiffHostApi:
                 self.diffframes += 1
                 self.output_frames += 1
                 self.frame_serial += 1
+                self._mark_frame_tick()
             elif frame_type == FRAME_SKIP:
                 if self.frame_gray is None:
                     self.frames_before_key += 1
@@ -198,10 +274,15 @@ class DiffHostApi:
                 self.skipframes += 1
                 self.output_frames += 1
                 self.frame_serial += 1
+                self._mark_frame_tick()
             else:
                 return
 
-            self._write_frame_if_recording()
+            if self.recording and self.frame_gray is not None:
+                frame_for_record = self.frame_gray.copy()
+
+        if frame_for_record is not None:
+            self._write_record_frame(frame_for_record)
 
     def _parse_packets(self, buf: bytearray) -> list[bytes]:
         packets = []
@@ -212,24 +293,30 @@ class DiffHostApi:
                 i += 1
                 continue
             if buf[i + 2] not in (VERSION, 0):
-                self.bad_versions += 1
+                with self.lock:
+                    self.bad_versions += 1
                 i += 1
                 continue
+
             payload_len = le_u32(buf, i + 20)
             if payload_len > 300000:
                 i += 1
                 continue
+
             total_len = HEADER_SIZE + payload_len + 1
             if i + total_len > n:
                 break
+
             pkt = bytes(buf[i:i + total_len])
             checksum = sum(pkt[:-1]) & 0xFF
             if checksum == pkt[-1]:
                 packets.append(pkt)
                 i += total_len
             else:
-                self.bad_checksums += 1
+                with self.lock:
+                    self.bad_checksums += 1
                 i += 1
+
         if i > 0:
             del buf[:i]
         return packets
@@ -293,6 +380,7 @@ class DiffHostApi:
                     with self.lock:
                         self.raw_bytes += len(chunk)
                         self.raw_chunks += 1
+                        self._mark_net_tick(len(chunk))
                     buf.extend(chunk)
                     for pkt in self._parse_packets(buf):
                         self._handle_packet(pkt)
@@ -318,14 +406,13 @@ class DiffHostApi:
         self._close_sockets()
         self._log("receiver stopped")
 
-    # ===== JS API =====
     def start_receive(self, host: str, port: int, fps: float, output_dir: str):
         with self.lock:
             if self.running:
                 return {"ok": False, "message": "already running"}
             self.host = (host or "0.0.0.0").strip()
             self.port = int(port)
-            self.fps_hint = float(fps)
+            self.fps_hint = float(fps) if float(fps) > 0 else 120.0
             if output_dir and output_dir.strip():
                 self.output_root = Path(output_dir).expanduser().resolve()
                 self.frames_dir = self.output_root / "frames"
@@ -337,6 +424,7 @@ class DiffHostApi:
             self.recording = False
             self.recording_pending = False
             self.record_path = ""
+            self.record_codec = ""
             self.recorded_frames = 0
             self._stop_record_writer()
             self.stop_event.clear()
@@ -351,6 +439,10 @@ class DiffHostApi:
             if not self.running:
                 return {"ok": False, "message": "not running"}
             self.stop_event.set()
+            if self.recording:
+                self.recording = False
+                self.recording_pending = False
+                self._stop_record_writer()
         self._close_sockets()
         if self.server_thread is not None:
             self.server_thread.join(timeout=2.0)
@@ -363,9 +455,13 @@ class DiffHostApi:
             self.recording = True
             self.recording_pending = True
             self.recorded_frames = 0
-            ts = time.strftime("%Y%m%d_%H%M%S")
-            self.record_path = str(self.videos_dir / f"realtime_record_{ts}.mp4")
+            self.record_path = ""
+            self.record_codec = ""
             self._open_record_writer_if_needed()
+            if not self.recording:
+                return {"ok": False, "message": self.last_error or "recording start failed"}
+            if self.record_writer is None:
+                return {"ok": True, "message": "record armed, waiting first frame", "path": ""}
         return {"ok": True, "message": "recording started", "path": self.record_path}
 
     def stop_record_video(self):
@@ -376,8 +472,12 @@ class DiffHostApi:
             self.recording_pending = False
             path = self.record_path
             frames = self.recorded_frames
+            codec = self.record_codec
             self._stop_record_writer()
-        self._log(f"record saved: {path} ({frames} frames)")
+        if not path or frames <= 0:
+            self._log("record stopped: no frames written")
+            return {"ok": False, "message": "no frames written, please receive frames first", "path": path, "frames": frames}
+        self._log(f"record saved: {path} ({frames} frames, codec={codec})")
         return {"ok": True, "message": "recording stopped", "path": path, "frames": frames}
 
     def save_current_frame(self):
@@ -385,10 +485,19 @@ class DiffHostApi:
             if self.frame_gray is None:
                 return {"ok": False, "message": "no frame available"}
             ts = time.strftime("%Y%m%d_%H%M%S")
-            out = self.frames_dir / f"frame_{ts}_{self.frame_id}.png"
-            ok = cv2.imwrite(str(out), self.frame_gray)
-            if not ok:
-                return {"ok": False, "message": "save frame failed"}
+            ms = int((time.time() % 1.0) * 1000.0)
+            out = self.frames_dir / f"frame_{ts}_{ms:03d}_{self.frame_id}.png"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            frame_copy = self.frame_gray.copy()
+        ok, enc = cv2.imencode(".png", frame_copy)
+        if not ok:
+            return {"ok": False, "message": "save frame failed: encode error"}
+        try:
+            enc.tofile(str(out))
+        except Exception as exc:
+            return {"ok": False, "message": f"save frame failed: {exc}"}
+        if (not out.exists()) or out.stat().st_size <= 0:
+            return {"ok": False, "message": "save frame failed: file not written"}
         self._log(f"frame saved: {out}")
         return {"ok": True, "message": "frame saved", "path": str(out)}
 
@@ -398,25 +507,29 @@ class DiffHostApi:
         return {"ok": True}
 
     def get_state(self):
+        preview_frame = None
+        preview_target_serial = -1
+
         with self.lock:
             now = time.time()
-            elapsed = max(now - self.start_ts, 1e-6) if self.start_ts > 0 else 0.0
-            fps = (self.output_frames / elapsed) if elapsed > 0 else 0.0
-            kbps = ((self.total_bytes * 8.0) / elapsed / 1000.0) if elapsed > 0 else 0.0
+            _elapsed = max(now - self.start_ts, 1e-6) if self.start_ts > 0 else 0.0
+            while self.frame_times and (now - self.frame_times[0] > 1.0):
+                self.frame_times.popleft()
+            while self.net_times and (now - self.net_times[0][0] > 1.0):
+                _, old_size = self.net_times.popleft()
+                self.net_bytes_window -= old_size
+
+            if (self.last_frame_ts <= 0.0) or (now - self.last_frame_ts > 1.2):
+                fps = 0.0
+            else:
+                fps = float(len(self.frame_times))
+            kbps = (max(self.net_bytes_window, 0) * 8.0) / 1000.0
 
             if self.frame_gray is not None and self.preview_serial != self.frame_serial:
-                preview = cv2.resize(
-                    self.frame_gray,
-                    (self.frame_w * 4, self.frame_h * 4),
-                    interpolation=cv2.INTER_NEAREST,
-                )
-                ok, enc = cv2.imencode(".jpg", preview, [cv2.IMWRITE_JPEG_QUALITY, 80])
-                if ok:
-                    b64 = base64.b64encode(enc.tobytes()).decode("ascii")
-                    self.preview_data_uri = f"data:image/jpeg;base64,{b64}"
-                    self.preview_serial = self.frame_serial
+                preview_frame = self.frame_gray.copy()
+                preview_target_serial = self.frame_serial
 
-            return {
+            state = {
                 "running": self.running,
                 "connected": self.connected,
                 "client_addr": self.client_addr,
@@ -453,6 +566,19 @@ class DiffHostApi:
                 "preview": self.preview_data_uri,
                 "logs": self.logs[-40:],
             }
+
+        if preview_frame is not None:
+            ok, enc = cv2.imencode(".png", preview_frame)
+            if ok:
+                b64 = base64.b64encode(enc.tobytes()).decode("ascii")
+                preview_uri = f"data:image/png;base64,{b64}"
+                with self.lock:
+                    if self.preview_serial < preview_target_serial:
+                        self.preview_data_uri = preview_uri
+                        self.preview_serial = preview_target_serial
+                    state["preview"] = self.preview_data_uri
+
+        return state
 
 
 def main() -> None:
