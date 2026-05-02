@@ -37,6 +37,7 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
 #include "vision/vision_ipc_core0.h"
+#include "tools/telemetry_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
@@ -270,6 +271,7 @@ gnss_init(TAU1201);//gnss导航初始化
 Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 BumpyRoad_Init();//颠簸路段状态机初始化
 VisionIpc_Core0_Init();
+TelemetryIpc_Core0_Init();
 VisionPvcControl_Init(); // Bring-up: 0核通过2ms中断调度1核开启PVC入口检测，并用回传数据做入口引导
 VisionBumpyControl_Init(); // 颠簸路段：0核读取1核视觉并生成方向控制量
 VisionBridgeTask_Init(); // 科目三任务区：PVC进入 + 直线/单边桥视觉控制状态机
@@ -344,6 +346,8 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             // }
             #if WIFI_USE
                 wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
+            #endif
+                TelemetryIpc_Core0_PublishPvcDefault();
 
                 //逐飞助手示波器发送代码        
                 //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
@@ -421,7 +425,6 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
                 // 用于上位机向小车发送pid信息
                 //wifi_update_pid_params(); 
-                #endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;

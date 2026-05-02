@@ -1,5 +1,10 @@
 @echo off
 chcp 65001 >nul
 cd /d "%~dp0"
-python "实时图传上位机_webview.py"
+for %%F in (*_webview.py) do (
+    python "%%F"
+    goto :done
+)
+echo [ERROR] not found *_webview.py
+:done
 pause
