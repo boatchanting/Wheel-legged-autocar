@@ -1,13 +1,13 @@
 /*
  * =================================================================================
- * 文件: vision_task_area.c
+ * 文件: vision_bridge_control.c
  * 作用: 0 核 (Core 0) 视觉桥梁任务（单边桥）的状态机与控制执行。
  * 说明: 这个文件就像是车子过桥时的“大脑”。它不断读取 1 核发来的直线和黑块位置，
  *       然后决定车子现在该干嘛（比如：接近入口 -> 桥头对齐 -> 上桥盲跑 -> 
  *       找线微调 -> 发现出口 -> 下桥缓冲 -> 恢复正常循迹）。
  * =================================================================================
  */
-#include "vision/vision_task_area.h"
+#include "vision/vision_bridge_control.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "plan/bridge.h"

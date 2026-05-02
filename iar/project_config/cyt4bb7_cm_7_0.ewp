@@ -1280,6 +1280,12 @@
                 <name>$PROJ_DIR$\..\..\code\vision\pvc_entry_control.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_bridge_control.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_bridge_control.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\vision\vision_bumpy_control.c</name>
             </file>
             <file>
@@ -1299,12 +1305,6 @@
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code\vision\vision_pvc_control.h</name>
-            </file>
-            <file>
-                <name>$PROJ_DIR$\..\..\code\vision\vision_task_area.c</name>
-            </file>
-            <file>
-                <name>$PROJ_DIR$\..\..\code\vision\vision_task_area.h</name>
             </file>
         </group>
         <file>
