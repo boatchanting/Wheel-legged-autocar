@@ -8,4 +8,7 @@ iar/
 data/
 # py虚拟环境
 .venv/
-
+# Python 缓存文件
+__pycache__/
+*.pyc
+tools/05_通用数据处理工具/视频网页上位机/output_realtime
