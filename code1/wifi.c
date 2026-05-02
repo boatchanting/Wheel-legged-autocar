@@ -652,9 +652,18 @@ void render_line_vision_to_image(void)
         int x_lookahead = (int)(result.line_x_lookahead + 0.5f);
         const int lookahead_y = (int)((uint32)LINE_IMAGE_H * 62U / 100U);
 
-        draw_line_on_image(x_lookahead, lookahead_y, x_bottom, y_max, 0U);
-        draw_cross_on_image(x_bottom, y_max, 2, 0U);
-        draw_cross_on_image(x_lookahead, lookahead_y, 2, 0U);
+        /* 1. 利用两点算出斜率变化率 dx/dy */
+        float dx_dy = (float)(x_lookahead - x_bottom) / (float)(lookahead_y - y_max);
+        
+        /* 2. 推算出画面最顶部(y_min)应该在哪个 X 坐标 */
+        int x_top = x_bottom + (int)(dx_dy * (float)(y_min - y_max));
+
+        /* 3. 画一条从屏幕最底下，直插屏幕最顶部的“长矛”引导线 */
+        draw_line_on_image(x_top, y_min, x_bottom, y_max, 0U); 
+
+        /* 4. 在重要位置画十字靶心 */
+        draw_cross_on_image(x_bottom, y_max, 3, 0U);       // 底部控制点
+        draw_cross_on_image(x_lookahead, lookahead_y, 3, 0U); // 预瞄控制点
 
 #if VISION_IMAGE_RENDER_ENABLE
         draw_vline_on_image(x_bottom, y_max - 5, y_max, 0U);
