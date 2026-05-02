@@ -1,4 +1,4 @@
-/*
+﻿/*
  * =================================================================================
  * 文件: pvc_vision.h
  * 作用: 1 核 (Core 1) PVC 入口检测模块的对外接口与配置。
@@ -51,7 +51,7 @@ extern "C" {
 
 /* --- 2. 功能开关与硬件配置 --- */
 #define PVC_VISION_ENABLE                 (1)     /* 模块总开关：1 为开启编译，0 为关闭。遇到问题可以关掉排查 */
-#define PVC_VISION_PROFILE_ENABLE         (1)     /* 性能统计开关：1 为开启。开启后可以看算一帧要多久 */
+#define PVC_VISION_PROFILE_ENABLE         (0)     /* 性能统计开关：1 为开启。开启后可以看算一帧要多久 */
 #define PVC_VISION_SMOOTH_ENABLE          (1)     /* 平滑开关：1 为开启。开启后可以过滤掉突然闪烁的反光，让结果更稳定 */
 #define PVC_VISION_PROFILE_TIMER          (TC_TIME2_CH1) /* 测时间用的硬件定时器。别和遥控器冲突 */
 #define PVC_VISION_DEBUG_PRINT_EVERY      (0U)    /* 串口打印周期。0 是不打印；50 表示每 50 帧在电脑上打印一次信息 */
@@ -75,7 +75,7 @@ extern "C" {
  * 最终打分门槛：算法会给候选的 PVC 打分，分数 >= 0.58 才算真正看到了 PVC
  */
 #define PVC_VISION_MIN_DECISION_SCORE     (0.58f)
-#define PVC_VISION_MAX_COMPONENTS         (128)   /* 内存限制：画面里最多允许找 128 块白斑 */
+#define PVC_VISION_MAX_COMPONENTS         (32)   /* 内存限制：画面里最多允许找 32 块白斑 */
 
 /*
  * 稳定策略参数：防抖动

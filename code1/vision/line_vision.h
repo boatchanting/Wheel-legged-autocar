@@ -26,7 +26,7 @@ extern "C" {
 
 /* --- 2. 功能开关与硬件配置 --- */
 #define LINE_VISION_ENABLE                   (1)     /* 模块总开关：1 为开启，0 为关闭 */
-#define LINE_VISION_PROFILE_ENABLE           (1)     /* 性能统计开关：用来测算代码跑了多久 */
+#define LINE_VISION_PROFILE_ENABLE           (0)     /* 性能统计开关：用来测算代码跑了多久 */
 #define LINE_VISION_PROFILE_TIMER            (PVC_VISION_PROFILE_TIMER) /* 复用同一个定时器 */
 #define LINE_VISION_DEBUG_PRINT_EVERY        (0U)    /* 串口打印周期，0 为不打印 */
 
