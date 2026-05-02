@@ -21,7 +21,11 @@ MERGE_PATTERNS = [
 
 
 def run_git(cmd: list[str]) -> str:
-    return subprocess.check_output(["git", *cmd], text=True).strip()
+    try:
+        return subprocess.check_output(["git", *cmd], encoding='utf-8').strip()
+    except UnicodeDecodeError:
+        # 如果 UTF-8 解码失败，尝试系统默认编码
+        return subprocess.check_output(["git", *cmd], text=True).strip()
 
 
 def parse_commits(from_tag: str, to_tag: str, include_merge: bool, include_format: bool) -> OrderedDict[str, list[str]]:
