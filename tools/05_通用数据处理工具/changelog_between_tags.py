@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate grouped changelog between two git tags (or refs)."""
+"""Generate grouped changelog between two git tags (or refs).
+使用方法
+python changelog_between_tags.py v0.4.0 v0.4.1 --markdown
+python tools/05_通用数据处理工具/changelog_between_tags.py v0.1.0 v0.2.0 --markdown > changelog.md
+
+"""
 from __future__ import annotations
 
 import argparse
