@@ -36,6 +36,7 @@
 #include "zf_common_headfile.h"
 #include "../code1/wifi.h"
 #include "../code1/vision/pvc_vision.h"
+#include "../code1/vision/bumpy_vision.h"
 #include "../code1/vision/vision_ipc_core1.h"
 // 打开新的工程或者工程移动了位置务必执行以下操作
 // 第一步 关闭上面所有打开的文件
@@ -66,6 +67,7 @@ int main(void)
     // mt9v03x_init();//初始化摄像头
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     line_vision_init();                                                         // 初始化任务区直线/单边桥视觉检测
+    bumpy_vision_init();                                                        // 初始化颠簸路段视觉检测
     VisionIpc_Core1_Init();                                                     // 初始化1核视觉共享内存结果发布
     pit_ms_init(VISION_IPC_PIT_NUM, 2);                                          // 2ms 中断中处理0/1核视觉通信
     interrupt_global_enable(0);
@@ -92,6 +94,10 @@ int main(void)
             {
                 line_vision_reset_filter();
             }
+            if(VisionIpc_Core1_TakeBumpyResetRequest())
+            {
+                bumpy_vision_reset_filter();
+            }
 
             if(VisionIpc_Core1_ShouldRunPvc())
             {
@@ -106,6 +112,11 @@ int main(void)
                 line_vision_process_camera_frame(compressed_image_copy[0]);
                 render_line_vision_to_image();
             }
+            if(VisionIpc_Core1_ShouldRunBumpy())
+            {
+                bumpy_vision_process_camera_frame(compressed_image_copy[0]);
+                render_bumpy_vision_to_image();
+            }
             // 发送图像
             seekfree_assistant_camera_send();
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
@@ -118,3 +129,4 @@ int main(void)
 }
 
 // **************************** 代码区域 ****************************
+

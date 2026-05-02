@@ -38,6 +38,7 @@
 #include "tools/runtime_profiler.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
+#include "vision/vision_bumpy_control.h"
 #include "vision/vision_task_area.h"
 
 
@@ -270,6 +271,7 @@ Bridge_Init();//【优化点】单边桥控制初始化，可以集成
 BumpyRoad_Init();//颠簸路段状态机初始化
 VisionIpc_Core0_Init();
 VisionPvcControl_Init(); // Bring-up: 0核通过2ms中断调度1核开启PVC入口检测，并用回传数据做入口引导
+VisionBumpyControl_Init(); // 颠簸路段：0核读取1核视觉并生成方向控制量
 VisionBridgeTask_Init(); // 科目三任务区：PVC进入 + 直线/单边桥视觉控制状态机
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
@@ -603,4 +605,5 @@ void uart_rx_interrupt_handler (void)
         fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // 将数据写入 fifo 中
     }
 }
+
 
