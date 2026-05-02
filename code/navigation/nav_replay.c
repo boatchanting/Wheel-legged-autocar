@@ -2,7 +2,7 @@
 #include "../common.h"
 #include "nav_replay_route_table.h"
 #include "../config/sys_options.h"
-#include "vision/vision_task_area.h"
+#include "vision/vision_bridge_control.h"
 
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;

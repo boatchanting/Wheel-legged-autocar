@@ -1,7 +1,7 @@
 #include "sbus.h"
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "../common.h"
-#include "../vision/vision_task_area.h"
+#include "../vision/vision_bridge_control.h"
 
 // ==========================================
 // 1. 宏定义 (参数配置区)
