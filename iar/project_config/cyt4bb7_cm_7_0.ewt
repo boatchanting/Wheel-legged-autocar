@@ -1575,6 +1575,15 @@
                 <name>$PROJ_DIR$\..\..\code\tools\sbus.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\tools\telemetry_ipc.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\tools\telemetry_ipc_core0.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\tools\telemetry_ipc_core0.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\tools\wifi.c</name>
             </file>
             <file>

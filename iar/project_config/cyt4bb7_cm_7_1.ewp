@@ -1124,6 +1124,12 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\bumpy_vision.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\ipm_transform.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\ipm_transform.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\line_vision.c</name>
             </file>
             <file>
@@ -1134,6 +1140,12 @@
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\pvc_vision.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\telemetry_ipc_core1.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\telemetry_ipc_core1.h</name>
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code\vision\vision_ipc.h</name>
