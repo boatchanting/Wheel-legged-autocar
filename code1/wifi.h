@@ -43,7 +43,7 @@
 // 目的：为了获取 PVC_IMAGE_W (94) 和 PVC_IMAGE_H (60) 的宏定义，用于压缩数组的大小声明
 #include "vision/pvc_vision.h"
 #include "vision/line_vision.h"
-
+#include  "vision/bumpy_vision.h"
 // *************************** 例程使用步骤说明 ***************************
 // 1.根据硬件连接说明连接好模块，使用电源供电(下载器供电会导致模块电压不足)
 //
@@ -137,5 +137,6 @@ void draw_cross_on_image(int x, int y, int size, uint8 color);
 // 请在调用 compress_image_to_target 以及 pvc_vision_process_camera_frame 之后，WIFI发送之前调用。
 void render_pvc_vision_to_image(void);
 void render_line_vision_to_image(void);
+void render_bumpy_vision_to_image(void);
 
 #endif // __CODE1_WIFI_H__
