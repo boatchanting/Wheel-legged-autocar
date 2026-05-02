@@ -20,6 +20,13 @@
 #define RC_SW_MID_HIGH  1400    // >1400 判为 HIGH
 
 // --- 增量系数 (灵敏度) ---
+
+// --- 线控转向倍率参数 (随车速动态调整) ---
+// 说明：低速时转向倍率高，高速时转向倍率低
+#define STEER_GAIN_MAX         1.00f    // 最大发电倍率（低速）
+#define STEER_GAIN_MIN         0.30f    // 最小转向倍率（高速）
+#define STEER_SPEED_BREAK_LOW  350.0f   // 低速分界点（单位：与轮速反馈一致）
+#define STEER_SPEED_BREAK_HIGH 1300.0f  // 高速分界点（单位：与轮速反馈一致）
 // 说明: 每次调用 Process 函数增加的数值 = (摇杆偏差值) * 系数
 // 假设 Process 每 10ms 调用一次
 #define K_STEER_INC     0.00225f  // 转向灵敏度
@@ -41,6 +48,37 @@ robot_ctrl_t robot_ctrl;
 // ==========================================
 // 3. 函数实现
 // ==========================================
+// 基于左右轮速反馈计算当前车速对应的转向倍率
+// 设计目标：
+// 1) 低速放大转向灵敏度；2) 高速降低转向灵敏度；3) 过渡无突变
+static float Remote_Calc_Steer_Gain_BySpeed(float left_speed, float right_speed)
+{
+    // 采用平均绝对轮速作为“车速估计”，避免正反转方向影响分段逻辑
+    float vehicle_speed_abs = (ABS(left_speed) + ABS(right_speed)) * 0.5f;
+
+    // 低速区：固定最大倍率
+    if (vehicle_speed_abs <= STEER_SPEED_BREAK_LOW)
+    {
+        return STEER_GAIN_MAX;
+    }
+
+    // 高速区：固定最小倍率
+    if (vehicle_speed_abs >= STEER_SPEED_BREAK_HIGH)
+    {
+        return STEER_GAIN_MIN;
+    }
+
+    // 中速过渡区：使用 smoothstep 平滑插值，保证一阶连续，避免响应突变
+    float t = (vehicle_speed_abs - STEER_SPEED_BREAK_LOW) /
+              (STEER_SPEED_BREAK_HIGH - STEER_SPEED_BREAK_LOW);
+
+    // smoothstep(t) = 3t^2 - 2t^3
+    float smooth_t = t * t * (3.0f - 2.0f * t);
+
+    // 从最大倍率平滑过渡到最小倍率
+    return STEER_GAIN_MAX + (STEER_GAIN_MIN - STEER_GAIN_MAX) * smooth_t;
+}
+
 uint8 Remote_control_connected =0;
 // 初始化
 void Remote_Control_Init(void)
@@ -124,8 +162,12 @@ void Remote_Control_Process(void)
     
     if (abs(diff_steer) > RC_DEADZONE)
     {
-        // 积分计算
-        robot_ctrl.target_angle += (float)diff_steer * K_STEER_INC;
+        // 根据当前车速动态计算转向倍率：低速更灵敏，高速更稳
+        float steer_gain = Remote_Calc_Steer_Gain_BySpeed(motor_value.receive_left_speed_data,
+                                                          motor_value.receive_right_speed_data);
+
+        // 积分计算（带动态倍率）
+        robot_ctrl.target_angle += (float)diff_steer * K_STEER_INC * steer_gain;
         
         // // 限幅逻辑
         // if (robot_ctrl.target_angle > MAX_STEER_ANGLE) 
