@@ -24,3 +24,14 @@ iar/**/settings/
 iar/project_config/Debug_m7_0/
 iar/project_config/Debug_m7_1/
 # iar\icf\linker_directives_tviibh.icf ：IAR Embedded Workbench 的链接器配置文件
+#iar/project_config/cyt4bb7_cm_7_0.ewp
+#iar/project_config/cyt4bb7_cm_7_0.ewt
+iar/cyt4bb7.eww
+# iar/icf/linker_directives_tviibh.icf
+iar/project_config/cm7_0_cm7_1_debug.xml
+iar/project_config/cyt4bb7_cm_7_0.ewd
+iar/project_config/cyt4bb7_cm_7_0.eww
+iar/project_config/cyt4bb7_cm_7_0.ewx
+iar/project_config/cyt4bb7_cm_7_0.sim
+iar/project_config/cyt4bb7_cm_7_1.ewd
+iar/project_config/cyt4bb7_cm_7_1.eww
