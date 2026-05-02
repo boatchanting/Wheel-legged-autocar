@@ -1280,6 +1280,12 @@
                 <name>$PROJ_DIR$\..\..\code\vision\pvc_entry_control.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_bumpy_control.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_bumpy_control.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\vision\vision_ipc.h</name>
             </file>
             <file>

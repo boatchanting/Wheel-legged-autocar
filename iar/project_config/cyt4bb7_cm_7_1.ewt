@@ -1457,6 +1457,18 @@
             <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\vision_ipc_core1.h</name>
             </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\wifi_diff_stream.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\wifi_diff_stream.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\wifi_protocol.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\wifi_protocol.h</name>
+            </file>
         </group>
         <file>
             <name>$PROJ_DIR$\..\..\code1\wifi.c</name>
