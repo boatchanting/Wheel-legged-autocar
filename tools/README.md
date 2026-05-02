@@ -70,3 +70,21 @@
 - 优先按目录用途查找，避免在根目录堆积脚本。
 - 新增工具时，放入最匹配的分类目录，并在本文件补充用途说明。
 - 对实验性质强的脚本建议附带简短 `*.md` 使用说明（输入数据格式、运行方式、输出说明）。
+
+### 8) `05_通用数据处理工具/changelog_between_tags.py`（两个 Tag 间自动更新日志）
+- 输入：`from_tag`、`to_tag`。
+- 输出：按 commit 消息分组的 changelog，支持 `【功能】消息` 这类格式。
+- 过滤：默认过滤 merge 和格式化提交（`fmt:` / `format:` / `style:` / `chore(format):`）。
+- 可选：`--markdown` 直接输出可发布 Markdown。
+
+示例：
+```bash
+# 本地一键（Markdown）
+python3 tools/05_通用数据处理工具/changelog_between_tags.py v1.0.0 v1.1.0 --markdown
+
+# 保留 merge/格式化提交
+python3 tools/05_通用数据处理工具/changelog_between_tags.py v1.0.0 v1.1.0 --markdown --include-merge --include-format
+```
+
+CI 示例：
+- 使用 `.github/workflows/changelog-between-tags.yml`，通过 `workflow_dispatch` 输入 `from_tag` 和 `to_tag` 后自动生成并上传 `changelog.txt`。
