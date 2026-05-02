@@ -35,3 +35,7 @@ iar/project_config/cyt4bb7_cm_7_0.ewx
 iar/project_config/cyt4bb7_cm_7_0.sim
 iar/project_config/cyt4bb7_cm_7_1.ewd
 iar/project_config/cyt4bb7_cm_7_1.eww
+# Python 缓存文件
+__pycache__/
+*.pyc
+tools/05_通用数据处理工具/视频网页上位机/output_realtime

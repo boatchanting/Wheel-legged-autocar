@@ -529,6 +529,11 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数
         g_motor_enable = 1; // 正常工作
     }
 
+    if ((robot_ctrl.brake_active != 0U) && (g_replay_state == REPLAY_RUNNING))
+    {
+        NavReplay_Stop();
+    }
+
     if (jump_stepup_three_stairs_test_is_active())
     {
         err_degree = 0.0f;
