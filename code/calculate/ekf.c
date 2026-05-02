@@ -64,20 +64,47 @@ imu_t imu_data = {0, 0, 0, 0, 0, 0};
 // 误差阈值
 matrix_type r_yz = 0.001f;
 
+#if ENABLE_ESKF
+// ========================================================================
+// 【新增】 ESKF 核心参数配置 (6状态: 3维角度误差 + 3维陀螺仪零偏误差)
+// ========================================================================
+// 过程噪声 Q (6x6)
+const matrix_type eskf_q[6][6] = {
+    {0.0001, 0, 0, 0, 0, 0}, {0, 0.0001, 0, 0, 0, 0}, {0, 0, 0.0001, 0, 0, 0},  // 角度误差游走噪声
+    {0, 0, 0, 1e-6, 0, 0},   {0, 0, 0, 0, 1e-6, 0},   {0, 0, 0, 0, 0, 1e-6}     // 零偏游走噪声(缓慢变化)
+};
+// 测量噪声 R (3x3) - 信任度，越小越信任加速度计，震动大时可适当加大
+const matrix_type eskf_r[3][3] = {{100, 0, 0}, {0, 100, 0}, {0, 0, 100}};
+// 初始协方差 P (6x6)
+const matrix_type eskf_p[6][6] = {
+    {10, 0, 0, 0, 0, 0}, {0, 10, 0, 0, 0, 0}, {0, 0, 10, 0, 0, 0},
+    {0, 0, 0, 1, 0, 0},  {0, 0, 0, 0, 1, 0},  {0, 0, 0, 0, 0, 1}
+};
+static float eskf_bg[3] = {0, 0, 0}; // 动态陀螺仪零偏 (在线估计，解决长时漂移)
+
+/**
+ * @brief 四元数乘法工具: q_out = q1 ⊗ q2 
+ * @note 专为ESKF流形注入设计，保持四元数模长约束
+ */
+static inline void quat_multiply(float* q1, float* q2, float* q_out) {
+    q_out[0] = q1[0]*q2[0] - q1[1]*q2[1] - q1[2]*q2[2] - q1[3]*q2[3];
+    q_out[1] = q1[0]*q2[1] + q1[1]*q2[0] + q1[2]*q2[3] - q1[3]*q2[2];
+    q_out[2] = q1[0]*q2[2] - q1[1]*q2[3] + q1[2]*q2[0] + q1[3]*q2[1];
+    q_out[3] = q1[0]*q2[3] + q1[1]*q2[2] - q1[2]*q2[1] + q1[3]*q2[0];
+}
+
+#else
+// ========================================================================
+// 原有旧版 EKF 参数配置 (4状态: 直接滤波四元数)
+// ========================================================================
 // 过程噪声协方差矩阵Q
 const matrix_type q[4][4] = {{0.005, 0, 0, 0}, {0, 0.005, 0, 0}, {0, 0, 0.005, 0}, {0, 0, 0, 0.005}};
 // 测量噪声协方差矩阵R
 const matrix_type r[3][3] = {{10000, 0, 0}, {0, 10000, 0}, {0, 0, 10000}};
-
-// 定义两个 R 矩阵的值(这里优化可以这么用测试一下,暂时尚未优化)
-// // R_FAST: 启动时用，极小，信任加速度计，瞬间收敛 (10 ~ 50)
-// const matrix_type r_fast[3][3] = {{20, 0, 0}, {0, 20, 0}, {0, 0, 20}};
-
-// // R_SLOW: 稳定后用，极大，信任陀螺仪，过滤震动 (你原来的 10000)
-// const matrix_type r_slow[3][3] = {{10000, 0, 0}, {0, 10000, 0}, {0, 0, 10000}};
-
 // 初始协方差矩阵P
 const matrix_type p[4][4] = {{1000000, 0, 0, 0}, {0, 1000000, 0, 0}, {0, 0, 1000000, 0}, {0, 0, 0, 1000000}};
+#endif
+
 // 初始四元数 [1, 0, 0, 0]
 //const matrix_type ekf[4] = {1, 0, 0, 0};//原先代码中的值
 #if IMU_CATEGORY == 1 && CAR_SELECT == 0 //imu660ra
@@ -99,20 +126,29 @@ static matrix_t Q;  // 过程噪声协方差矩阵
 static matrix_t R;  // 测量噪声协方差矩阵
 static matrix_t P;  // 协方差矩阵
 static volatile bool  start_yaw_stability_check = false;//偏航角稳定性检测
+
 /**
- * @brief 初始化扩展卡尔曼滤波器
- * @note 将静态数组转换为矩阵类型
+ * @brief 初始化卡尔曼滤波器
+ * @note 将静态数组转换为矩阵类型，并根据宏开关装载对应维度参数
  */
 void EKF_Init(void)
 {
-    // 初始化状态向量exf_x
+    // 初始化状态向量exf_x (四元数标称状态，不论EKF还是ESKF，位姿始终用4x1表示)
     Matrix_From_Array(&exf_x, (const matrix_type*)ekf, 4, 1);
-    // 初始化过程噪声协方差矩阵Q
+    
+#if ENABLE_ESKF
+    // ESKF 使用 6x6 和 3x3 矩阵
+    Matrix_From_Array(&Q, (const matrix_type*)eskf_q, 6, 6);
+    Matrix_From_Array(&R, (const matrix_type*)eskf_r, 3, 3);
+    Matrix_From_Array(&P, (const matrix_type*)eskf_p, 6, 6);
+    eskf_bg[0] = 0; eskf_bg[1] = 0; eskf_bg[2] = 0; // 重置动态零偏
+#else
+    // EKF 使用 4x4 和 3x3 矩阵
     Matrix_From_Array(&Q, (const matrix_type*)q, 4, 4);
-    // 初始化测量噪声协方差矩阵R
     Matrix_From_Array(&R, (const matrix_type*)r, 3, 3);
-    // 初始化协方差矩阵P
     Matrix_From_Array(&P, (const matrix_type*)p, 4, 4);
+#endif
+
     start_yaw_stability_check = true;//初始化偏航角稳定性检测
 }
 
@@ -159,6 +195,7 @@ static inline void quaternion_to_euler(void)
     euler_angle.yaw = atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) * DEG_TO_RAD-90;    // yaw
     //if(euler_angle.yaw   < -180.0f) euler_angle.yaw  += 360.0f;
     #endif
+    
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3//imu963ra //这里面根据实际测试使用了面向结果编程，imu换轴的时候使用转轴公式，或者根据上位机波形来判断一下
     // 直接从旧四元数计算新坐标系下的欧拉角
     euler_angle.roll  = -atan2(2.0f * (q0 * q2 - q3 * q1),1.0f - 2.0f * (q1 * q1 + q2 * q2)) * DEG_TO_RAD-180.0f;
@@ -239,8 +276,7 @@ void imu_get_values(void)
     IMU_GET_GYRO();
     IMU_GET_ACC();
 
-    // 2. 减去零偏 (这里是报错的地方，已修正为新变量名)
-    // 之前报错是因为写成了 gyro_z_offset
+    // 2. 减去零偏 
     float gx_temp = (float)IMU_GYRO_X - gyro_offset_x; 
     float gy_temp = (float)IMU_GYRO_Y - gyro_offset_y;
     float gz_temp = (float)IMU_GYRO_Z - gyro_offset_z; 
@@ -273,14 +309,143 @@ void imu_get_values(void)
 }
 
 /**
- * @brief 扩展卡尔曼滤波更新函数 (已融合重力估计)
- * @note 执行完整的EKF预测、更新步骤以及重力分量提取
+ * @brief 核心滤波器更新函数 
+ * @note 根据宏开关执行 ESKF 或 旧版 EKF，计算并融合重力分量
  */
 void EKF_UpData(void)
 {
-    // 1. 获取并处理数据
+    // 1. 获取最新预处理好的 IMU 数据
+    imu_get_values();
+
+#if ENABLE_ESKF
+    // =========================================================================
+    // 【新版】 ESKF 误差状态卡尔曼滤波 核心实现区
+    // =========================================================================
+    float q0, q1, q2, q3;
+
+    // 1. 扣除长期动态估计的系统零偏 Bias (极其重要，消除长期偏航角漂移)
+    float gx = imu_data.gyro_x - eskf_bg[0];
+    float gy = imu_data.gyro_y - eskf_bg[1];
+    float gz = imu_data.gyro_z - eskf_bg[2];
+
+    // 2. 标称状态预测 (Nominal State Predict) -> 采用四元数乘法一阶龙格库塔积分
+    float q_old[4] = {exf_x.data[0][0], exf_x.data[1][0], exf_x.data[2][0], exf_x.data[3][0]};
+    float dq[4] = {1.0f, 0.5f * gx * dt, 0.5f * gy * dt, 0.5f * gz * dt}; 
+    float q_pred[4];
+    quat_multiply(q_old, dq, q_pred);
+    
+    // 写回预测后的标称四元数，并利用 normalize_vector 消除浮点误差
+    exf_x.data[0][0] = q_pred[0]; exf_x.data[1][0] = q_pred[1];
+    exf_x.data[2][0] = q_pred[2]; exf_x.data[3][0] = q_pred[3];
+    normalize_vector(&exf_x); 
+    
+    // 3. 误差状态协方差预测 (Covariance Predict: P = F*P*F' + Q)
+    // 状态转移矩阵 F (6x6): F ≈ I + A*dt 
+    matrix_type f_mat[6][6] = {0};
+    for(int i=0; i<6; i++) f_mat[i][i] = 1.0f; // 对角线为 1
+    // 左上角: 旋转角度对自身的偏导 (反对称矩阵)
+    f_mat[0][1] =  gz * dt; f_mat[0][2] = -gy * dt;
+    f_mat[1][0] = -gz * dt; f_mat[1][2] =  gx * dt;
+    f_mat[2][0] =  gy * dt; f_mat[2][1] = -gx * dt;
+    // 右上角: 旋转角度对零偏的偏导 (-I*dt)
+    f_mat[0][3] = -dt; f_mat[1][4] = -dt; f_mat[2][5] = -dt;
+
+    matrix_t F, FT, FP;
+    Matrix_From_Array(&F, (const matrix_type*)f_mat, 6, 6);
+    FT = Matrix_Transpose(&F);
+    FP = multiply_matrices(&F, &P);
+    FP = multiply_matrices(&FP, &FT);
+    P = add_matrices(&FP, &Q); 
+
+    // 4. 构建观测矩阵 H (3x6) 与 计算残差 Z_err (3x1)
+    q0 = exf_x.data[0][0]; q1 = exf_x.data[1][0]; 
+    q2 = exf_x.data[2][0]; q3 = exf_x.data[3][0];
+    
+    // 预测重力向量 gb (世界系 [0,0,1] 在传感器系的投影)
+    float gb_x = 2.0f * (q1 * q3 - q0 * q2);
+    float gb_y = 2.0f * (q0 * q1 + q2 * q3);
+    float gb_z = 2.0f * (0.5f - q1 * q1 - q2 * q2);
+
+    // 雅可比 H 矩阵极其优美: 左3列为 gb 的反对称矩阵，右3列全为0
+    matrix_type h_mat[3][6] = {0};
+    h_mat[0][1] = -gb_z; h_mat[0][2] =  gb_y;
+    h_mat[1][0] =  gb_z; h_mat[1][2] = -gb_x;
+    h_mat[2][0] = -gb_y; h_mat[2][1] =  gb_x;
+    
+    matrix_t H, HT;
+    Matrix_From_Array(&H, (const matrix_type*)h_mat, 3, 6);
+    HT = Matrix_Transpose(&H);
+
+    // 构造实际观测向量 Z = 加速度计数据归一化
+    matrix_t Z, GB, Z_err;
+    Matrix_Init(&Z, 3, 1);
+    Z.data[0][0] = imu_data.acc_x; 
+    Z.data[1][0] = imu_data.acc_y; 
+    Z.data[2][0] = imu_data.acc_z;
+    normalize_vector(&Z); 
+
+    // 残差向量 = 实际测量重力方向 - 预测重力方向
+    Matrix_Init(&GB, 3, 1);
+    GB.data[0][0] = gb_x; GB.data[1][0] = gb_y; GB.data[2][0] = gb_z;
+    Z_err = subtract_matrices(&Z, &GB); 
+
+    // 5. 计算卡尔曼增益 K (6x3) = P * H^T * (H * P * H^T + R)^-1
+    matrix_t S, invS, K_gain;
+    S = multiply_matrices(&H, &P);
+    S = multiply_matrices(&S, &HT);
+    S = add_matrices(&S, &R); 
+    
+    // 如果系统矩阵奇异，防止崩溃，直接计算欧拉角并退出
+    if(inverse_matrix(&S, &invS)) { quaternion_to_euler(); return; } 
+
+    K_gain = multiply_matrices(&P, &HT);
+    K_gain = multiply_matrices(&K_gain, &invS);
+
+    // 6. 计算最终误差状态 delta_x (6x1)
+    matrix_t delta_x;
+    delta_x = multiply_matrices(&K_gain, &Z_err);
+    
+    // 拆包误差向量
+    float dtheta_x = delta_x.data[0][0]; float dtheta_y = delta_x.data[1][0]; float dtheta_z = delta_x.data[2][0];
+    float dbg_x    = delta_x.data[3][0]; float dbg_y    = delta_x.data[4][0]; float dbg_z    = delta_x.data[5][0];
+
+    // 7. 误差状态注入 (Injection - ESKF的灵魂)
+    // 7.1 将旋转角度误差转化为误差四元数，然后"乘法注入"到标称状态 (杜绝破坏加法流形导致发散)
+    float dq_err[4] = {1.0f, 0.5f * dtheta_x, 0.5f * dtheta_y, 0.5f * dtheta_z};
+    float q_upd[4];
+    quat_multiply(q_pred, dq_err, q_upd);
+    
+    exf_x.data[0][0] = q_upd[0]; exf_x.data[1][0] = q_upd[1];
+    exf_x.data[2][0] = q_upd[2]; exf_x.data[3][0] = q_upd[3];
+    normalize_vector(&exf_x);
+
+    // 7.2 将零偏误差注入系统零偏池
+    eskf_bg[0] += dbg_x;
+    eskf_bg[1] += dbg_y;
+    eskf_bg[2] += dbg_z;
+
+    // 8. 协方差更新 P = (I - K * H) * P
+    matrix_t I6, KH, I_KH;
+    Matrix_Identity(&I6, 6);
+    KH = multiply_matrices(&K_gain, &H);
+    I_KH = subtract_matrices(&I6, &KH);
+    P = multiply_matrices(&I_KH, &P);
+
+    // 9. 更新供外部调用的重力分量参数
+    q0 = exf_x.data[0][0]; q1 = exf_x.data[1][0]; 
+    q2 = exf_x.data[2][0]; q3 = exf_x.data[3][0];
+    imu_data.grav_x = 2.0f * (q1 * q3 - q0 * q2);
+    imu_data.grav_y = 2.0f * (q0 * q1 + q2 * q3);
+    imu_data.grav_z = 2.0f * (0.5f - q1 * q1 - q2 * q2);
+
+    // 10. 转化为欧拉角供PID控制
+    quaternion_to_euler();
+
+#else
+    // =========================================================================
+    // 【旧版】 传统 EKF 代码 (保留用于对比，随时可切回)
+    // =========================================================================
     float gx, gy, gz;
-    imu_get_values(); // 获取最新的 acc 和 gyro 数据
     gx = imu_data.gyro_x;
     gy = imu_data.gyro_y;
     gz = imu_data.gyro_z;
@@ -392,18 +557,17 @@ void EKF_UpData(void)
 
     // 7. 转换为欧拉角供控制使用
     quaternion_to_euler();
+#endif
 }
 
 // ================== 偏航角零点初始化模块实现开始 ==================
 
 // --- 全局变量定义 ---
-// 这是变量的实体，内存会在这里分配
 volatile float g_initial_yaw = 0.0f;
 volatile bool  g_yaw_initialized = false;
 static volatile bool  start_yaw_stability_check;
 
 // --- 内部静态变量 ---
-// static 关键字使这些变量仅在 ekf.c 文件内部可见，实现了信息隐藏
 static uint32_t yaw_init_start_time = 0;
 static float    yaw_at_init_start = 0.0f;
 

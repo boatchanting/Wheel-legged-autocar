@@ -16,7 +16,7 @@
 #define MIN(a, b)            (((a) < (b)) ? (a) : (b))
 
 // 矩阵最大尺寸（此项目仅使用小矩阵）
-#define MAX_SIZE (4)
+#define MAX_SIZE (6)
 #define ASSERT(x) zf_assert(x)
 
 typedef float matrix_type;

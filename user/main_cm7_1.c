@@ -56,13 +56,13 @@ int main(void)
     // 此处编写用户代码 例如外设初始化代码等
 
      // 初始化 WiFi 模块
-    wifi_init();                                                                // 初始化WIFI模块
+    // wifi_init();                                                                // 初始化WIFI模块
 
     // 连接TCP服务器
-    wifi_connect_tcp_server();                                                  // 连接TCP服务器
+    // wifi_connect_tcp_server();                                                  // 连接TCP服务器
 
-    // 初始化摄像头和逐飞助手
-    wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
+    // // 初始化摄像头和逐飞助手
+    // wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
     // mt9v03x_init();//初始化摄像头
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     line_vision_init();                                                         // 初始化任务区直线/单边桥视觉检测
@@ -107,7 +107,7 @@ int main(void)
                 render_line_vision_to_image();
             }
             // 发送图像
-            seekfree_assistant_camera_send();
+            // seekfree_assistant_camera_send();
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
             // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
             // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节
