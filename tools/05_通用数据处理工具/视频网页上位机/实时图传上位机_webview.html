@@ -218,6 +218,22 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .osc-toolbar-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .osc-select {
+      min-width: 230px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #0b1522;
+      color: var(--text);
+      padding: 5px 8px;
+      font-size: 12px;
+      outline: none;
+    }
     .toggle-grid {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -351,6 +367,10 @@
             <div class="osc-toolbar">
               <div class="osc-toolbar-left" id="oscMeta">采样率 0 Hz | 时间窗 10.0s</div>
               <div class="osc-toolbar-left" id="oscRows">已缓存 0 行</div>
+              <div class="osc-toolbar-right">
+                <button class="ghost compact" id="oscTimeBtn">时间运行</button>
+                <select class="osc-select" id="oscRateSource"></select>
+              </div>
             </div>
             <div class="osc-canvas-wrap">
               <canvas class="osc-canvas" id="oscCanvas"></canvas>
@@ -361,6 +381,7 @@
               通道修改位置：在 <span class="hint-path" id="mapFile">code/vision/telemetry_ipc_core0.c</span> 的
               <span class="hint-path" id="mapFunc">TelemetryIpc_Core0_PublishPvcDefault()</span> 中，
               修改 <span class="hint-path">g_telemetry_shadow.data[0..7]</span> 对应变量即可。上位机会自动读取并刷新通道名。
+              暂停时间后支持鼠标左键拖动查看历史，滚轮缩放时间轴；“频率变量来源”可选择某通道值做频率显示。
             </div>
           </div>
         </div>
@@ -409,20 +430,29 @@
     const oscLegend = document.getElementById("oscLegend");
     const oscMeta = document.getElementById("oscMeta");
     const oscRows = document.getElementById("oscRows");
+    const oscTimeBtn = document.getElementById("oscTimeBtn");
+    const oscRateSource = document.getElementById("oscRateSource");
     const mapFile = document.getElementById("mapFile");
     const mapFunc = document.getElementById("mapFunc");
 
     const oscColors = ["#58a6ff", "#ff9f43", "#5eead4", "#ff6b81", "#ffd166", "#7bd88f", "#c792ea", "#f78fb3"];
     const oscVisible = Array.from({ length: 8 }, () => true);
     const oscSeries = Array.from({ length: 8 }, () => []);
+    const oscLatestValues = Array.from({ length: 8 }, () => 0);
     const oscNames = Array.from({ length: 8 }, (_, i) => `CH${i}`);
 
     const OSC_WINDOW_SEC = 10.0;
+    const OSC_WINDOW_MIN_SEC = 1.0;
+    const OSC_WINDOW_MAX_SEC = 120.0;
     const OSC_Y_TICKS = 6;
     const OSC_X_TICKS = 10;
-    const OSC_MAX_POINTS = 4000;
+    const OSC_MAX_POINTS = 10000;
     const OSC_RENDER_MS = 33;
     const REFRESH_MS = 66;
+    const OSC_PAD_LEFT = 54;
+    const OSC_PAD_RIGHT = 10;
+    const OSC_PAD_TOP = 10;
+    const OSC_PAD_BOTTOM = 24;
 
     let apiReady = false;
     let timerId = null;
@@ -432,9 +462,76 @@
     let streamStartTs = 0;
     let runningState = false;
     let lastRenderMs = 0;
+    let oscRenderHz = 0;
+    let oscRenderCount = 0;
+    let oscRenderStatTs = 0;
+    let oscTimeRunning = true;
+    let oscViewWindowSec = OSC_WINDOW_SEC;
+    let oscViewNowSec = 0;
+    let oscDragActive = false;
+    let oscDragStartX = 0;
+    let oscDragStartViewNow = 0;
 
     function hasApi() {
       return !!(window.pywebview && window.pywebview.api);
+    }
+
+    function clamp(v, min, max) {
+      return Math.max(min, Math.min(max, v));
+    }
+
+    function getPlotWidthPx() {
+      const w = oscCanvas.clientWidth || 640;
+      return Math.max(10, w - OSC_PAD_LEFT - OSC_PAD_RIGHT);
+    }
+
+    function getViewNowSec(nowSec) {
+      if (!oscViewNowSec) oscViewNowSec = nowSec;
+      if (oscTimeRunning) {
+        oscViewNowSec = nowSec;
+      }
+      return oscViewNowSec;
+    }
+
+    function updateOscTimeBtn() {
+      oscTimeBtn.textContent = oscTimeRunning ? "时间运行" : "时间暂停";
+      oscTimeBtn.classList.toggle("warn", !oscTimeRunning);
+      if (oscDragActive) {
+        oscCanvas.style.cursor = "grabbing";
+      } else {
+        oscCanvas.style.cursor = oscTimeRunning ? "default" : "grab";
+      }
+    }
+
+    function rebuildRateSourceOptions(names) {
+      const prev = oscRateSource.value || "auto";
+      const options = ['<option value="auto">频率变量来源: 自动(链路Hz)</option>'];
+      for (let i = 0; i < 8; i++) {
+        const name = escapeHtml(names[i] || `CH${i}`);
+        options.push(`<option value="ch${i}">频率变量来源: CH${i} (${name})</option>`);
+      }
+      oscRateSource.innerHTML = options.join("");
+      if ([...oscRateSource.options].some((opt) => opt.value === prev)) {
+        oscRateSource.value = prev;
+      }
+    }
+
+    function getConfiguredRateHz() {
+      const mode = oscRateSource.value || "auto";
+      if (mode === "auto") return Number(oscHz || 0);
+      const m = /^ch(\d+)$/.exec(mode);
+      if (!m) return Number(oscHz || 0);
+      const idx = Number(m[1]);
+      if (idx < 0 || idx > 7) return Number(oscHz || 0);
+      return Number(oscLatestValues[idx] || 0);
+    }
+
+    function getConfiguredRateLabel() {
+      const mode = oscRateSource.value || "auto";
+      if (mode === "auto") return "自动";
+      const m = /^ch(\d+)$/.exec(mode);
+      if (!m) return "自动";
+      return `CH${Number(m[1])}`;
     }
 
     function setButtonsEnabled(enabled) {
@@ -473,6 +570,7 @@
 
     function rebuildLegend(names) {
       oscLegend.innerHTML = "";
+      rebuildRateSourceOptions(names);
       names.forEach((name, idx) => {
         const item = document.createElement("label");
         item.className = "toggle-item";
@@ -500,7 +598,8 @@
     }
 
     function pruneSeries(nowSec) {
-      const minT = nowSec - OSC_WINDOW_SEC - 2.0;
+      const keepSec = Math.max(oscViewWindowSec * 2.0, 20.0);
+      const minT = nowSec - keepSec;
       for (let i = 0; i < oscSeries.length; i++) {
         const series = oscSeries[i];
         let firstKeep = 0;
@@ -542,6 +641,7 @@
       const t = Number(sampleTs || 0) > 0 ? Number(sampleTs) : (Date.now() / 1000.0);
       for (let i = 0; i < 8; i++) {
         const v = Number((values || [])[i] ?? 0);
+        oscLatestValues[i] = v;
         if (Number.isFinite(v)) {
           oscSeries[i].push({ t, v });
         }
@@ -567,22 +667,21 @@
       ctx.fillStyle = "#06101a";
       ctx.fillRect(0, 0, width, height);
 
-      const leftPad = 54;
-      const rightPad = 10;
-      const topPad = 10;
-      const bottomPad = 24;
-      const plotW = Math.max(10, width - leftPad - rightPad);
-      const plotH = Math.max(10, height - topPad - bottomPad);
-      const plotX = leftPad;
-      const plotY = topPad;
+      const plotW = Math.max(10, width - OSC_PAD_LEFT - OSC_PAD_RIGHT);
+      const plotH = Math.max(10, height - OSC_PAD_TOP - OSC_PAD_BOTTOM);
+      const plotX = OSC_PAD_LEFT;
+      const plotY = OSC_PAD_TOP;
       const xToPix = (xNorm) => plotX + xNorm * plotW;
       const yToPix = (yNorm) => plotY + (1 - yNorm) * plotH;
+
+      const viewNow = getViewNowSec(nowSec);
+      const viewStart = viewNow - oscViewWindowSec;
 
       const activeValues = [];
       for (let i = 0; i < 8; i++) {
         if (!oscVisible[i]) continue;
         for (const p of oscSeries[i]) {
-          if (p.t >= nowSec - OSC_WINDOW_SEC && Number.isFinite(p.v)) activeValues.push(p.v);
+          if (p.t >= viewStart && p.t <= viewNow && Number.isFinite(p.v)) activeValues.push(p.v);
         }
       }
 
@@ -617,8 +716,7 @@
         ctx.fillText(v.toFixed(2), 4, y + 4);
       }
 
-      const elapsed = Math.max(0, (runningState && streamStartTs > 0) ? (nowSec - streamStartTs) : 0);
-      const tStart = elapsed - OSC_WINDOW_SEC;
+      const baseTs = streamStartTs > 0 ? streamStartTs : viewStart;
       for (let i = 0; i <= OSC_X_TICKS; i++) {
         const xNorm = i / OSC_X_TICKS;
         const x = xToPix(xNorm);
@@ -627,7 +725,8 @@
         ctx.lineTo(x, plotY + plotH);
         ctx.stroke();
 
-        const labelTime = Math.max(0, tStart + xNorm * OSC_WINDOW_SEC);
+        const labelAbs = viewStart + xNorm * oscViewWindowSec;
+        const labelTime = Math.max(0, labelAbs - baseTs);
         ctx.fillText(`${labelTime.toFixed(1)}s`, x - 14, plotY + plotH + 16);
       }
 
@@ -640,9 +739,8 @@
         ctx.beginPath();
         let started = false;
         for (const p of series) {
-          const dt = nowSec - p.t;
-          if (dt < 0 || dt > OSC_WINDOW_SEC) continue;
-          const xNorm = 1 - (dt / OSC_WINDOW_SEC);
+          if (p.t < viewStart || p.t > viewNow) continue;
+          const xNorm = (p.t - viewStart) / oscViewWindowSec;
           const yNorm = (p.v - minV) / (maxV - minV);
           const px = xToPix(xNorm);
           const py = yToPix(yNorm);
@@ -658,11 +756,20 @@
 
       const hasAnyData = oscSeries.some((series) => series.length > 0);
       oscEmpty.style.display = hasAnyData ? "none" : "grid";
+      const elapsed = Math.max(0, viewNow - baseTs);
+      const rateHz = getConfiguredRateHz();
       oscMeta.textContent =
-        `采样率 ${oscHz} Hz | 时间窗 ${OSC_WINDOW_SEC.toFixed(1)}s | Y范围 ${minV.toFixed(2)}~${maxV.toFixed(2)} | 运行时间 ${elapsed.toFixed(1)}s`;
+        `链路 ${oscHz.toFixed(1)} Hz | 刷新 ${oscRenderHz.toFixed(1)} Hz | 频率变量(${getConfiguredRateLabel()}) ${rateHz.toFixed(2)} Hz | 时间窗 ${oscViewWindowSec.toFixed(1)}s | 运行时间 ${elapsed.toFixed(1)}s`;
     }
 
     function renderLoop(ts) {
+      oscRenderCount += 1;
+      if (!oscRenderStatTs) oscRenderStatTs = ts;
+      if (ts - oscRenderStatTs >= 1000) {
+        oscRenderHz = (oscRenderCount * 1000.0) / (ts - oscRenderStatTs);
+        oscRenderCount = 0;
+        oscRenderStatTs = ts;
+      }
       if (!lastRenderMs || (ts - lastRenderMs) >= OSC_RENDER_MS) {
         drawOscilloscope();
         lastRenderMs = ts;
@@ -699,6 +806,17 @@
     document.getElementById("saveFrameBtn").onclick = () => callApi("save_current_frame");
     document.getElementById("saveDataBtn").onclick = () => callApi("save_osc_data");
     document.getElementById("clearLogBtn").onclick = () => callApi("clear_logs");
+    oscTimeBtn.onclick = () => {
+      const nowSec = Date.now() / 1000.0;
+      if (oscTimeRunning) {
+        oscViewNowSec = nowSec;
+        oscTimeRunning = false;
+      } else {
+        oscTimeRunning = true;
+        oscViewNowSec = nowSec;
+      }
+      updateOscTimeBtn();
+    };
 
     async function refresh() {
       if (!apiReady || !hasApi()) return;
@@ -738,9 +856,48 @@
       }
     }
 
+    oscCanvas.addEventListener("mousedown", (e) => {
+      if (oscTimeRunning || e.button !== 0) return;
+      oscDragActive = true;
+      oscDragStartX = e.clientX;
+      oscDragStartViewNow = oscViewNowSec || (Date.now() / 1000.0);
+      updateOscTimeBtn();
+      e.preventDefault();
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!oscDragActive || oscTimeRunning) return;
+      const dx = e.clientX - oscDragStartX;
+      const secPerPx = oscViewWindowSec / getPlotWidthPx();
+      oscViewNowSec = oscDragStartViewNow - dx * secPerPx;
+      e.preventDefault();
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (!oscDragActive) return;
+      oscDragActive = false;
+      updateOscTimeBtn();
+    });
+
+    oscCanvas.addEventListener("wheel", (e) => {
+      if (oscTimeRunning) return;
+      const rect = oscCanvas.getBoundingClientRect();
+      const x = clamp(e.clientX - rect.left, OSC_PAD_LEFT, rect.width - OSC_PAD_RIGHT);
+      const ratio = clamp((x - OSC_PAD_LEFT) / getPlotWidthPx(), 0, 1);
+      const viewNow = oscViewNowSec || (Date.now() / 1000.0);
+      const viewStart = viewNow - oscViewWindowSec;
+      const anchorTime = viewStart + ratio * oscViewWindowSec;
+      const zoom = e.deltaY < 0 ? 0.85 : 1.15;
+      const newWin = clamp(oscViewWindowSec * zoom, OSC_WINDOW_MIN_SEC, OSC_WINDOW_MAX_SEC);
+      oscViewWindowSec = newWin;
+      oscViewNowSec = anchorTime + (1 - ratio) * newWin;
+      e.preventDefault();
+    }, { passive: false });
+
     setButtonsEnabled(false);
     setPreview("");
     rebuildLegend(oscNames);
+    updateOscTimeBtn();
     window.addEventListener("resize", drawOscilloscope);
     window.requestAnimationFrame(renderLoop);
 
