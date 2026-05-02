@@ -138,11 +138,11 @@ int main(void)
     disp_y += 16;
 #endif
 
-    // 初始化无刷电机
-    small_driver_uart_init();		// 初始化驱动通讯功能
-    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
-    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
-    uart_write_byte(UART_INDEX, '\n');
+    // // 初始化无刷电机
+    // small_driver_uart_init();		// 初始化驱动通讯功能
+    // uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
+    // uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    // uart_write_byte(UART_INDEX, '\n');
 
     // --- 屏幕打印无刷电机初始化完成 ---
 #if DEBUG_DISPLAY
