@@ -1,0 +1,412 @@
+/*
+ * =================================================================================
+ * 文件: vision_three_stage_control.c
+ * 作用: 三级跳视觉融合状态机（0 核）
+ * 设计原则:
+ *   - 只做方向与跳跃触发，不修改 target_speed_set；
+ *   - 外部单标志位触发，内部完成三次跳跃时序；
+ *   - 通过 PVC 行号阈值触发：下边界/上边界/下边界；
+ *   - 通过“PVC 短暂丢失后再出现”过滤第二次与第三次之间的黑区阶段。
+ * =================================================================================
+ */
+#include "vision/vision_three_stage_control.h"
+
+#if VISION_THREE_STAGE_CONTROL_ENABLE
+
+#include "vision/vision_ipc_core0.h"
+#include "servo/servo_jump.h"
+
+// /* ---------------- 外部控制量 ---------------- */
+// extern volatile float err_degree; /* 底盘方向控制输入 */
+// extern int g_motor_enable;        /* 电机使能 */
+// extern bool g_yaw_initialized;   /* 姿态初始化状态 */
+// extern uint8 g_special_action_trigger; /* 导航特殊动作占用标志 */
+
+/* ---------------- 全局状态 ---------------- */
+volatile vision_three_stage_control_status_t g_vision_three_stage_control_status = {0};
+volatile uint8 g_vision_three_stage_control_enable = VISION_THREE_STAGE_CONTROL_DEFAULT_ACTIVE;
+
+volatile uint8 g_vision_three_stage_jump1_bottom_y = VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT;
+volatile uint8 g_vision_three_stage_jump2_top_y = VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT;
+volatile uint8 g_vision_three_stage_jump3_bottom_y = VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT;
+volatile uint8 g_vision_three_stage_exit_top_y = VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT;
+
+/* 影子变量：先算完，再一次性发布，减少并发读写中间态 */
+static vision_three_stage_control_status_t s_ctrl_shadow;
+
+/* ---------------- 工具函数 ---------------- */
+static float vision_three_stage_abs_f(float value)
+{
+    return (value < 0.0f) ? -value : value;
+}
+
+static float vision_three_stage_constrain_f(float value, float min_value, float max_value)
+{
+    if (value < min_value)
+    {
+        return min_value;
+    }
+    if (value > max_value)
+    {
+        return max_value;
+    }
+    return value;
+}
+
+static void vision_three_stage_publish_status(void)
+{
+    g_vision_three_stage_control_status = s_ctrl_shadow;
+}
+
+static void vision_three_stage_set_state(vision_three_stage_ctrl_state_e next_state)
+{
+    s_ctrl_shadow.state = next_state;
+    s_ctrl_shadow.state_ticks = 0U;
+    s_ctrl_shadow.stable_count = 0U;
+    s_ctrl_shadow.lost_count = 0U;
+}
+
+static void vision_three_stage_stop_internal(vision_three_stage_exit_reason_e reason)
+{
+    s_ctrl_shadow.active = 0U;
+    s_ctrl_shadow.state = VISION_THREE_STAGE_CTRL_IDLE;
+    s_ctrl_shadow.state_ticks = 0U;
+    s_ctrl_shadow.stable_count = 0U;
+    s_ctrl_shadow.lost_count = 0U;
+    s_ctrl_shadow.black_gap_seen = 0U;
+    s_ctrl_shadow.jump_cooldown_ticks = 0U;
+    s_ctrl_shadow.exit_reason = reason;
+    s_ctrl_shadow.err_degree_cmd = 0.0f;
+
+    /* 退出时释放方向控制，避免残留转向量 */
+    err_degree = 0.0f;
+
+    /* 关闭本任务的视觉目标，归还上层调度权 */
+    VisionIpc_Core0_SetTask(VISION_TARGET_NONE, 0U);
+    g_special_action_trigger = 0U;
+}
+
+static void vision_three_stage_apply_err_from_pvc(void)
+{
+    float err;
+    const float lateral_term =
+        (float)s_ctrl_shadow.pvc_lateral_mm * VISION_THREE_STAGE_K_LAT_DEG_PER_MM;
+    const float yaw_term =
+        ((float)s_ctrl_shadow.pvc_yaw_error_deg_x100 * 0.01f) * VISION_THREE_STAGE_K_YAW_DEG_PER_DEG;
+
+    if (s_ctrl_shadow.pvc_stable_detected != 0U)
+    {
+        err = VISION_THREE_STAGE_LATERAL_SIGN * (lateral_term + yaw_term);
+        err = vision_three_stage_constrain_f(
+            err,
+            -VISION_THREE_STAGE_MAX_ERR_DEG,
+            VISION_THREE_STAGE_MAX_ERR_DEG);
+
+        if (vision_three_stage_abs_f(err) < VISION_THREE_STAGE_DEADBAND_DEG)
+        {
+            err = 0.0f;
+        }
+        s_ctrl_shadow.err_degree_cmd = err;
+    }
+    else
+    {
+        /* 暂失目标时平滑衰减，避免方向瞬变 */
+        s_ctrl_shadow.err_degree_cmd *= 0.90f;
+        if (vision_three_stage_abs_f(s_ctrl_shadow.err_degree_cmd) < 0.05f)
+        {
+            s_ctrl_shadow.err_degree_cmd = 0.0f;
+        }
+    }
+
+    err_degree = s_ctrl_shadow.err_degree_cmd;
+}
+
+static uint8 vision_three_stage_try_trigger_step_jump(void)
+{
+    if ((jump_flag == 0U) &&
+        (s_ctrl_shadow.jump_cooldown_ticks >= VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS))
+    {
+        jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+        s_ctrl_shadow.jump_count++;
+        s_ctrl_shadow.jump_cooldown_ticks = 0U;
+        return 1U;
+    }
+    return 0U;
+}
+
+/* ---------------- 对外接口 ---------------- */
+void VisionThreeStageControl_Init(void)
+{
+    memset(&s_ctrl_shadow, 0, sizeof(s_ctrl_shadow));
+    s_ctrl_shadow.enabled = g_vision_three_stage_control_enable ? 1U : 0U;
+    s_ctrl_shadow.state = VISION_THREE_STAGE_CTRL_IDLE;
+    s_ctrl_shadow.exit_reason = VISION_THREE_STAGE_EXIT_NONE;
+    vision_three_stage_publish_status();
+}
+
+void VisionThreeStageControl_SetEnable(uint8 enable)
+{
+    g_vision_three_stage_control_enable = enable ? 1U : 0U;
+    s_ctrl_shadow.enabled = g_vision_three_stage_control_enable;
+
+    if (g_vision_three_stage_control_enable == 0U)
+    {
+        vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_MANUAL_STOP);
+    }
+
+    vision_three_stage_publish_status();
+}
+
+uint8 VisionThreeStageControl_IsEnabled(void)
+{
+    return g_vision_three_stage_control_enable;
+}
+
+void VisionThreeStageControl_Start(void)
+{
+    if (g_vision_three_stage_control_enable == 0U)
+    {
+        return;
+    }
+
+    if (s_ctrl_shadow.active != 0U)
+    {
+        return;
+    }
+
+    memset(&s_ctrl_shadow, 0, sizeof(s_ctrl_shadow));
+    s_ctrl_shadow.enabled = 1U;
+    s_ctrl_shadow.active = 1U;
+    s_ctrl_shadow.exit_reason = VISION_THREE_STAGE_EXIT_NONE;
+    s_ctrl_shadow.jump_cooldown_ticks = VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS;
+    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_PVC_LOCK);
+
+    /* 切到 PVC 视觉任务，获取入口 top/bottom 行号 */
+    VisionIpc_Core0_SetTask(VISION_TARGET_PVC_ENTRY, VISION_MASK_PVC_ENTRY);
+
+    /* 告诉导航层：此时由特殊动作状态机占用控制权 */
+    g_special_action_trigger = 1U;
+    vision_three_stage_publish_status();
+}
+
+void VisionThreeStageControl_Stop(void)
+{
+    vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_MANUAL_STOP);
+    vision_three_stage_publish_status();
+}
+
+uint8 VisionThreeStageControl_IsActive(void)
+{
+    return s_ctrl_shadow.active;
+}
+
+void VisionThreeStageControl_Update_2ms(void)
+{
+    const volatile vision_ipc_packet_t *packet;
+    uint8 packet_new;
+    uint8 pvc_valid;
+
+    s_ctrl_shadow.enabled = g_vision_three_stage_control_enable ? 1U : 0U;
+
+    if (s_ctrl_shadow.enabled == 0U)
+    {
+        vision_three_stage_publish_status();
+        return;
+    }
+
+    if (s_ctrl_shadow.active == 0U)
+    {
+        vision_three_stage_publish_status();
+        return;
+    }
+
+    if (g_motor_enable == 0)
+    {
+        vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_MOTOR_OFF);
+        vision_three_stage_publish_status();
+        return;
+    }
+
+    if (g_yaw_initialized == 0U)
+    {
+        vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_YAW_INVALID);
+        vision_three_stage_publish_status();
+        return;
+    }
+
+    packet = VisionIpc_Core0_GetLatest();
+    packet_new = (uint8)(packet->seq != s_ctrl_shadow.last_seq);
+
+    if (packet_new != 0U)
+    {
+        s_ctrl_shadow.last_seq = packet->seq;
+        s_ctrl_shadow.stale_ticks = 0U;
+    }
+    else if (s_ctrl_shadow.stale_ticks < 0xFFFFU)
+    {
+        s_ctrl_shadow.stale_ticks++;
+    }
+
+    if (s_ctrl_shadow.jump_cooldown_ticks < 0xFFFFU)
+    {
+        s_ctrl_shadow.jump_cooldown_ticks++;
+    }
+
+    if (s_ctrl_shadow.state_ticks < 0xFFFFU)
+    {
+        s_ctrl_shadow.state_ticks++;
+    }
+
+    if (s_ctrl_shadow.stale_ticks > VISION_THREE_STAGE_STALE_TIMEOUT_TICKS)
+    {
+        vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_STALE);
+        vision_three_stage_publish_status();
+        return;
+    }
+
+    if (s_ctrl_shadow.state_ticks > VISION_THREE_STAGE_STATE_TIMEOUT_TICKS)
+    {
+        vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_TIMEOUT);
+        vision_three_stage_publish_status();
+        return;
+    }
+
+    pvc_valid = (uint8)((packet->valid_mask & VISION_VALID_PVC) != 0U);
+    if (pvc_valid != 0U)
+    {
+        s_ctrl_shadow.pvc_stable_detected = packet->pvc_stable_detected;
+        s_ctrl_shadow.pvc_raw_detected = packet->pvc_detected;
+        s_ctrl_shadow.pvc_entry_bottom_y = packet->pvc_entry_bottom_y;
+        s_ctrl_shadow.pvc_entry_top_y = packet->pvc_entry_top_y;
+        s_ctrl_shadow.pvc_lateral_mm = packet->pvc_lateral_mm;
+        s_ctrl_shadow.pvc_yaw_error_deg_x100 = packet->pvc_yaw_error_deg_x100;
+    }
+    else
+    {
+        s_ctrl_shadow.pvc_stable_detected = 0U;
+        s_ctrl_shadow.pvc_raw_detected = 0U;
+    }
+
+    /* 视觉只控制方向，不控制速度 */
+    vision_three_stage_apply_err_from_pvc();
+
+    switch (s_ctrl_shadow.state)
+    {
+        case VISION_THREE_STAGE_CTRL_WAIT_PVC_LOCK:
+            if (s_ctrl_shadow.pvc_stable_detected != 0U)
+            {
+                s_ctrl_shadow.stable_count++;
+                if (s_ctrl_shadow.stable_count >= VISION_THREE_STAGE_LOCK_STABLE_FRAMES)
+                {
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_JUMP1_BOTTOM);
+                }
+            }
+            else
+            {
+                s_ctrl_shadow.stable_count = 0U;
+            }
+            break;
+
+        case VISION_THREE_STAGE_CTRL_WAIT_JUMP1_BOTTOM:
+            if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
+                (s_ctrl_shadow.pvc_entry_bottom_y >= g_vision_three_stage_jump1_bottom_y))
+            {
+                if (vision_three_stage_try_trigger_step_jump() != 0U)
+                {
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_JUMP2_TOP);
+                }
+            }
+            break;
+
+        case VISION_THREE_STAGE_CTRL_WAIT_JUMP2_TOP:
+            if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
+                (s_ctrl_shadow.pvc_entry_top_y >= g_vision_three_stage_jump2_top_y))
+            {
+                if (vision_three_stage_try_trigger_step_jump() != 0U)
+                {
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC);
+                    s_ctrl_shadow.black_gap_seen = 0U;
+                }
+            }
+            break;
+
+        case VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC:
+            if (s_ctrl_shadow.pvc_stable_detected == 0U)
+            {
+                s_ctrl_shadow.stable_count = 0U;
+                if (s_ctrl_shadow.lost_count < 0xFFFFU)
+                {
+                    s_ctrl_shadow.lost_count++;
+                }
+                if (s_ctrl_shadow.lost_count >= VISION_THREE_STAGE_BLACK_GAP_LOST_FRAMES)
+                {
+                    s_ctrl_shadow.black_gap_seen = 1U;
+                }
+            }
+            else
+            {
+                s_ctrl_shadow.lost_count = 0U;
+                if (s_ctrl_shadow.black_gap_seen != 0U)
+                {
+                    if (s_ctrl_shadow.stable_count < 0xFFFFU)
+                    {
+                        s_ctrl_shadow.stable_count++;
+                    }
+                    if (s_ctrl_shadow.stable_count >= VISION_THREE_STAGE_REACQUIRE_STABLE_FRAMES)
+                    {
+                        vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_JUMP3_BOTTOM);
+                    }
+                }
+            }
+            break;
+
+        case VISION_THREE_STAGE_CTRL_WAIT_JUMP3_BOTTOM:
+            if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
+                (s_ctrl_shadow.pvc_entry_bottom_y >= g_vision_three_stage_jump3_bottom_y))
+            {
+                if (vision_three_stage_try_trigger_step_jump() != 0U)
+                {
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_EXIT_TOP);
+                }
+            }
+            break;
+
+        case VISION_THREE_STAGE_CTRL_WAIT_EXIT_TOP:
+            if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
+                (s_ctrl_shadow.pvc_entry_top_y >= g_vision_three_stage_exit_top_y))
+            {
+                s_ctrl_shadow.stable_count++;
+                if (s_ctrl_shadow.stable_count >= VISION_THREE_STAGE_EXIT_STABLE_FRAMES)
+                {
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_FINISH);
+                }
+            }
+            else
+            {
+                s_ctrl_shadow.stable_count = 0U;
+            }
+            break;
+
+        case VISION_THREE_STAGE_CTRL_FINISH:
+            vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_SUCCESS);
+            break;
+
+        case VISION_THREE_STAGE_CTRL_FAILSAFE:
+        default:
+            vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_TIMEOUT);
+            break;
+    }
+
+    vision_three_stage_publish_status();
+}
+
+#else
+/* 编译开关关闭时保留空实现，保证链接通过 */
+void VisionThreeStageControl_Init(void) {}
+void VisionThreeStageControl_SetEnable(uint8 enable) {(void)enable;}
+uint8 VisionThreeStageControl_IsEnabled(void) { return 0U; }
+void VisionThreeStageControl_Start(void) {}
+void VisionThreeStageControl_Stop(void) {}
+uint8 VisionThreeStageControl_IsActive(void) { return 0U; }
+void VisionThreeStageControl_Update_2ms(void) {}
+#endif

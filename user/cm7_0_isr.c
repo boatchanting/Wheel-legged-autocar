@@ -42,6 +42,7 @@
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
+#include "vision/vision_three_stage_control.h"
 
 // 声明外部函数
 
@@ -82,6 +83,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         VisionPvcControl_Update_2ms();
         VisionBumpyControl_Update_2ms();
         VisionBridgeTask_Update_2ms();
+        VisionThreeStageControl_Update_2ms();
     }
 
     imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用【优化点】
@@ -91,7 +93,6 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // 2) 里程累计到 1000mm 后停车并退出状态机
     if(g_motor_enable ==1){
         BumpyRoad_Update_1ms(); // 颠簸路段状态机
-        jump_stepup_three_stairs_test_update(); // 连续上三级台阶测试状态机
     }
 
     
@@ -534,13 +535,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         NavReplay_Stop();
     }
 
-    if (jump_stepup_three_stairs_test_is_active())
-    {
-        err_degree = 0.0f;
-    }
 
     if ((g_replay_state != REPLAY_RUNNING) &&
-        (!jump_stepup_three_stairs_test_is_active()) &&
+        (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
         && g_pvc_control_enable ==0

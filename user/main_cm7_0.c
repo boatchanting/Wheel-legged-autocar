@@ -41,6 +41,7 @@
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
+#include "vision/vision_three_stage_control.h"
 
 
 // **************************** uart配置区域 **************************** 
@@ -274,7 +275,8 @@ VisionIpc_Core0_Init();
 TelemetryIpc_Core0_Init();
 VisionPvcControl_Init(); // Bring-up: 0核通过2ms中断调度1核开启PVC入口检测，并用回传数据做入口引导
 VisionBumpyControl_Init(); // 颠簸路段：0核读取1核视觉并生成方向控制量
-VisionBridgeTask_Init(); // 科目三任务区：PVC进入 + 直线/单边桥视觉控制状态机
+VisionBridgeTask_Init();
+VisionThreeStageControl_Init(); // three-stage vision jump state machine
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
@@ -480,9 +482,9 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         if (vision_detected_three_jump_point == 1) 
         {
             // 判断当前是否处于空闲状态，防止跳跃中途重复触发打断动作
-            if (!jump_stepup_three_stairs_test_is_active()) 
+            if (!VisionThreeStageControl_IsActive()) 
             {
-                jump_stepup_three_stairs_test_start(); // <--- 启动三级跳状态机
+                VisionThreeStageControl_Start(); // <--- 启动三级跳状态机
             }
             vision_detected_three_jump_point = 0; // 清除标志位
         }
