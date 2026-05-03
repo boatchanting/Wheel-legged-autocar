@@ -345,7 +345,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             //     ekf_print_div = 0;
             // }
             #if WIFI_USE
-                //wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
+                wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
             #endif
                 TelemetryIpc_Core0_PublishPvcDefault();
 
@@ -361,15 +361,15 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
-                // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // //3.【调试遥控器，前六个通道】
@@ -417,14 +417,14 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 // // data[7] 远端白边行号
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                    // 4. 设置本次发送的通道数量 (一共8个数据)
-                seekfree_assistant_oscilloscope_data.channel_num = 8;
+                //     // 4. 设置本次发送的通道数量 (一共8个数据)
+                // seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                    // 5. 调用发送函数
-                seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                //     // 5. 调用发送函数
+                // seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                //用于上位机向小车发送pid信息
-                wifi_update_pid_params(); 
+                // //用于上位机向小车发送pid信息
+                // wifi_update_pid_params(); 
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;
