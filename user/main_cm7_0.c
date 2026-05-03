@@ -140,11 +140,11 @@ int main(void)
     disp_y += 16;
 #endif
 
-    // // 初始化无刷电机
-    // small_driver_uart_init();		// 初始化驱动通讯功能
-    // uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
-    // uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
-    // uart_write_byte(UART_INDEX, '\n');
+    // 初始化无刷电机
+    small_driver_uart_init();		// 初始化驱动通讯功能
+    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // 输出无刷电机初始化完成信息
+    uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
+    uart_write_byte(UART_INDEX, '\n');
 
     // --- 屏幕打印无刷电机初始化完成 ---
 #if DEBUG_DISPLAY
@@ -350,26 +350,26 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 TelemetryIpc_Core0_PublishPvcDefault();
 
                 //逐飞助手示波器发送代码        
-                //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                // //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)gyro_loop_out;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+
+
+                // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
                 seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
                 seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
                 seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
                 seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
                 seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
-
-
-                // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
-                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)pid_gyro.output;
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_turn_angle.output;
-                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.output;
-                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // //3.【调试遥控器，前六个通道】
