@@ -62,7 +62,7 @@ volatile struct {
     float gyro;
     float speed;
 } sensor_data = {0};
-# define OUR_PWM_MAX_LIMIT 4000.0f // 最大PWM值（根据实际情况调整）
+# define OUR_PWM_MAX_LIMIT 8000.0f // 最大PWM值（根据实际情况调整）
 
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）

@@ -18,8 +18,8 @@
 #define NAV_START_HEADING_TOLERANCE 0.3f // 复刻起步前，绝对航向对齐阈值(度)，这个需要使用地磁计航向角，暂时不用调【优化点】
 
 // 速度设定 (负数为前进，数值对应 motor rpm 或 pwm 级)
-#define NAV_SPEED_FAST          (-4500.0f) // 高速行驶速度
-#define NAV_SPEED_SLOW          (-300.0f)  // 低速逼近速度 (-60 约等于 20cm/s) 
+#define NAV_SPEED_FAST          (-800.0f) // 高速行驶速度
+#define NAV_SPEED_SLOW          (-200.0f)  // 低速逼近速度 (-60 约等于 20cm/s) 
 
 #define NAV_SPEED_STOP          (0.0f)
 
@@ -34,9 +34,9 @@
 #define CURVE_PREVIEW_DIST     1200.0f   // 曲率预判距离 (mm)。探测多远处的弯道，决定提早减速的时机。
 
 // --- 2. 速度规划 (Speed Planning) 参数 ---
-#define SPD_CURVE_DEADZONE     0.35f     // 曲率感应死区 (0-1)。低于此值的弯道视为直道，不减速，释放速度。
-#define SPD_CURVE_EXPONENT     3.5f     // 曲率减速指数。1.0为线性，2.0为平方律。越大则轻微弯道速度越快。
-#define SPD_ANGLE_PENALTY      0.08f     // 转向角度惩罚权重 (0-1)。值越小，纠偏时减速越少，动力更足。
+#define SPD_CURVE_DEADZONE     0.02f     // 曲率感应死区 (0-1)。低于此值的弯道视为直道，不减速，释放速度。
+#define SPD_CURVE_EXPONENT     2.5f     // 曲率减速指数。1.0为线性，2.0为平方律。越大则轻微弯道速度越快。
+#define SPD_ANGLE_PENALTY      0.15f     // 转向角度惩罚权重 (0-1)。值越小，纠偏时减速越少，动力更足。
 #define SPD_ANGLE_TOLERANCE    60.0f    // 转向角度容忍门槛 (度)。角度偏差在此范围内不触发剧烈减速。
 
 // --- 3. 丝滑滤波 (Smoothness) 参数 ---

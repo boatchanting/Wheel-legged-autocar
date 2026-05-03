@@ -214,7 +214,7 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
         if (far_idx > start_idx) {
             float dx = nav_ram_data.points[far_idx].x - nav_ram_data.points[start_idx].x;
             float dy = nav_ram_data.points[far_idx].y - nav_ram_data.points[start_idx].y;
-            float path_angle = atan2f(dy, dx) * 57.29578f;
+            float path_angle = -atan2f(dy, -dx) * 57.29578f;
             float angle_diff = fabsf(NormalizeAngle(path_angle - inertial_nav.relative_yaw));
             
             float factor = (angle_diff / 60.0f) * (1.2f - 0.2f * step);
