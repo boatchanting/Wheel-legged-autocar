@@ -652,13 +652,108 @@ void render_line_vision_to_image(void)
         int x_lookahead = (int)(result.line_x_lookahead + 0.5f);
         const int lookahead_y = (int)((uint32)LINE_IMAGE_H * 62U / 100U);
 
-        draw_line_on_image(x_lookahead, lookahead_y, x_bottom, y_max, 0U);
-        draw_cross_on_image(x_bottom, y_max, 2, 0U);
-        draw_cross_on_image(x_lookahead, lookahead_y, 2, 0U);
+        /* 1. 利用两点算出斜率变化率 dx/dy */
+        float dx_dy = (float)(x_lookahead - x_bottom) / (float)(lookahead_y - y_max);
+        
+        /* 2. 推算出画面最顶部(y_min)应该在哪个 X 坐标 */
+        int x_top = x_bottom + (int)(dx_dy * (float)(y_min - y_max));
+
+        /* 3. 画一条从屏幕最底下，直插屏幕最顶部的“长矛”引导线 */
+        draw_line_on_image(x_top, y_min, x_bottom, y_max, 0U); 
+
+        /* 4. 在重要位置画十字靶心 */
+        draw_cross_on_image(x_bottom, y_max, 3, 0U);       // 底部控制点
+        draw_cross_on_image(x_lookahead, lookahead_y, 3, 0U); // 预瞄控制点
 
 #if VISION_IMAGE_RENDER_ENABLE
         draw_vline_on_image(x_bottom, y_max - 5, y_max, 0U);
         draw_vline_on_image(x_lookahead, lookahead_y - 3, lookahead_y + 3, 0U);
 #endif
+    }
+}
+
+void render_bumpy_vision_to_image(void)
+{
+    const volatile bumpy_vision_output_t *bumpy_out = &g_bumpy_vision_output;
+    bumpy_vision_frame_result_t result;
+
+    /* 1. 决定画稳定数据还是原始数据 */
+    if (bumpy_out->stable_detected)
+    {
+        result = bumpy_out->stable;
+    }
+    else
+    {
+        result = bumpy_out->raw;
+    }
+
+#if VISION_IMAGE_RENDER_ENABLE
+    /* 画顶部的通用状态指示灯 (借用原有函数，没有桥梁则后两个参数填 0) */
+    render_common_status_strip(bumpy_out->raw_detected,
+                               bumpy_out->stable_detected,
+                               0U, 
+                               0U);
+
+    {
+        /* 提取需要显示的指标并限制范围 */
+        int conf = clamp_int_to_range((int)result.confidence_u16, 0, 1000);
+        int cost_us = (int)g_bumpy_vision_cost_profiler.last_us;
+        int phase = (int)result.phase;
+        int rib_count = (int)result.rib_count;
+
+        /* 画进度条：置信度 (左侧) 和 耗时 (右侧) */
+        draw_bar_on_image(0, 0, 22, conf, 1000, 0U);
+        draw_bar_on_image(24, 0, 16, clamp_int_to_range(cost_us, 0, 10000), 10000, 0U);
+
+#if VISION_IMAGE_RENDER_NUMERIC_ENABLE
+        /* 打印具体微型数字：置信度 | 阶段Phase | 识别到的黑条数 | 转向误差 */
+        (void)draw_uint3x5_on_image(0, 4, (uint32)conf, 0U);
+        (void)draw_uint3x5_on_image(25, 4, (uint32)phase, 0U);           /* 关键状态机参数 */
+        (void)draw_uint3x5_on_image(35, 4, (uint32)rib_count, 0U);       /* 颠簸黑条数 */
+        draw_int3x5_on_image(45, 4, (int)(result.steer_error_px_x100 / 100), 0U); /* 偏差 */
+#endif
+    }
+#endif
+
+    /* 2. 画出检测的 ROI (感兴趣区域) 边界虚线，明确算法看哪里 */
+    for (int x = 0; x < BUMPY_IMAGE_W; x += 3)
+    {
+        draw_point_on_image(x, BUMPY_ROI_Y0, 0U); /* 顶部边界 */
+        draw_point_on_image(x, BUMPY_ROI_Y1, 0U); /* 底部边界 */
+    }
+
+    /* 3. 画出识别到的特征结果 */
+    if (bumpy_out->stable_detected || bumpy_out->raw_detected)
+    {
+        /* --- 画出颠簸白色底板的包围盒 (Bounding Box) --- */
+        if (result.bbox_xmin != 0xFFU && result.bbox_xmax != 0xFFU)
+        {
+            /* 用白色 (255U) 画一个框，把找到的白色大板块框起来 */
+            draw_rect_on_image(result.bbox_xmin,
+                               result.bbox_ymin,
+                               result.bbox_xmax,
+                               result.bbox_ymax,
+                               255U);
+        }
+
+        /* --- 画出引导目标线 (Centerline/Target) --- */
+        if (result.target_x_px_x100 != 0) 
+        {
+            /* 将放大了100倍的坐标还原回实际像素 */
+            int target_x = (int)(result.target_x_px_x100 / 100.0f + 0.5f);
+            
+            /* 确定线条的上下边界，如果没有有效边界就用 ROI 边界 */
+            int top_y = (result.centerline_top_y != 0xFFU) ? result.centerline_top_y : BUMPY_ROI_Y0;
+            int bottom_y = (result.centerline_bottom_y != 0xFFU) ? result.centerline_bottom_y : BUMPY_ROI_Y1;
+
+            /* 画一条垂直的中心虚线，代表车要对准的 X 坐标 */
+            for (int y = top_y; y <= bottom_y; y += 2)
+            {
+                draw_point_on_image(target_x, y, 0U);
+            }
+            
+            /* 在底部画一个大十字准星，代表我们要转向的目标瞄准点 */
+            draw_cross_on_image(target_x, bottom_y, 3, 0U);
+        }
     }
 }

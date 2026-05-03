@@ -13,6 +13,7 @@ typedef struct {
     
     uint8 mark_trigger;     // [标志] CH3 打点触发 (按下瞬间置1，需手动清零)
     uint8 motor_enable;     // [状态] CH6 总开关 (1=使能, 0=急停)
+    uint8 brake_active;     // [状态] CH5 刹车开关 (1=按下, 0=松开)
     
     uint8 point_type;      // 导航的打点类型
     // 模式枚举 (对应 CH4 三态开关和CH5开关的组合状态，使用ch3开关进行触发)

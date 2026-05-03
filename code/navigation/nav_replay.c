@@ -4,7 +4,7 @@
 #include "gps_nav_replay_route_table.h"
 #include "gnss_transform.h"
 #include "../config/sys_options.h"
-#include "vision/vision_task_area.h"
+#include "vision/vision_bridge_control.h"
 
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;
@@ -21,6 +21,14 @@ uint8 g_special_action_trigger = 0;         // 触发标志
 #endif
 
 static uint8 g_start_heading_aligned = 1;
+
+#if IMU_CATEGORY == 3
+static uint8 s_start_heading_stable_count = 0;
+#endif
+
+#if CURRENT_NAV_PLAN == 1
+static void NavReplay_ResetProcessState(void);
+#endif
 
 // ========================= 辅助函数 =========================
 
@@ -86,8 +94,13 @@ void NavReplay_Start(void)
     g_special_action_trigger = 0;
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
+    s_start_heading_stable_count = 0;
 #else
     g_start_heading_aligned = 1;
+#endif
+
+#if CURRENT_NAV_PLAN == 1
+    NavReplay_ResetProcessState();
 #endif
     
     #if DEBUG_LOG_ENABLE
@@ -103,6 +116,13 @@ void NavReplay_Stop(void)
     err_degree = 0.0f;
     g_special_action_trigger = 0;
     g_start_heading_aligned = 1;
+#if IMU_CATEGORY == 3
+    s_start_heading_stable_count = 0;
+#endif
+
+#if CURRENT_NAV_PLAN == 1
+    NavReplay_ResetProcessState();
+#endif
     
     #if DEBUG_LOG_ENABLE
     printf("[Nav] Replay STOPPED.\r\n");
@@ -115,6 +135,11 @@ void NavReplay_Stop(void)
 static float prev_err_degree = 0.0f;
 static float prev_speed_set = 0.0f;
 static float prev_curve_f = 0.0f;
+
+#if IMU_CATEGORY == 3
+#define NAV_START_ALIGN_MAX_ERR      25.0f
+#define NAV_START_ALIGN_STABLE_COUNT 6U
+#endif
 
 // 高效平方距离计算
 static inline float CalcDistanceSq(float x1, float y1, float x2, float y2) {
@@ -210,9 +235,94 @@ static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下�
 
 /*这里注释了，保存的是Pure Pursuit 联合 特殊点直走 状态机*/
 
+static void NavReplay_ResetProcessState(void)
+{
+    prev_err_degree = 0.0f;
+    prev_speed_set = 0.0f;
+    prev_curve_f = 0.0f;
+    is_arrived = 0;
+    s_is_aligning = 0;
+    s_prev_trigger = 0;
+#if IMU_CATEGORY == 3
+    s_start_heading_stable_count = 0;
+#endif
+}
+
+#if IMU_CATEGORY == 3
+static uint8 NavReplay_HandleStartHeadingAlignment(void)
+{
+    float heading_err = NormalizeAngle(NAV_REPLAY_START_HEADING_DEG - heading);
+    float heading_cmd = heading_err;
+
+    if (heading_cmd > NAV_START_ALIGN_MAX_ERR) heading_cmd = NAV_START_ALIGN_MAX_ERR;
+    if (heading_cmd < -NAV_START_ALIGN_MAX_ERR) heading_cmd = -NAV_START_ALIGN_MAX_ERR;
+
+    err_degree = heading_cmd;
+    target_speed_set = NAV_SPEED_STOP;
+
+    if (fabsf(heading_err) <= NAV_START_HEADING_TOLERANCE)
+    {
+        if (s_start_heading_stable_count < NAV_START_ALIGN_STABLE_COUNT)
+        {
+            s_start_heading_stable_count++;
+        }
+    }
+    else
+    {
+        s_start_heading_stable_count = 0;
+    }
+
+    if (s_start_heading_stable_count < NAV_START_ALIGN_STABLE_COUNT)
+    {
+        return 0;
+    }
+
+    g_start_heading_aligned = 1;
+    s_start_heading_stable_count = 0;
+    err_degree = 0.0f;
+    target_speed_set = NAV_SPEED_STOP;
+    return 1;
+}
+
+static void NavReplay_ResetLaunchPose(void)
+{
+    inertial_nav.x = 0.0f;
+    inertial_nav.y = 0.0f;
+    inertial_nav.vx_body = 0.0f;
+    inertial_nav.vy_body = 0.0f;
+    inertial_nav.slip_flag = 0;
+    inertial_nav.relative_yaw = 0.0f;
+    inertial_nav.init_yaw = euler_angle.yaw;
+
+    g_target_idx = 0;
+    g_current_point_type = NAV_POINT_PATH;
+    g_special_action_trigger = 0;
+
+    NavReplay_ResetProcessState();
+    err_degree = 0.0f;
+    target_speed_set = NAV_SPEED_STOP;
+}
+#endif
+
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING) return;
+#if IMU_CATEGORY == 3
+    if (!g_start_heading_aligned)
+    {
+        if (!NavReplay_HandleStartHeadingAlignment())
+        {
+            return;
+        }
+
+        NavReplay_ResetLaunchPose();
+
+        #if DEBUG_LOG_ENABLE
+        printf("[Nav] Start heading aligned, launch pose reset.\r\n");
+        #endif
+        return;
+    }
+#endif
 
     // 如果状态机正在干预，记录状态并退出
     // if (g_special_action_trigger == 1) {

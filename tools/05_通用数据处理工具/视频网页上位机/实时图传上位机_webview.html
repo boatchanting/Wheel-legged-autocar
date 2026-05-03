@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>实时图传上位机 Pro</title>
+  <style>
+    /* 核心主题变量定义 */
+    :root {
+      /* ====== 暗黑模式 (默认) ====== */
+      --bg-main: #050914;
+      --card-bg: rgba(17, 25, 40, 0.85);
+      --card-border: rgba(255, 255, 255, 0.08);
+      --card-head-bg: rgba(255, 255, 255, 0.02);
+      --line: #2a3a52;
+      --text: #eef4ff;
+      --muted: #8b9bb4;
+      --input-bg: #0b1120;
+      --panel-soft: rgba(0, 0, 0, 0.2);
+      
+      --osc-bg: #040811;
+      --osc-grid: rgba(255, 255, 255, 0.08);
+      --osc-text: #8b9bb4;
+
+      /* 通用功能色 */
+      --blue: #3b82f6; --blue-hover: #60a5fa;
+      --red: #ef4444;  --red-hover: #f87171;
+      --gold: #f59e0b; --gold-hover: #fbbf24;
+      --slate: #475569;--slate-hover: #64748b;
+      --ok: #10b981; --warn: #f59e0b; --err: #ef4444;
+      
+      --resizer-color: rgba(255,255,255, 0.05);
+      --resizer-hover: var(--blue);
+    }
+
+    /* ====== 亮色模式 ====== */
+    body.light-mode {
+      --bg-main: #f1f5f9;
+      --card-bg: rgba(255, 255, 255, 0.95);
+      --card-border: rgba(0, 0, 0, 0.1);
+      --card-head-bg: rgba(0, 0, 0, 0.02);
+      --line: #cbd5e1;
+      --text: #1e293b;
+      --muted: #64748b;
+      --input-bg: #ffffff;
+      --panel-soft: rgba(0, 0, 0, 0.04);
+      
+      --osc-bg: #f8fafc;
+      --osc-grid: rgba(0, 0, 0, 0.08);
+      --osc-text: #64748b;
+      
+      --resizer-color: rgba(0,0,0, 0.05);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0; padding: 0;
+      width: 100vw; height: 100vh;
+      overflow: hidden;
+      color: var(--text);
+      background: var(--bg-main);
+      font: 13px/1.5 "Segoe UI", system-ui, sans-serif;
+      transition: background 0.3s, color 0.3s;
+    }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+
+    /* ====== 全局拖拽布局外壳 ====== */
+    .app-container {
+      display: flex;
+      flex-direction: row;
+      width: 100%; height: 100%;
+      padding: 8px;
+      gap: 2px;
+    }
+
+    .col {
+      display: flex;
+      flex-direction: column;
+      min-width: 250px;
+      height: 100%;
+      gap: 2px;
+    }
+
+    /* 卡片槽位：用于 Drag & Drop 内容交换而不断开 Resizer */
+    .slot {
+      display: flex;
+      flex-direction: column;
+      min-height: 150px;
+    }
+
+    /* 分割线控制柄 */
+    .resizer {
+      background: var(--resizer-color);
+      z-index: 10;
+      transition: background 0.2s;
+    }
+    .resizer:hover, .resizer.active { background: var(--resizer-hover); }
+    .v-resizer { width: 8px; cursor: col-resize; margin: 0 2px; border-radius: 4px; }
+    .h-resizer { height: 8px; cursor: row-resize; margin: 2px 0; border-radius: 4px; }
+
+    /* ====== 卡片主体 ====== */
+    .card {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      background: var(--card-bg);
+      backdrop-filter: blur(8px);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      overflow: hidden;
+      transition: border-color 0.3s, background 0.3s;
+    }
+
+    /* 可拖拽的头部标题栏 */
+    .head {
+      padding: 8px 14px;
+      border-bottom: 1px solid var(--line);
+      background: var(--card-head-bg);
+      display: flex; align-items: center; justify-content: space-between;
+      cursor: grab;
+      user-select: none;
+    }
+    .head:active { cursor: grabbing; }
+    .head h2 { margin: 0; font-size: 14px; font-weight: 600; pointer-events: none; }
+    
+    .content {
+      padding: 12px;
+      display: flex; flex-direction: column; gap: 10px;
+      flex: 1; min-height: 0; overflow: auto;
+    }
+
+    /* 杂项样式 */
+    .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .field label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 12px; }
+    .field input { width: 100%; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--input-bg); color: var(--text); outline: none; transition: border-color 0.2s; }
+    .field input:focus { border-color: var(--blue); }
+    .field input[readonly] { color: var(--muted); cursor: default; }
+
+    .btns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    button { border: none; border-radius: 6px; background: var(--blue); color: #fff; padding: 8px 12px; cursor: pointer; font-weight: 600; transition: all 0.2s; }
+    button:hover:not(:disabled) { background: var(--blue-hover); transform: translateY(-1px); }
+    button:active:not(:disabled) { transform: translateY(0); }
+    button:disabled { opacity: 0.4; cursor: not-allowed; filter: grayscale(100%); }
+    button.warn { background: var(--gold); } button.warn:hover:not(:disabled) { background: var(--gold-hover); }
+    button.stop { background: var(--red); } button.stop:hover:not(:disabled) { background: var(--red-hover); }
+    button.ghost { background: var(--slate); } button.ghost:hover:not(:disabled) { background: var(--slate-hover); }
+    button.compact { padding: 4px 8px; font-size: 12px; font-weight: normal; }
+
+    /* 状态面板 */
+    .facts { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+    .fact { border: 1px solid var(--line); background: var(--panel-soft); border-radius: 6px; padding: 6px 8px; }
+    .k { color: var(--muted); font-size: 11px; margin-bottom: 2px;}
+    .v { font-size: 14px; font-weight: 600; font-family: Consolas, monospace;}
+    .status-line { border-radius: 6px; padding: 8px 10px; background: var(--panel-soft); color: var(--muted); font-size: 12px; word-break: break-all; }
+
+    /* ====== 视频和图表区 ====== */
+    .preview-wrap {
+      flex: 1; position: relative; width: 100%; min-height: 0;
+      border: 1px solid var(--line); border-radius: 8px;
+      background: #000; overflow: hidden;
+    }
+    .preview {
+      width: 100%; height: 100%;
+      /* 对于94x60，contain加pixelated能保证完美的硬边像素放大缩放 */
+      object-fit: contain; 
+      image-rendering: pixelated; 
+      display: none;
+    }
+    .empty-text { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; }
+
+    .logs { width: 100%; height: 100%; border-radius: 6px; border: 1px solid var(--line); background: var(--input-bg); color: #a5b4cb; resize: none; padding: 8px; font: 12px/1.5 Consolas, monospace; outline: none; }
+    body.light-mode .logs { color: #334155; }
+
+    .osc-wrap { flex: 1; display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+    .osc-canvas-wrap { flex: 1; position: relative; border: 1px solid var(--line); border-radius: 8px; background: var(--osc-bg); overflow: hidden; min-height: 120px; transition: background 0.3s; }
+    .osc-canvas { width: 100%; height: 100%; display: block; }
+    
+    .osc-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;}
+    .osc-select { border: 1px solid var(--line); border-radius: 6px; background: var(--input-bg); color: var(--text); padding: 4px 8px; font-size: 12px; outline: none; }
+
+    .toggle-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px; }
+    .toggle-item { display: flex; align-items: center; justify-content: space-between; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-soft); padding: 4px 8px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .toggle-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11px; margin-left:6px; flex:1;}
+    .toggle-value { color: var(--text); font: 12px/1 Consolas, monospace; }
+    .toggle-check { accent-color: var(--blue); cursor: pointer; margin: 0; }
+
+    /* 主题切换悬浮按钮 */
+    .theme-btn {
+      position: fixed; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 100; border-radius: 20px; padding: 4px 12px; font-size: 16px;
+      background: var(--card-bg); border: 1px solid var(--line); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      color: var(--text); backdrop-filter: blur(8px);
+    }
+  </style>
+</head>
+<body>
+
+  <!-- 主题切换开关 -->
+  <button id="themeToggle" class="theme-btn" title="切换夜间/白天模式">🌙 / ☀️</button>
+
+  <div class="app-container">
+    
+    <!-- 左侧容器 -->
+    <div class="col" id="colLeft" style="width: 360px;">
+      <!-- 槽位 1 -->
+      <div class="slot" style="flex: 1.5;">
+        <div class="card" id="cardCtrl">
+          <div class="head" draggable="true"><h2>⚙️ 接收控制</h2></div>
+          <div class="content">
+            <div class="grid">
+              <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
+              <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
+              <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" /></div>
+              <div class="field"><label>输出目录</label><input id="output" readonly /></div>
+            </div>
+            <div class="btns">
+              <button id="startBtn">开始接收</button>
+              <button class="stop" id="stopBtn">停止接收</button>
+              <button class="warn" id="recordStartBtn">保存视频</button>
+              <button class="stop" id="recordStopBtn">停止保存</button>
+              <button class="ghost" id="saveFrameBtn">保存单帧</button>
+              <button class="ghost" id="clearLogBtn">清空日志</button>
+            </div>
+            <div class="facts">
+              <div class="fact"><div class="k">连接状态</div><div class="v" id="connState">-</div></div>
+              <div class="fact"><div class="k">实时帧率</div><div class="v" id="fpsNow">0</div></div>
+              <div class="fact"><div class="k">当前带宽</div><div class="v" id="kbpsNow">0</div></div>
+              <div class="fact"><div class="k">分辨率</div><div class="v" id="sizeNow">-</div></div>
+              <div class="fact" style="grid-column: span 2;">
+                <div class="k">接收帧数 | 关键/差分/跳帧</div>
+                <div class="v"><span id="framesNow">0</span> | <span id="kdsNow">0/0/0</span></div>
+              </div>
+            </div>
+            <div class="status-line" id="statusText">等待后端注入...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 横向分割线 (调整上下高度) -->
+      <div class="resizer h-resizer"></div>
+
+      <!-- 槽位 2 -->
+      <div class="slot" style="flex: 1;">
+        <div class="card" id="cardLog">
+          <div class="head" draggable="true"><h2>📝 运行日志</h2></div>
+          <div class="content" style="padding: 10px;">
+            <textarea class="logs" id="logs" readonly></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 纵向分割线 (调整左右宽度) -->
+    <div class="resizer v-resizer"></div>
+
+    <!-- 右侧容器 -->
+    <div class="col" id="colRight" style="flex: 1;">
+      <!-- 槽位 3 -->
+      <div class="slot" style="flex: 1.2;">
+        <div class="card" id="cardVideo">
+          <div class="head" draggable="true"><h2>🖥️ 实时图像 (94x60 像素缩放)</h2></div>
+          <div class="content">
+            <div class="preview-wrap">
+              <img class="preview" id="preview" />
+              <div class="empty-text" id="previewEmpty">等待视频帧...</div>
+            </div>
+            <div class="status-line" id="metaText" style="margin-top: 6px;">暂无图像</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 横向分割线 (调整上下高度) -->
+      <div class="resizer h-resizer"></div>
+
+      <!-- 槽位 4 -->
+      <div class="slot" style="flex: 1;">
+        <div class="card" id="cardOsc">
+          <div class="head" draggable="true">
+            <h2>📈 示波器</h2>
+            <button class="ghost compact" id="saveDataBtn" style="pointer-events: auto;">保存数据</button>
+          </div>
+          <div class="content">
+            <div class="osc-wrap">
+              <div class="osc-toolbar">
+                <div style="color:var(--muted); font-size:12px;" id="oscMeta">采样率 0 Hz | 时间窗 10.0s</div>
+                <div style="display:flex; gap:8px;">
+                  <button class="ghost compact" id="oscTimeBtn">时间运行</button>
+                  <select class="osc-select" id="oscRateSource"></select>
+                </div>
+              </div>
+              <div class="osc-canvas-wrap">
+                <canvas class="osc-canvas" id="oscCanvas"></canvas>
+                <div class="empty-text" id="oscEmpty">等待示波器数据...</div>
+              </div>
+              <div class="toggle-grid" id="oscLegend"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ==========================================
+    // 1. UI 交互功能扩展：主题切换 & 拖拽调节
+    // ==========================================
+    
+    // -- 主题切换 --
+    let isLightMode = false;
+    const themeBtn = document.getElementById("themeToggle");
+    themeBtn.onclick = () => {
+      isLightMode = !isLightMode;
+      if (isLightMode) document.body.classList.add("light-mode");
+      else document.body.classList.remove("light-mode");
+    };
+
+    function getThemeColor(varName) {
+      return getComputedStyle(document.body).getPropertyValue(varName).trim();
+    }
+
+    // -- 卡片位置互换 (Drag & Drop) --
+    let draggedCard = null;
+    document.querySelectorAll('.card').forEach(card => {
+      const head = card.querySelector('.head');
+      
+      head.addEventListener('dragstart', (e) => {
+        draggedCard = card;
+        e.dataTransfer.effectAllowed = 'move';
+        setTimeout(() => card.style.opacity = '0.4', 0); // 视觉反馈
+      });
+      
+      head.addEventListener('dragend', () => {
+        draggedCard.style.opacity = '1';
+        draggedCard = null;
+      });
+
+      card.addEventListener('dragover', (e) => {
+        e.preventDefault(); // 允许放置
+      });
+
+      card.addEventListener('drop', (e) => {
+        e.preventDefault();
+        if (draggedCard && draggedCard !== card) {
+          // 巧妙逻辑：只交换内部的 card，而不交换 slot 和 resizer，这样分割线永远不会乱！
+          const slotA = draggedCard.parentNode;
+          const slotB = card.parentNode;
+          slotA.appendChild(card);
+          slotB.appendChild(draggedCard);
+          window.dispatchEvent(new Event('resize')); // 触发图表重绘
+        }
+      });
+    });
+
+    // -- 面板大小调节 (Resizer) --
+    document.querySelectorAll('.resizer').forEach(resizer => {
+      let isDragging = false;
+      let startPos, startSize;
+      const isV = resizer.classList.contains('v-resizer');
+      // 分割线控制的元素是它前面的那个 slot / col
+      const prevEl = resizer.previousElementSibling;
+
+      resizer.addEventListener('mousedown', e => {
+        isDragging = true;
+        resizer.classList.add('active');
+        startPos = isV ? e.clientX : e.clientY;
+        startSize = isV ? prevEl.getBoundingClientRect().width : prevEl.getBoundingClientRect().height;
+        document.body.style.cursor = isV ? 'col-resize' : 'row-resize';
+        document.body.style.userSelect = 'none'; // 防遮挡
+      });
+
+      window.addEventListener('mousemove', e => {
+        if (!isDragging) return;
+        const currentPos = isV ? e.clientX : e.clientY;
+        const newSize = startSize + (currentPos - startPos);
+        if (isV) {
+          prevEl.style.width = `${newSize}px`;
+        } else {
+          prevEl.style.height = `${newSize}px`;
+        }
+        prevEl.style.flex = 'none'; // 解除按比例分配，锁定绝对像素大小
+      });
+
+      window.addEventListener('mouseup', () => {
+        if (isDragging) {
+          isDragging = false;
+          resizer.classList.remove('active');
+          document.body.style.cursor = '';
+          document.body.style.userSelect = '';
+          window.dispatchEvent(new Event('resize')); // 手松开时触发Canvas重绘
+        }
+      });
+    });
+
+    // ==========================================
+    // 2. 原有核心业务逻辑 (兼容原代码)
+    // ==========================================
+    
+    const hostEl = document.getElementById("host");
+    const portEl = document.getElementById("port");
+    const fpsEl = document.getElementById("fps");
+    const outputEl = document.getElementById("output");
+    const statusText = document.getElementById("statusText");
+    const connState = document.getElementById("connState");
+    const fpsNow = document.getElementById("fpsNow");
+    const kbpsNow = document.getElementById("kbpsNow");
+    const framesNow = document.getElementById("framesNow");
+    const kdsNow = document.getElementById("kdsNow");
+    const sizeNow = document.getElementById("sizeNow");
+    const preview = document.getElementById("preview");
+    const previewEmpty = document.getElementById("previewEmpty");
+    const metaText = document.getElementById("metaText");
+    const logs = document.getElementById("logs");
+    
+    const oscCanvas = document.getElementById("oscCanvas");
+    const oscEmpty = document.getElementById("oscEmpty");
+    const oscLegend = document.getElementById("oscLegend");
+    const oscMeta = document.getElementById("oscMeta");
+    const oscTimeBtn = document.getElementById("oscTimeBtn");
+    const oscRateSource = document.getElementById("oscRateSource");
+
+    const oscColors = ["#58a6ff", "#ff9f43", "#5eead4", "#ff6b81", "#ffd166", "#7bd88f", "#c792ea", "#f78fb3"];
+    const oscVisible = Array.from({ length: 8 }, () => true);
+    const oscSeries = Array.from({ length: 8 }, () => []);
+    const oscLatestValues = Array.from({ length: 8 }, () => 0);
+    const oscNames = Array.from({ length: 8 }, (_, i) => `CH${i}`);
+
+    const OSC_WINDOW_SEC = 10.0;
+    const OSC_MAX_POINTS = 10000;
+    let apiReady = false; let timerId = null; let oscSeq = -1; let oscHz = 0;
+    let streamStartTs = 0; let oscTimeRunning = false; let oscViewWindowSec = OSC_WINDOW_SEC;
+    let oscViewNowSec = 0; let oscDragActive = false; let oscDragStartX = 0; let oscDragStartViewNow = 0;
+    let lastConnected = false;
+
+    function hasApi() { return !!(window.pywebview && window.pywebview.api); }
+    function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+    function updateOscTimeBtn() {
+      oscTimeBtn.textContent = oscTimeRunning ? "时间运行" : "时间暂停";
+      oscTimeBtn.classList.toggle("warn", !oscTimeRunning);
+      oscCanvas.style.cursor = oscDragActive ? "grabbing" : (oscTimeRunning ? "default" : "grab");
+    }
+
+    function rebuildRateSourceOptions(names) {
+      const prev = oscRateSource.value || "auto";
+      let html = '<option value="auto">自动(链路Hz)</option>';
+      names.forEach((name, i) => { html += `<option value="ch${i}">CH${i} (${name || `CH${i}`})</option>`; });
+      oscRateSource.innerHTML = html;
+      oscRateSource.value = [...oscRateSource.options].some(o => o.value === prev) ? prev : "auto";
+    }
+
+    function setStatus(msg) { statusText.textContent = msg; }
+    function setPreview(src) {
+      if (src) { preview.src = src; preview.style.display = "block"; previewEmpty.style.display = "none"; }
+      else { preview.removeAttribute("src"); preview.style.display = "none"; previewEmpty.style.display = "grid"; }
+    }
+
+    function rebuildLegend(names) {
+      oscLegend.innerHTML = "";
+      rebuildRateSourceOptions(names);
+      names.forEach((name, idx) => {
+        const d = document.createElement('div');
+        d.className = 'toggle-item';
+        d.innerHTML = `
+          <input class="toggle-check" type="checkbox" id="oscCheck${idx}" ${oscVisible[idx]?'checked':''} />
+          <span class="legend-dot" style="background:${oscColors[idx]}"></span>
+          <span class="toggle-name" title="${name}">${idx}. ${name}</span>
+          <span class="toggle-value" id="legendValue${idx}">0.000</span>
+        `;
+        oscLegend.appendChild(d);
+        d.querySelector(`#oscCheck${idx}`).onchange = e => { oscVisible[idx] = !!e.target.checked; };
+      });
+    }
+
+    function updateLegend(values) {
+      values.forEach((v, i) => {
+        const el = document.getElementById(`legendValue${i}`);
+        if(el) el.textContent = Number(v||0).toFixed(3);
+      });
+    }
+
+    function pushOscSample(values, names, seq, hz, rows, sampleTs) {
+      let changed = false;
+      for (let i = 0; i < 8; i++) {
+        if (oscNames[i] !== (names[i] || `CH${i}`)) { oscNames[i] = names[i] || `CH${i}`; changed = true; }
+      }
+      if (changed) rebuildLegend(oscNames);
+      oscHz = Number(hz || 0);
+
+      if (seq === oscSeq) { updateLegend(values || []); return; }
+      oscSeq = seq;
+      const t = Number(sampleTs || 0) > 0 ? Number(sampleTs) : (Date.now() / 1000.0);
+      for (let i = 0; i < 8; i++) {
+        const v = Number((values || [])[i] ?? 0);
+        oscLatestValues[i] = v;
+        if (Number.isFinite(v)) {
+          oscSeries[i].push({ t, v });
+          if(oscSeries[i].length > OSC_MAX_POINTS) oscSeries[i].shift();
+        }
+      }
+      updateLegend(values || []);
+    }
+
+    function drawOscilloscope() {
+      // 动态读取 CSS 变量颜色以支持主题切换
+      const bgColor = getThemeColor('--osc-bg') || '#040811';
+      const gridColor = getThemeColor('--osc-grid') || 'rgba(255, 255, 255, 0.08)';
+      const textColor = getThemeColor('--osc-text') || '#8b9bb4';
+
+      const dpr = window.devicePixelRatio || 1;
+      const width = oscCanvas.clientWidth || 640;
+      const height = oscCanvas.clientHeight || 150;
+      oscCanvas.width = width * dpr; oscCanvas.height = height * dpr;
+      const ctx = oscCanvas.getContext("2d");
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+      ctx.fillStyle = bgColor;
+      ctx.fillRect(0, 0, width, height);
+
+      const PAD = {L: 45, R: 10, T: 10, B: 20};
+      const plotW = Math.max(10, width - PAD.L - PAD.R);
+      const plotH = Math.max(10, height - PAD.T - PAD.B);
+      
+      const nowSec = Date.now() / 1000.0;
+      if (oscTimeRunning) oscViewNowSec = nowSec;
+      const viewStart = oscViewNowSec - oscViewWindowSec;
+
+      let minV = -1, maxV = 1, active = [];
+      for (let i = 0; i < 8; i++) {
+        if (!oscVisible[i]) continue;
+        for (const p of oscSeries[i]) {
+          if (p.t >= viewStart && p.t <= oscViewNowSec) active.push(p.v);
+        }
+      }
+      if (active.length > 0) {
+        minV = Math.min(...active); maxV = Math.max(...active);
+        if (Math.abs(maxV - minV) < 1e-6) { maxV += 1; minV -= 1; }
+        const m = (maxV - minV) * 0.1; maxV += m; minV -= m;
+      }
+
+      ctx.strokeStyle = gridColor;
+      ctx.fillStyle = textColor;
+      ctx.font = '10px Consolas';
+      ctx.lineWidth = 1;
+      
+      // Y轴网格
+      for (let i = 0; i <= 5; i++) {
+        const y = PAD.T + (1 - i/5)*plotH;
+        ctx.beginPath(); ctx.moveTo(PAD.L, y); ctx.lineTo(PAD.L+plotW, y); ctx.stroke();
+        ctx.fillText((maxV - (maxV-minV)*(1-i/5)).toFixed(2), 2, y + 4);
+      }
+      // X轴网格
+      for (let i = 0; i <= 8; i++) {
+        const x = PAD.L + (i/8)*plotW;
+        ctx.beginPath(); ctx.moveTo(x, PAD.T); ctx.lineTo(x, PAD.T+plotH); ctx.stroke();
+        ctx.fillText(`${(viewStart + (i/8)*oscViewWindowSec - streamStartTs).toFixed(1)}s`, x - 10, PAD.T + plotH + 14);
+      }
+
+      // 绘制曲线
+      for (let i = 0; i < 8; i++) {
+        if (!oscVisible[i] || !oscSeries[i].length) continue;
+        ctx.strokeStyle = oscColors[i]; ctx.lineWidth = 2; ctx.beginPath();
+        let started = false;
+        for (const p of oscSeries[i]) {
+          if (p.t < viewStart || p.t > oscViewNowSec) continue;
+          const x = PAD.L + ((p.t - viewStart) / oscViewWindowSec) * plotW;
+          const y = PAD.T + (1 - (p.v - minV) / (maxV - minV)) * plotH;
+          if (!started) { ctx.moveTo(x, y); started = true; } else ctx.lineTo(x, y);
+        }
+        if (started) ctx.stroke();
+      }
+
+      oscEmpty.style.display = active.length ? "none" : "grid";
+      oscMeta.textContent = `链路 ${oscHz.toFixed(1)}Hz | 时间窗 ${oscViewWindowSec.toFixed(1)}s`;
+    }
+
+    function renderLoop() { drawOscilloscope(); window.requestAnimationFrame(renderLoop); }
+
+    async function callApi(fn, ...args) {
+      if (!apiReady || !hasApi()) return { ok: false };
+      try {
+        const r = await window.pywebview.api[fn](...args);
+        setStatus(r.message || `${fn} done`);
+      } catch (e) { setStatus(`Error: ${e}`); }
+    }
+
+    // 事件绑定
+    document.getElementById("startBtn").onclick = () => callApi("start_receive", hostEl.value, Number(portEl.value), Number(fpsEl.value), "");
+    document.getElementById("stopBtn").onclick = () => callApi("stop_receive");
+    document.getElementById("recordStartBtn").onclick = () => callApi("start_record_video");
+    document.getElementById("recordStopBtn").onclick = () => callApi("stop_record_video");
+    document.getElementById("saveFrameBtn").onclick = () => callApi("save_current_frame");
+    document.getElementById("saveDataBtn").onclick = () => callApi("save_osc_data");
+    document.getElementById("clearLogBtn").onclick = () => callApi("clear_logs");
+    
+    oscTimeBtn.onclick = () => { oscTimeRunning = !oscTimeRunning; updateOscTimeBtn(); };
+
+    // 图表鼠标事件交互 (拖拽 / 滚轮缩放)
+    oscCanvas.onmousedown = e => { if(oscTimeRunning) return; oscDragActive = true; oscDragStartX = e.clientX; oscDragStartViewNow = oscViewNowSec; updateOscTimeBtn(); };
+    window.onmousemove = e => { if(!oscDragActive) return; oscViewNowSec = oscDragStartViewNow - (e.clientX - oscDragStartX)*(oscViewWindowSec/Math.max(10, oscCanvas.clientWidth-55)); };
+    window.onmouseup = () => { if(oscDragActive){ oscDragActive=false; updateOscTimeBtn(); } };
+    oscCanvas.onwheel = e => {
+      if(oscTimeRunning) return; e.preventDefault();
+      const rect = oscCanvas.getBoundingClientRect();
+      const ratio = clamp((e.clientX - rect.left - 45) / Math.max(10, rect.width - 55), 0, 1);
+      const anchorTime = oscViewNowSec - oscViewWindowSec + ratio * oscViewWindowSec;
+      oscViewWindowSec = clamp(oscViewWindowSec * (e.deltaY < 0 ? 0.8 : 1.2), 1.0, 120.0);
+      oscViewNowSec = anchorTime + (1 - ratio) * oscViewWindowSec;
+    };
+
+    async function refresh() {
+      if (!apiReady || !hasApi()) return;
+      const s = await window.pywebview.api.get_state();
+      outputEl.value = s.output_root || "";
+      connState.innerHTML = s.connected ? '🟢 已连接' : (s.running ? '🟡 监听中' : '🔴 未运行');
+      if (s.connected && !lastConnected) {
+        oscTimeRunning = true;
+        oscViewNowSec = Date.now() / 1000.0;
+        updateOscTimeBtn();
+      } else if (!s.connected && lastConnected) {
+        oscTimeRunning = false;
+        updateOscTimeBtn();
+      }
+      lastConnected = !!s.connected;
+      fpsNow.textContent = Number(s.fps || 0).toFixed(2);
+      kbpsNow.textContent = `${Number(s.kbps || 0).toFixed(1)} kbps`;
+      framesNow.textContent = String(s.frames || 0);
+      kdsNow.textContent = `${s.keyframes||0}/${s.diffframes||0}/${s.skipframes||0}`;
+      sizeNow.textContent = (s.width && s.height) ? `${s.width}x${s.height}` : "-";
+      streamStartTs = Number(s.start_ts || 0);
+      
+      setPreview(s.preview || "");
+      metaText.textContent = `raw=${s.raw_bytes||0}B | badCk=${s.bad_checksums||0} badVer=${s.bad_versions||0} | record=${s.recording?"on":"off"}`;
+      logs.value = (s.logs || []).join("\n");
+      logs.scrollTop = logs.scrollHeight;
+
+      pushOscSample((s.osc_latest||[]), (s.osc_names||[]), Number(s.osc_seq||0), Number(s.osc_hz||0), 0, Number(s.osc_last_time||0));
+    }
+
+    rebuildLegend(oscNames);
+    updateOscTimeBtn();
+    window.requestAnimationFrame(renderLoop);
+
+    window.addEventListener("pywebviewready", () => {
+      apiReady = true; setStatus("后端已就绪");
+      document.querySelectorAll("button").forEach(b => b.disabled = false);
+      if (!timerId) timerId = setInterval(refresh, 66);
+    });
+  </script>
+</body>
+</html>

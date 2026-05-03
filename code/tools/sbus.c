@@ -1,7 +1,7 @@
 #include "sbus.h"
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "../common.h"
-#include "../vision/vision_task_area.h"
+#include "../vision/vision_bridge_control.h"
 
 // ==========================================
 // 1. 宏定义 (参数配置区)
@@ -20,6 +20,13 @@
 #define RC_SW_MID_HIGH  1400    // >1400 判为 HIGH
 
 // --- 增量系数 (灵敏度) ---
+
+// --- 线控转向倍率参数 (随车速动态调整) ---
+// 说明：低速时转向倍率高，高速时转向倍率低
+#define STEER_GAIN_MAX         1.00f    // 最大发电倍率（低速）
+#define STEER_GAIN_MIN         0.30f    // 最小转向倍率（高速）
+#define STEER_SPEED_BREAK_LOW  350.0f   // 低速分界点（单位：与轮速反馈一致）
+#define STEER_SPEED_BREAK_HIGH 1300.0f  // 高速分界点（单位：与轮速反馈一致）
 // 说明: 每次调用 Process 函数增加的数值 = (摇杆偏差值) * 系数
 // 假设 Process 每 10ms 调用一次
 #define K_STEER_INC     0.00225f  // 转向灵敏度
@@ -41,6 +48,37 @@ robot_ctrl_t robot_ctrl;
 // ==========================================
 // 3. 函数实现
 // ==========================================
+// 基于左右轮速反馈计算当前车速对应的转向倍率
+// 设计目标：
+// 1) 低速放大转向灵敏度；2) 高速降低转向灵敏度；3) 过渡无突变
+static float Remote_Calc_Steer_Gain_BySpeed(float left_speed, float right_speed)
+{
+    // 采用平均绝对轮速作为“车速估计”，避免正反转方向影响分段逻辑
+    float vehicle_speed_abs = (ABS(left_speed) + ABS(right_speed)) * 0.5f;
+
+    // 低速区：固定最大倍率
+    if (vehicle_speed_abs <= STEER_SPEED_BREAK_LOW)
+    {
+        return STEER_GAIN_MAX;
+    }
+
+    // 高速区：固定最小倍率
+    if (vehicle_speed_abs >= STEER_SPEED_BREAK_HIGH)
+    {
+        return STEER_GAIN_MIN;
+    }
+
+    // 中速过渡区：使用 smoothstep 平滑插值，保证一阶连续，避免响应突变
+    float t = (vehicle_speed_abs - STEER_SPEED_BREAK_LOW) /
+              (STEER_SPEED_BREAK_HIGH - STEER_SPEED_BREAK_LOW);
+
+    // smoothstep(t) = 3t^2 - 2t^3
+    float smooth_t = t * t * (3.0f - 2.0f * t);
+
+    // 从最大倍率平滑过渡到最小倍率
+    return STEER_GAIN_MAX + (STEER_GAIN_MIN - STEER_GAIN_MAX) * smooth_t;
+}
+
 uint8 Remote_control_connected =0;
 // 初始化
 void Remote_Control_Init(void)
@@ -49,6 +87,7 @@ void Remote_Control_Init(void)
     robot_ctrl.target_speed = 0.0f;
     robot_ctrl.mark_trigger = 0;
     robot_ctrl.motor_enable = 1;  //1=使能,0=急停
+    robot_ctrl.brake_active = 0;
     robot_ctrl.point_type = 0;
     // 模式枚举 (对应 CH4 三态开关和CH5开关的组合状态，使用ch3开关进行触发)
     // NAV_POINT_PATH = 0,     // 普通路径点
@@ -81,6 +120,7 @@ void Remote_Control_Process(void)
     else
     {
         // printf("Remote control is disconnected. ");
+        robot_ctrl.brake_active = 0;
         robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 失控则不进行后续处理
 
@@ -102,11 +142,13 @@ void Remote_Control_Process(void)
     // 1792 (>1000) 为关电机状态
     if(ch1_steer == 0 && ch2_thro == 0 && ch3_mark == 0 && ch4_mode == 0 && ch5_brake == 0 && ch6_off == 0)
     {
+        robot_ctrl.brake_active = 0;
         robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 遥控器完全回中且总开关关闭，则不进行后续处理
     }
     if (ch6_off > RC_SW_THRESHOLD) 
     {
+        robot_ctrl.brake_active = 0;
         robot_ctrl.motor_enable = 0;
         // printf("Motor disabled by CH6 switch\n");
         // 关机状态下，不进行增量计算，防止后台积分
@@ -124,8 +166,12 @@ void Remote_Control_Process(void)
     
     if (abs(diff_steer) > RC_DEADZONE)
     {
-        // 积分计算
-        robot_ctrl.target_angle += (float)diff_steer * K_STEER_INC;
+        // 根据当前车速动态计算转向倍率：低速更灵敏，高速更稳
+        float steer_gain = Remote_Calc_Steer_Gain_BySpeed(motor_value.receive_left_speed_data,
+                                                          motor_value.receive_right_speed_data);
+
+        // 积分计算（带动态倍率）
+        robot_ctrl.target_angle += (float)diff_steer * K_STEER_INC * steer_gain;
         
         // // 限幅逻辑
         // if (robot_ctrl.target_angle > MAX_STEER_ANGLE) 
@@ -141,6 +187,8 @@ void Remote_Control_Process(void)
     // --------------------------------------------------------
     // Step 5: 处理刹车/油门/急停 (CH5 & CH2)
     // --------------------------------------------------------
+
+    robot_ctrl.brake_active = (ch5_brake > RC_SW_THRESHOLD) ? 1U : 0U;
 
     if (ch5_brake > RC_SW_THRESHOLD)// 开关刹车
     {
@@ -219,7 +267,8 @@ void Remote_Control_Process(void)
     {
         //vision_detected_jump_point = 1;//跳跃点调用,测试用
         //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
-        robot_ctrl.mark_trigger = 1; // 置位，Main函数处理完需手动清零
+        //vision_detected_bumpy_point = 1; // 置位，Main函数处理完需手动清零
+        robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点
     // NAV_POINT_SLOPE = 2,    // 上坡点

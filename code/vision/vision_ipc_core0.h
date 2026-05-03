@@ -43,6 +43,7 @@ void VisionIpc_Core0_SetPvcEnable(uint8 enable);
  * @brief 快捷指令：让 1 核开启或关闭桥梁/直线检测
  */
 void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable);
+void VisionIpc_Core0_SetBumpyEnable(uint8 enable);
 
 /**
  * @brief 0 核 IPC 的定时更新（建议放在 2ms 定时中断里）
