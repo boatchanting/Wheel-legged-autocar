@@ -158,7 +158,7 @@ servo_executor_init();
     disp_y += 16;
 #endif
 
-#if WIFI_USE    
+#if WIFI_USE_CORE0_ANY
     // 初始化 WiFi 模块
     wifi_init();                                                                // 初始化WIFI模块
     uart_write_string(UART_INDEX, "WiFi Module Initialized.");                  // 输出WIFI初始化完成信息
@@ -344,7 +344,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             //     }
             //     ekf_print_div = 0;
             // }
-            #if WIFI_USE
+            #if WIFI_USE_CORE0_CUSTOM
                 wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
             #endif
                 TelemetryIpc_Core0_PublishPvcDefault();
@@ -417,14 +417,16 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 // // data[7] 远端白边行号
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                //     // 4. 设置本次发送的通道数量 (一共8个数据)
-                //     seekfree_assistant_oscilloscope_data.channel_num = 8;
+#if WIFI_USE_CORE0_DEFAULT
+                // 4. 设置本次发送的通道数量 (一共8个数据)
+                seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                //     // 5. 调用发送函数
-                //     seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                // 5. 调用发送函数
+                seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
                 // 用于上位机向小车发送pid信息
-                //wifi_update_pid_params(); 
+                wifi_update_pid_params(); 
+#endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;
@@ -447,7 +449,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
         // }
 
-        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
+        #if WIFI_USE_CORE0_ANY && WIFI_IMAGE_SEND//0核WiFi开启且图像发送开关开启则发送图像
         // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
         {

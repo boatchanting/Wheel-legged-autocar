@@ -34,6 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
+#include "../code/config/sys_options.h"
 #include "../code1/wifi.h"
 #include "../code1/wifi_diff_stream.h"
 #include "../code1/wifi_protocol.h"
@@ -59,15 +60,19 @@ int main(void)
 
     // 此处编写用户代码 例如外设初始化代码等
 
-     // 初始化 WiFi 模块
+    mt9v03x_init();                                                             // 1核视觉默认需要摄像头，和 WiFi 使能解耦
+
+    #if WIFI_USE_CORE1
+    // 初始化 WiFi 模块
     wifi_init();                                                                // 初始化WIFI模块
 
     // 连接TCP服务器
     wifi_connect_tcp_server();                                                  // 连接TCP服务器
 
-    // 初始化摄像头和逐飞助手
-    wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
+    // 初始化逐飞助手与 1核图传链路
+    seekfree_assistant_interface_init(SEEKFREE_ASSISTANT_WIFI_SPI);
     wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 100U, 2U);                 // init realtime diff stream
+    #endif
     // mt9v03x_init();//初始化摄像头
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     line_vision_init();                                                         // 初始化任务区直线/单边桥视觉检测
@@ -80,8 +85,10 @@ int main(void)
     // 此处编写用户代码 例如外设初始化代码等
     while(true)
     {
+        #if WIFI_USE_CORE1
         wifi_protocol_poll_rx();
         wifi_protocol_send_oscilloscope();
+        #endif
         // 此处编写需要循环执行的代码
                 // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
@@ -123,8 +130,10 @@ int main(void)
                 bumpy_vision_process_camera_frame(compressed_image_copy[0]);
                 render_bumpy_vision_to_image();
             }
+            #if WIFI_USE_CORE1 && WIFI_IMAGE_SEND
             // 发送图像
             wifi_diff_stream_send_gray_frame((const uint8 *)compressed_image_copy[0]);
+            #endif
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
             // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
             // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节
