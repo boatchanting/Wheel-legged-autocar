@@ -15,8 +15,8 @@
 #define GPS_NAV_DIST_FAR                  5000.0f
 #define GPS_NAV_YAW_TOLERANCE             8.0f
 #define GPS_NAV_HEADING_OFFSET_DEG        0.0f
-#define GPS_NAV_SPEED_FAST                NAV_SPEED_FAST
-#define GPS_NAV_SPEED_SLOW                NAV_SPEED_SLOW
+#define GPS_NAV_SPEED_FAST                -150.0f
+#define GPS_NAV_SPEED_SLOW                -20.0f
 #define GPS_NAV_SPEED_STOP                NAV_SPEED_STOP
 
 
