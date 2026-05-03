@@ -535,6 +535,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     if ((robot_ctrl.brake_active != 0U) && (g_replay_state == REPLAY_RUNNING))
     {
         NavReplay_Stop();//【nav】复现停止
+    }
+    if ((robot_ctrl.brake_active != 0U) && (g_gps_replay_state == REPLAY_RUNNING))
+    {
         GpsNavReplay_Stop();//【gnss】复现停止
     }
 
