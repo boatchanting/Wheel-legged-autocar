@@ -4,6 +4,7 @@
 .vs/
 # data
 data/
+.csv
 # python venv
 .venv/
 
