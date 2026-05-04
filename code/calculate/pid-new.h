@@ -527,6 +527,24 @@ extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern volatile float target_speed_set;
 extern uint8_t roll_balance_enable; // rolling环使能开关
+extern volatile uint8 g_brake_active;
+
+// 全局刹车前馈参数
+#define BRAKE_SPEED_DEADBAND     5.0f
+#define BRAKE_LOW_SPEED_TH       40.0f
+#define BRAKE_ERR_LIGHT          40.0f
+#define BRAKE_ERR_MED            120.0f
+#define BRAKE_ERR_HEAVY          220.0f
+#define BRAKE_GAIN_LIGHT         8.0f
+#define BRAKE_GAIN_MED           14.0f
+#define BRAKE_GAIN_HEAVY         22.0f
+#define BRAKE_MAX_LIGHT          1200.0f
+#define BRAKE_MAX_MED            2200.0f
+#define BRAKE_MAX_HEAVY          3500.0f
+#define BRAKE_RAMP_UP_LIGHT      200.0f
+#define BRAKE_RAMP_UP_MED        400.0f
+#define BRAKE_RAMP_UP_HEAVY      700.0f
+#define BRAKE_RAMP_DOWN          800.0f
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
@@ -539,6 +557,9 @@ float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
+float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
+void Brake_Feedforward_Reset(void);
+float Brake_Feedforward_GetPwm(void);
 
 // 辅助宏：取绝对值
 #define MY_ABS(x) ((x) > 0 ? (x) : -(x))
