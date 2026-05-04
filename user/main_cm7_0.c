@@ -507,8 +507,6 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
         }
 
-        //跳跃雷区测试用，【调试】打开
-        system_delay_ms(50);
 
 
         // ---------------------------------------------------------
