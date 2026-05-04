@@ -178,12 +178,12 @@ static void load_jump_profile(JumpType_e type, float current_height)
             
         case JUMP_TYPE_NORMAL: // 【普通平地跳】
         default:
-            g_jump_profile.t_launch = 90;
-            g_jump_profile.t_flight = 100;
-            g_jump_profile.t_landing = 130;
-            g_jump_profile.t_recovery = 150;
+            g_jump_profile.t_launch = 100;
+            g_jump_profile.t_flight = 115;
+            g_jump_profile.t_landing = 140;
+            g_jump_profile.t_recovery = 160;
             g_jump_profile.offset_launch = 3000; 
-            g_jump_profile.offset_flight = -1000;
+            g_jump_profile.offset_flight = -500;
             g_jump_profile.offset_land = 1700;
             g_jump_profile.air_target_pitch = -1.0f; // 默认轻微低头
             g_jump_profile.post_jump_height = current_height; // 落地高度不变
