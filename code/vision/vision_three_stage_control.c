@@ -317,7 +317,7 @@ void VisionThreeStageControl_Update_2ms(void)
             break;
 
         case VISION_THREE_STAGE_CTRL_WAIT_JUMP1_BOTTOM:
-            target_speed_set = -60.0f; 
+            target_speed_set = -100.0f; //增加速度控制为定值，先测试第一个跳跃
             if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
                 (s_ctrl_shadow.pvc_entry_bottom_y >= g_vision_three_stage_jump1_bottom_y))
             {
