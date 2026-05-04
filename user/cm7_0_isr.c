@@ -65,12 +65,26 @@ volatile struct {
 } sensor_data = {0};
 # define OUR_PWM_MAX_LIMIT 8000.0f // 最大PWM值（根据实际情况调整）
 
-// Brake feedforward (remote brake_active) - tune per vehicle
-#define BRAKE_FF_GAIN           20.0f   // PWM per speed unit
-#define BRAKE_FF_MAX            4000.0f
-#define BRAKE_FF_RAMP_UP         600.0f
-#define BRAKE_FF_RAMP_DOWN       600.0f
+// Brake feedforward (all deceleration) - tune per vehicle
 #define BRAKE_SPEED_DEADBAND     5.0f
+#define BRAKE_LOW_SPEED_TH       40.0f
+
+#define BRAKE_ERR_LIGHT          40.0f
+#define BRAKE_ERR_MED            120.0f
+#define BRAKE_ERR_HEAVY          220.0f
+
+#define BRAKE_GAIN_LIGHT         8.0f
+#define BRAKE_GAIN_MED           14.0f
+#define BRAKE_GAIN_HEAVY         22.0f
+
+#define BRAKE_MAX_LIGHT          1200.0f
+#define BRAKE_MAX_MED            2200.0f
+#define BRAKE_MAX_HEAVY          3500.0f
+
+#define BRAKE_RAMP_UP_LIGHT      200.0f
+#define BRAKE_RAMP_UP_MED        400.0f
+#define BRAKE_RAMP_UP_HEAVY      700.0f
+#define BRAKE_RAMP_DOWN          800.0f
 
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
@@ -206,16 +220,69 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
-            // 2.2 Brake feedforward target (oppose current motion)
-            float speed_for_brake = current_actual_speed;
-            if (fabsf(speed_for_brake) < BRAKE_SPEED_DEADBAND) {
-                speed_for_brake = 0.0f;
+            // 2.2 Brake feedforward target (all deceleration)
+            float speed_now = current_actual_speed;
+            float target_now = target_speed_set;
+            float abs_speed = fabsf(speed_now);
+            float abs_target = fabsf(target_now);
+            float abs_err = fabsf(target_now - speed_now);
+            float brake_gain = 0.0f;
+            float brake_max = 0.0f;
+            float brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
+
+            if (g_motor_enable && (jump_flag == 0) && (abs_speed > BRAKE_SPEED_DEADBAND))
+            {
+                uint8 decel_request = (uint8)((speed_now * target_now <= 0.0f) || (abs_target < abs_speed));
+                if (decel_request)
+                {
+                    uint8 brake_level = 0;
+                    if (g_brake_active)
+                    {
+                        brake_level = 3;
+                    }
+                    else if (abs_err >= BRAKE_ERR_HEAVY)
+                    {
+                        brake_level = 3;
+                    }
+                    else if (abs_err >= BRAKE_ERR_MED)
+                    {
+                        brake_level = 2;
+                    }
+                    else if (abs_err >= BRAKE_ERR_LIGHT)
+                    {
+                        brake_level = 1;
+                    }
+
+                    if ((abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1))
+                    {
+                        brake_level = 1; // 低速只允许轻刹，防止摆动
+                    }
+
+                    if (brake_level == 3)
+                    {
+                        brake_gain = BRAKE_GAIN_HEAVY;
+                        brake_max = BRAKE_MAX_HEAVY;
+                        brake_ramp_up = BRAKE_RAMP_UP_HEAVY;
+                    }
+                    else if (brake_level == 2)
+                    {
+                        brake_gain = BRAKE_GAIN_MED;
+                        brake_max = BRAKE_MAX_MED;
+                        brake_ramp_up = BRAKE_RAMP_UP_MED;
+                    }
+                    else if (brake_level == 1)
+                    {
+                        brake_gain = BRAKE_GAIN_LIGHT;
+                        brake_max = BRAKE_MAX_LIGHT;
+                        brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
+                    }
+                }
             }
-            if (g_brake_active && g_motor_enable && (jump_flag == 0))
+
+            if (brake_gain > 0.0f)
             {
                 // Forward is negative; this generates opposite sign torque.
-                brake_ff_target = Float_Constrain(-BRAKE_FF_GAIN * speed_for_brake,
-                                                  -BRAKE_FF_MAX, BRAKE_FF_MAX);
+                brake_ff_target = Float_Constrain(-brake_gain * speed_now, -brake_max, brake_max);
             }
             else
             {
@@ -224,7 +291,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
             // Ramp to target to avoid step shocks
             float brake_delta = brake_ff_target - brake_ff_pwm;
-            brake_ff_pwm += Float_Constrain(brake_delta, -BRAKE_FF_RAMP_DOWN, BRAKE_FF_RAMP_UP);
+            brake_ff_pwm += Float_Constrain(brake_delta, -BRAKE_RAMP_DOWN, brake_ramp_up);
 
 
             // 2.3 计算目标速度调整分量
