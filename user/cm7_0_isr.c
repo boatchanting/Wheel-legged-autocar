@@ -65,6 +65,17 @@ volatile struct {
 } sensor_data = {0};
 # define OUR_PWM_MAX_LIMIT 8000.0f // 最大PWM值（根据实际情况调整）
 
+// Brake feedforward (remote brake_active) - tune per vehicle
+#define BRAKE_FF_GAIN           20.0f   // PWM per speed unit
+#define BRAKE_FF_MAX            4000.0f
+#define BRAKE_FF_RAMP_UP         600.0f
+#define BRAKE_FF_RAMP_DOWN       600.0f
+#define BRAKE_SPEED_DEADBAND     5.0f
+
+static float brake_ff_pwm = 0.0f;
+static float brake_ff_target = 0.0f;
+volatile uint8 g_brake_active = 0;
+
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
@@ -195,6 +206,26 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
+            // 2.2 Brake feedforward target (oppose current motion)
+            float speed_for_brake = current_actual_speed;
+            if (fabsf(speed_for_brake) < BRAKE_SPEED_DEADBAND) {
+                speed_for_brake = 0.0f;
+            }
+            if (g_brake_active && g_motor_enable && (jump_flag == 0))
+            {
+                // Forward is negative; this generates opposite sign torque.
+                brake_ff_target = Float_Constrain(-BRAKE_FF_GAIN * speed_for_brake,
+                                                  -BRAKE_FF_MAX, BRAKE_FF_MAX);
+            }
+            else
+            {
+                brake_ff_target = 0.0f;
+            }
+
+            // Ramp to target to avoid step shocks
+            float brake_delta = brake_ff_target - brake_ff_pwm;
+            brake_ff_pwm += Float_Constrain(brake_delta, -BRAKE_FF_RAMP_DOWN, BRAKE_FF_RAMP_UP);
+
 
             // 2.3 计算目标速度调整分量
             float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed,euler_angle.pitch);
@@ -209,6 +240,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         pid_servo_speed.prev_error = 0;
         pid_servo_speed.error_integral = 0;
         pid_servo_speed.output = 0;
+
+        brake_ff_pwm = 0.0f;
+        brake_ff_target = 0.0f;
     }
     // ==========================================================
     // 步骤 2: 转向角度环 (6ms) - 外环
@@ -423,8 +457,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     {
         // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
         // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
-        int16_t pwm_left  = (int16_t)( gyro_loop_out + turn_gyro_loop_out);
-        int16_t pwm_right = (int16_t)(-gyro_loop_out + turn_gyro_loop_out);
+        int16_t pwm_left  = (int16_t)( gyro_loop_out + brake_ff_pwm + turn_gyro_loop_out);
+        int16_t pwm_right = (int16_t)(-gyro_loop_out - brake_ff_pwm + turn_gyro_loop_out);
 
         // 统一限幅（防止叠加后超限）
         pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
@@ -535,6 +569,8 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         NavReplay_Stop();
     }
 
+    g_brake_active = (robot_ctrl.brake_active != 0U) ? 1U : 0U;
+
 
     if ((g_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&
@@ -559,6 +595,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         target_speed_set = 0.0f;
         // 同时清除遥控器内部积分，防止再次使能时车突然冲出去
         robot_ctrl.target_speed = 0.0f; 
+        g_brake_active = 0;
     }
 #endif
 
