@@ -221,7 +221,7 @@ void VisionThreeStageControl_Update_2ms(void)
     }
 
     #if REMOTE_CONTROL == 1
-    if (robot_ctrl.brake_active == 0)//遥控器sbus退出状态机
+    if (robot_ctrl.brake_active != 0U)//遥控器刹车生效时退出状态机
     {
         vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_MOTOR_OFF);
         vision_three_stage_publish_status();
