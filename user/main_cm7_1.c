@@ -67,7 +67,7 @@ int main(void)
 
     // 初始化摄像头和逐飞助手
     wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
-    wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 100U, 2U);                 // init realtime diff stream
+    wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 30U, 2U);                  // init realtime diff stream (keyframe interval = 30)
     // mt9v03x_init();//初始化摄像头
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     line_vision_init();                                                         // 初始化任务区直线/单边桥视觉检测
@@ -81,8 +81,7 @@ int main(void)
     // 跳帧控制：摄像头 ~100fps，WiFi 目标 ~60fps
     #define CAMERA_FPS          100U
     #define WIFI_TARGET_FPS     100U
-    #define FRAME_SKIP_RATIO    1U
-    // #define FRAME_SKIP_RATIO    ((CAMERA_FPS + WIFI_TARGET_FPS - 1) / WIFI_TARGET_FPS)  // = 2
+    #define FRAME_SKIP_RATIO    ((CAMERA_FPS + WIFI_TARGET_FPS - 1) / WIFI_TARGET_FPS)  // = 2
     static uint32_t frame_skip_counter = 0U;
     
     while(true)
