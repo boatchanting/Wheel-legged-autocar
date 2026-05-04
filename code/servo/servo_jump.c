@@ -181,7 +181,7 @@ static void load_jump_profile(JumpType_e type, float current_height)
             g_jump_profile.t_launch = 90;
             g_jump_profile.t_flight = 100;
             g_jump_profile.t_landing = 130;
-            g_jump_profile.t_recovery = 1500;
+            g_jump_profile.t_recovery = 150;
             g_jump_profile.offset_launch = 3000; 
             g_jump_profile.offset_flight = -1000;
             g_jump_profile.offset_land = 1700;
