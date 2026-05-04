@@ -220,6 +220,15 @@ void VisionThreeStageControl_Update_2ms(void)
         return;
     }
 
+    #if REMOTE_CONTROL == 1
+    if (robot_ctrl.brake_active == 0)//遥控器sbus退出状态机
+    {
+        vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_MOTOR_OFF);
+        vision_three_stage_publish_status();
+        return;
+    }
+    #endif
+
     if (g_motor_enable == 0)
     {
         vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_MOTOR_OFF);
@@ -308,6 +317,7 @@ void VisionThreeStageControl_Update_2ms(void)
             break;
 
         case VISION_THREE_STAGE_CTRL_WAIT_JUMP1_BOTTOM:
+            target_speed_set = -60.0f; 
             if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
                 (s_ctrl_shadow.pvc_entry_bottom_y >= g_vision_three_stage_jump1_bottom_y))
             {
