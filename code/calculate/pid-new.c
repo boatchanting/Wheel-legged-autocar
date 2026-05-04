@@ -456,7 +456,7 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
     // else{
     //     pid_servo_speed.error_integral = 0.0f;
     // }
-    if (fabsf(pid_servo_speed.error) < 100.0f) {
+    if (fabsf(pid_servo_speed.error) < 200.0f) {
         pid_servo_speed.error_integral += pid_servo_speed.error;
     } else {
         pid_servo_speed.error_integral = 0.0f;
