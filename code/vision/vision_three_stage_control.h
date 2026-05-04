@@ -23,7 +23,7 @@ extern "C" {
 #define VISION_THREE_STAGE_CONTROL_DEFAULT_ACTIVE        (1U)
 
 /* 方向控制参数（与 PVC 控制同量纲） */
-#define VISION_THREE_STAGE_LATERAL_SIGN                  (-1.0f)
+#define VISION_THREE_STAGE_LATERAL_SIGN                  (0.0f)
 #define VISION_THREE_STAGE_K_LAT_DEG_PER_MM              (0.20f)
 #define VISION_THREE_STAGE_K_YAW_DEG_PER_DEG             (0.50f)
 #define VISION_THREE_STAGE_MAX_ERR_DEG                   (18.0f)
