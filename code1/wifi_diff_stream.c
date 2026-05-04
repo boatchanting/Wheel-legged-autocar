@@ -69,7 +69,7 @@ void wifi_diff_stream_init(uint16 width, uint16 height, uint16 keyframe_interval
     }
     s_width = width;
     s_height = height;
-    s_key_interval = (keyframe_interval < 240U) ? 240U : keyframe_interval;
+    s_key_interval = (keyframe_interval < 30U) ? 30U : keyframe_interval;
     s_diff_threshold = diff_threshold;
     memset(s_prev, 0, sizeof(s_prev));
     memset(&s_stats, 0, sizeof(s_stats));
