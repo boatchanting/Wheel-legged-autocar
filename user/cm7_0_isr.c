@@ -65,6 +65,7 @@ volatile struct {
 } sensor_data = {0};
 # define OUR_PWM_MAX_LIMIT 8000.0f // 最大PWM值（根据实际情况调整）
 
+
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
@@ -195,6 +196,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
+            // 2.2 全局刹车前馈
+            Brake_Feedforward_Update(target_speed_set, current_actual_speed, g_motor_enable, jump_flag);
+
 
             // 2.3 计算目标速度调整分量
             float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed,euler_angle.pitch);
@@ -209,6 +213,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         pid_servo_speed.prev_error = 0;
         pid_servo_speed.error_integral = 0;
         pid_servo_speed.output = 0;
+
+        Brake_Feedforward_Reset();
     }
     // ==========================================================
     // 步骤 2: 转向角度环 (6ms) - 外环
@@ -423,8 +429,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     {
         // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
         // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
-        int16_t pwm_left  = (int16_t)( gyro_loop_out + turn_gyro_loop_out);
-        int16_t pwm_right = (int16_t)(-gyro_loop_out + turn_gyro_loop_out);
+        float brake_pwm = Brake_Feedforward_GetPwm();
+        int16_t pwm_left  = (int16_t)( gyro_loop_out + brake_pwm + turn_gyro_loop_out);
+        int16_t pwm_right = (int16_t)(-gyro_loop_out - brake_pwm + turn_gyro_loop_out);
 
         // 统一限幅（防止叠加后超限）
         pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
@@ -995,4 +1002,3 @@ void uart4_isr (void)
     }
 }
 // **************************** 串口中断函数 ****************************
-
