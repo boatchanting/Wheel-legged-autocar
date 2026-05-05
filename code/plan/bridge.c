@@ -331,7 +331,7 @@ void Bridge_Update(void) {
                 // 【核心开启】：放开舵机速度，开启底层“一边不动一边缩短”的横滚平衡
                 acc_limit = bridge_params.servo_acc_bridge;
                 dec_limit = bridge_params.servo_dec_bridge;
-                roll_balance_enable = 1; 
+                roll_balance_enable = 0; 
 
                 Reset_Start_Point(); 
                 current_bridge_state = BRIDGE_STATE_ON_BRIDGE;
