@@ -288,6 +288,12 @@ void Bridge_Trigger(float distance_to_bridge) {
 }
 
 void Bridge_Update(void) {
+    #if REMOTE_CONTROL
+    if (robot_ctrl.brake_active  == 1U)
+    {
+        current_bridge_state = BRIDGE_STATE_IDLE;
+    }
+    #endif
     // 计算离桥头的剩余距离
     float remaining_dist = initial_distance_to_bridge - Get_Traveled_Distance();
 
@@ -408,6 +414,16 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
         return;
     }
 
+     #if REMOTE_CONTROL
+    if (robot_ctrl.brake_active  == 1U)
+    {
+        if (s_bridge_test_state != BRIDGE_TEST_STATE_IDLE) {
+            Bridge_Test_Reset_All(1);
+        }
+        return;
+    }
+    #endif
+
     switch (s_bridge_test_state) {
         // ====================================================================
         // 【状态机修改】IDLE 状态：确保 debug_triple_bridge_test_enable 为 1 时正确启动
@@ -430,7 +446,7 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
             Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
             acc_limit = bridge_params.servo_acc_bridge;
             dec_limit = bridge_params.servo_dec_bridge;
-            roll_balance_enable = 1;
+            roll_balance_enable = 0;
 
             if (Get_Traveled_Distance() >= BRIDGE_TEST_PREPARE_LEN_MM) {
                 Reset_Start_Point();

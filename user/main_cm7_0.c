@@ -500,9 +500,9 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         if (vision_detected_bridge_point == 1) 
         {
             // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
-            if (!VisionBridgeTask_IsActive())
+            if (!Bridge_Test_Triple_SingleSide_Is_Active()) 
             {
-                VisionBridgeTask_Start(); // 启动视觉融合单边桥状态机
+                Bridge_Test_Triple_SingleSide_Start(); // 启动单边桥测试状态机
             }
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
         }
