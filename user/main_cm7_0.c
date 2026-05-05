@@ -181,13 +181,15 @@ servo_executor_init();
     uart_write_string(UART_INDEX, "TCP Server Connected.");                     // 输出TCP连接成功信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
-    
+
+    #if WIFI_CAMERA    
     // 初始化摄像头和逐飞助手
     wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
     uart_write_string(UART_INDEX, "Camera Initialized.");                       // 输出摄像头初始化完成信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');
     //初始化摄像头和通信模块结束
+    #endif
 #endif
  gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // 初始化 蜂鸣器 引脚 低电平 默认 推挽输出模式
 // --- 屏幕打印 WiFi 初始化完成 ---
