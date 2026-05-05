@@ -2,6 +2,7 @@
 #define __BRIDGE_H__
 
 #include "zf_common_headfile.h" 
+#include "tools/sbus.h"
 #include "../config/car_select.h"//根据小车选择配置不同的PID参数
 #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
 // 【单边桥高姿态专属 PID 参数】 (用于抬腿时的线性插值，防止原地震荡)

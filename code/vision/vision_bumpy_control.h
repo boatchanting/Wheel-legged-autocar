@@ -27,7 +27,7 @@ extern "C" {
 #define VISION_BUMPY_STALE_TIMEOUT_TICKS       (120U)  // 数据包过期超时时间(2ms周期计数, 120=240ms)
 #define VISION_BUMPY_K_STEER_DEG_PER_PX        (-0.30f) // 像素到角度的转换系数(度/像素)
 #define VISION_BUMPY_MAX_ERR_DEG               (18.0f) // 最大转向误差角度限制(度)
-#define VISION_BUMPY_DEADBAND_DEG              (0.25f) // 转向误差死区(度), 小于此值的误差将被忽略
+#define VISION_BUMPY_DEADBAND_DEG              (180.0f) // 转向误差死区(度), 小于此值的误差将被忽略
 
 /* 枚举类型定义区 */
 /**

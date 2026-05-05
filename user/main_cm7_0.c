@@ -181,13 +181,15 @@ servo_executor_init();
     uart_write_string(UART_INDEX, "TCP Server Connected.");                     // 输出TCP连接成功信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
-    
+
+    #if WIFI_CAMERA    
     // 初始化摄像头和逐飞助手
     wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
     uart_write_string(UART_INDEX, "Camera Initialized.");                       // 输出摄像头初始化完成信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');
     //初始化摄像头和通信模块结束
+    #endif
 #endif
  gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // 初始化 蜂鸣器 引脚 低电平 默认 推挽输出模式
 // --- 屏幕打印 WiFi 初始化完成 ---
@@ -349,7 +351,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             #if WIFI_USE
                 wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
             #endif
-                TelemetryIpc_Core0_PublishPvcDefault();
+                //TelemetryIpc_Core0_PublishPvcDefault();
 
                 //逐飞助手示波器发送代码        
                 // //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
@@ -500,9 +502,9 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         if (vision_detected_bridge_point == 1) 
         {
             // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
-            if (!VisionBridgeTask_IsActive())
+            if (!Bridge_Test_Triple_SingleSide_Is_Active()) 
             {
-                VisionBridgeTask_Start(); // 启动视觉融合单边桥状态机
+                Bridge_Test_Triple_SingleSide_Start(); // 启动单边桥测试状态机
             }
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
         }
