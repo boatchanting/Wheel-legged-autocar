@@ -30,6 +30,7 @@ typedef struct {
 // ==========================================
 // 在其他文件包含此头文件后，可直接访问 robot_ctrl 变量
 extern robot_ctrl_t robot_ctrl;
+extern volatile uint8 g_brake_active;
 
 // ==========================================
 // 函数声明
