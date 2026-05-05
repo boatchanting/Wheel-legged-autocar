@@ -1231,6 +1231,9 @@ uint8 g_gps_special_action_trigger = 0;
 
 static uint16 g_gps_target_idx = 0;
 
+static uint8 g_gyro_yaw_initialized = 0;
+static float g_yaw_offset_deg = 0.0f;
+
 static float GpsNormalizeCourse360(float angle)
 {
     while (angle >= 360.0f) angle -= 360.0f;
@@ -1258,13 +1261,27 @@ static float GpsNavCurrentYmm(void)
 
 static float GpsNav_GetCurrentHeadingDeg(void)
 {
-    float heading_deg = 0.0f;
+    float current_absolute_heading = 0.0f;
+
+    if (g_gyro_yaw_initialized == 0U)
+    {
+        float initial_heading = 0.0f;
 #if IMU_CATEGORY == 3
-    heading_deg = heading;
+        initial_heading = heading;
 #else
-    heading_deg = gnss.direction;
+        initial_heading = gnss.direction;
 #endif
-    return GpsNormalizeCourse360(heading_deg + GPS_NAV_HEADING_OFFSET_DEG);
+        g_yaw_offset_deg = initial_heading - euler_angle.yaw;
+        g_gyro_yaw_initialized = 1U;
+        
+        current_absolute_heading = initial_heading;
+    }
+    else
+    {
+        current_absolute_heading = euler_angle.yaw + g_yaw_offset_deg;
+    }
+
+    return GpsNormalizeCourse360(current_absolute_heading + GPS_NAV_HEADING_OFFSET_DEG);
 }
 
 uint16 GpsNavReplay_LoadStaticRouteToRam(void)
@@ -1310,6 +1327,8 @@ void GpsNavReplay_Start(void)
     g_gps_replay_state = REPLAY_RUNNING;
     target_speed_set = GPS_NAV_SPEED_STOP;
     err_degree = 0.0f;
+    
+    g_gyro_yaw_initialized = 0U;
 
 #if DEBUG_LOG_ENABLE
     printf("[GPS-NAV] Replay START. Points: %d\r\n", nav_ram_data.point_count);
