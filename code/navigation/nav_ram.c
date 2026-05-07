@@ -22,6 +22,7 @@ void NavRam_Init(void)
         nav_ram_data.points[i].y = 0.0f;
         nav_ram_data.points[i].target_yaw_deg = 0.0f;
         nav_ram_data.points[i].heading_deg = 0.0f;
+        nav_ram_data.points[i].target_speed = 0.0f;
         nav_ram_data.points[i].point_type = 0;
     }
 }
@@ -59,6 +60,7 @@ uint8 NavRam_RecordPoint(uint8 point_type)
 #else
     nav_ram_data.points[idx].heading_deg = 0.0f;
 #endif
+    nav_ram_data.points[idx].target_speed = 0.0f;
     nav_ram_data.points[idx].point_type = point_type;
 
     nav_ram_data.point_count++;

@@ -40,6 +40,7 @@ typedef struct
     float y;
     float target_yaw_deg;
     float heading_deg;
+    float target_speed;
     uint8 point_type;
 } NavRamPoint_t;
 
