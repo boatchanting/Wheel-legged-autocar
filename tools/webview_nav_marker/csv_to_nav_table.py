@@ -1,5 +1,5 @@
 ﻿#!/usr/bin/env python3
-"""Convert exported nav marker CSV to a C route table header."""
+"""将打点导出的 CSV 转换为 C 路表头文件（6 字段，速度先占位 0）。"""
 
 from __future__ import annotations
 
@@ -26,26 +26,29 @@ class RoutePoint:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Convert nav marker CSV to C header")
-    parser.add_argument("csv", nargs="?", help="Path to exported CSV")
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser(description="将导航打点 CSV 转为 C 路表头文件")
+    parser.add_argument("csv", nargs="?", help="导出的 CSV 文件路径")
     parser.add_argument(
         "--output",
-        help="Output header path (default: code/navigation/nav_replay_route_table.h)",
+        help="输出头文件路径（默认：code/navigation/nav_replay_route_table.h）",
     )
     parser.add_argument(
         "--max-points",
         type=int,
         default=MAX_POINTS_DEFAULT,
-        help=f"Maximum route points to keep (default: {MAX_POINTS_DEFAULT})",
+        help=f"最多保留的轨迹点数（默认：{MAX_POINTS_DEFAULT}）",
     )
     return parser.parse_args()
 
 
 def normalize_key(key: str) -> str:
+    """规范化 CSV 列名，便于兼容大小写和空格差异。"""
     return key.strip().lower().replace(" ", "")
 
 
 def auto_find_latest_csv(script_dir: Path) -> Path:
+    """自动查找脚本目录下最新的打点 CSV 文件。"""
     candidates = sorted(
         script_dir.glob("nav_mark_points_*.csv"),
         key=lambda p: p.stat().st_mtime,
@@ -57,6 +60,7 @@ def auto_find_latest_csv(script_dir: Path) -> Path:
 
 
 def normalize_heading_deg(value: object) -> Optional[float]:
+    """将绝对航向角归一化到 [0, 360)。"""
     try:
         heading = float(value)
     except (TypeError, ValueError):
@@ -70,6 +74,7 @@ def normalize_heading_deg(value: object) -> Optional[float]:
 
 
 def normalize_relative_yaw_deg(value: object) -> Optional[float]:
+    """将相对航向角归一化到 (-180, 180]。"""
     try:
         yaw = float(value)
     except (TypeError, ValueError):
@@ -84,10 +89,12 @@ def normalize_relative_yaw_deg(value: object) -> Optional[float]:
 
 
 def calc_path_yaw_deg(x0: float, y0: float, x1: float, y1: float) -> float:
+    """按项目坐标系计算路径切向角（deg）。"""
     return -math.degrees(math.atan2(y1 - y0, -(x1 - x0)))
 
 
 def infer_target_yaws(points: List[RoutePoint]) -> None:
+    """在 CSV 缺失 target_yaw 时，用相邻点几何关系补齐。"""
     count = len(points)
     for idx, point in enumerate(points):
         if point.target_yaw_deg is not None:
@@ -107,12 +114,19 @@ def infer_target_yaws(points: List[RoutePoint]) -> None:
 
 
 def fill_missing_heading(points: List[RoutePoint]) -> None:
+    """补齐缺失 heading，默认回填 0。"""
     for point in points:
         if point.heading_deg is None:
             point.heading_deg = 0.0
 
 
 def read_points(csv_path: Path) -> Tuple[List[RoutePoint], Optional[float]]:
+    """
+    读取 CSV 并转换为轨迹点列表。
+
+    @return (轨迹点列表, 起跑航向角或 None)
+    @note 调用位置：main() 主流程入口
+    """
     with csv_path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         if reader.fieldnames is None:
@@ -172,6 +186,11 @@ def read_points(csv_path: Path) -> Tuple[List[RoutePoint], Optional[float]]:
 
 
 def format_header(points: List[RoutePoint], src_path: Path, start_heading: Optional[float]) -> str:
+    """
+    生成 C 头文件文本（6 字段 NavRamPoint_t 格式）。
+
+    @note 调用位置：main() 在读取并裁剪点数据后调用
+    """
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     count = len(points)
     heading_valid = 1 if start_heading is not None else 0
@@ -219,6 +238,11 @@ def format_header(points: List[RoutePoint], src_path: Path, start_heading: Optio
 
 
 def main() -> int:
+    """
+    脚本主入口：读取 CSV -> 构建头文件文本 -> 写入目标路径。
+
+    @return 0 成功，非 0 失败
+    """
     args = parse_args()
 
     script_dir = Path(__file__).resolve().parent

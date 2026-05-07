@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smooth route points and generate a speed-planned nav route table."""
+"""轨迹平滑与离线速度规划脚本：读取路表、插值、规划速度并输出 6 字段头文件。"""
 
 from __future__ import annotations
 
@@ -17,12 +17,19 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import Akima1DInterpolator, PchipInterpolator, interp1d, splprep, splev
 
+# 插值后的目标点间距（mm），越小路径越密，计算量越大
 INTERPOLATE_DIST = 20.0
+# 纵向速度上限（mm/s），离线速度包络的硬约束上限
 PATH_SPEED_MAX_MM_S = 1800.0
+# 最大可用加速度（mm/s^2），前向扫描时限制提速斜率
 MAX_ACCEL_MM_S2 = 1200.0
+# 最大可用减速度（mm/s^2），反向扫描时限制刹车能力
 MAX_DECEL_MM_S2 = 1800.0
+# 最大横向加速度（mm/s^2），通过曲率约束弯中速度
 MAX_LATERAL_ACCEL_MM_S2 = 1800.0
+# 速度指令换算系数（速度指令单位 -> mm/s）
 SPEED_TO_MM_S = 5.183
+# 曲率计算分母保护项，避免除零与数值放大
 CURVATURE_EPS = 1e-6
 FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 
@@ -36,11 +43,11 @@ POINT_TYPE_TOKENS: Dict[str, int] = {
 }
 
 SPECIAL_POINTS_MAP = {
-    1: ("Circle", "#FF00FF", "o"),
-    2: ("Slope", "#FFA500", "^"),
-    3: ("Jump", "#00FFFF", "v"),
-    4: ("Bridge", "#8B4513", "s"),
-    5: ("Bump", "#800080", "D"),
+    1: ("圆环点", "#FF00FF", "o"),
+    2: ("坡道点", "#FFA500", "^"),
+    3: ("跳跃点", "#00FFFF", "v"),
+    4: ("桥面点", "#8B4513", "s"),
+    5: ("颠簸点", "#800080", "D"),
 }
 
 
@@ -55,29 +62,31 @@ class RoutePoint:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Interpolate route points and plan target speed")
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser(description="轨迹插值并生成离线速度规划路表")
     parser.add_argument(
         "--input",
-        help="Input route-table header path (default: code/navigation/nav_replay_route_table.h)",
+        help="输入路表头文件路径（默认：code/navigation/nav_replay_route_table.h）",
     )
     parser.add_argument(
         "--output",
-        help="Output route-table header path (default: overwrite input file)",
+        help="输出路表头文件路径（默认：覆盖输入文件）",
     )
     parser.add_argument(
         "--method",
         choices=["1", "2", "3", "4", "5", "6"],
-        help="Interpolation method id. Defaults to interactive selection or [4] in non-interactive mode.",
+        help="插值方法编号。未指定时：交互模式手选，非交互模式默认 4。",
     )
     parser.add_argument(
         "--no-plot",
         action="store_true",
-        help="Skip the interpolation preview window.",
+        help="跳过插值对比预览窗口。",
     )
     return parser.parse_args()
 
 
 def normalize_relative_yaw_deg(value: float) -> float:
+    """将相对航向角归一化到 (-180, 180]。"""
     while value > 180.0:
         value -= 360.0
     while value <= -180.0:
@@ -86,6 +95,7 @@ def normalize_relative_yaw_deg(value: float) -> float:
 
 
 def normalize_heading_deg(value: float) -> float:
+    """将绝对航向角归一化到 [0, 360)。"""
     value = math.fmod(value, 360.0)
     if value < 0.0:
         value += 360.0
@@ -93,10 +103,12 @@ def normalize_heading_deg(value: float) -> float:
 
 
 def calc_path_yaw_deg(x0: float, y0: float, x1: float, y1: float) -> float:
+    """按项目坐标系定义计算路径切向角（deg）。"""
     return -math.degrees(math.atan2(y1 - y0, -(x1 - x0)))
 
 
 def parse_point_type(token: str) -> int:
+    """解析点类型标记（支持枚举名或数字）。"""
     token = token.strip()
     if token in POINT_TYPE_TOKENS:
         return POINT_TYPE_TOKENS[token]
@@ -104,6 +116,7 @@ def parse_point_type(token: str) -> int:
 
 
 def infer_missing_angles(points: List[RoutePoint]) -> None:
+    """补全缺失的 target_yaw_deg 与 heading_deg。"""
     for idx, point in enumerate(points):
         if point.target_yaw_deg is None:
             yaw = None
@@ -122,6 +135,12 @@ def infer_missing_angles(points: List[RoutePoint]) -> None:
 
 
 def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
+    """
+    读取路表头文件，兼容 3/5/6 字段点格式。
+
+    @return (轨迹点列表, 起跑航向有效标志, 起跑航向角)
+    @note 调用位置：main() 主流程入口
+    """
     if not os.path.exists(file_path):
         raise FileNotFoundError(file_path)
 
@@ -208,6 +227,11 @@ def generate_header(
     start_heading_valid: int,
     start_heading_deg: float,
 ) -> None:
+    """
+    生成 6 字段导航路表头文件。
+
+    @note 调用位置：main() 中完成插值与速度规划后调用
+    """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -220,7 +244,7 @@ def generate_header(
         f.write(f"// Interpolation Method: {method_name}\n")
         f.write(f"// Interpolation interval: ~{INTERPOLATE_DIST}mm\n")
         f.write(
-            f"// Speed plan: vmax={PATH_SPEED_MAX_MM_S:.1f}mm/s, "
+            f"// 速度规划: vmax={PATH_SPEED_MAX_MM_S:.1f}mm/s, "
             f"a+={MAX_ACCEL_MM_S2:.1f}mm/s^2, "
             f"a-={MAX_DECEL_MM_S2:.1f}mm/s^2, "
             f"alat={MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2, "
@@ -243,6 +267,7 @@ def generate_header(
 
 
 def resample_path(x_fine: np.ndarray, y_fine: np.ndarray, target_dist: float) -> Tuple[np.ndarray, np.ndarray]:
+    """按弧长重采样路径，使点间距接近 target_dist。"""
     diffs = np.sqrt(np.diff(x_fine) ** 2 + np.diff(y_fine) ** 2)
     cum_dist = np.insert(np.cumsum(diffs), 0, 0.0)
     total_length = cum_dist[-1]
@@ -262,6 +287,7 @@ def corner_fillet_path(
     y_orig: np.ndarray,
     fillet_radius: float = 500.0,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    """对折角进行圆角化，减小路径尖角突变。"""
     pts = np.vstack((x_orig, y_orig)).T
     new_pts = [pts[0]]
 
@@ -293,6 +319,7 @@ def corner_fillet_path(
 
 
 def b_spline_path(x_orig: np.ndarray, y_orig: np.ndarray, smooth_factor: float = 5.0) -> Tuple[np.ndarray, np.ndarray]:
+    """使用 B 样条对路径进行平滑。"""
     tck, _ = splprep([x_orig, y_orig], s=smooth_factor, k=min(3, len(x_orig) - 1))
     u_fine = np.linspace(0.0, 1.0, 2000)
     x_spline, y_spline = splev(u_fine, tck)
@@ -300,6 +327,7 @@ def b_spline_path(x_orig: np.ndarray, y_orig: np.ndarray, smooth_factor: float =
 
 
 def tangent_yaws(x_vals: np.ndarray, y_vals: np.ndarray) -> np.ndarray:
+    """根据相邻点切向计算每个点的 target_yaw。"""
     yaws = np.zeros(len(x_vals), dtype=float)
     for i in range(len(x_vals)):
         if i + 1 < len(x_vals):
@@ -314,6 +342,7 @@ def tangent_yaws(x_vals: np.ndarray, y_vals: np.ndarray) -> np.ndarray:
 
 
 def build_methods(x_orig: np.ndarray, y_orig: np.ndarray) -> Dict[str, Tuple[str, np.ndarray, np.ndarray]]:
+    """构建多种插值方法候选，用于人工/脚本选择。"""
     diffs = np.sqrt(np.diff(x_orig) ** 2 + np.diff(y_orig) ** 2)
     t_orig = np.insert(np.cumsum(diffs), 0, 0.0)
     if t_orig[-1] == 0.0:
@@ -350,11 +379,12 @@ def build_methods(x_orig: np.ndarray, y_orig: np.ndarray) -> Dict[str, Tuple[str
 
 
 def show_methods(raw_points: List[RoutePoint], methods: Dict[str, Tuple[str, np.ndarray, np.ndarray]]) -> None:
+    """可视化不同插值方法效果，供人工对比。"""
     plt.rcParams["font.sans-serif"] = ["SimHei", "DejaVu Sans", "Arial Unicode MS"]
     plt.rcParams["axes.unicode_minus"] = False
     plt.ion()
     fig, axs = plt.subplots(2, 3, figsize=(16, 8))
-    fig.canvas.manager.set_window_title("Route interpolation preview")
+    fig.canvas.manager.set_window_title("轨迹插值预览")
     axs = axs.flatten()
 
     x_orig = np.array([p.x for p in raw_points])
@@ -362,10 +392,10 @@ def show_methods(raw_points: List[RoutePoint], methods: Dict[str, Tuple[str, np.
     special_points = [p for p in raw_points if p.point_type != 0]
 
     for ax, (key, (name, x_res, y_res)) in zip(axs, methods.items()):
-        ax.plot(x_orig, y_orig, "ro-", label="Raw points", markersize=4, alpha=0.5, zorder=3)
-        ax.plot(x_res, y_res, "b.-", markersize=3, label="Interpolated", zorder=2)
+        ax.plot(x_orig, y_orig, "ro-", label="原始点", markersize=4, alpha=0.5, zorder=3)
+        ax.plot(x_res, y_res, "b.-", label="插值后", markersize=3, zorder=2)
         for p in special_points:
-            label, color, marker = SPECIAL_POINTS_MAP.get(p.point_type, ("Special", "black", "X"))
+            label, color, marker = SPECIAL_POINTS_MAP.get(p.point_type, ("特殊点", "black", "X"))
             ax.scatter([p.x], [p.y], c=color, marker=marker, s=80, edgecolors="black", label=label, zorder=5)
         ax.set_title(f"[{key}] {name}")
         ax.axis("equal")
@@ -382,6 +412,11 @@ def build_final_points(
     sel_y: np.ndarray,
     drop_first_count: int,
 ) -> List[RoutePoint]:
+    """
+    构建最终轨迹点序列，并回填特殊点类型与姿态信息。
+
+    @note 调用位置：main() 选择插值方法后调用
+    """
     final_x = np.array(sel_x, dtype=float)
     final_y = np.array(sel_y, dtype=float)
     final_type = np.zeros(len(final_x), dtype=int)
@@ -420,6 +455,7 @@ def build_final_points(
 
 
 def prepare_spline_input_points(raw_points: List[RoutePoint]) -> Tuple[List[RoutePoint], int]:
+    """准备样条输入点，必要时补充原点并返回需丢弃的前缀点数。"""
     if raw_points and math.isclose(raw_points[0].x, 0.0, abs_tol=1e-6) and math.isclose(raw_points[0].y, 0.0, abs_tol=1e-6):
         return list(raw_points), 0
 
@@ -427,6 +463,7 @@ def prepare_spline_input_points(raw_points: List[RoutePoint]) -> Tuple[List[Rout
 
 
 def cumulative_arc_length(points: List[RoutePoint]) -> np.ndarray:
+    """计算每个轨迹点对应的累计弧长 s（mm）。"""
     if not points:
         return np.array([], dtype=float)
     x_vals = np.array([p.x for p in points], dtype=float)
@@ -436,6 +473,7 @@ def cumulative_arc_length(points: List[RoutePoint]) -> np.ndarray:
 
 
 def signed_curvature(points: List[RoutePoint]) -> np.ndarray:
+    """离散估计路径有符号曲率 k（1/mm）。"""
     count = len(points)
     curvature = np.zeros(count, dtype=float)
     if count < 3:
@@ -465,6 +503,11 @@ def signed_curvature(points: List[RoutePoint]) -> np.ndarray:
 
 
 def apply_speed_plan(points: List[RoutePoint]) -> None:
+    """
+    对轨迹点执行离线速度规划并写入 target_speed。
+
+    @note 规划流程：曲率限速包络 -> 停止点约束 -> 反向减速扫描 -> 正向加速扫描 -> 单位换算
+    """
     if not points:
         return
 
@@ -505,6 +548,7 @@ def choose_method(
     args: argparse.Namespace,
     methods: Dict[str, Tuple[str, np.ndarray, np.ndarray]],
 ) -> str:
+    """确定插值方法（命令行优先，否则交互/默认值）。"""
     if args.method in methods:
         return args.method
 
@@ -512,7 +556,7 @@ def choose_method(
         return "4"
 
     print("\n" + "=" * 64)
-    print("Interpolation methods")
+    print("插值方法")
     print("[1] Cubic Spline")
     print("[2] PCHIP")
     print("[3] Akima")
@@ -521,14 +565,19 @@ def choose_method(
     print("[6] Linear")
     print("=" * 64)
 
-    choice = input("Select method (1-6) [default 4]: ").strip() or "4"
+    choice = input("请选择方法 (1-6) [默认 4]: ").strip() or "4"
     if choice not in methods:
-        print("Invalid input, falling back to [4] Corner Fillet.")
+        print("输入无效，回退到 [4] Corner Fillet。")
         return "4"
     return choice
 
 
 def main() -> int:
+    """
+    脚本主入口：读路表 -> 插值 -> 速度规划 -> 写回头文件。
+
+    @return 0 成功，非 0 失败
+    """
     args = parse_args()
 
     default_header = Path(__file__).resolve().parents[2] / "code" / "navigation" / "nav_replay_route_table.h"
@@ -537,7 +586,7 @@ def main() -> int:
 
     raw_points, start_heading_valid, start_heading_deg = read_route_header(str(input_path))
     if not raw_points:
-        print("No route points were loaded from the input header.")
+        print("未从输入头文件读取到轨迹点。")
         return 1
 
     spline_input_points, drop_first_count = prepare_spline_input_points(raw_points)
@@ -556,11 +605,11 @@ def main() -> int:
     apply_speed_plan(final_points)
     generate_header(final_points, method_name, str(output_path), start_heading_valid, start_heading_deg)
 
-    print(f"Selected interpolation: {method_name}")
-    print(f"Generated header: {output_path}")
-    print(f"Route points written: {len(final_points)}")
+    print(f"已选择插值方法: {method_name}")
+    print(f"已生成头文件: {output_path}")
+    print(f"写入轨迹点数: {len(final_points)}")
     print(
-        "Speed plan defaults: "
+        "速度规划默认参数: "
         f"vmax={PATH_SPEED_MAX_MM_S:.1f}mm/s, "
         f"a+={MAX_ACCEL_MM_S2:.1f}mm/s^2, "
         f"a-={MAX_DECEL_MM_S2:.1f}mm/s^2, "
