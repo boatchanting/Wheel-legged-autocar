@@ -64,6 +64,10 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
 
 /**
  * @brief 计算两点距离平方（避免频繁开方）
+ * @param x1 点1 x 坐标（mm）
+ * @param y1 点1 y 坐标（mm）
+ * @param x2 点2 x 坐标（mm）
+ * @param y2 点2 y 坐标（mm）
  * @return 距离平方（mm^2）
  * @note 由最近点搜索与前瞻搜索调用
  */
