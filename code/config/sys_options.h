@@ -21,4 +21,9 @@
 2.2.惯导条件下，状态机进保留了雷区状态机code/navigation/nav_replay.c
 
 */
+// ---------------- 重刹模式配置 ----------------
+#define BRAKE_HEAVY_MODE_LEGACY 0   // 使用原有重刹逻辑
+#define BRAKE_HEAVY_MODE_PRO    1   // 使用“重刹pro”逻辑，让平衡环参与重刹
+#define BRAKE_HEAVY_MODE        BRAKE_HEAVY_MODE_PRO   // 当前默认启用重刹pro，便于直接测试
+
 #endif // __SYS_OPTIONS_H__

@@ -1,6 +1,7 @@
 #ifndef CODE__PID_NEW_H__
 #define CODE__PID_NEW_H__
 #include "zf_common_headfile.h"
+#include "../config/sys_options.h"
 #include "../config/car_select.h"//根据小车选择配置不同的PID参数
 #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
 // *************************** 【学习板小车】pid参数定义开始 ***************************
@@ -545,6 +546,20 @@ extern volatile uint8 g_brake_active;
 #define BRAKE_RAMP_UP_MED        400.0f
 #define BRAKE_RAMP_UP_HEAVY      700.0f
 #define BRAKE_RAMP_DOWN          800.0f
+
+// ==================== 重刹pro调参区 ====================
+// 说明：
+// 1. 下面这些参数只在“重刹等级”下、且 sys_options 选择 BRAKE_HEAVY_MODE_PRO 时生效。
+// 2. 重刹pro不会改写基础机械零点，而是在角度环里临时叠加一个机械零点偏移。
+// 3. 如果需要调刹车更猛/更柔，优先改这里，便于集中调参。
+#define BRAKE_PRO_MECH_ZERO_OFFSET_DEG      2.2f
+#define BRAKE_PRO_RELEASE_SPEED_ERR         45.0f
+#define BRAKE_PRO_OFFSET_RAMP_IN            0.18f
+#define BRAKE_PRO_OFFSET_RAMP_OUT           0.28f
+#define BRAKE_PRO_MIN_SPEED                 25.0f
+
+// 保护阈值：当重刹pro释放到足够接近 0 时，直接钳到 0，避免残留极小偏移持续抖动。
+#define BRAKE_PRO_OFFSET_EPS                0.02f
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用

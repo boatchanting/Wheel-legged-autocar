@@ -31,6 +31,8 @@ uint8_t roll_balance_enable = 0; // 横滚平衡环使能开关
 volatile int16 g_target_pwm_roll_adj = 0; // 目标横滚调整分量
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
+static float brake_pro_zero_offset = 0.0f;
+static uint8 brake_pro_active = 0U;
 
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
 {
@@ -40,13 +42,16 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     float brake_gain = 0.0f;
     float brake_max = 0.0f;
     float brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
+    uint8 decel_request = 0U;
+    uint8 brake_level = 0U;
+    float brake_pro_target_offset = 0.0f;
+    float brake_pro_ramp_step = BRAKE_PRO_OFFSET_RAMP_OUT;
 
     if (motor_enable && (jump_flag == 0U) && (abs_speed > BRAKE_SPEED_DEADBAND))
     {
-        uint8 decel_request = (uint8)((actual_speed * target_speed <= 0.0f) || (abs_target < abs_speed));
+        decel_request = (uint8)((actual_speed * target_speed <= 0.0f) || (abs_target < abs_speed));
         if (decel_request)
         {
-            uint8 brake_level = 0;
             if (g_brake_active) brake_level = 3U;
             else if (abs_err >= BRAKE_ERR_HEAVY) brake_level = 3U;
             else if (abs_err >= BRAKE_ERR_MED) brake_level = 2U;
@@ -60,6 +65,49 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         }
     }
 
+#if BRAKE_HEAVY_MODE == BRAKE_HEAVY_MODE_PRO
+    // 重刹pro：在重刹阶段临时给平衡环机械零点叠加偏移，让平衡环主动参与减速。
+    // 这里不直接改写基础机械零点，只生成一个临时偏移量，供 Angle_Loop_Control 叠加使用。
+    if (motor_enable &&
+        (jump_flag == 0U) &&
+        decel_request &&
+        (brake_level == 3U) &&
+        (abs_speed >= BRAKE_PRO_MIN_SPEED) &&
+        (abs_err > BRAKE_PRO_RELEASE_SPEED_ERR))
+    {
+        // 当前工程里前进时速度通常为负，因此前进重刹时给正偏移，让车更主动后仰。
+        // 倒车时反向处理，避免把方向写死。
+        brake_pro_target_offset = (actual_speed < 0.0f) ? BRAKE_PRO_MECH_ZERO_OFFSET_DEG : -BRAKE_PRO_MECH_ZERO_OFFSET_DEG;
+        brake_pro_ramp_step = BRAKE_PRO_OFFSET_RAMP_IN;
+        brake_pro_active = 1U;
+    }
+    else
+    {
+        brake_pro_target_offset = 0.0f;
+        brake_pro_ramp_step = BRAKE_PRO_OFFSET_RAMP_OUT;
+    }
+
+    if ((brake_pro_active != 0U) || (brake_pro_target_offset != 0.0f) || (brake_pro_zero_offset != 0.0f))
+    {
+        brake_pro_zero_offset += Float_Constrain(brake_pro_target_offset - brake_pro_zero_offset,
+                                                 -brake_pro_ramp_step,
+                                                  brake_pro_ramp_step);
+    }
+
+    if (fabsf(brake_pro_zero_offset) <= BRAKE_PRO_OFFSET_EPS)
+    {
+        brake_pro_zero_offset = 0.0f;
+    }
+
+    if (brake_pro_zero_offset == 0.0f)
+    {
+        brake_pro_active = 0U;
+    }
+#else
+    brake_pro_zero_offset = 0.0f;
+    brake_pro_active = 0U;
+#endif
+
     brake_ff_target = (brake_gain > 0.0f) ? Float_Constrain(-brake_gain * actual_speed, -brake_max, brake_max) : 0.0f;
     brake_ff_pwm += Float_Constrain(brake_ff_target - brake_ff_pwm, -BRAKE_RAMP_DOWN, brake_ramp_up);
     return brake_ff_pwm;
@@ -69,6 +117,8 @@ void Brake_Feedforward_Reset(void)
 {
     brake_ff_pwm = 0.0f;
     brake_ff_target = 0.0f;
+    brake_pro_zero_offset = 0.0f;
+    brake_pro_active = 0U;
 }
 
 float Brake_Feedforward_GetPwm(void)
@@ -206,6 +256,8 @@ void PID_Param_Init(void) {
 
     // 重置目标速度
     target_speed_set = 0.0f;
+    brake_pro_zero_offset = 0.0f;
+    brake_pro_active = 0U;
 }
 
 /**
@@ -319,6 +371,8 @@ void PID_Data_Reset(void) {
 
     // 重置目标速度
     target_speed_set = 0.0f;
+    brake_pro_zero_offset = 0.0f;
+    brake_pro_active = 0U;
 }
 
 
@@ -576,7 +630,10 @@ float Angle_Loop_Control(float speed_loop_output, float actual_angle)
     // 如果速度环输出正值(想加速)，通常需要车前倾。
     // 假设前倾是负角度，那么 Target = Zero - Positive，目标变小(变负)，车会前倾。
     // (注意：这里的正负号取决于你的IMU安装方向，可能需要改为 + )
-    float target_angle = pid_angle.compensation - speed_loop_output; 
+    // 重刹pro通过“临时机械零点偏移”让平衡环参与减速。
+    // 这里使用“基础机械零点 + 临时刹车偏移”的等效机械零点，避免覆盖桥区等逻辑对 compensation 的动态修改。
+    float effective_mech_zero = pid_angle.compensation + brake_pro_zero_offset;
+    float target_angle = effective_mech_zero - speed_loop_output;
 
     // 2. 计算误差
     pid_angle.error = target_angle - actual_angle;
