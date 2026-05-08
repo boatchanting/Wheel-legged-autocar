@@ -1,8 +1,8 @@
 #include "zf_common_headfile.h"
 
 // ================= 参数配置宏 =================
-#define SPIN_TARGET_ANGLE     800.0f  // 目标旋转总角度 (2圈)由于地打滑的缘故，实际转动角度会变大，视实际情况调整
-#define SPIN_MAX_SPEED        220.0f  // 最大旋转速度 (°/s)
+#define SPIN_TARGET_ANGLE     720.0f  // 目标旋转总角度 (2圈)由于地打滑的缘故，实际转动角度会变大，视实际情况调整
+#define SPIN_MAX_SPEED        360.0f  // 最大旋转速度 (°/s)
 #define SPIN_ACCEL_STEP       0.6f    // 加速度步长 (每次调用增加的速度) 建议 0.4~1.0
 #define SPIN_DECEL_ANGLE      180.0f  // 距离结束剩多少度时开始减速
 #define SPIN_MIN_SPEED        45.0f   // 最小收尾速度 (防止由于摩擦力停下)
