@@ -348,8 +348,9 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             //     }
             //     ekf_print_div = 0;
             // }
+            
             #if WIFI_USE
-                wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
+                //wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
             #endif
                 //TelemetryIpc_Core0_PublishPvcDefault();
 
@@ -421,11 +422,21 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 // // data[7] 远端白边行号
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                //     // 4. 设置本次发送的通道数量 (一共8个数据)
-                // seekfree_assistant_oscilloscope_data.channel_num = 8;
+                //5.【代码运行计时】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)(g_ekf_profiler.count); 
+                seekfree_assistant_oscilloscope_data.data[3] = (float)(g_ekf_profiler.avg_us);
+                seekfree_assistant_oscilloscope_data.data[4] = (float)(g_ekf_profiler.min_us);
+                seekfree_assistant_oscilloscope_data.data[5] = (float)(g_ekf_profiler.max_us);
+                seekfree_assistant_oscilloscope_data.data[6] = (float)(g_ekf_profiler.last_us);
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+
+                    //4. 设置本次发送的通道数量 (一共8个数据)
+                seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                //     // 5. 调用发送函数
-                // seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                    // 5. 调用发送函数
+                seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
                 // //用于上位机向小车发送pid信息
                 // wifi_update_pid_params(); 

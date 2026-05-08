@@ -52,7 +52,7 @@ extern volatile uint8 pit_state1;
 // 声明外部函数，确保编译器能找到 ekf.c 中的函数
 extern void EKF_UpData(void);//卡尔曼滤波
 extern volatile runtime_profiler_t g_ekf_profiler;
-
+volatile runtime_profiler_t g_ekf_prof = {0};
 volatile uint32_t control_tick = 0;        // 1ms计数器
 extern volatile float pid_out_speed;  // 速度环输出（目标角度）
 extern volatile float pid_out_angle;// 角度环输出（目标角速度）
@@ -63,7 +63,7 @@ volatile struct {
     float gyro;
     float speed;
 } sensor_data = {0};
-# define OUR_PWM_MAX_LIMIT 8000.0f // 最大PWM值（根据实际情况调整）
+# define OUR_PWM_MAX_LIMIT 3000.0f // 最大PWM值（根据实际情况调整）
 
 
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
@@ -74,6 +74,7 @@ uint32_t loop_counter = 0;
 
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
+    RUNTIME_PROFILE_BEGIN(g_ekf_profiler, TC_TIME2_CH0);//代码统计计时开始
     // 1. 清除中断标志位 (必须第一步做)
     pit_isr_flag_clear(PIT_CH0);
     loop_counter++;
@@ -163,7 +164,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
             gnss_flag = 0;//将标志位清零
-            gnss_data_parse();           //开始解析数据
+            //gnss_data_parse();           //开始解析数据
         } // GNSS更新
     }
 
@@ -392,7 +393,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         //   (2) 非跳跃状态（jump_flag == 0）
         //   (3) 倾角超过安全阈值（±30°）
         //   (4) 第一次站起来之后，loop_counter > 2000(中断开启两秒后)
-        if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
+        /*if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
         {
              // 如果角度过大（例如超过 40 度），判定为倒地
             if (now_angle-ANG_MECH_ZERO > 70.0f || now_angle-ANG_MECH_ZERO < -70.0f)
@@ -404,7 +405,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 //g_motor_enable = 0; 
                 NavReplay_Stop();//【nav】复现停止
             }
-        }
+        }*/
             
         if(g_motor_enable==0)
         {
@@ -418,6 +419,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             //     target_speed_set = 0.0f;  // 确保速度归零
             //     printf("ISR: Motor disabled, replay stopped.\r\n");
             // }
+            Brake_Feedforward_Reset();
             NavReplay_Stop();//【nav】复现停止
         }
     }
@@ -511,6 +513,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     {
         pit_state = 1; 
     }
+    RUNTIME_PROFILE_END(&g_ekf_profiler, TC_TIME2_CH0);//代码统计计时结束
     
 }
 
@@ -988,7 +991,7 @@ void uart4_isr (void)
         Cy_SCB_ClearRxInterrupt(get_scb_module(UART_4), CY_SCB_UART_RX_NOT_EMPTY);              // 清除接收中断标志位
 
         uart_control_callback();  
-        uart_receiver_handler();                                                                // 串口接收机回调函数
+        //uart_receiver_handler();                                                                // 串口接收机回调函数
         
                                                             
         
