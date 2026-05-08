@@ -150,6 +150,8 @@ typedef struct
     uint16 bumpy_confidence_u16;
     int16 bumpy_steer_error_px_x100;
     int16 bumpy_target_x_px_x100;
+    int16 bumpy_target_x_ipm_mm;
+    int16 bumpy_target_y_ipm_mm;
     uint8 bumpy_phase;
     uint8 bumpy_mode;
     uint8 bumpy_component_count;

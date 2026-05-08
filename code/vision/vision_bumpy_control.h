@@ -28,6 +28,10 @@ extern "C" {
 #define VISION_BUMPY_K_STEER_DEG_PER_PX        (-0.30f) // 像素到角度的转换系数(度/像素)
 #define VISION_BUMPY_MAX_ERR_DEG               (18.0f) // 最大转向误差角度限制(度)
 #define VISION_BUMPY_DEADBAND_DEG              (180.0f) // 转向误差死区(度), 小于此值的误差将被忽略
+#define VISION_BUMPY_PID_KP                    (0.80f) // PID比例系数
+#define VISION_BUMPY_PID_KI                    (0.02f) // PID积分系数
+#define VISION_BUMPY_PID_KD                    (0.12f) // PID微分系数
+#define VISION_BUMPY_PID_INTEGRAL_LIMIT        (30.0f) // PID积分限幅
 
 /* 枚举类型定义区 */
 /**
@@ -42,6 +46,17 @@ typedef enum
 } vision_bumpy_control_state_e;
 
 /* 结构体类型定义区 */
+typedef struct
+{
+    float kp;
+    float ki;
+    float kd;
+    float error;
+    float last_error;
+    float integral;
+    float output;
+} vision_bumpy_pid_t;
+
 /**
  * @brief   凹凸路面控制状态结构体
  * @details 包含了凹凸路面控制的所有状态信息和控制参数
@@ -60,6 +75,7 @@ typedef struct
     vision_bumpy_control_state_e state;    // 当前控制状态
     int16 steer_error_px_x100;             // 转向误差像素值(放大100倍)
     float err_degree_cmd;                  // 转向误差角度指令(度)
+    vision_bumpy_pid_t steer_pid;           // 方向PID状态
 } vision_bumpy_control_status_t;
 
 /* 全局变量声明区 */

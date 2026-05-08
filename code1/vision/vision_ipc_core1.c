@@ -218,6 +218,8 @@ static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
     packet->bumpy_confidence_u16 = ctrl->confidence_u16;
     packet->bumpy_steer_error_px_x100 = ctrl->steer_error_px_x100;
     packet->bumpy_target_x_px_x100 = ctrl->target_x_px_x100;
+    packet->bumpy_target_x_ipm_mm = ctrl->target_x_ipm_mm;
+    packet->bumpy_target_y_ipm_mm = ctrl->target_y_ipm_mm;
     packet->bumpy_phase = ctrl->phase;
     packet->bumpy_mode = ctrl->mode;
     packet->bumpy_component_count = ctrl->component_count;

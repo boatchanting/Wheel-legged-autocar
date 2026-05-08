@@ -1,4 +1,5 @@
-#include "bumpy_vision.h"
+﻿#include "bumpy_vision.h"
+#include "ipm_transform.h"
 
 #if BUMPY_VISION_ENABLE
 
@@ -1076,6 +1077,22 @@ static void bumpy_copy_detect_to_frame_result(const bumpy_detect_result_t *detec
     result->target_x_px_x100 = bumpy_float_to_i16_x100(detect->centerline.target_x);
     result->steer_error_px_x100 = bumpy_float_to_i16_x100(detect->centerline.steer_error_px);
 
+    if (detect->centerline.bottom_y >= 0)
+    {
+        uint8 ipm_x = (uint8)bumpy_clamp_f(detect->centerline.target_x, 0.0f, (float)(BUMPY_IMAGE_W - 1U));
+        uint8 ipm_y = (uint8)detect->centerline.bottom_y;
+        IPM_Point_t ipm_point = IPM_GetPhysicalCoord(ipm_x, ipm_y);
+        if (ipm_point.is_valid)
+        {
+            result->target_x_ipm_mm = (int16)ipm_point.x_mm;
+            result->target_y_ipm_mm = (int16)ipm_point.y_mm;
+            if (ipm_point.y_mm > 0)
+            {
+                result->local_s_mm = (uint16)ipm_point.y_mm;
+            }
+        }
+    }
+
     result->white_threshold_x10 = (uint16)(detect->white_threshold * 10.0f);
     result->dark_threshold_x10 = (uint16)(detect->dark_threshold * 10.0f);
 
@@ -1087,7 +1104,10 @@ static void bumpy_copy_detect_to_frame_result(const bumpy_detect_result_t *detec
         result->bbox_xmax = best->xmax;
         result->bbox_ymax = best->ymax;
         result->bbox_area = (uint16)(bumpy_component_width(best) * bumpy_component_height(best));
-        result->local_s_mm = (uint16)((BUMPY_IMAGE_H - 1U - best->ymax) * 30U);
+        if (result->local_s_mm == 0U)
+        {
+            result->local_s_mm = (uint16)((BUMPY_IMAGE_H - 1U - best->ymax) * 30U);
+        }
         confidence += 0.55f * best->score;
     }
     else
