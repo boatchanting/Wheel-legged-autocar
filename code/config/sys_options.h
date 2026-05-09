@@ -6,9 +6,8 @@
 // 1  -> use core1 WiFi
 // 10 -> use core0 custom WiFi
 // others -> disable WiFi
-#define WIFI_USE 255
-#define WIFI_IMAGE_SEND 0
-
+#define WIFI_USE 255// 【全局开关】选择WIFI使用模式，0:core0默认模式，1:core1模式，10:core0自定义模式，其他值:关闭wifi功能
+#define WIFI_IMAGE_SEND 0 // 【全局开关】1:开启图像发送功能 0:关闭图像发送功能，开启后会占用较多性能，比赛时候建议关闭
 #define WIFI_USE_CORE0_DEFAULT   (0 == WIFI_USE)
 #define WIFI_USE_CORE1           (1 == WIFI_USE)
 #define WIFI_USE_CORE0_CUSTOM    (10 == WIFI_USE)
