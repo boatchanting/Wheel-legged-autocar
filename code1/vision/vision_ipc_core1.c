@@ -124,6 +124,8 @@ static void vision_ipc_core1_fill_pvc(vision_ipc_packet_t *packet,
     packet->pvc_confidence_u16 = vision_confidence_to_u16(ctrl->confidence);
     packet->pvc_forward_mm = ctrl->forward_mm;
     packet->pvc_lateral_mm = ctrl->lateral_mm;
+    packet->pvc_phy_x_mm = ctrl->phy_x_mm;
+    packet->pvc_phy_y_mm = ctrl->phy_y_mm;
     packet->pvc_yaw_error_deg_x100 = ctrl->yaw_error_deg_x100;
     packet->pvc_entry_bottom_y = ctrl->entry_bottom_y;
     packet->pvc_entry_top_y = ctrl->entry_top_y;

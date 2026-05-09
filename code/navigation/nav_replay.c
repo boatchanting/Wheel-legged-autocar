@@ -217,7 +217,7 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
         if (far_idx > start_idx) {
             float dx = nav_ram_data.points[far_idx].x - nav_ram_data.points[start_idx].x;
             float dy = nav_ram_data.points[far_idx].y - nav_ram_data.points[start_idx].y;
-            float path_angle = atan2f(dy, dx) * 57.29578f;
+            float path_angle = -atan2f(dy, -dx) * 57.29578f;
             float angle_diff = fabsf(NormalizeAngle(path_angle - inertial_nav.relative_yaw));
             
             float factor = (angle_diff / 60.0f) * (1.2f - 0.2f * step);
@@ -658,7 +658,7 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
         if (far_idx > start_idx) {
             float dx = nav_ram_data.points[far_idx].x - nav_ram_data.points[start_idx].x;
             float dy = nav_ram_data.points[far_idx].y - nav_ram_data.points[start_idx].y;
-            float path_angle = atan2f(dy, dx) * 57.29578f;
+            float path_angle = -atan2f(dy, -dx) * 57.29578f;
             float angle_diff = fabsf(NormalizeAngle(path_angle - inertial_nav.relative_yaw));
             
             float factor = (angle_diff / 60.0f) * (1.2f - 0.2f * step);
@@ -667,7 +667,6 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
     }
     return (max_curve > 1.0f) ? 1.0f : max_curve;
 }
-
 uint8 is_arrived = 0;  // 到达判定状态锁
 
 // 局部静态变量：用于滤波历史保持与下降沿检测
@@ -933,7 +932,11 @@ void NavReplay_Process(void)
 #define ANGLE_FILTER_ALPHA  0.3f    // 角度滤波系数(0~1)。越小越丝滑，越大越跟手。防止在点旁边抽搐。
 
 static float s_prev_err_degree = 0.0f; // 用于角度滤波的静态变量
+uint8 is_arrived = 0;  // 到达判定状态锁
 
+// 局部静态变量：用于滤波历史保持与下降沿检测
+static uint8 s_is_aligning = 0;
+static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下降沿）
 // 局部静态变量，用于记录历史角度和状态锁
 
 void NavReplay_Process(void)

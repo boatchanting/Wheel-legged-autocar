@@ -29,6 +29,52 @@ volatile float turn_gyro_loop_out = 0.0f;// 转向角速度环输出（PWM）
 volatile float final_motor_pwm = 0.0f;
 uint8_t roll_balance_enable = 0; // 横滚平衡环使能开关
 volatile int16 g_target_pwm_roll_adj = 0; // 目标横滚调整分量
+static float brake_ff_pwm = 0.0f;
+static float brake_ff_target = 0.0f;
+
+float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
+{
+    float abs_speed = fabsf(actual_speed);
+    float abs_target = fabsf(target_speed);
+    float abs_err = fabsf(target_speed - actual_speed);
+    float brake_gain = 0.0f;
+    float brake_max = 0.0f;
+    float brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
+
+    if (motor_enable && (jump_flag == 0U) && (abs_speed > BRAKE_SPEED_DEADBAND))
+    {
+        uint8 decel_request = (uint8)((actual_speed * target_speed <= 0.0f) || (abs_target < abs_speed));
+        if (decel_request)
+        {
+            uint8 brake_level = 0;
+            if (g_brake_active) brake_level = 3U;
+            else if (abs_err >= BRAKE_ERR_HEAVY) brake_level = 3U;
+            else if (abs_err >= BRAKE_ERR_MED) brake_level = 2U;
+            else if (abs_err >= BRAKE_ERR_LIGHT) brake_level = 1U;
+
+            if ((abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1U)) brake_level = 1U;
+
+            if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
+            else if (brake_level == 2U) { brake_gain = BRAKE_GAIN_MED; brake_max = BRAKE_MAX_MED; brake_ramp_up = BRAKE_RAMP_UP_MED; }
+            else if (brake_level == 1U) { brake_gain = BRAKE_GAIN_LIGHT; brake_max = BRAKE_MAX_LIGHT; brake_ramp_up = BRAKE_RAMP_UP_LIGHT; }
+        }
+    }
+
+    brake_ff_target = (brake_gain > 0.0f) ? Float_Constrain(-brake_gain * actual_speed, -brake_max, brake_max) : 0.0f;
+    brake_ff_pwm += Float_Constrain(brake_ff_target - brake_ff_pwm, -BRAKE_RAMP_DOWN, brake_ramp_up);
+    return brake_ff_pwm;
+}
+
+void Brake_Feedforward_Reset(void)
+{
+    brake_ff_pwm = 0.0f;
+    brake_ff_target = 0.0f;
+}
+
+float Brake_Feedforward_GetPwm(void)
+{
+    return brake_ff_pwm;
+}
 
 // ============================================================================
 //  辅助函数实现

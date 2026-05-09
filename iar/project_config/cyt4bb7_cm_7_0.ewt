@@ -1628,6 +1628,12 @@
             <file>
                 <name>$PROJ_DIR$\..\..\code\vision\vision_pvc_control.h</name>
             </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_three_stage_control.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_three_stage_control.h</name>
+            </file>
         </group>
         <file>
             <name>$PROJ_DIR$\..\..\code\common.h</name>

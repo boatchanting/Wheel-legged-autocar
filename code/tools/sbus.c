@@ -44,6 +44,7 @@ static uint8 throttle_locked = 0; // 油门锁标记：0=正常接受指令, 1=�
 // 2. 全局变量定义
 // ==========================================
 robot_ctrl_t robot_ctrl;
+volatile uint8 g_brake_active = 0;
 
 // ==========================================
 // 3. 函数实现
@@ -88,6 +89,7 @@ void Remote_Control_Init(void)
     robot_ctrl.mark_trigger = 0;
     robot_ctrl.motor_enable = 1;  //1=使能,0=急停
     robot_ctrl.brake_active = 0;
+    g_brake_active = 0;
     robot_ctrl.point_type = 0;
     // 模式枚举 (对应 CH4 三态开关和CH5开关的组合状态，使用ch3开关进行触发)
     // NAV_POINT_PATH = 0,     // 普通路径点
@@ -121,20 +123,66 @@ void Remote_Control_Process(void)
     {
         // printf("Remote control is disconnected. ");
         robot_ctrl.brake_active = 0;
+        g_brake_active = 0;
         robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 失控则不进行后续处理
 
     }
-    int16 ch1_steer = uart_receiver.channel[0];
+
+    // ==== 增加的 5 次消抖逻辑开始 ====
+    static int16 last_raw_ch[6] = {0};       // 记录上一次的原始数据
+    static int16 debounced_ch[6] = {0};      // 消抖后输出的最终数据
+    static uint8 stable_cnt[6] = {0};        // 连续相同次数计数器
+    static uint8 is_first_run = 1;           // 首次运行标志
+
+    // 上电首次运行，直接初始化缓冲，避免起步有延迟卡顿
+    if (is_first_run)
+    {
+        for (int i = 0; i < 6; i++)
+        {
+            debounced_ch[i] = uart_receiver.channel[i];
+            last_raw_ch[i] = uart_receiver.channel[i];
+            stable_cnt[i] = 0;
+        }
+        is_first_run = 0;
+    }
+
+    // 对6个通道进行独立消抖判定
+    for (int i = 0; i < 6; i++)
+    {
+        if (uart_receiver.channel[i] == last_raw_ch[i])
+        {
+            // 数据没变，计数增加
+            if (stable_cnt[i] < 5)
+            {
+                stable_cnt[i]++;
+            }
+            // 达到5次相同的条件，更新有效结果数组
+            if (stable_cnt[i] >= 5)
+            {
+                debounced_ch[i] = uart_receiver.channel[i];
+            }
+        }
+        else
+        {
+            // 数据发生变化，重新开始计数，并记录新的变化值
+            stable_cnt[i] = 0;
+            last_raw_ch[i] = uart_receiver.channel[i];
+        }
+    }
+    // ==== 增加的 5 次消抖逻辑结束 ====
+
+    // 改用消抖后的数组 debounced_ch 赋值变量
+    int16 ch1_steer = debounced_ch[0];
 #if SUBS_CATEGORY == 1
-    int16 ch2_thro  = uart_receiver.channel[1];
+    int16 ch2_thro  = debounced_ch[1];
 #else
-    int16 ch2_thro  = 1952 - uart_receiver.channel[1];
+    int16 ch2_thro  = 1952 - debounced_ch[1];
 #endif
-    int16 ch3_mark  = uart_receiver.channel[2];
-    int16 ch4_mode  = uart_receiver.channel[3];
-    int16 ch5_brake = uart_receiver.channel[4];
-    int16 ch6_off   = uart_receiver.channel[5];
+    int16 ch3_mark  = debounced_ch[2];
+    int16 ch4_mode  = debounced_ch[3];
+    int16 ch5_brake = debounced_ch[4];
+    int16 ch6_off   = debounced_ch[5];
 
     // --------------------------------------------------------
     // Step 2: 处理最高优先级逻辑 (CH6 总开关)
@@ -143,12 +191,14 @@ void Remote_Control_Process(void)
     if(ch1_steer == 0 && ch2_thro == 0 && ch3_mark == 0 && ch4_mode == 0 && ch5_brake == 0 && ch6_off == 0)
     {
         robot_ctrl.brake_active = 0;
+        g_brake_active = 0;
         robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 遥控器完全回中且总开关关闭，则不进行后续处理
     }
     if (ch6_off > RC_SW_THRESHOLD) 
     {
         robot_ctrl.brake_active = 0;
+        g_brake_active = 0;
         robot_ctrl.motor_enable = 0;
         // printf("Motor disabled by CH6 switch\n");
         // 关机状态下，不进行增量计算，防止后台积分
@@ -189,6 +239,7 @@ void Remote_Control_Process(void)
     // --------------------------------------------------------
 
     robot_ctrl.brake_active = (ch5_brake > RC_SW_THRESHOLD) ? 1U : 0U;
+    g_brake_active = robot_ctrl.brake_active;
 
     if (ch5_brake > RC_SW_THRESHOLD)// 开关刹车
     {
@@ -265,9 +316,10 @@ void Remote_Control_Process(void)
     }
     if (curr_ch3_state != last_ch3_state )
     {
+        //vision_detected_three_jump_point =1;//视觉控制的三级跳状态机，测试用
         //vision_detected_jump_point = 1;//跳跃点调用,测试用
         //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
-        //vision_detected_bumpy_point = 1; // 置位，Main函数处理完需手动清零
+        //vision_detected_bridge_point = 1; // 单边桥调用,测试用
         robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点

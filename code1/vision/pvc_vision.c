@@ -10,6 +10,7 @@
  * =================================================================================
  */
 #include "pvc_vision.h"
+#include "ipm_transform.h"
 
 #if PVC_VISION_ENABLE
 
@@ -149,6 +150,38 @@ static int16 pvc_estimate_lateral_mm_from_x(float x)
     return (int16)((x - ((float)PVC_IMAGE_W - 1.0f) * 0.5f) * 8.0f);
 }
 
+static void pvc_fill_physical_coord_from_ipm(const pvc_component_t *best, pvc_vision_frame_result_t *result)
+{
+    uint8 img_x;
+    const uint8 img_y = best->ymax;
+    IPM_Point_t ipm_point;
+
+    if (best->centroid_x <= 0.0f)
+    {
+        img_x = 0U;
+    }
+    else if (best->centroid_x >= (float)(PVC_IMAGE_W - 1U))
+    {
+        img_x = (uint8)(PVC_IMAGE_W - 1U);
+    }
+    else
+    {
+        img_x = (uint8)(best->centroid_x + 0.5f);
+    }
+
+    ipm_point = IPM_GetPhysicalCoord(img_x, img_y);
+    if (ipm_point.is_valid)
+    {
+        result->phy_x_mm = ipm_point.x_mm;
+        result->phy_y_mm = ipm_point.y_mm;
+    }
+    else
+    {
+        result->phy_x_mm = PVC_VISION_PHY_INVALID_MM;
+        result->phy_y_mm = PVC_VISION_PHY_INVALID_MM;
+    }
+}
+
 /* --- 6. 核心逻辑：打分与排序 --- */
 
 /**
@@ -165,6 +198,8 @@ static void pvc_clear_frame_result(pvc_vision_frame_result_t *result)
     result->bbox_ymax = 0xFFU;
     result->entry_bottom_y = 0xFFU;
     result->entry_top_y = 0xFFU;
+    result->phy_x_mm = PVC_VISION_PHY_INVALID_MM;
+    result->phy_y_mm = PVC_VISION_PHY_INVALID_MM;
     result->forward_mm = -1; /* 距离设为 -1 表示未知 */
 }
 
@@ -471,6 +506,7 @@ static void pvc_copy_best_to_result(const pvc_component_t *best, pvc_vision_fram
     result->centroid_y = best->centroid_y;
     result->fill_ratio = best->fill_ratio;
     result->mean_gray = best->mean_gray;
+    pvc_fill_physical_coord_from_ipm(best, result);
     
     /* 调用前面的估算函数，算出距离和偏差 */
     result->forward_mm = pvc_estimate_forward_mm_from_row(best->ymax);

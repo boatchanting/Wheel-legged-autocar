@@ -48,6 +48,7 @@ extern "C" {
 #define PVC_IMAGE_W                       (94U)   /* 图像宽度，单位：像素 */
 #define PVC_IMAGE_H                       (60U)   /* 图像高度，单位：像素 */
 #define PVC_IMAGE_SIZE                    (PVC_IMAGE_W * PVC_IMAGE_H) /* 图像总像素数 */
+#define PVC_VISION_PHY_INVALID_MM         (32767) /* 物理坐标无效标记值（IPM查表失败或越界） */
 
 /* --- 2. 功能开关与硬件配置 --- */
 #define PVC_VISION_ENABLE                 (1)     /* 模块总开关：1 为开启编译，0 为关闭。遇到问题可以关掉排查 */
@@ -107,6 +108,8 @@ typedef struct
     float mean_gray;             /* 平均亮度（255 是纯白） */
     int16 forward_mm;            /* 估算离车还有多远（单位：毫米，-1表示不知道） */
     int16 lateral_mm;            /* 估算车偏离了中心多少（单位：毫米，正数偏右，负数偏左） */
+    int16 phy_x_mm;              /* 基于 IPM 查表得到的真实物理 X 坐标（毫米） */
+    int16 phy_y_mm;              /* 基于 IPM 查表得到的真实物理 Y 坐标（毫米） */
     int16 yaw_error_deg_x100;    /* 角度偏差（当前先不用，填 0） */
 } pvc_vision_frame_result_t;
 

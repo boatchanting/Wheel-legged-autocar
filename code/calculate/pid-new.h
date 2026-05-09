@@ -404,9 +404,9 @@ extern float current_actual_speed;
 //    作用：根据期望角度(来自机械零点+速度环)，计算出需要的角速度。
 //    这是维持直立最关键的一环。
 // ----------------------------------------------------------------------------
-#define ANG_KP      -12.0f   // [直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。
+#define ANG_KP      -12.0f   //[直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。
 #define ANG_KI      0.0f    // [一般不用] 平衡车本身是不稳定系统，加积分容易导致无法直立，除非是完全静态的高精度控制。
-#define ANG_KD      -8.0f    // [直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。
+#define ANG_KD      -8.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。
 
 #define ANG_MAX_I   0.0f    // 积分限幅
 #define ANG_MAX_O   8000.0f // [最大角速度] 限制期望的旋转速度，防止电机指令过大。
@@ -414,7 +414,7 @@ extern float current_actual_speed;
 // [关键补偿] 机械零点 (Mechanical Zero)
 // 理想情况下0度是平衡点。但因电池安装、传感器贴歪等原因，实际平衡点可能是 -1.5度。
 // 调试方法：如果车总是往“前”跑，说明它觉得自己后仰了，需要减小这个值；反之增大。
-#define ANG_MECH_ZERO  -1.1f   
+#define ANG_MECH_ZERO  -1.4f   
 
 // ----------------------------------------------------------------------------
 // 3. 角速度环参数 (最内环 - 周期约 1ms)
@@ -426,7 +426,7 @@ extern float current_actual_speed;
 #define GYR_KD      0.0f    // [消除抖动] 抑制高频噪声和电机抖动。
 
 #define GYR_MAX_I   0.0f    
-#define GYR_MAX_O   6000.0f // [PWM满幅] 满是10000，这里留点余量设3000。
+#define GYR_MAX_O   9000.0f // [PWM满幅] 满是10000，这里留点余量设3000。
 
 // [关键补偿] 电机死区 (Dead Zone Voltage)
 // 直流电机存在静摩擦，PWM太小(如200)时不转。
@@ -441,7 +441,7 @@ extern float current_actual_speed;
 //    作用：根据视觉/编码器计算的角度误差，生成期望转向角速度
 //    特性：无积分项（避免转向累积误差），支持赛道场景自适应增益
 // ----------------------------------------------------------------------------
-#define TURN_ANG_KP     -12.0f   // [转向刚度] 值越大转向越灵敏，但易振荡
+#define TURN_ANG_KP     -8.0f   // -12[转向刚度] 值越大转向越灵敏，但易振荡
 #define TURN_ANG_KI     0.0f   // [一般不用] 无积分项，避免转向累积误差
 #define TURN_ANG_KD     0.0f   // [转向阻尼] 抑制转向超调，值过大会导致响应迟钝
 #define TURN_ANG_MAX_I  0.0f    // [一般不用] 无积分项，避免转向累积误差
@@ -452,13 +452,13 @@ extern float current_actual_speed;
 // 6. 转向角速度环参数 (内环 - 周期2ms)
 //    作用：快速跟踪期望角速度，直接输出转向专用PWM
 // ----------------------------------------------------------------------------
-#define TURN_GYR_KP     35.0f    // [响应速度] 决定转向电机响应刚度
+#define TURN_GYR_KP     20.0f    // 35[响应速度] 决定转向电机响应刚度
 #define TURN_GYR_KI     0.0f     // [一般不用] 无积分项，避免转向累积误差
-#define TURN_GYR_KD     12.0f     // [抖动抑制] 消除高频抖动
+#define TURN_GYR_KD     8.0f     // 12[抖动抑制] 消除高频抖动
 #define TURN_GYR_MAX_I  0.0f     // [一般不用] 无积分项，避免转向累积误差
 #define TURN_GYR_DEAD_ZONE 0.0f  // [死区] 消除低速时的非线性迟滞
-#define TURN_GYR_MAX_O  5000.0f  // [PWM限幅] 普通赛道转向PWM上限
-#define TURN_GYR_MAX_O_BRIDGE 7000.0f // [单边桥限幅] 单边桥需更大转向力矩
+#define TURN_GYR_MAX_O  8000.0f  // [PWM限幅] 普通赛道转向PWM上限
+#define TURN_GYR_MAX_O_BRIDGE 9000.0f // [单边桥限幅] 单边桥需更大转向力矩
 
 // ----------------------------------------------------------------------------
 // 7. 单边桥 Rolling (横滚) 自适应平衡环参数
@@ -527,6 +527,24 @@ extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern volatile float target_speed_set;
 extern uint8_t roll_balance_enable; // rolling环使能开关
+extern volatile uint8 g_brake_active;
+
+// 全局刹车前馈参数
+#define BRAKE_SPEED_DEADBAND     5.0f
+#define BRAKE_LOW_SPEED_TH       40.0f
+#define BRAKE_ERR_LIGHT          40.0f
+#define BRAKE_ERR_MED            120.0f
+#define BRAKE_ERR_HEAVY          220.0f
+#define BRAKE_GAIN_LIGHT         8.0f
+#define BRAKE_GAIN_MED           14.0f
+#define BRAKE_GAIN_HEAVY         22.0f
+#define BRAKE_MAX_LIGHT          1200.0f
+#define BRAKE_MAX_MED            2200.0f
+#define BRAKE_MAX_HEAVY          3500.0f
+#define BRAKE_RAMP_UP_LIGHT      200.0f
+#define BRAKE_RAMP_UP_MED        400.0f
+#define BRAKE_RAMP_UP_HEAVY      700.0f
+#define BRAKE_RAMP_DOWN          800.0f
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
@@ -539,6 +557,9 @@ float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
+float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
+void Brake_Feedforward_Reset(void);
+float Brake_Feedforward_GetPwm(void);
 
 // 辅助宏：取绝对值
 #define MY_ABS(x) ((x) > 0 ? (x) : -(x))

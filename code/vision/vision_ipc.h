@@ -100,6 +100,8 @@ typedef struct
     uint16 pvc_confidence_u16;
     int16 pvc_forward_mm;
     int16 pvc_lateral_mm;
+    int16 pvc_phy_x_mm;
+    int16 pvc_phy_y_mm;
     int16 pvc_yaw_error_deg_x100;
     uint8 pvc_entry_bottom_y;
     uint8 pvc_entry_top_y;

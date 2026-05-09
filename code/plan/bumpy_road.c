@@ -1,24 +1,26 @@
 #include "bumpy_road.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_bumpy_control.h"
+#include "tools/sbus.h"
 
 /* ========================= 参数区（可按实车调参） ========================= */
-#define BUMPY_ROAD_LOCK_SPEED_SET        (-150.0f)
-#define BUMPY_ROAD_TARGET_DISTANCE_MM    (3000.0f)
-#define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)
+#define BUMPY_ROAD_LOCK_SPEED_SET        (-200.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
+#define BUMPY_ROAD_TARGET_DISTANCE_MM    (3000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
+#define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms(10个1ms周期)更新一次距离
 
-#define BUMPY_ROAD_STALL_SPEED_ABS_TH    (50.0f)
-#define BUMPY_ROAD_STALL_PITCH_TH        (3.0f)
-#define BUMPY_ROAD_STALL_MS              (100U)
+#define BUMPY_ROAD_STALL_SPEED_ABS_TH    (50.0f)        // 卡顿检测速度阈值(mm/s)，低于此值认为可能卡住
+#define BUMPY_ROAD_STALL_PITCH_TH        (2.6f)         // 卡顿检测俯仰角阈值(°)，大于此值且速度低时认为卡住
+#define BUMPY_ROAD_STALL_MS              (100U)         // 卡顿持续时间阈值(ms)，持续满足卡顿条件此时间才判定为卡住
 
-#define BUMPY_ROAD_JUMP_MIN_GAP_MS       (1000U)
-#define BUMPY_ROAD_NO_JUMP_TICK          (0xFFFFFFFFU)
+#define BUMPY_ROAD_JUMP_MIN_GAP_MS       (1000U)        // 两次跳跃动作最小间隔(ms)，防止频繁跳跃
+#define BUMPY_ROAD_NO_JUMP_TICK          (0xFFFFFFFFU)  // 表示从未执行过跳跃的特殊时间戳
 
-#define BUMPY_ROAD_BACK_SPEED_SET        (100.0f)
-#define BUMPY_ROAD_BACK_DURATION_MS      (800U)
+#define BUMPY_ROAD_BACK_SPEED_SET        (100.0f)       // 后退脱困速度(mm/s)，正值表示后退
+#define BUMPY_ROAD_BACK_DURATION_MS      (800U)         // 后退持续时间(ms)
 
-#define BUMPY_ROAD_APPROACH_SPEED_SET    (-200.0f)
-#define BUMPY_ROAD_APPROACH_DURATION_MS  (200U)
+#define BUMPY_ROAD_APPROACH_SPEED_SET    (-200.0f)      // 接近障碍物时的速度(mm/s)，负值表示前进
+#define BUMPY_ROAD_APPROACH_DURATION_MS  (200U)         // 接近持续时间(ms)，之后触发跳跃
+
 
 typedef struct
 {
@@ -126,10 +128,23 @@ void BumpyRoad_Trigger(void)
 
 void BumpyRoad_Update_1ms(void)
 {
+    #if REMOTE_CONTROL == 1
+    if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_IDLE || robot_ctrl.brake_active == 1U)
+    {
+        if (robot_ctrl.brake_active == 1U)//遥控器可以停控制器
+        {
+            BumpyRoad_Init();
+            return;
+        }
+        return;
+    }
+    #endif
+    #if REMOTE_CONTROL == 0
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_IDLE)
     {
         return;
     }
+    #endif
 
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
