@@ -1249,7 +1249,7 @@ static float GpsCalcBearingDegFromNorth(float from_x, float from_y, float to_x, 
 {
     float dx = to_x - from_x;
     float dy = to_y - from_y;
-    return GpsNormalizeCourse360(atan2f(dx, dy) * 57.2957795f);
+    return GpsNormalizeCourse360(atan2f(dy, dx) * 57.2957795f);
 }
 
 static float GpsNavCurrentXmm(void)
