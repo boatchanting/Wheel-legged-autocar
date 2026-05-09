@@ -182,7 +182,7 @@ servo_executor_init();
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
 
-    #if WIFI_CAMERA    
+    #if WIFI_CAMERA_AND_ASSISTANT    
     // 初始化摄像头和逐飞助手
     wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
     uart_write_string(UART_INDEX, "Camera Initialized.");                       // 输出摄像头初始化完成信息
@@ -352,7 +352,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
             #endif
                 //TelemetryIpc_Core0_PublishPvcDefault();
-
+            #if WIFI_CAMERA_AND_ASSISTANT && WIFI_USE  
                 //逐飞助手示波器发送代码        
                 // //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
@@ -429,6 +429,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
                 // //用于上位机向小车发送pid信息
                 // wifi_update_pid_params(); 
+            #endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---
             display_count++;

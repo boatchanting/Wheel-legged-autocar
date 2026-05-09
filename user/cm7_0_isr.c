@@ -988,7 +988,7 @@ void uart4_isr (void)
         Cy_SCB_ClearRxInterrupt(get_scb_module(UART_4), CY_SCB_UART_RX_NOT_EMPTY);              // 清除接收中断标志位
 
         uart_control_callback();  
-        uart_receiver_handler();                                                                // 串口接收机回调函数
+        //uart_receiver_handler();                                                                // 串口接收机回调函数
         
                                                             
         
