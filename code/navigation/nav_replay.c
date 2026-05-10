@@ -1244,11 +1244,12 @@ static float GpsNormalizeCourse360(float angle)
     return angle;
 }
 
-// Bearing measured clockwise from north, in degree.
+// Bearing measured counter-clockwise from X-axis (Standard Math)
 static float GpsCalcBearingDegFromNorth(float from_x, float from_y, float to_x, float to_y)
 {
     float dx = to_x - from_x;
     float dy = to_y - from_y;
+    // 使用标准 atan2f(dy, dx) 匹配打点坐标系
     return GpsNormalizeCourse360(atan2f(dy, dx) * 57.2957795f);
 }
 
@@ -1270,7 +1271,7 @@ static float GpsNav_GetCurrentHeadingDeg(void)
     {
         float initial_heading = 0.0f;
 #if IMU_CATEGORY == 3
-        initial_heading = heading;
+        initial_heading = 226.0f;
 #else
         initial_heading = gnss.direction;
 #endif
@@ -1391,41 +1392,70 @@ void GpsNavReplay_Process(void)
 
     if (dist <= GPS_NAV_DIST_ARRIVE)
     {
-        target_speed_set = GPS_NAV_SPEED_STOP;
-        err_degree = 0.0f;
-
+        // 到达目标点，但不急刹车（依靠后续点自然计算速度）
         if (g_gps_current_point_type != NAV_POINT_PATH)
         {
+            target_speed_set = GPS_NAV_SPEED_STOP;
+            err_degree = 0.0f;
             if (g_gps_current_point_type == NAV_POINT_CIRCLE)
             {
                 minefield_flag = 1;
             }
             g_gps_special_action_trigger = 1U;
         }
-
         g_gps_target_idx++;
         return;
     }
 
-    // Pure point-to-point logic: rotate in place first, then move straight.
+    // === 1. 计算原始角度偏差 ===
     target_bearing = GpsCalcBearingDegFromNorth(GpsNavCurrentXmm(), GpsNavCurrentYmm(), tx, ty);
     current_heading = GpsNav_GetCurrentHeadingDeg();
     raw_err_degree = NormalizeAngle(target_bearing - current_heading);
-    err_degree = raw_err_degree;
+    
+    float current_err = raw_err_degree; 
 
-    if (fabsf(err_degree) > GPS_NAV_YAW_TOLERANCE)
-    {
-        target_speed_set = GPS_NAV_SPEED_STOP;
-        return;
+    // === 2. 核心抗噪魔法 A：一阶低通滤波 (EMA) ===
+    static float s_filtered_err = 0.0f;
+    float alpha = 0.2f; 
+    
+    if (g_gps_target_idx == 0 && target_speed_set == GPS_NAV_SPEED_STOP) {
+        s_filtered_err = current_err; 
+    } else {
+        s_filtered_err = (1.0f - alpha) * s_filtered_err + alpha * current_err;
     }
 
-    if (dist > GPS_NAV_DIST_NEAR)
-    {
-        target_speed_set = GPS_NAV_SPEED_FAST;
-    }
-    else
-    {
-        target_speed_set = GPS_NAV_SPEED_SLOW;
+    // === 3. 核心抗噪魔法 B：转向死区 (Deadband) ===
+    float final_err = s_filtered_err;
+    if (fabsf(final_err) < 2.0f) {
+        final_err = 0.0f;
     }
 
+    // === 4. 暴力限幅 (Clamp) [新增的核心护盾] ===
+    // 强制截断误差：无论目标在后方多少度，给到底层的误差绝对不能超过 30 度！
+    // 彻底防止底层电机因为接收到巨大误差而疯狂转圈或来回甩尾
+    if (final_err > 30.0f) final_err = 30.0f;
+    if (final_err < -30.0f) final_err = -30.0f;
+
+    // 最终下发误差
+    err_degree = final_err;
+    float abs_err = fabsf(err_degree);
+
+    // === 5. 纯线性的平滑速度控制逻辑 [去除了硬 Stop 的致病逻辑] ===
+    float base_speed;
+    if (dist > GPS_NAV_DIST_NEAR) {
+        base_speed = GPS_NAV_SPEED_FAST;
+    } else {
+        base_speed = GPS_NAV_SPEED_SLOW;
+    }
+
+    // 弯道动态降速 (0度误差 = 1.0 满速，30度误差 = 0.2 极慢速)
+    float speed_factor = 1.0f - (abs_err / 37.5f); 
+    
+    // 保底推力：保证哪怕在急转弯，也留有 15% 的基础速度往前走（用前进的惯性带动转向）
+    if (speed_factor < 0.15f) {
+        speed_factor = 0.15f; 
+    }
+
+    // 最终速度下发
+    target_speed_set = base_speed * speed_factor; 
 }

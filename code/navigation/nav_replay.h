@@ -10,13 +10,17 @@
 #define GPS_NAV_REPLAY_USE_STATIC_ROUTE_TABLE 1
 
 #define GPS_NAV_MIN_SAT_USED              4U
-#define GPS_NAV_DIST_ARRIVE               800.0f
+
+// 【重要建议】：室外 GPS 漂移大，建议把到达距离改大（比如 1500.0f 或 2000.0f）
+// 这样小车会在距离点 1.5 米时就开始看向下一个点，过弯会极其丝滑！
+#define GPS_NAV_DIST_ARRIVE               500.0f 
 #define GPS_NAV_DIST_NEAR                 2200.0f
 #define GPS_NAV_DIST_FAR                  5000.0f
-#define GPS_NAV_YAW_TOLERANCE             8.0f
-#define GPS_NAV_HEADING_OFFSET_DEG        -68.23f
-#define GPS_NAV_SPEED_FAST                -150.0f
-#define GPS_NAV_SPEED_SLOW                -20.0f
+
+#define GPS_NAV_YAW_TOLERANCE             2.0f
+#define GPS_NAV_HEADING_OFFSET_DEG        0.0f
+#define GPS_NAV_SPEED_FAST                -600.0f
+#define GPS_NAV_SPEED_SLOW                -80.0f
 #define GPS_NAV_SPEED_STOP                NAV_SPEED_STOP
 
 
