@@ -1271,7 +1271,7 @@ static float GpsNav_GetCurrentHeadingDeg(void)
     {
         float initial_heading = 0.0f;
 #if IMU_CATEGORY == 3
-        initial_heading = 226.0f;
+        initial_heading = 226.0f;//heading
 #else
         initial_heading = gnss.direction;
 #endif
@@ -1358,17 +1358,14 @@ void GpsNavReplay_Stop(void)
 
 void GpsNavReplay_Process(void)
 {
-    float tx = 0.0f;
-    float ty = 0.0f;
+    float cx = 0.0f, cy = 0.0f;
+    float target_x = 0.0f, target_y = 0.0f;
     float target_bearing = 0.0f;
     float current_heading = 0.0f;
     float raw_err_degree = 0.0f;
-    float dist = 0.0f;
 
-    if (g_gps_replay_state != REPLAY_RUNNING || g_gps_special_action_trigger == 1U)
-    {
-        return;
-    }
+    // 1. 状态与 GPS 有效性校验
+    if (g_gps_replay_state != REPLAY_RUNNING) return;
 
     if (!gnss_trans.is_valid || !gnss_trans.is_origin_set || gnss.state != 1U || gnss.satellite_used < GPS_NAV_MIN_SAT_USED)
     {
@@ -1377,85 +1374,123 @@ void GpsNavReplay_Process(void)
         return;
     }
 
-    if (g_gps_target_idx >= nav_ram_data.point_count)
-    {
-        g_gps_replay_state = REPLAY_FINISHED;
-        target_speed_set = GPS_NAV_SPEED_STOP;
-        err_degree = 0.0f;
-        return;
-    }
+    cx = GpsNavCurrentXmm();
+    cy = GpsNavCurrentYmm();
+    
+    // 【修改点1】：提前获取车头航向，用于判断点是否在车身侧后方
+    current_heading = GpsNav_GetCurrentHeadingDeg();
 
-    tx = nav_ram_data.points[g_gps_target_idx].x;
-    ty = nav_ram_data.points[g_gps_target_idx].y;
-    g_gps_current_point_type = nav_ram_data.points[g_gps_target_idx].point_type;
-    dist = CalcDistance(GpsNavCurrentXmm(), GpsNavCurrentYmm(), tx, ty);
-
-    if (dist <= GPS_NAV_DIST_ARRIVE)
+    // === 2. 终点防冲过头判定 ===
+    if (g_gps_target_idx >= nav_ram_data.point_count - 1)
     {
-        // 到达目标点，但不急刹车（依靠后续点自然计算速度）
-        if (g_gps_current_point_type != NAV_POINT_PATH)
+        target_x = nav_ram_data.points[nav_ram_data.point_count - 1].x;
+        target_y = nav_ram_data.points[nav_ram_data.point_count - 1].y;
+        float dist_to_end = CalcDistance(cx, cy, target_x, target_y);
+        
+        // 计算终点相对于车头的角度
+        float bearing_to_end = GpsCalcBearingDegFromNorth(cx, cy, target_x, target_y);
+        float angle_to_end = fabsf(NormalizeAngle(bearing_to_end - current_heading));
+
+        // 【修改点2】：进入抵达圆，或者在接近终点时“冲过了线”（终点跑到了车侧后方 >90度），果断停车！防止原地转圈寻终点！
+        if (dist_to_end <= GPS_NAV_DIST_ARRIVE || (dist_to_end < 3500.0f && angle_to_end > 90.0f))
         {
+            g_gps_replay_state = REPLAY_FINISHED;
             target_speed_set = GPS_NAV_SPEED_STOP;
             err_degree = 0.0f;
-            if (g_gps_current_point_type == NAV_POINT_CIRCLE)
-            {
-                minefield_flag = 1;
-            }
-            g_gps_special_action_trigger = 1U;
+            return;
         }
-        g_gps_target_idx++;
-        return;
+    }
+    else
+    {
+        // === 3. 核心：Pure Pursuit 前瞻搜索与防死锁丢弃 ===
+        while (g_gps_target_idx < nav_ram_data.point_count - 1)
+        {
+            float check_tx = nav_ram_data.points[g_gps_target_idx].x;
+            float check_ty = nav_ram_data.points[g_gps_target_idx].y;
+            float dist_current = CalcDistance(cx, cy, check_tx, check_ty);
+
+            // 计算该点相对车头的角度
+            float bearing_to_check = GpsCalcBearingDegFromNorth(cx, cy, check_tx, check_ty);
+            float angle_to_check = fabsf(NormalizeAngle(bearing_to_check - current_heading));
+
+            // 【修改点3：绝对核心修复】：
+            // 如果距离小于前瞻，【或者】该点已经被甩到了车侧后方（角度差 > 90度）
+            // 果断抛弃当前点，目标索引+1，看向更前方的赛道！
+            if (dist_current < GPS_NAV_LOOKAHEAD_DIST || angle_to_check > 90.0f)
+            {
+                g_gps_target_idx++;
+            }
+            else
+            {
+                // 点在正前方且在圆外，进行线性插值保持走线平滑
+                if (g_gps_target_idx > 0)
+                {
+                    float prev_x = nav_ram_data.points[g_gps_target_idx - 1].x;
+                    float prev_y = nav_ram_data.points[g_gps_target_idx - 1].y;
+                    float dist_prev = CalcDistance(cx, cy, prev_x, prev_y);
+
+                    float ratio = (GPS_NAV_LOOKAHEAD_DIST - dist_prev) / (dist_current - dist_prev + 0.001f);
+                    if (ratio < 0.0f) ratio = 0.0f;
+                    if (ratio > 1.0f) ratio = 1.0f;
+
+                    target_x = prev_x + ratio * (check_tx - prev_x);
+                    target_y = prev_y + ratio * (check_ty - prev_y);
+                }
+                else
+                {
+                    target_x = check_tx;
+                    target_y = check_ty;
+                }
+                break; // 找到合适的前瞻目标，跳出搜索
+            }
+        }
+        
+        // 容错：如果搜索直接推到了最后一个点
+        if (g_gps_target_idx == nav_ram_data.point_count - 1) {
+            target_x = nav_ram_data.points[g_gps_target_idx].x;
+            target_y = nav_ram_data.points[g_gps_target_idx].y;
+        }
     }
 
-    // === 1. 计算原始角度偏差 ===
-    target_bearing = GpsCalcBearingDegFromNorth(GpsNavCurrentXmm(), GpsNavCurrentYmm(), tx, ty);
-    current_heading = GpsNav_GetCurrentHeadingDeg();
+    // === 4. 计算航向误差 ===
+    target_bearing = GpsCalcBearingDegFromNorth(cx, cy, target_x, target_y);
     raw_err_degree = NormalizeAngle(target_bearing - current_heading);
     
-    float current_err = raw_err_degree; 
-
-    // === 2. 核心抗噪魔法 A：一阶低通滤波 (EMA) ===
+    // 核心抗噪 A：一阶低通滤波 (EMA)
     static float s_filtered_err = 0.0f;
-    float alpha = 0.2f; 
+    float alpha = 0.25f; 
     
     if (g_gps_target_idx == 0 && target_speed_set == GPS_NAV_SPEED_STOP) {
-        s_filtered_err = current_err; 
+        s_filtered_err = raw_err_degree; 
     } else {
-        s_filtered_err = (1.0f - alpha) * s_filtered_err + alpha * current_err;
+        s_filtered_err = (1.0f - alpha) * s_filtered_err + alpha * raw_err_degree;
     }
 
-    // === 3. 核心抗噪魔法 B：转向死区 (Deadband) ===
     float final_err = s_filtered_err;
-    if (fabsf(final_err) < 2.0f) {
-        final_err = 0.0f;
-    }
 
-    // === 4. 暴力限幅 (Clamp) [新增的核心护盾] ===
-    // 强制截断误差：无论目标在后方多少度，给到底层的误差绝对不能超过 30 度！
-    // 彻底防止底层电机因为接收到巨大误差而疯狂转圈或来回甩尾
-    if (final_err > 30.0f) final_err = 30.0f;
-    if (final_err < -30.0f) final_err = -30.0f;
+    // 核心抗噪 B：死区
+    if (fabsf(final_err) < 2.0f) final_err = 0.0f;
 
-    // 最终下发误差
-    err_degree = final_err;
+    // 核心抗噪 C：暴力限幅保护 (防止转角指令过大引起失控)
+    if (final_err > 35.0f) final_err = 35.0f;
+    if (final_err < -35.0f) final_err = -35.0f;
+
+    err_degree = final_err; 
     float abs_err = fabsf(err_degree);
 
-    // === 5. 纯线性的平滑速度控制逻辑 [去除了硬 Stop 的致病逻辑] ===
+    // === 5. 动态速度控制 ===
+    float dist_to_target = CalcDistance(cx, cy, target_x, target_y);
     float base_speed;
-    if (dist > GPS_NAV_DIST_NEAR) {
-        base_speed = GPS_NAV_SPEED_FAST;
-    } else {
-        base_speed = GPS_NAV_SPEED_SLOW;
-    }
-
-    // 弯道动态降速 (0度误差 = 1.0 满速，30度误差 = 0.2 极慢速)
-    float speed_factor = 1.0f - (abs_err / 37.5f); 
     
-    // 保底推力：保证哪怕在急转弯，也留有 15% 的基础速度往前走（用前进的惯性带动转向）
-    if (speed_factor < 0.15f) {
-        speed_factor = 0.15f; 
+    if (dist_to_target > GPS_NAV_DIST_NEAR && abs_err < 10.0f) {
+        base_speed = GPS_NAV_SPEED_FAST; 
+    } else {
+        base_speed = GPS_NAV_SPEED_SLOW; 
     }
 
-    // 最终速度下发
+    // 弯道动态降速
+    float speed_factor = 1.0f - (abs_err / 40.0f); 
+    if (speed_factor < 0.20f) speed_factor = 0.20f; 
+
     target_speed_set = base_speed * speed_factor; 
 }
