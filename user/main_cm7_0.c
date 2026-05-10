@@ -1,40 +1,41 @@
 /*********************************************************************************************************************
-* CYT4BB Opensourec Library ¼´£¨ CYT4BB ¿ªÔ´¿â£©ÊÇÒ»¸ö»ùÓÚ¹Ù·½ SDK ½Ó¿ÚµÄµÚÈı·½¿ªÔ´¿â
-* Copyright (c) 2022 SEEKFREE Öğ·É¿Æ¼¼
+* CYT4BB Opensourec Library å³ï¼ˆ CYT4BB å¼€æºåº“ï¼‰æ˜¯ä¸€ä¸ªåŸºäºå®˜æ–¹ SDK æ¥å£çš„ç¬¬ä¸‰æ–¹å¼€æºåº“
+* Copyright (c) 2022 SEEKFREE é€é£ç§‘æŠ€
 *
-* ±¾ÎÄ¼şÊÇ CYT4BB ¿ªÔ´¿âµÄÒ»²¿·Ö
+* æœ¬æ–‡ä»¶æ˜¯ CYT4BB å¼€æºåº“çš„ä¸€éƒ¨åˆ†
 *
-* CYT4BB ¿ªÔ´¿â ÊÇÃâ·ÑÈí¼ş
-* Äú¿ÉÒÔ¸ù¾İ×ÔÓÉÈí¼ş»ù½ğ»á·¢²¼µÄ GPL£¨GNU General Public License£¬¼´ GNUÍ¨ÓÃ¹«¹²Ğí¿ÉÖ¤£©µÄÌõ¿î
-* ¼´ GPL µÄµÚ3°æ£¨¼´ GPL3.0£©»ò£¨ÄúÑ¡ÔñµÄ£©ÈÎºÎºóÀ´µÄ°æ±¾£¬ÖØĞÂ·¢²¼ºÍ/»òĞŞ¸ÄËü
+* CYT4BB å¼€æºåº“ æ˜¯å…è´¹è½¯ä»¶
+* æ‚¨å¯ä»¥æ ¹æ®è‡ªç”±è½¯ä»¶åŸºé‡‘ä¼šå‘å¸ƒçš„ GPLï¼ˆGNU General Public Licenseï¼Œå³ GNUé€šç”¨å…¬å…±è®¸å¯è¯ï¼‰çš„æ¡æ¬¾
+* å³ GPL çš„ç¬¬3ç‰ˆï¼ˆå³ GPL3.0ï¼‰æˆ–ï¼ˆæ‚¨é€‰æ‹©çš„ï¼‰ä»»ä½•åæ¥çš„ç‰ˆæœ¬ï¼Œé‡æ–°å‘å¸ƒå’Œ/æˆ–ä¿®æ”¹å®ƒ
 *
-* ±¾¿ªÔ´¿âµÄ·¢²¼ÊÇÏ£ÍûËüÄÜ·¢»Ó×÷ÓÃ£¬µ«²¢Î´¶ÔÆä×÷ÈÎºÎµÄ±£Ö¤
-* ÉõÖÁÃ»ÓĞÒşº¬µÄÊÊÏúĞÔ»òÊÊºÏÌØ¶¨ÓÃÍ¾µÄ±£Ö¤
-* ¸ü¶àÏ¸½ÚÇë²Î¼û GPL
+* æœ¬å¼€æºåº“çš„å‘å¸ƒæ˜¯å¸Œæœ›å®ƒèƒ½å‘æŒ¥ä½œç”¨ï¼Œä½†å¹¶æœªå¯¹å…¶ä½œä»»ä½•çš„ä¿è¯
+* ç”šè‡³æ²¡æœ‰éšå«çš„é€‚é”€æ€§æˆ–é€‚åˆç‰¹å®šç”¨é€”çš„ä¿è¯
+* æ›´å¤šç»†èŠ‚è¯·å‚è§ GPL
 *
-* ÄúÓ¦¸ÃÔÚÊÕµ½±¾¿ªÔ´¿âµÄÍ¬Ê±ÊÕµ½Ò»·İ GPL µÄ¸±±¾
-* Èç¹ûÃ»ÓĞ£¬Çë²ÎÔÄ<https://www.gnu.org/licenses/>
+* æ‚¨åº”è¯¥åœ¨æ”¶åˆ°æœ¬å¼€æºåº“çš„åŒæ—¶æ”¶åˆ°ä¸€ä»½ GPL çš„å‰¯æœ¬
+* å¦‚æœæ²¡æœ‰ï¼Œè¯·å‚é˜…<https://www.gnu.org/licenses/>
 *
-* ¶îÍâ×¢Ã÷£º
-* ±¾¿ªÔ´¿âÊ¹ÓÃ GPL3.0 ¿ªÔ´Ğí¿ÉÖ¤Ğ­Òé ÒÔÉÏĞí¿ÉÉêÃ÷ÎªÒëÎÄ°æ±¾
-* Ğí¿ÉÉêÃ÷Ó¢ÎÄ°æÔÚ libraries/doc ÎÄ¼ş¼ĞÏÂµÄ GPL3_permission_statement.txt ÎÄ¼şÖĞ
-* Ğí¿ÉÖ¤¸±±¾ÔÚ libraries ÎÄ¼ş¼ĞÏÂ ¼´¸ÃÎÄ¼ş¼ĞÏÂµÄ LICENSE ÎÄ¼ş
-* »¶Ó­¸÷Î»Ê¹ÓÃ²¢´«²¥±¾³ÌĞò µ«ĞŞ¸ÄÄÚÈİÊ±±ØĞë±£ÁôÖğ·É¿Æ¼¼µÄ°æÈ¨ÉùÃ÷£¨¼´±¾ÉùÃ÷£©
+* é¢å¤–æ³¨æ˜ï¼š
+* æœ¬å¼€æºåº“ä½¿ç”¨ GPL3.0 å¼€æºè®¸å¯è¯åè®® ä»¥ä¸Šè®¸å¯ç”³æ˜ä¸ºè¯‘æ–‡ç‰ˆæœ¬
+#include "navigation/nav_fusion.h"
+* è®¸å¯ç”³æ˜è‹±æ–‡ç‰ˆåœ¨ libraries/doc æ–‡ä»¶å¤¹ä¸‹çš„ GPL3_permission_statement.txt æ–‡ä»¶ä¸­
+* è®¸å¯è¯å‰¯æœ¬åœ¨ libraries æ–‡ä»¶å¤¹ä¸‹ å³è¯¥æ–‡ä»¶å¤¹ä¸‹çš„ LICENSE æ–‡ä»¶
+* æ¬¢è¿å„ä½ä½¿ç”¨å¹¶ä¼ æ’­æœ¬ç¨‹åº ä½†ä¿®æ”¹å†…å®¹æ—¶å¿…é¡»ä¿ç•™é€é£ç§‘æŠ€çš„ç‰ˆæƒå£°æ˜ï¼ˆå³æœ¬å£°æ˜ï¼‰
 *
-* ÎÄ¼şÃû³Æ          main_cm7_0
-* ¹«Ë¾Ãû³Æ          ³É¶¼Öğ·É¿Æ¼¼ÓĞÏŞ¹«Ë¾
-* °æ±¾ĞÅÏ¢          ²é¿´ libraries/doc ÎÄ¼ş¼ĞÄÚ version ÎÄ¼ş °æ±¾ËµÃ÷
-* ¿ª·¢»·¾³          IAR 9.40.1
-* ÊÊÓÃÆ½Ì¨          CYT4BB
-* µêÆÌÁ´½Ó          https://seekfree.taobao.com/
+* æ–‡ä»¶åç§°          main_cm7_0
+* å…¬å¸åç§°          æˆéƒ½é€é£ç§‘æŠ€æœ‰é™å…¬å¸
+* ç‰ˆæœ¬ä¿¡æ¯          æŸ¥çœ‹ libraries/doc æ–‡ä»¶å¤¹å†… version æ–‡ä»¶ ç‰ˆæœ¬è¯´æ˜
+* å¼€å‘ç¯å¢ƒ          IAR 9.40.1
+* é€‚ç”¨å¹³å°          CYT4BB
+* åº—é“ºé“¾æ¥          https://seekfree.taobao.com/
 *
-* ĞŞ¸Ä¼ÇÂ¼
-* ÈÕÆÚ              ×÷Õß                ±¸×¢
+* ä¿®æ”¹è®°å½•
+* æ—¥æœŸ              ä½œè€…                å¤‡æ³¨
 * 2024-1-4       pudding            first version
 ********************************************************************************************************************/
 
-#include "zf_common_headfile.h"//¡¾ÌáĞÑ£¡£¡£¡¡¿µ¼ÈëÁËĞÂÄ£¿éÌí¼Óµ½Õâ¸öÎÄ¼şÀï
-#include "config/config.h"//¡¾ÌáĞÑ¡¿ÅäÖÃÇëÔÚÕâÀïĞŞ¸Ä
+#include "zf_common_headfile.h"//ã€æé†’ï¼ï¼ï¼ã€‘å¯¼å…¥äº†æ–°æ¨¡å—æ·»åŠ åˆ°è¿™ä¸ªæ–‡ä»¶é‡Œ
+#include "config/config.h"//ã€æé†’ã€‘é…ç½®è¯·åœ¨è¿™é‡Œä¿®æ”¹
 #include "tools/runtime_profiler.h"
 #include "vision/vision_ipc_core0.h"
 #include "tools/telemetry_ipc_core0.h"
@@ -44,110 +45,110 @@
 #include "vision/vision_three_stage_control.h"
 
 
-// **************************** uartÅäÖÃÇøÓò **************************** 
-#define UART_INDEX              (DEBUG_UART_INDEX    )                           // Ä¬ÈÏ UART_0
-#define UART_BAUDRATE           (DEBUG_UART_BAUDRATE)                           // Ä¬ÈÏ 115200
-#define UART_TX_PIN             (DEBUG_UART_TX_PIN  )                           // Ä¬ÈÏ UART0_TX_P00_1
-#define UART_RX_PIN             (DEBUG_UART_RX_PIN  )                           // Ä¬ÈÏ UART0_RX_P00_0
-uint8 uart_get_data[64];                                                        // ´®¿Ú½ÓÊÕÊı¾İ»º³åÇø
-uint8 fifo_get_data[64];                                                        // fifo Êä³ö¶Á³ö»º³åÇø
-uint8  get_data = 0;                                                            // ½ÓÊÕÊı¾İ±äÁ¿
-uint32 fifo_data_count = 0;                                                     // fifo Êı¾İ¸öÊı
+// **************************** uarté…ç½®åŒºåŸŸ **************************** 
+#define UART_INDEX              (DEBUG_UART_INDEX    )                           // é»˜è®¤ UART_0
+#define UART_BAUDRATE           (DEBUG_UART_BAUDRATE)                           // é»˜è®¤ 115200
+#define UART_TX_PIN             (DEBUG_UART_TX_PIN  )                           // é»˜è®¤ UART0_TX_P00_1
+#define UART_RX_PIN             (DEBUG_UART_RX_PIN  )                           // é»˜è®¤ UART0_RX_P00_0
+uint8 uart_get_data[64];                                                        // ä¸²å£æ¥æ”¶æ•°æ®ç¼“å†²åŒº
+uint8 fifo_get_data[64];                                                        // fifo è¾“å‡ºè¯»å‡ºç¼“å†²åŒº
+uint8  get_data = 0;                                                            // æ¥æ”¶æ•°æ®å˜é‡
+uint32 fifo_data_count = 0;                                                     // fifo æ•°æ®ä¸ªæ•°
 fifo_struct uart_data_fifo;
-// **************************** ÎŞË¢µç»úÅäÖÃÇøÓò **************************** 
-#define MAX_DUTY            (30 )                                               // ×î´ó MAX_DUTY% Õ¼¿Õ±È
+// **************************** æ— åˆ·ç”µæœºé…ç½®åŒºåŸŸ **************************** 
+#define MAX_DUTY            (30 )                                               // æœ€å¤§ MAX_DUTY% å ç©ºæ¯”
 int8 duty = 0;
 bool dir = true;
-// **************************** ips200ÆÁÄ»ÅäÖÃÇøÓò ****************************                                    
-#define IPS200_TYPE     (IPS200_TYPE_SPI)   // °ËÎ»²¢¿ÚÁ½´çÆÁ ÕâÀïºê¶¨ÒåÌîĞ´ IPS200_TYPE_PARALLEL8  ¶¨ÒåÆÁÄ»½Ó¿ÚÀàĞÍ    
-// SPI ´®¿ÚÁ½´çÆÁ ÕâÀïºê¶¨ÒåÌîĞ´ IPS200_TYPE_SPI
-// **************************** LEDÅäÖÃÇøÓò ****************************
-#define LED1                    (P19_0)                                         // SPI ´®¿Ú SPI Á½´çÆÁ ÕâÀïºê¶¨ÒåÌîĞ´ IPS200_TYPE_SPI
+// **************************** ips200å±å¹•é…ç½®åŒºåŸŸ ****************************                                    
+#define IPS200_TYPE     (IPS200_TYPE_SPI)   // å…«ä½å¹¶å£ä¸¤å¯¸å± è¿™é‡Œå®å®šä¹‰å¡«å†™ IPS200_TYPE_PARALLEL8  å®šä¹‰å±å¹•æ¥å£ç±»å‹    
+// SPI ä¸²å£ä¸¤å¯¸å± è¿™é‡Œå®å®šä¹‰å¡«å†™ IPS200_TYPE_SPI
+// **************************** LEDé…ç½®åŒºåŸŸ ****************************
+#define LED1                    (P19_0)                                         // SPI ä¸²å£ SPI ä¸¤å¯¸å± è¿™é‡Œå®å®šä¹‰å¡«å†™ IPS200_TYPE_SPI
 
-//  **************************** ÖĞ¶ÏÅäÖÃÇøÓò ****************************
-#define PIT_NUM         (PIT_CH0) // Ê¹ÓÃ¶¨Ê±Æ÷Í¨µÀ0       ÓÃÓÚÆ½ºâ¿ØÖÆ£¬1ms
-#define PIT_NUM_1         (PIT_CH1) // Ê¹ÓÃ¶¨Ê±Æ÷Í¨µÀ1     ÓÃÓÚÒ£¿ØÆ÷£¬10ms
-#define PIT_NUM_10         (PIT_CH10) // Ê¹ÓÃ¶¨Ê±Æ÷Í¨µÀ10  ÓÃÓÚÒ£¿ØÆ÷£¬10ms
-volatile uint8 pit_state = 0;  //Í¨µÀ0ÖĞ¶Ï±êÖ¾Î»
+//  **************************** ä¸­æ–­é…ç½®åŒºåŸŸ ****************************
+#define PIT_NUM         (PIT_CH0) // ä½¿ç”¨å®šæ—¶å™¨é€šé“0       ç”¨äºå¹³è¡¡æ§åˆ¶ï¼Œ1ms
+#define PIT_NUM_1         (PIT_CH1) // ä½¿ç”¨å®šæ—¶å™¨é€šé“1     ç”¨äºé¥æ§å™¨ï¼Œ10ms
+#define PIT_NUM_10         (PIT_CH10) // ä½¿ç”¨å®šæ—¶å™¨é€šé“10  ç”¨äºé¥æ§å™¨ï¼Œ10ms
+volatile uint8 pit_state = 0;  //é€šé“0ä¸­æ–­æ ‡å¿—ä½
 
-uint8 pit_state_1 = 0;//Í¨µÀ1ÖĞ¶Ï±êÖ¾Î»
+uint8 pit_state_1 = 0;//é€šé“1ä¸­æ–­æ ‡å¿—ä½
 volatile runtime_profiler_t g_ekf_profiler = {0};
 
 
-// *************************** EKFÖĞ¶ÏÉùÃ÷ ***************************
-extern void IMU_Calibrate_All_Gyro(void); // Ğ£×¼ÍÓÂİÒÇÉùÃ÷
+// *************************** EKFä¸­æ–­å£°æ˜ ***************************
+extern void IMU_Calibrate_All_Gyro(void); // æ ¡å‡†é™€èºä»ªå£°æ˜
 extern void EKF_Init(void);
 extern void EKF_UpData(void);
-extern EulerAngles euler_angle; // ÒıÓÃ ekf.c ÖĞ¼ÆËã³öµÄ½Ç¶È
+extern EulerAngles euler_angle; // å¼•ç”¨ ekf.c ä¸­è®¡ç®—å‡ºçš„è§’åº¦
 // =================================================================================
-// PID¿ØÖÆÖĞ¼ä±äÁ¿¿ªÊ¼
-float pid_out_speed = 0.0f; // ËÙ¶È»·Êä³ö (½Ç¶Èµ÷ÕûÁ¿)
-float pid_out_angle = 0.0f; // ½Ç¶È»·Êä³ö (ÆÚÍû½ÇËÙ¶È)
-float pid_out_pwm   = 0.0f; // ½ÇËÙ¶È»·Êä³ö (µç»úÕ¼¿Õ±È)
-int g_motor_enable = 1; // µç»úÊ¹ÄÜ°²È«¿ª¹Ø£¬1ÎªÊ¹ÄÜ£¬0Îª¹Ø»ú
+// PIDæ§åˆ¶ä¸­é—´å˜é‡å¼€å§‹
+float pid_out_speed = 0.0f; // é€Ÿåº¦ç¯è¾“å‡º (è§’åº¦è°ƒæ•´é‡)
+float pid_out_angle = 0.0f; // è§’åº¦ç¯è¾“å‡º (æœŸæœ›è§’é€Ÿåº¦)
+float pid_out_pwm   = 0.0f; // è§’é€Ÿåº¦ç¯è¾“å‡º (ç”µæœºå ç©ºæ¯”)
+int g_motor_enable = 1; // ç”µæœºä½¿èƒ½å®‰å…¨å¼€å…³ï¼Œ1ä¸ºä½¿èƒ½ï¼Œ0ä¸ºå…³æœº
 // =================================================================================
 
 // =================================================================================
-// µ¼º½¼ÇÂ¼¿ØÖÆ±êÖ¾Î»
-volatile uint8_t g_nav_recording = 0;       // 1: ÕıÔÚ¼ÇÂ¼ RAM, 0: Í£Ö¹¼ÇÂ¼
-volatile uint8_t g_nav_start_recording = 0;  // 1: ÇëÇó¿ªÊ¼Â¼ÖÆ£¬´´½¨ÄÚ´æÇø
-volatile uint8_t g_save_flash_request = 0;  // 1: ÇëÇó½« RAM Êı¾İ´æÈë Flash
-volatile uint8_t g_load_flash_request = 0;      // 1: ÇëÇó´Ó Flash ¼ÓÔØÊı¾İ
+// å¯¼èˆªè®°å½•æ§åˆ¶æ ‡å¿—ä½
+volatile uint8_t g_nav_recording = 0;       // 1: æ­£åœ¨è®°å½• RAM, 0: åœæ­¢è®°å½•
+volatile uint8_t g_nav_start_recording = 0;  // 1: è¯·æ±‚å¼€å§‹å½•åˆ¶ï¼Œåˆ›å»ºå†…å­˜åŒº
+volatile uint8_t g_save_flash_request = 0;  // 1: è¯·æ±‚å°† RAM æ•°æ®å­˜å…¥ Flash
+volatile uint8_t g_load_flash_request = 0;      // 1: è¯·æ±‚ä» Flash åŠ è½½æ•°æ®
 volatile uint8_t g_replay_start_request = 0;
 volatile uint8_t g_replay_stop_request = 0;
-volatile uint8_t vision_detected_bumpy_point = 0; // Ä£ÄâÊÓ¾õ¼ì²âµ½¡°µßô¤Èë¿Ú¡±
+volatile uint8_t vision_detected_bumpy_point = 0; // æ¨¡æ‹Ÿè§†è§‰æ£€æµ‹åˆ°â€œé¢ ç°¸å…¥å£â€
 // =================================================================================
 int main(void)
 {
-    clock_init(SYSTEM_CLOCK_250M); 	// Ê±ÖÓÅäÖÃ¼°ÏµÍ³³õÊ¼»¯<Îñ±Ø±£Áô>
-    debug_init();                   // µ÷ÊÔ´®¿ÚĞÅÏ¢³õÊ¼»¯
-    // ´Ë´¦±àĞ´ÓÃ»§´úÂë ÀıÈçÍâÉè³õÊ¼»¯´úÂëµÈ
+    clock_init(SYSTEM_CLOCK_250M); 	// æ—¶é’Ÿé…ç½®åŠç³»ç»Ÿåˆå§‹åŒ–<åŠ¡å¿…ä¿ç•™>
+    debug_init();                   // è°ƒè¯•ä¸²å£ä¿¡æ¯åˆå§‹åŒ–
+    // æ­¤å¤„ç¼–å†™ç”¨æˆ·ä»£ç  ä¾‹å¦‚å¤–è®¾åˆå§‹åŒ–ä»£ç ç­‰
 
     
-    target_speed_set = 0.0f;//Ä¿±êËÙ¶È£¬¸ºÊı´ú±íÏòÇ°£¬ºÍrpmÊıÁ¿¼¶Ïàµ±£¬²ÎÊıÎª-60Ê±Ğ¡³µ´ó¸ÅÒÔ20m/sÏòÇ°ĞĞÊ»
+    target_speed_set = 0.0f;//ç›®æ ‡é€Ÿåº¦ï¼Œè´Ÿæ•°ä»£è¡¨å‘å‰ï¼Œå’Œrpmæ•°é‡çº§ç›¸å½“ï¼Œå‚æ•°ä¸º-60æ—¶å°è½¦å¤§æ¦‚ä»¥20m/så‘å‰è¡Œé©¶
 
-    // *************************** ÆÁÄ»³õÊ¼»¯¿ªÊ¼ ***************************
-    // ¶¨ÒåÒ»¸ö±äÁ¿ÓÃÓÚ¼ÇÂ¼ÆÁÄ»´òÓ¡µÄY×ø±ê£¨ĞĞºÅ£©
+    // *************************** å±å¹•åˆå§‹åŒ–å¼€å§‹ ***************************
+    // å®šä¹‰ä¸€ä¸ªå˜é‡ç”¨äºè®°å½•å±å¹•æ‰“å°çš„Yåæ ‡ï¼ˆè¡Œå·ï¼‰
     uint16 disp_y = 0; 
-    gpio_init(LED1, GPO, GPIO_HIGH, GPO_PUSH_PULL);                             // ³õÊ¼»¯ LED1 Êä³ö Ä¬ÈÏ¸ßµçÆ½ ÍÆÍìÊä³öÄ£Ê½£¨ÓÃÓÚ¼ì²âimu660raÊÇ·ñ³õÊ¼»¯³É¹¦£©
+    gpio_init(LED1, GPO, GPIO_HIGH, GPO_PUSH_PULL);                             // åˆå§‹åŒ– LED1 è¾“å‡º é»˜è®¤é«˜ç”µå¹³ æ¨æŒ½è¾“å‡ºæ¨¡å¼ï¼ˆç”¨äºæ£€æµ‹imu660raæ˜¯å¦åˆå§‹åŒ–æˆåŠŸï¼‰
 #if DEBUG_DISPLAY
-    // 1. ÉèÖÃÆÁÄ»·½Ïò£¨ÊúÆÁ£©
+    // 1. è®¾ç½®å±å¹•æ–¹å‘ï¼ˆç«–å±ï¼‰
     ips200_set_dir(IPS200_PORTAIT);
-    // 2. ÉèÖÃÑÕÉ«£ºÂÌÉ«ÎÄ×Ö£¬ºÚÉ«±³¾° (ÏñºÚ¿ÍÖÕ¶ËÒ»Ñù)
+    // 2. è®¾ç½®é¢œè‰²ï¼šç»¿è‰²æ–‡å­—ï¼Œé»‘è‰²èƒŒæ™¯ (åƒé»‘å®¢ç»ˆç«¯ä¸€æ ·)
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
-    // 3. ³õÊ¼»¯ÆÁÄ»Ó²¼ş
+    // 3. åˆå§‹åŒ–å±å¹•ç¡¬ä»¶
     ips200_init(IPS200_TYPE);
-    // 4. ÇåÆÁ
+    // 4. æ¸…å±
     ips200_clear();
     
-    // ´òÓ¡ÏµÍ³Æô¶¯ĞÅÏ¢
+    // æ‰“å°ç³»ç»Ÿå¯åŠ¨ä¿¡æ¯
     ips200_show_string(0, disp_y, "System Booting...");
-    disp_y += 16; // »»ĞĞ£¨¼ÙÉè×ÖÌå¸ß¶È16£©
+    disp_y += 16; // æ¢è¡Œï¼ˆå‡è®¾å­—ä½“é«˜åº¦16ï¼‰
 #endif
-// *************************** ÆÁÄ»³õÊ¼»¯½áÊø ***************************
+// *************************** å±å¹•åˆå§‹åŒ–ç»“æŸ ***************************
 
-    fifo_init(&uart_data_fifo, FIFO_DATA_8BIT, uart_get_data, 64);              // ³õÊ¼»¯ fifo ¹ÒÔØ»º³åÇø
+    fifo_init(&uart_data_fifo, FIFO_DATA_8BIT, uart_get_data, 64);              // åˆå§‹åŒ– fifo æŒ‚è½½ç¼“å†²åŒº
 
-    uart_init(UART_INDEX, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN);             // ³õÊ¼»¯´®¿Ú
-    uart_rx_interrupt(UART_INDEX, 1);                                           // ¿ªÆô UART_INDEX µÄ½ÓÊÕÖĞ¶Ï
+    uart_init(UART_INDEX, UART_BAUDRATE, UART_TX_PIN, UART_RX_PIN);             // åˆå§‹åŒ–ä¸²å£
+    uart_rx_interrupt(UART_INDEX, 1);                                           // å¼€å¯ UART_INDEX çš„æ¥æ”¶ä¸­æ–­
 
-    uart_write_string(UART_INDEX, "UART Text.");                                // Êä³ö²âÊÔĞÅÏ¢
-    uart_write_byte(UART_INDEX, '\r');                                          // Êä³ö»Ø³µ
-    uart_write_byte(UART_INDEX, '\n');                                          // Êä³ö»»ĞĞ
+    uart_write_string(UART_INDEX, "UART Text.");                                // è¾“å‡ºæµ‹è¯•ä¿¡æ¯
+    uart_write_byte(UART_INDEX, '\r');                                          // è¾“å‡ºå›è½¦
+    uart_write_byte(UART_INDEX, '\n');                                          // è¾“å‡ºæ¢è¡Œ
 
-// --- ÆÁÄ»´òÓ¡ UART ³õÊ¼»¯Íê³É ---
+// --- å±å¹•æ‰“å° UART åˆå§‹åŒ–å®Œæˆ ---
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "UART Init OK");
     disp_y += 16;
 #endif
 
-    // ³õÊ¼»¯ÎŞË¢µç»ú
-    small_driver_uart_init();		// ³õÊ¼»¯Çı¶¯Í¨Ñ¶¹¦ÄÜ
-    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // Êä³öÎŞË¢µç»ú³õÊ¼»¯Íê³ÉĞÅÏ¢
-    uart_write_byte(UART_INDEX, '\r');                                          // Êä³ö»Ø³µ
+    // åˆå§‹åŒ–æ— åˆ·ç”µæœº
+    small_driver_uart_init();		// åˆå§‹åŒ–é©±åŠ¨é€šè®¯åŠŸèƒ½
+    uart_write_string(UART_INDEX, "Brushless Motor Initialized.");              // è¾“å‡ºæ— åˆ·ç”µæœºåˆå§‹åŒ–å®Œæˆä¿¡æ¯
+    uart_write_byte(UART_INDEX, '\r');                                          // è¾“å‡ºå›è½¦
     uart_write_byte(UART_INDEX, '\n');
 
-    // --- ÆÁÄ»´òÓ¡ÎŞË¢µç»ú³õÊ¼»¯Íê³É ---
+    // --- å±å¹•æ‰“å°æ— åˆ·ç”µæœºåˆå§‹åŒ–å®Œæˆ ---
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Brushless Motor Init OK");
     disp_y += 16;
@@ -160,13 +161,13 @@ servo_executor_init();
 #endif
 
 #if WIFI_USE    
-    // ³õÊ¼»¯ WiFi Ä£¿é
-    wifi_init();                                                                // ³õÊ¼»¯WIFIÄ£¿é
-    uart_write_string(UART_INDEX, "WiFi Module Initialized.");                  // Êä³öWIFI³õÊ¼»¯Íê³ÉĞÅÏ¢
-    uart_write_byte(UART_INDEX, '\r');                                          // Êä³ö»Ø³µ
-    uart_write_byte(UART_INDEX, '\n');                                              // Êä³ö»»ĞĞ
+    // åˆå§‹åŒ– WiFi æ¨¡å—
+    wifi_init();                                                                // åˆå§‹åŒ–WIFIæ¨¡å—
+    uart_write_string(UART_INDEX, "WiFi Module Initialized.");                  // è¾“å‡ºWIFIåˆå§‹åŒ–å®Œæˆä¿¡æ¯
+    uart_write_byte(UART_INDEX, '\r');                                          // è¾“å‡ºå›è½¦
+    uart_write_byte(UART_INDEX, '\n');                                              // è¾“å‡ºæ¢è¡Œ
     
-    // ¡¾µ÷ÊÔÓÃ¡¿²é¿´WiFiÄ£¿éµÄÁ¬½Ó×´Ì¬
+    // ã€è°ƒè¯•ç”¨ã€‘æŸ¥çœ‹WiFiæ¨¡å—çš„è¿æ¥çŠ¶æ€
     uart_write_string(UART_INDEX, "WiFi SSID: ");
     uart_write_string(UART_INDEX, WIFI_SSID_TEST);
     uart_write_byte(UART_INDEX, '\r');
@@ -176,34 +177,34 @@ servo_executor_init();
     uart_write_byte(UART_INDEX, '\r');
     uart_write_byte(UART_INDEX, '\n');
 
-    // Á¬½ÓTCP·şÎñÆ÷
-    wifi_connect_tcp_server();                                                  // Á¬½ÓTCP·şÎñÆ÷
-    uart_write_string(UART_INDEX, "TCP Server Connected.");                     // Êä³öTCPÁ¬½Ó³É¹¦ĞÅÏ¢
-    uart_write_byte(UART_INDEX, '\r');                                          // Êä³ö»Ø³µ
-    uart_write_byte(UART_INDEX, '\n');                                          // Êä³ö»»ĞĞ
+    // è¿æ¥TCPæœåŠ¡å™¨
+    wifi_connect_tcp_server();                                                  // è¿æ¥TCPæœåŠ¡å™¨
+    uart_write_string(UART_INDEX, "TCP Server Connected.");                     // è¾“å‡ºTCPè¿æ¥æˆåŠŸä¿¡æ¯
+    uart_write_byte(UART_INDEX, '\r');                                          // è¾“å‡ºå›è½¦
+    uart_write_byte(UART_INDEX, '\n');                                          // è¾“å‡ºæ¢è¡Œ
 
     #if WIFI_CAMERA_AND_ASSISTANT    
-    // ³õÊ¼»¯ÉãÏñÍ·ºÍÖğ·ÉÖúÊÖ
-    wifi_camera_init();                                                         // ³õÊ¼»¯ÉãÏñÍ·ºÍÖğ·ÉÖúÊÖ
-    uart_write_string(UART_INDEX, "Camera Initialized.");                       // Êä³öÉãÏñÍ·³õÊ¼»¯Íê³ÉĞÅÏ¢
-    uart_write_byte(UART_INDEX, '\r');                                          // Êä³ö»Ø³µ
+    // åˆå§‹åŒ–æ‘„åƒå¤´å’Œé€é£åŠ©æ‰‹
+    wifi_camera_init();                                                         // åˆå§‹åŒ–æ‘„åƒå¤´å’Œé€é£åŠ©æ‰‹
+    uart_write_string(UART_INDEX, "Camera Initialized.");                       // è¾“å‡ºæ‘„åƒå¤´åˆå§‹åŒ–å®Œæˆä¿¡æ¯
+    uart_write_byte(UART_INDEX, '\r');                                          // è¾“å‡ºå›è½¦
     uart_write_byte(UART_INDEX, '\n');
-    //³õÊ¼»¯ÉãÏñÍ·ºÍÍ¨ĞÅÄ£¿é½áÊø
+    //åˆå§‹åŒ–æ‘„åƒå¤´å’Œé€šä¿¡æ¨¡å—ç»“æŸ
     #endif
 #endif
- gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // ³õÊ¼»¯ ·äÃùÆ÷ Òı½Å µÍµçÆ½ Ä¬ÈÏ ÍÆÍìÊä³öÄ£Ê½
-// --- ÆÁÄ»´òÓ¡ WiFi ³õÊ¼»¯Íê³É ---
+ gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // åˆå§‹åŒ– èœ‚é¸£å™¨ å¼•è„š ä½ç”µå¹³ é»˜è®¤ æ¨æŒ½è¾“å‡ºæ¨¡å¼
+// --- å±å¹•æ‰“å° WiFi åˆå§‹åŒ–å®Œæˆ ---
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "WiFi Init OK");
     disp_y += 16;
 #endif
 system_delay_ms(1000);
-while(1)//¼ì²âimu660raÊÇ·ñ³õÊ¼»¯³É¹¦
+while(1)//æ£€æµ‹imu660raæ˜¯å¦åˆå§‹åŒ–æˆåŠŸ
 {
-    #if IMU_CATEGORY == 1 //Èç¹ûĞ¡³µ²»Í¬ÔÙ¶ÔĞ¡³µ¼Ó&&¼ÓÒÔÇø·Ö
+    #if IMU_CATEGORY == 1 //å¦‚æœå°è½¦ä¸åŒå†å¯¹å°è½¦åŠ &&åŠ ä»¥åŒºåˆ†
     if(imu660ra_init())
     {
-        printf("\r\n imu660ra init error.");                                 // imu660ra ³õÊ¼»¯Ê§°Ü
+        printf("\r\n imu660ra init error.");                                 // imu660ra åˆå§‹åŒ–å¤±è´¥
     }
     else{
         break;
@@ -212,127 +213,128 @@ while(1)//¼ì²âimu660raÊÇ·ñ³õÊ¼»¯³É¹¦
     #if IMU_CATEGORY == 3
     if(imu963ra_init())
     {
-        printf("\r\n imu963ra init error.");                                 // imu963ra ³õÊ¼»¯Ê§°Ü
+        printf("\r\n imu963ra init error.");                                 // imu963ra åˆå§‹åŒ–å¤±è´¥
     }
     else{
         break;
     }
     #endif
-    gpio_toggle_level(LED1);                                                // ·­×ª LED Òı½ÅÊä³öµçÆ½ ¿ØÖÆ LED ÁÁÃğ ³õÊ¼»¯³ö´íÕâ¸öµÆ»áÉÁµÄºÜÂı
+    gpio_toggle_level(LED1);                                                // ç¿»è½¬ LED å¼•è„šè¾“å‡ºç”µå¹³ æ§åˆ¶ LED äº®ç­ åˆå§‹åŒ–å‡ºé”™è¿™ä¸ªç¯ä¼šé—ªçš„å¾ˆæ…¢
 }
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "IMU Init OK");
     disp_y += 16;
 #endif
 
-//¡ï¡ï¡ï Ö´ĞĞZÖáĞ£×¼ ¡ï¡ï¡ï
-// ´ËÊ±³µÄ£/Éè±¸±ØĞë±£³Ö¾²Ö¹£¡
+//â˜…â˜…â˜… æ‰§è¡ŒZè½´æ ¡å‡† â˜…â˜…â˜…
+// æ­¤æ—¶è½¦æ¨¡/è®¾å¤‡å¿…é¡»ä¿æŒé™æ­¢ï¼
 IMU_Calibrate_All_Gyro();
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "IMU All Gyro Calibrated");
     disp_y += 16;
 #endif
 
-EKF_Init(); // ³õÊ¼»¯À©Õ¹¿¨¶ûÂüÂË²¨
+EKF_Init(); // åˆå§‹åŒ–æ‰©å±•å¡å°”æ›¼æ»¤æ³¢
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "EKF Init OK");
     disp_y += 16;
 #endif
 
 #if REMOTE_CONTROL
-    uart_receiver_init();//sbus½ÓÊÕ»ú³õÊ¼»¯
-    Remote_Control_Init(); // Ò£¿ØÆ÷³õÊ¼»¯º¯ÊıÉùÃ÷
+    uart_receiver_init();//sbusæ¥æ”¶æœºåˆå§‹åŒ–
+Gnss_Transform_Init();
+NavFusion_Init();//GNSSÎ³Í¶Ó°ÎªÆ½ê£¬GPS/Ê¹
     #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Remote Control Init OK");
     disp_y += 16;
     #endif
 #endif
 
-// ³õÊ¼»¯ PID ²ÎÊı (±ØĞë×îÏÈµ÷ÓÃ)
-flash_init();   // Ê¹ÓÃflashÇ°ÏÈµ÷ÓÃflash³õÊ¼»¯ £¬°üº¬pid³õÊ¼»¯
-PID_Param_Init();//pidÆäÓà²ÎÊı³õÊ¼»¯
-Momentum_Wheel_Control_Init();//pidÌøÔ¾¿ØÖÆ£¬¶¯Á¿ÂÖ¿ØÖÆ²ÎÊı³õÊ¼»¯
-//param_read_from_flash(); // ´Ó Flash ¶ÁÈ¡²ÎÊı
-// param_save_to_flash()   ;     // ½«µ±Ç°²ÎÊı±£´æµ½ Flash 
+// åˆå§‹åŒ– PID å‚æ•° (å¿…é¡»æœ€å…ˆè°ƒç”¨)
+flash_init();   // ä½¿ç”¨flashå‰å…ˆè°ƒç”¨flashåˆå§‹åŒ– ï¼ŒåŒ…å«pidåˆå§‹åŒ–
+PID_Param_Init();//pidå…¶ä½™å‚æ•°åˆå§‹åŒ–
+Momentum_Wheel_Control_Init();//pidè·³è·ƒæ§åˆ¶ï¼ŒåŠ¨é‡è½®æ§åˆ¶å‚æ•°åˆå§‹åŒ–
+//param_read_from_flash(); // ä» Flash è¯»å–å‚æ•°
+// param_save_to_flash()   ;     // å°†å½“å‰å‚æ•°ä¿å­˜åˆ° Flash 
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Flash Init OK");
     disp_y += 16;
 #endif
 
-InertialNav_Init();//¹ßĞÔµ¼º½³õÊ¼»¯
+InertialNav_Init();//æƒ¯æ€§å¯¼èˆªåˆå§‹åŒ–
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "InertialNav Init OK");
     disp_y += 16;
 #endif
 
-gnss_init(TAU1201);//gnssµ¼º½³õÊ¼»¯
-Gnss_Transform_Init();//GNSS¾­Î³¶ÈÍ¶Ó°ÎªÏà¶ÔÆ½Ãæ×ø±ê£¬¹©´¿GPS´òµã/¸´¿ÌÊ¹ÓÃ
+gnss_init(TAU1201);//gnsså¯¼èˆªåˆå§‹åŒ–
+Gnss_Transform_Init();//GNSSç»çº¬åº¦æŠ•å½±ä¸ºç›¸å¯¹å¹³é¢åæ ‡ï¼Œä¾›çº¯GPSæ‰“ç‚¹/å¤åˆ»ä½¿ç”¨
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;
 #endif
 
-Bridge_Init();//¡¾ÓÅ»¯µã¡¿µ¥±ßÇÅ¿ØÖÆ³õÊ¼»¯£¬¿ÉÒÔ¼¯³É
-BumpyRoad_Init();//µßô¤Â·¶Î×´Ì¬»ú³õÊ¼»¯
+Bridge_Init();//ã€ä¼˜åŒ–ç‚¹ã€‘å•è¾¹æ¡¥æ§åˆ¶åˆå§‹åŒ–ï¼Œå¯ä»¥é›†æˆ
+BumpyRoad_Init();//é¢ ç°¸è·¯æ®µçŠ¶æ€æœºåˆå§‹åŒ–
 VisionIpc_Core0_Init();
 TelemetryIpc_Core0_Init();
-VisionPvcControl_Init(); // Bring-up: 0ºËÍ¨¹ı2msÖĞ¶Ïµ÷¶È1ºË¿ªÆôPVCÈë¿Ú¼ì²â£¬²¢ÓÃ»Ø´«Êı¾İ×öÈë¿ÚÒıµ¼
-VisionBumpyControl_Init(); // µßô¤Â·¶Î£º0ºË¶ÁÈ¡1ºËÊÓ¾õ²¢Éú³É·½Ïò¿ØÖÆÁ¿
+VisionPvcControl_Init(); // Bring-up: 0æ ¸é€šè¿‡2msä¸­æ–­è°ƒåº¦1æ ¸å¼€å¯PVCå…¥å£æ£€æµ‹ï¼Œå¹¶ç”¨å›ä¼ æ•°æ®åšå…¥å£å¼•å¯¼
+VisionBumpyControl_Init(); // é¢ ç°¸è·¯æ®µï¼š0æ ¸è¯»å–1æ ¸è§†è§‰å¹¶ç”Ÿæˆæ–¹å‘æ§åˆ¶é‡
 VisionBridgeTask_Init();
 VisionThreeStageControl_Init(); // three-stage vision jump state machine
-//===============¹ßĞÔµ¼º½³õÊ¼»¯½áÊø==================
+//===============æƒ¯æ€§å¯¼èˆªåˆå§‹åŒ–ç»“æŸ==================
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "Button Init OK");
     disp_y += 16;
 #endif
 
 
-    uart_rx_interrupt(UART_INDEX, 1);                                           // ¿ªÆô UART_INDEX µÄ½ÓÊÕÖĞ¶Ï
-    // --- ÆÁÄ»´òÓ¡uartÖĞ¶ÏÍê³É ---
+    uart_rx_interrupt(UART_INDEX, 1);                                           // å¼€å¯ UART_INDEX çš„æ¥æ”¶ä¸­æ–­
+    // --- å±å¹•æ‰“å°uartä¸­æ–­å®Œæˆ ---
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "UART INTERRUPT Init OK");
     disp_y += 16;
 #endif
 
-// *****************ÖĞ¶ÏÔÚÕâºóÃæ¿ª*****************
+// *****************ä¸­æ–­åœ¨è¿™åé¢å¼€*****************
     
-    // 1. ³õÊ¼»¯¶¨Ê±Æ÷ÖĞ¶Ï£¬ÖÜÆÚ 1ms (±ØĞëÓëekf.cÖĞµÄdt=0.005¶ÔÓ¦)
-    // EKF ÔËĞĞÊ±¼ä²âÊÔ
+    // 1. åˆå§‹åŒ–å®šæ—¶å™¨ä¸­æ–­ï¼Œå‘¨æœŸ 1ms (å¿…é¡»ä¸ekf.cä¸­çš„dt=0.005å¯¹åº”)
+    // EKF è¿è¡Œæ—¶é—´æµ‹è¯•
     timer_init(TC_TIME2_CH0, TIMER_US);
     timer_start(TC_TIME2_CH0);
     RUNTIME_PROFILE_RESET(&g_ekf_profiler);
     
     pit_ms_init(PIT_NUM, 1);
     #if REMOTE_CONTROL
-    pit_ms_init(PIT_NUM_1, 10);                                                // ¶¨Ê±Æ÷Í¨µÀ1 ³õÊ¼»¯Îª 10ms ÖĞ¶Ï ÓÃÓÚ sbus Ò£¿ØÆ÷Êı¾İ´¦Àí
+    pit_ms_init(PIT_NUM_1, 10);                                                // å®šæ—¶å™¨é€šé“1 åˆå§‹åŒ–ä¸º 10ms ä¸­æ–­ ç”¨äº sbus é¥æ§å™¨æ•°æ®å¤„ç†
     #endif
-    pit_ms_init(PIT_NUM_10, 10);                                                // ¶¨Ê±Æ÷Í¨µÀ10 ³õÊ¼»¯Îª 10ms ÖĞ¶Ï ÓÃÓÚ°´¼üÉ¨Ãè
-    key_init(10);  // Ã¿10msÉ¨ÃèÒ»´Î
-    // 2. ¿ªÆôÈ«¾ÖÖĞ¶Ï (Ã»ÓĞÕâÒ»²½£¬ÖĞ¶Ïº¯ÊıÓÀÔ¶²»»áÖ´ĞĞ)
+    pit_ms_init(PIT_NUM_10, 10);                                                // å®šæ—¶å™¨é€šé“10 åˆå§‹åŒ–ä¸º 10ms ä¸­æ–­ ç”¨äºæŒ‰é”®æ‰«æ
+    key_init(10);  // æ¯10msæ‰«æä¸€æ¬¡
+    // 2. å¼€å¯å…¨å±€ä¸­æ–­ (æ²¡æœ‰è¿™ä¸€æ­¥ï¼Œä¸­æ–­å‡½æ•°æ°¸è¿œä¸ä¼šæ‰§è¡Œ)
     interrupt_global_enable(0); 
 
 #if DEBUG_DISPLAY    
-    // ÑÓÊ±Ò»»á¶ùÈÃÈË¿´ÇåÆô¶¯ĞÅÏ¢£¬È»ºóÇåÆÁ×¼±¸ÏÔÊ¾Êı¾İ
+    // å»¶æ—¶ä¸€ä¼šå„¿è®©äººçœ‹æ¸…å¯åŠ¨ä¿¡æ¯ï¼Œç„¶åæ¸…å±å‡†å¤‡æ˜¾ç¤ºæ•°æ®
     system_delay_ms(1000); 
     ips200_clear();
 #endif
- uint8 display_count = 0; // ÓÃÓÚÆÁÄ»Ë¢ĞÂ·ÖÆµ
+ uint8 display_count = 0; // ç”¨äºå±å¹•åˆ·æ–°åˆ†é¢‘
  uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
 
-vision_detected_marker = 0;//À×Çøµ÷ÓÃ,²âÊÔÓÃ
-vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
+vision_detected_marker = 0;//é›·åŒºè°ƒç”¨,æµ‹è¯•ç”¨
+vision_detected_bumpy_point = 0;//é¢ ç°¸è·¯æ®µè°ƒç”¨,æµ‹è¯•ç”¨
     //-------------------------------------------------------------------
-    //******************************ÏµÍ³³õÊ¼»¯½áÊø************************
+    //******************************ç³»ç»Ÿåˆå§‹åŒ–ç»“æŸ************************
     //-------------------------------------------------------------------
     
 
     while(true)
     {
-        // ¼ì²éÖĞ¶Ï±êÖ¾Î» (ÓÉ isr.c ÖĞµÄ pit0_ch0_isr ÖÃÎ»)
-        if(pit_state == 1)//10mswifi£¬100msÆÁÄ»Ë¢ĞÂ
+        // æ£€æŸ¥ä¸­æ–­æ ‡å¿—ä½ (ç”± isr.c ä¸­çš„ pit0_ch0_isr ç½®ä½)
+        if(pit_state == 1)//10mswifiï¼Œ100mså±å¹•åˆ·æ–°
         {
-            // Èç¹ûĞèÒª WiFi ·¢ËÍ£¬½¨ÒéÒ²·ÅÔÚÕâÀï(50msÒ»´Î)£¬»òÕß·ÅÔÚ5msµÄÂß¼­Àï
-            pit_state = 0; // Çå³ı±êÖ¾   
+            // å¦‚æœéœ€è¦ WiFi å‘é€ï¼Œå»ºè®®ä¹Ÿæ”¾åœ¨è¿™é‡Œ(50msä¸€æ¬¡)ï¼Œæˆ–è€…æ”¾åœ¨5msçš„é€»è¾‘é‡Œ
+            pit_state = 0; // æ¸…é™¤æ ‡å¿—   
 
             // ekf_print_div++;
             // if(ekf_print_div >= 10)
@@ -350,12 +352,12 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
             //     ekf_print_div = 0;
             // }
             #if WIFI_USE
-                wifi_protocol_send_data();//×Ô¶¨ÒåwifiĞ­Òé£¨¹ßµ¼/GNSS/´òµã×´Ì¬£©
+                wifi_protocol_send_data();//è‡ªå®šä¹‰wifiåè®®ï¼ˆæƒ¯å¯¼/GNSS/æ‰“ç‚¹çŠ¶æ€ï¼‰
             #endif
                 //TelemetryIpc_Core0_PublishPvcDefault();
             #if WIFI_CAMERA_AND_ASSISTANT && WIFI_USE  
-                //Öğ·ÉÖúÊÖÊ¾²¨Æ÷·¢ËÍ´úÂë        
-                // //1.¡¾µ÷ÊÔÖ±Á¢»·£¬×óÓÒÂÖ£¬¸©Ñö½Ç£¬½ÇËÙ¶È»·Êä³ö£¬½Ç¶È»·Êä³ö£¬¶æ»ú»·Êä³ö£¬·­¹ö½Ç£¬Æ«º½½Ç¡¿
+                //é€é£åŠ©æ‰‹ç¤ºæ³¢å™¨å‘é€ä»£ç         
+                // //1.ã€è°ƒè¯•ç›´ç«‹ç¯ï¼Œå·¦å³è½®ï¼Œä¿¯ä»°è§’ï¼Œè§’é€Ÿåº¦ç¯è¾“å‡ºï¼Œè§’åº¦ç¯è¾“å‡ºï¼Œèˆµæœºç¯è¾“å‡ºï¼Œç¿»æ»šè§’ï¼Œåèˆªè§’ã€‘
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
@@ -366,7 +368,7 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
-                // 2.¡¾µ÷ÊÔ×ªÏò»·£¬×óÓÒÂÖ£¬Æ«º½½Ç£¬×ªÏò½ÇËÙ¶È»·Êä³ö£¬×ªÏò½Ç¶È»·Êä³ö£¬¶æ»ú»·Êä³ö£¬·­¹ö½Ç£¬¸©Ñö½Ç¡¿
+                // 2.ã€è°ƒè¯•è½¬å‘ç¯ï¼Œå·¦å³è½®ï¼Œåèˆªè§’ï¼Œè½¬å‘è§’é€Ÿåº¦ç¯è¾“å‡ºï¼Œè½¬å‘è§’åº¦ç¯è¾“å‡ºï¼Œèˆµæœºç¯è¾“å‡ºï¼Œç¿»æ»šè§’ï¼Œä¿¯ä»°è§’ã€‘
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
@@ -377,7 +379,7 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
-                // //3.¡¾µ÷ÊÔÒ£¿ØÆ÷£¬Ç°Áù¸öÍ¨µÀ¡¿
+                // //3.ã€è°ƒè¯•é¥æ§å™¨ï¼Œå‰å…­ä¸ªé€šé“ã€‘
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)uart_receiver.channel[0];
                 // seekfree_assistant_oscilloscope_data.data[1] =(float)uart_receiver.channel[1];
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)uart_receiver.channel[2];
@@ -387,7 +389,7 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
                 // seekfree_assistant_oscilloscope_data.data[6] = 0.0f;//(float)uart_receiver.channel[6];
                 // seekfree_assistant_oscilloscope_data.data[7] = 0.0f;//(float)uart_receiver.channel[7];
 
-                // 4.¡¾µ÷½Úµßô¤Â·¶Î×´Ì¬»ú¡¿
+                // 4.ã€è°ƒèŠ‚é¢ ç°¸è·¯æ®µçŠ¶æ€æœºã€‘
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)(gyro_loop_out + turn_gyro_loop_out); 
@@ -397,124 +399,124 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.pitch;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw; 
 
-                // 4.¡¾µ÷½ÚpvcÊ¶±ğ¡¿
-                // data[0] ×óÂÖËÙ¶È
+                // 4.ã€è°ƒèŠ‚pvcè¯†åˆ«ã€‘
+                // data[0] å·¦è½®é€Ÿåº¦
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
 
-                // // data[1] ÓÒÂÖËÙ¶È
+                // // data[1] å³è½®é€Ÿåº¦
                 // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
 
-                // // data[2] º½ÏòÎó²î (PVC µÚÒ»°æÔİÊ±Îª 0)
+                // // data[2] èˆªå‘è¯¯å·® (PVC ç¬¬ä¸€ç‰ˆæš‚æ—¶ä¸º 0)
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)g_vision_ipc_latest.pvc_yaw_error_deg_x100 / 100.0f;
 
-                // // data[3] ºáÏòÆ«²î
+                // // data[3] æ¨ªå‘åå·®
                 // seekfree_assistant_oscilloscope_data.data[3] = (float)g_vision_ipc_latest.pvc_lateral_mm;
 
-                // // data[4] Ä¿±êËÙ¶È
+                // // data[4] ç›®æ ‡é€Ÿåº¦
                 // seekfree_assistant_oscilloscope_data.data[4] = (float)target_speed_set;
 
-                // // data[5] ÖÃĞÅ¶È (0~1000)
+                // // data[5] ç½®ä¿¡åº¦ (0~1000)
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)g_vision_ipc_latest.pvc_confidence_u16;
 
-                // // data[6] ½ü¶Ë°×±ßĞĞºÅ
+                // // data[6] è¿‘ç«¯ç™½è¾¹è¡Œå·
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)g_vision_ipc_latest.pvc_entry_bottom_y;
 
-                // // data[7] Ô¶¶Ë°×±ßĞĞºÅ
+                // // data[7] è¿œç«¯ç™½è¾¹è¡Œå·
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                //     // 4. ÉèÖÃ±¾´Î·¢ËÍµÄÍ¨µÀÊıÁ¿ (Ò»¹²8¸öÊı¾İ)
+                //     // 4. è®¾ç½®æœ¬æ¬¡å‘é€çš„é€šé“æ•°é‡ (ä¸€å…±8ä¸ªæ•°æ®)
                 // seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                //     // 5. µ÷ÓÃ·¢ËÍº¯Êı
+                //     // 5. è°ƒç”¨å‘é€å‡½æ•°
                 // seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // //ÓÃÓÚÉÏÎ»»úÏòĞ¡³µ·¢ËÍpidĞÅÏ¢
+                // //ç”¨äºä¸Šä½æœºå‘å°è½¦å‘é€pidä¿¡æ¯
                 // wifi_update_pid_params(); 
             #endif
-            //ÏÂÃæ×«Ğ´µÄÊÇ100msÖ´ĞĞÒ»´ÎµÄ´úÂë
-            // --- ÆÁÄ»Ë¢ĞÂÂß¼­ (½µÆµ´¦Àí) ---
+            //ä¸‹é¢æ’°å†™çš„æ˜¯100msæ‰§è¡Œä¸€æ¬¡çš„ä»£ç 
+            // --- å±å¹•åˆ·æ–°é€»è¾‘ (é™é¢‘å¤„ç†) ---
             display_count++;
-            if(display_count >= 10) // 10* 10 ms = 100ms Ë¢ĞÂÒ»´ÎÆÁÄ»
+            if(display_count >= 10) // 10* 10 ms = 100ms åˆ·æ–°ä¸€æ¬¡å±å¹•
             {
                 display_count = 0;    
                 #if DEBUG_DISPLAY
-                    Menu_ShowStatic();    // ¾²Ì¬ÏÔÊ¾
-                    Menu_ShowDynamic();   // ¶¯Ì¬ÏÔÊ¾
+                    Menu_ShowStatic();    // é™æ€æ˜¾ç¤º
+                    Menu_ShowDynamic();   // åŠ¨æ€æ˜¾ç¤º
                 #endif    
             }
         }
 
 
-        // fifo_data_count = fifo_used(&uart_data_fifo);                           // ²é¿´ fifo ÊÇ·ñÓĞÊı¾İ
-        // if(fifo_data_count != 0)                                                // ¶ÁÈ¡µ½Êı¾İÁË
+        // fifo_data_count = fifo_used(&uart_data_fifo);                           // æŸ¥çœ‹ fifo æ˜¯å¦æœ‰æ•°æ®
+        // if(fifo_data_count != 0)                                                // è¯»å–åˆ°æ•°æ®äº†
         // {
-        //     fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // ½« fifo ÖĞÊı¾İ¶Á³ö²¢Çå¿Õ fifo ¹ÒÔØµÄ»º³å
-        //     uart_write_string(UART_INDEX, "\r\nUART get data:");                // Êä³ö²âÊÔĞÅÏ¢
-        //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // ½«¶ÁÈ¡µ½µÄÊı¾İ·¢ËÍ³öÈ¥
+        //     fifo_read_buffer(&uart_data_fifo, fifo_get_data, &fifo_data_count, FIFO_READ_AND_CLEAN);    // å°† fifo ä¸­æ•°æ®è¯»å‡ºå¹¶æ¸…ç©º fifo æŒ‚è½½çš„ç¼“å†²
+        //     uart_write_string(UART_INDEX, "\r\nUART get data:");                // è¾“å‡ºæµ‹è¯•ä¿¡æ¯
+        //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // å°†è¯»å–åˆ°çš„æ•°æ®å‘é€å‡ºå»
         // }
 
-        #if WIFI_USE && WIFI_IMAGE_SEND//wifi¿ª¹ØºÍÍ¼Ïñ·¢ËÍ¿ª¹Ø¾ù¿ªÆôÔò·¢ËÍÍ¼Ïñ
-        // ´¦ÀíÉãÏñÍ·Í¼ÏñÊı¾İ
+        #if WIFI_USE && WIFI_IMAGE_SEND//wifiå¼€å…³å’Œå›¾åƒå‘é€å¼€å…³å‡å¼€å¯åˆ™å‘é€å›¾åƒ
+        // å¤„ç†æ‘„åƒå¤´å›¾åƒæ•°æ®
         if(mt9v03x_finish_flag)
         {
             mt9v03x_finish_flag = 0;
-            // ÔÚ·¢ËÍÇ°½«Í¼Ïñ±¸·İÔÙ½øĞĞ·¢ËÍ£¬ÕâÑù¿ÉÒÔ±ÜÃâÍ¼Ïñ³öÏÖËºÁÑµÄÎÊÌâ
+            // åœ¨å‘é€å‰å°†å›¾åƒå¤‡ä»½å†è¿›è¡Œå‘é€ï¼Œè¿™æ ·å¯ä»¥é¿å…å›¾åƒå‡ºç°æ’•è£‚çš„é—®é¢˜
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
-            // ·¢ËÍÍ¼Ïñ
+            // å‘é€å›¾åƒ
             seekfree_assistant_camera_send();
-            // Èç¹ûÊ¹ÓÃUDPĞ­Òé´«ÊäÊı¾İÔòÍÆ¼öÔÚÊı¾İÈ«²¿·¢ËÍµ½Ä£¿éÖ®ºóÁ¢¼´µ÷ÓÃwifi_spi_udp_send_now()º¯Êı£¬ÒÔ¸æÖªÄ£¿éÁ¢¼´½«ÊÕµ½µÄÊı¾İ·¢ËÍµ½ÍøÂçÉÏ
-            // Èç¹ûÃ»ÓĞÁ¢¼´µ÷ÓÃÔòÄ£¿é»áÔÚ³ÖĞø2ºÁÃëÎ´ÊÕµ½Êı¾İºó£¬½«Êı¾İ·¢ËÍµ½ÍøÂçÉÏ
-            // µ÷ÓÃwifi_spi_udp_send_now()Ç°´«Êä¸øÄ£¿éµÄÊı¾İÊıÁ¿½¨Òé²»Òª³¬¹ı40960×Ö½Ú
+            // å¦‚æœä½¿ç”¨UDPåè®®ä¼ è¾“æ•°æ®åˆ™æ¨èåœ¨æ•°æ®å…¨éƒ¨å‘é€åˆ°æ¨¡å—ä¹‹åç«‹å³è°ƒç”¨wifi_spi_udp_send_now()å‡½æ•°ï¼Œä»¥å‘ŠçŸ¥æ¨¡å—ç«‹å³å°†æ”¶åˆ°çš„æ•°æ®å‘é€åˆ°ç½‘ç»œä¸Š
+            // å¦‚æœæ²¡æœ‰ç«‹å³è°ƒç”¨åˆ™æ¨¡å—ä¼šåœ¨æŒç»­2æ¯«ç§’æœªæ”¶åˆ°æ•°æ®åï¼Œå°†æ•°æ®å‘é€åˆ°ç½‘ç»œä¸Š
+            // è°ƒç”¨wifi_spi_udp_send_now()å‰ä¼ è¾“ç»™æ¨¡å—çš„æ•°æ®æ•°é‡å»ºè®®ä¸è¦è¶…è¿‡40960å­—èŠ‚
             // wifi_spi_udp_send_now();
         }
         #endif
 
         if (vision_detected_marker == 1) {
-            minefield_flag = 1; // ´¥·¢Ğı×ª
+            minefield_flag = 1; // è§¦å‘æ—‹è½¬
             vision_detected_marker = 0;
-        }//À×ÇøĞı×ªµ÷ÓÃ£¬²âÊÔÓÃ
+        }//é›·åŒºæ—‹è½¬è°ƒç”¨ï¼Œæµ‹è¯•ç”¨
 
-        //Ä£ÄâÊÓ¾õ´¥·¢ÌøÔ¾²âÊÔ
+        //æ¨¡æ‹Ÿè§†è§‰è§¦å‘è·³è·ƒæµ‹è¯•
         if (vision_detected_jump_point == 1) 
         {
-            jump_trigger(); // <--- Ö»ĞèÒªµ÷ÓÃÕâÒ»¾ä
-            vision_detected_jump_point = 0; // Çå³ı±êÖ¾Î»£¬·ÀÖ¹Á¬Ğø´¥·¢
+            jump_trigger(); // <--- åªéœ€è¦è°ƒç”¨è¿™ä¸€å¥
+            vision_detected_jump_point = 0; // æ¸…é™¤æ ‡å¿—ä½ï¼Œé˜²æ­¢è¿ç»­è§¦å‘
         }
 
-         // 2. Ä£ÄâÊÓ¾õ´¥·¢¡¾Èı¼¶Ìø¡¿²âÊÔ
+         // 2. æ¨¡æ‹Ÿè§†è§‰è§¦å‘ã€ä¸‰çº§è·³ã€‘æµ‹è¯•
         if (vision_detected_three_jump_point == 1) 
         {
-            // ÅĞ¶Ïµ±Ç°ÊÇ·ñ´¦ÓÚ¿ÕÏĞ×´Ì¬£¬·ÀÖ¹ÌøÔ¾ÖĞÍ¾ÖØ¸´´¥·¢´ò¶Ï¶¯×÷
+            // åˆ¤æ–­å½“å‰æ˜¯å¦å¤„äºç©ºé—²çŠ¶æ€ï¼Œé˜²æ­¢è·³è·ƒä¸­é€”é‡å¤è§¦å‘æ‰“æ–­åŠ¨ä½œ
             if (!VisionThreeStageControl_IsActive()) 
             {
-                VisionThreeStageControl_Start(); // <--- Æô¶¯Èı¼¶Ìø×´Ì¬»ú
+                VisionThreeStageControl_Start(); // <--- å¯åŠ¨ä¸‰çº§è·³çŠ¶æ€æœº
             }
-            vision_detected_three_jump_point = 0; // Çå³ı±êÖ¾Î»
+            vision_detected_three_jump_point = 0; // æ¸…é™¤æ ‡å¿—ä½
         }
 
-        // Ä£ÄâÊÓ¾õ´¥·¢µßô¤²âÊÔ
+        // æ¨¡æ‹Ÿè§†è§‰è§¦å‘é¢ ç°¸æµ‹è¯•
         if (vision_detected_bumpy_point == 1)
         {
-            BumpyRoad_Trigger();             // <--- Ö»ĞèÒªµ÷ÓÃÕâÒ»¾ä
-            vision_detected_bumpy_point = 0; // Çå³ı±êÖ¾Î»£¬·ÀÖ¹Á¬Ğø´¥·¢
+            BumpyRoad_Trigger();             // <--- åªéœ€è¦è°ƒç”¨è¿™ä¸€å¥
+            vision_detected_bumpy_point = 0; // æ¸…é™¤æ ‡å¿—ä½ï¼Œé˜²æ­¢è¿ç»­è§¦å‘
         }
 
-        // Ä£ÄâÊÓ¾õ´¥·¢µ¥±ßÇÅ²âÊÔ
+        // æ¨¡æ‹Ÿè§†è§‰è§¦å‘å•è¾¹æ¡¥æµ‹è¯•
         if (vision_detected_bridge_point == 1) 
         {
-            // ÅĞ¶Ïµ±Ç°ÊÇ·ñ´¦ÓÚ¿ÕÏĞ×´Ì¬£¬·ÀÖ¹²âÊÔÖĞÍ¾ÖØ¸´´¥·¢´ò¶Ï¶¯×÷
+            // åˆ¤æ–­å½“å‰æ˜¯å¦å¤„äºç©ºé—²çŠ¶æ€ï¼Œé˜²æ­¢æµ‹è¯•ä¸­é€”é‡å¤è§¦å‘æ‰“æ–­åŠ¨ä½œ
             if (!Bridge_Test_Triple_SingleSide_Is_Active()) 
             {
-                Bridge_Test_Triple_SingleSide_Start(); // Æô¶¯µ¥±ßÇÅ²âÊÔ×´Ì¬»ú
+                Bridge_Test_Triple_SingleSide_Start(); // å¯åŠ¨å•è¾¹æ¡¥æµ‹è¯•çŠ¶æ€æœº
             }
-            vision_detected_bridge_point = 0; // Çå³ı±êÖ¾Î»£¬±ÜÃâÖØ¸´´¥·¢
+            vision_detected_bridge_point = 0; // æ¸…é™¤æ ‡å¿—ä½ï¼Œé¿å…é‡å¤è§¦å‘
         }
 
 
 
         // ---------------------------------------------------------
-        // ---------------- ¡¾nav.1¡¿³õÊ¼»¯¹ßĞÔµ¼º½Ä£¿éºÍ´òµãÄ£¿é ----------------
+        // ---------------- ã€nav.1ã€‘åˆå§‹åŒ–æƒ¯æ€§å¯¼èˆªæ¨¡å—å’Œæ‰“ç‚¹æ¨¡å— ----------------
         // ---------------------------------------------------------
         if (g_nav_start_recording)
         {            
@@ -526,24 +528,24 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
                        inertial_nav.y,
                        inertial_nav.relative_yaw);
             #endif
-            Buzzer_Beep_By_PointType(2);//½ĞÈı´Î
-            g_nav_start_recording = 0;//³õÊ¼»¯ºóÖÃ0´¦Àí
+            Buzzer_Beep_By_PointType(2);//å«ä¸‰æ¬¡
+            g_nav_start_recording = 0;//åˆå§‹åŒ–åç½®0å¤„ç†
         }
 
 
         // ---------------------------------------------------------
-        // ---------------- ¡¾nav.2¡¿´òµã´¦Àí ----------------
+        // ---------------- ã€nav.2ã€‘æ‰“ç‚¹å¤„ç† ----------------
         // ---------------------------------------------------------
         // if (robot_ctrl.mark_trigger)
         // {
         //     uint8_t ret;
 
-        //     // Ğ´Èë RAM
+        //     // å†™å…¥ RAM
         //     ret = NavRam_RecordPoint(robot_ctrl.point_type);
 
         //     if (ret == 0)
         //     {
-        //         // Ğ´Èë³É¹¦ ¡ú ·äÃùÆ÷·´À¡
+        //         // å†™å…¥æˆåŠŸ â†’ èœ‚é¸£å™¨åé¦ˆ
         //         Buzzer_Beep_By_PointType(robot_ctrl.point_type);
 
         //     #if DEBUG_LOG_ENABLE
@@ -556,18 +558,18 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
         //     }
         //     else
         //     {
-        //         // RAM Âú
+        //         // RAM æ»¡
         //         #if DEBUG_LOG_ENABLE
         //             printf("[NAV] Record FAILED: RAM FULL\r\n");
         //         #endif
         //     }
 
-        //     // ¡ï ±ØĞëÇåÁã£¬·ñÔò»áÖØ¸´Ğ´Èë ¡ï
+        //     // â˜… å¿…é¡»æ¸…é›¶ï¼Œå¦åˆ™ä¼šé‡å¤å†™å…¥ â˜…
         //     robot_ctrl.mark_trigger = 0;
         // }
 
     // ---------------------------------------------------------
-    //  ¡¾nav.3¡¿¾²Ì¬µã±íÄ£Ê½£ººöÂÔ Flash ±£´æÇëÇó
+    //  ã€nav.3ã€‘é™æ€ç‚¹è¡¨æ¨¡å¼ï¼šå¿½ç•¥ Flash ä¿å­˜è¯·æ±‚
     // ---------------------------------------------------------
     if(g_save_flash_request == 1)
     {
@@ -578,7 +580,7 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
     }
 
     // ---------------------------------------------------------
-    //  ¡¾nav.4¡¿¾²Ì¬µã±íÄ£Ê½£º¼ÓÔØ C µã±í²¢¿ªÊ¼¸´ÏÖ
+    //  ã€nav.4ã€‘é™æ€ç‚¹è¡¨æ¨¡å¼ï¼šåŠ è½½ C ç‚¹è¡¨å¹¶å¼€å§‹å¤ç°
     // ---------------------------------------------------------
     if (g_motor_enable == 1 && g_load_flash_request == 1)
     {
@@ -595,7 +597,7 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
         Buzzer_Beep_By_PointType(2);//beep x3
     }
     // ---------------------------------------------------------
-    //  ¡¾gps-nav¡¿¾²Ì¬µã±íÄ£Ê½£º¿ªÊ¼´¿GPS¸´¿Ì
+    //  ã€gps-navã€‘é™æ€ç‚¹è¡¨æ¨¡å¼ï¼šå¼€å§‹çº¯GPSå¤åˆ»
     // ---------------------------------------------------------
     if (g_motor_enable == 1 && g_replay_start_request == 1)
     {
@@ -609,7 +611,7 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
     }
 
     // ---------------------------------------------------------
-    //  ¡¾gps-nav¡¿Í£Ö¹´¿GPS¸´¿Ì
+    //  ã€gps-navã€‘åœæ­¢çº¯GPSå¤åˆ»
     // ---------------------------------------------------------
     if (g_replay_stop_request == 1)
     {
@@ -619,22 +621,22 @@ vision_detected_bumpy_point = 0;//µßô¤Â·¶Îµ÷ÓÃ,²âÊÔÓÃ
         printf("Main: Pure GPS replay stopped.\r\n");
         #endif
     }
-        // ´Ë´¦±àĞ´ĞèÒªÑ­»·Ö´ĞĞµÄ´úÂë
+        // æ­¤å¤„ç¼–å†™éœ€è¦å¾ªç¯æ‰§è¡Œçš„ä»£ç 
     }
 }
 
 //-------------------------------------------------------------------------------------------------------------------
-// º¯Êı¼ò½é       UART_INDEX µÄ½ÓÊÕÖĞ¶Ï´¦Àíº¯Êı Õâ¸öº¯Êı½«ÔÚ UART_INDEX ¶ÔÓ¦µÄÖĞ¶Ïµ÷ÓÃ
-// ²ÎÊıËµÃ÷       void
-// ·µ»Ø²ÎÊı       void
-// Ê¹ÓÃÊ¾Àı       uart_rx_interrupt_handler();
+// å‡½æ•°ç®€ä»‹       UART_INDEX çš„æ¥æ”¶ä¸­æ–­å¤„ç†å‡½æ•° è¿™ä¸ªå‡½æ•°å°†åœ¨ UART_INDEX å¯¹åº”çš„ä¸­æ–­è°ƒç”¨
+// å‚æ•°è¯´æ˜       void
+// è¿”å›å‚æ•°       void
+// ä½¿ç”¨ç¤ºä¾‹       uart_rx_interrupt_handler();
 //-------------------------------------------------------------------------------------------------------------------
 void uart_rx_interrupt_handler (void)
 {
-//    get_data = uart_read_byte(UART_INDEX);                                      // ½ÓÊÕÊı¾İ while µÈ´ıÊ½ ²»½¨ÒéÔÚÖĞ¶ÏÊ¹ÓÃ
-    if(uart_query_byte(UART_INDEX, &get_data))                                  // ½ÓÊÕÊı¾İ ²éÑ¯Ê½ ÓĞÊı¾İ»á·µ»Ø TRUE Ã»ÓĞÊı¾İ»á·µ»Ø FALSE
+//    get_data = uart_read_byte(UART_INDEX);                                      // æ¥æ”¶æ•°æ® while ç­‰å¾…å¼ ä¸å»ºè®®åœ¨ä¸­æ–­ä½¿ç”¨
+    if(uart_query_byte(UART_INDEX, &get_data))                                  // æ¥æ”¶æ•°æ® æŸ¥è¯¢å¼ æœ‰æ•°æ®ä¼šè¿”å› TRUE æ²¡æœ‰æ•°æ®ä¼šè¿”å› FALSE
     {
-        fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // ½«Êı¾İĞ´Èë fifo ÖĞ
+        fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // å°†æ•°æ®å†™å…¥ fifo ä¸­
     }
 }
 

@@ -43,6 +43,7 @@
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
+#include "navigation/nav_fusion.h"
 
 // 声明外部函数
 
@@ -52,6 +53,7 @@ extern volatile uint8 pit_state1;
 // 声明外部函数，确保编译器能找到 ekf.c 中的函数
 extern void EKF_UpData(void);//卡尔曼滤波
 extern volatile runtime_profiler_t g_ekf_profiler;
+extern float GpsNav_GetCurrentHeadingDeg_External(void);
 
 volatile uint32_t control_tick = 0;        // 1ms计数器
 extern volatile float pid_out_speed;  // 速度环输出（目标角度）
@@ -152,6 +154,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             inertial_nav.vy_body = 0.0f;
         }
 
+        NavFusion_UpdateImu10ms(GpsNav_GetCurrentHeadingDeg_External());
+
         // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y
         // 例如, 用于路径规划、位置闭环等
         // float current_pos_x = inertial_nav.x;
@@ -165,6 +169,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
             Gnss_Transform_Update();//gnss转换为高斯克吕格投影
+            NavFusion_UpdateGnss100ms(gnss_trans.x, gnss_trans.y, gnss_trans.is_valid, GpsNav_GetCurrentHeadingDeg_External());
         } // GNSS更新
     }
 

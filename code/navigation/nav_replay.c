@@ -1287,6 +1287,11 @@ static float GpsNav_GetCurrentHeadingDeg(void)
     return GpsNormalizeCourse360(current_absolute_heading + GPS_NAV_HEADING_OFFSET_DEG);
 }
 
+float GpsNav_GetCurrentHeadingDeg_External(void)
+{
+    return GpsNav_GetCurrentHeadingDeg();
+}
+
 uint16 GpsNavReplay_LoadStaticRouteToRam(void)
 {
 #if GPS_NAV_REPLAY_USE_STATIC_ROUTE_TABLE

@@ -184,5 +184,6 @@ uint16 GpsNavReplay_LoadStaticRouteToRam(void);
 void GpsNavReplay_Start(void);
 void GpsNavReplay_Stop(void);
 void GpsNavReplay_Process(void);
+float GpsNav_GetCurrentHeadingDeg_External(void);
 
 #endif
