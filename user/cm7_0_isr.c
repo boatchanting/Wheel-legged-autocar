@@ -36,6 +36,7 @@
 
 #include "zf_common_headfile.h"
 #include "config/config.h"//【提醒】配置请在这里修改
+#include "navigation/nav_fusion.h"
 #include "tools/runtime_profiler.h"
 #include "plan/bumpy_road.h"
 #include "vision/vision_ipc_core0.h"
@@ -152,6 +153,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             inertial_nav.vy_body = 0.0f;
         }
 
+        NavFusion_Predict_10ms();
+
         // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y
         // 例如, 用于路径规划、位置闭环等
         // float current_pos_x = inertial_nav.x;
@@ -165,6 +168,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
             Gnss_Transform_Update();//gnss转换为高斯克吕格投影
+            NavFusion_UpdateGnss_100ms();//100ms融合更新
         } // GNSS更新
     }
 
