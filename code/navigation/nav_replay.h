@@ -5,8 +5,10 @@
 #include "nav_ram.h"
 #include "../config/sys_options.h"
 
-// 1: use compile-time route table generated from CSV (no flash dependency)
-#define NAV_REPLAY_USE_STATIC_ROUTE_TABLE   1
+#if GNSS_NAV == 1
+//---------------------------------------------
+//--------------纯gnss逻辑------------------
+//--------------------------------------------
 #define GPS_NAV_REPLAY_USE_STATIC_ROUTE_TABLE 1
 
 #define GPS_NAV_MIN_SAT_USED              4U
@@ -22,7 +24,12 @@
 #define GPS_NAV_SPEED_SLOW                -80.0f
 #define GPS_NAV_SPEED_STOP                NAV_SPEED_STOP
 
+#endif
 
+//---------------------------------------------
+//--------------纯惯性导航逻辑------------------
+//---------------------------------------------
+#define NAV_REPLAY_USE_STATIC_ROUTE_TABLE   1 //use compile-time route table generated from CSV (no flash dependency)
 #if CURRENT_NAV_PLAN == 1 //科目一参数
 // ========================= 控制参数宏定义 =========================
 // 距离阈值 (单位: mm)
@@ -183,9 +190,12 @@ void NavReplay_Process(void);
  * @return loaded point count
  */
 uint16 NavReplay_LoadStaticRouteToRam(void);
-uint16 GpsNavReplay_LoadStaticRouteToRam(void);
-void GpsNavReplay_Start(void);
-void GpsNavReplay_Stop(void);
-void GpsNavReplay_Process(void);
+
+#if GNSS_NAV == 1
+    uint16 GpsNavReplay_LoadStaticRouteToRam(void);
+    void GpsNavReplay_Start(void);
+    void GpsNavReplay_Stop(void);
+    void GpsNavReplay_Process(void);
+#endif
 
 #endif

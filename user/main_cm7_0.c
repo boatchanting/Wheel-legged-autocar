@@ -594,6 +594,8 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
         Buzzer_Beep_By_PointType(2);//beep x3
     }
+
+    #if GNSS_NAV == 1
     // ---------------------------------------------------------
     //  【gps-nav】静态点表模式：开始纯GPS复刻
     // ---------------------------------------------------------
@@ -619,6 +621,9 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         printf("Main: Pure GPS replay stopped.\r\n");
         #endif
     }
+    #endif
+
+
         // 此处编写需要循环执行的代码
     }
 }

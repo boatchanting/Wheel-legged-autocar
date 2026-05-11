@@ -76,7 +76,9 @@ uint16 NavReplay_LoadStaticRouteToRam(void)
 
 void NavReplay_Start(void)
 {
-    GpsNavReplay_Stop();
+    #if GNSS_NAV == 1
+        GpsNavReplay_Stop();//惯导的时候关闭gnss复现
+    #endif
 #if NAV_REPLAY_USE_STATIC_ROUTE_TABLE
     NavReplay_LoadStaticRouteToRam();
 #endif
@@ -1228,6 +1230,7 @@ void NavReplay_Process(void)
 //         // 底层电机控制 (使用 target_speed_set 和 err_degree)
 //         // Motor_Control(target_speed_set, err_degree);
 
+#if GNSS_NAV == 1
 NavReplayState_e g_gps_replay_state = REPLAY_IDLE;
 uint8 g_gps_current_point_type = NAV_POINT_PATH;
 uint8 g_gps_special_action_trigger = 0;
@@ -1495,3 +1498,4 @@ void GpsNavReplay_Process(void)
 
     target_speed_set = base_speed * speed_factor; 
 }
+#endif

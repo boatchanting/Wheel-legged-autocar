@@ -159,6 +159,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
     }
 
+    #if GNSS_NAV == 1
     //【gnss.1】GNSS定位更新
     if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
@@ -167,6 +168,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             Gnss_Transform_Update();//gnss转换为高斯克吕格投影
         } // GNSS更新
     }
+    #endif
 
 
    // ------------------------------------------------------
@@ -174,7 +176,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ------------------------------------------------------
     if (loop_counter % 10 == 3) {  // 10ms 一次
         // 颠簸状态机激活时，暂停导航复现，避免覆盖锁速目标
-        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) { NavReplay_Process();GpsNavReplay_Process(); } //复现控制
+        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) 
+        { 
+            NavReplay_Process();
+            #if GNSS_NAV == 1
+            GpsNavReplay_Process(); 
+            #endif
+        } //复现控制
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
@@ -404,7 +412,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 // 彻底关闭电机使能，可以取消下面这行的注释
                 //g_motor_enable = 0; 
                 NavReplay_Stop();//【nav】复现停止
+                #if GNSS_NAV == 1
                 GpsNavReplay_Stop();//【gnss】复现停止
+                #endif
             }
         }
             
@@ -421,7 +431,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             //     printf("ISR: Motor disabled, replay stopped.\r\n");
             // }
             NavReplay_Stop();//【nav】复现停止
-            GpsNavReplay_Stop();//【gnss】复现停止
+            #if GNSS_NAV == 1
+                GpsNavReplay_Stop();//【gnss】复现停止
+            #endif
         }
     }
     
@@ -544,12 +556,14 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     {
         NavReplay_Stop();//【nav】复现停止
     }
+    #if GNSS_NAV == 1
     if ((robot_ctrl.brake_active != 0U) && (g_gps_replay_state == REPLAY_RUNNING))
     {
         GpsNavReplay_Stop();//【gnss】复现停止
     }
+    #endif
 
-
+    #if GNSS_NAV == 1
     if ((g_replay_state != REPLAY_RUNNING) &&
         (g_gps_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&
@@ -557,6 +571,15 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         && (VisionBridgeTask_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
+    #endif
+    #if GNSS_NAV == 0
+        if ((g_replay_state != REPLAY_RUNNING) &&
+        (!VisionThreeStageControl_IsActive()) &&
+        (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
+        && (VisionBridgeTask_IsActive() == 0U)
+        && g_pvc_control_enable ==0
+    )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
+    #endif
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
