@@ -1376,8 +1376,6 @@ void GpsNavReplay_Process(void)
 
     cx = GpsNavCurrentXmm();
     cy = GpsNavCurrentYmm();
-    
-    // 【修改点1】：提前获取车头航向，用于判断点是否在车身侧后方
     current_heading = GpsNav_GetCurrentHeadingDeg();
 
     // === 2. 终点防冲过头判定 ===
@@ -1387,12 +1385,22 @@ void GpsNavReplay_Process(void)
         target_y = nav_ram_data.points[nav_ram_data.point_count - 1].y;
         float dist_to_end = CalcDistance(cx, cy, target_x, target_y);
         
-        // 计算终点相对于车头的角度
-        float bearing_to_end = GpsCalcBearingDegFromNorth(cx, cy, target_x, target_y);
-        float angle_to_end = fabsf(NormalizeAngle(bearing_to_end - current_heading));
+        uint8 is_crossed_finish = 0;
+        if (nav_ram_data.point_count >= 2)
+        {
+            float px = nav_ram_data.points[nav_ram_data.point_count - 2].x;
+            float py = nav_ram_data.points[nav_ram_data.point_count - 2].y;
+            float v1_x = target_x - px;
+            float v1_y = target_y - py;
+            float v2_x = cx - px;
+            float v2_y = cy - py;
+            float dot = v1_x * v2_x + v1_y * v2_y;
+            float len_sq = v1_x * v1_x + v1_y * v1_y;
+            // 投影法：如果车子越过了倒数第二个点到终点的连线，说明冲线了
+            if (len_sq > 0.001f && dot >= len_sq) is_crossed_finish = 1;
+        }
 
-        // 【修改点2】：进入抵达圆，或者在接近终点时“冲过了线”（终点跑到了车侧后方 >90度），果断停车！防止原地转圈寻终点！
-        if (dist_to_end <= GPS_NAV_DIST_ARRIVE || (dist_to_end < 3500.0f && angle_to_end > 90.0f))
+        if (dist_to_end <= GPS_NAV_DIST_ARRIVE || is_crossed_finish)
         {
             g_gps_replay_state = REPLAY_FINISHED;
             target_speed_set = GPS_NAV_SPEED_STOP;
@@ -1402,64 +1410,54 @@ void GpsNavReplay_Process(void)
     }
     else
     {
-        // === 3. 核心：Pure Pursuit 前瞻搜索与防死锁丢弃 ===
+        // === 3. 极简 Pure Pursuit：只寻目标，绝不回头 ===
+        uint8 skips = 0;
         while (g_gps_target_idx < nav_ram_data.point_count - 1)
         {
             float check_tx = nav_ram_data.points[g_gps_target_idx].x;
             float check_ty = nav_ram_data.points[g_gps_target_idx].y;
             float dist_current = CalcDistance(cx, cy, check_tx, check_ty);
 
-            // 计算该点相对车头的角度
-            float bearing_to_check = GpsCalcBearingDegFromNorth(cx, cy, check_tx, check_ty);
-            float angle_to_check = fabsf(NormalizeAngle(bearing_to_check - current_heading));
+            uint8 is_passed = 0;
+            if (g_gps_target_idx > 0)
+            {
+                float px = nav_ram_data.points[g_gps_target_idx - 1].x;
+                float py = nav_ram_data.points[g_gps_target_idx - 1].y;
+                float v1_x = check_tx - px;
+                float v1_y = check_ty - py;
+                float v2_x = cx - px;
+                float v2_y = cy - py;
+                float dot = v1_x * v2_x + v1_y * v2_y;
+                float len_sq = v1_x * v1_x + v1_y * v1_y;
+                // 投影法：判定是否在物理上跑过了这个点
+                if (len_sq > 0.001f && dot >= len_sq) is_passed = 1;
+            }
 
-            // 【修改点3：绝对核心修复】：
-            // 如果距离小于前瞻，【或者】该点已经被甩到了车侧后方（角度差 > 90度）
-            // 果断抛弃当前点，目标索引+1，看向更前方的赛道！
-            if (dist_current < GPS_NAV_LOOKAHEAD_DIST || angle_to_check > 90.0f)
+            // 核心逻辑：如果点在 2.5米 圈内，或者已经被甩在身后，立刻抛弃它！吃下一个！
+            if (dist_current < GPS_NAV_LOOKAHEAD_DIST || is_passed)
             {
                 g_gps_target_idx++;
+                skips++;
+                if (skips >= 3) break; // 防跨界锁：每周期最多吃 3 个点
             }
             else
             {
-                // 点在正前方且在圆外，进行线性插值保持走线平滑
-                if (g_gps_target_idx > 0)
-                {
-                    float prev_x = nav_ram_data.points[g_gps_target_idx - 1].x;
-                    float prev_y = nav_ram_data.points[g_gps_target_idx - 1].y;
-                    float dist_prev = CalcDistance(cx, cy, prev_x, prev_y);
-
-                    float ratio = (GPS_NAV_LOOKAHEAD_DIST - dist_prev) / (dist_current - dist_prev + 0.001f);
-                    if (ratio < 0.0f) ratio = 0.0f;
-                    if (ratio > 1.0f) ratio = 1.0f;
-
-                    target_x = prev_x + ratio * (check_tx - prev_x);
-                    target_y = prev_y + ratio * (check_ty - prev_y);
-                }
-                else
-                {
-                    target_x = check_tx;
-                    target_y = check_ty;
-                }
-                break; // 找到合适的前瞻目标，跳出搜索
+                // 找到前方的点了！直接锁定目标，不做任何画蛇添足的插值运算
+                break;
             }
         }
         
-        // 容错：如果搜索直接推到了最后一个点
-        if (g_gps_target_idx == nav_ram_data.point_count - 1) {
-            target_x = nav_ram_data.points[g_gps_target_idx].x;
-            target_y = nav_ram_data.points[g_gps_target_idx].y;
-        }
+        target_x = nav_ram_data.points[g_gps_target_idx].x;
+        target_y = nav_ram_data.points[g_gps_target_idx].y;
     }
 
     // === 4. 计算航向误差 ===
     target_bearing = GpsCalcBearingDegFromNorth(cx, cy, target_x, target_y);
     raw_err_degree = NormalizeAngle(target_bearing - current_heading);
     
-    // 核心抗噪 A：一阶低通滤波 (EMA)
+    // 核心抗噪 A：低通滤波
     static float s_filtered_err = 0.0f;
     float alpha = 0.25f; 
-    
     if (g_gps_target_idx == 0 && target_speed_set == GPS_NAV_SPEED_STOP) {
         s_filtered_err = raw_err_degree; 
     } else {
@@ -1471,14 +1469,14 @@ void GpsNavReplay_Process(void)
     // 核心抗噪 B：死区
     if (fabsf(final_err) < 2.0f) final_err = 0.0f;
 
-    // 核心抗噪 C：暴力限幅保护 (防止转角指令过大引起失控)
+    // 核心抗噪 C：暴力限幅
     if (final_err > 35.0f) final_err = 35.0f;
     if (final_err < -35.0f) final_err = -35.0f;
 
     err_degree = final_err; 
     float abs_err = fabsf(err_degree);
 
-    // === 5. 动态速度控制 ===
+    // === 5. 动态速度控制（提高保底动力防卡死） ===
     float dist_to_target = CalcDistance(cx, cy, target_x, target_y);
     float base_speed;
     
@@ -1490,7 +1488,10 @@ void GpsNavReplay_Process(void)
 
     // 弯道动态降速
     float speed_factor = 1.0f - (abs_err / 40.0f); 
-    if (speed_factor < 0.20f) speed_factor = 0.20f; 
+    
+    // 【重要修改】：将保底推力从 0.2 提高到了 0.4！
+    // 防止大转弯时底盘输出的 PWM 太低，导致小车电机无力、原地震颤
+    if (speed_factor < 0.40f) speed_factor = 0.40f; 
 
     target_speed_set = base_speed * speed_factor; 
 }
