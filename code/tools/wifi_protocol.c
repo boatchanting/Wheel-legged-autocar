@@ -1,5 +1,6 @@
 #include "wifi_protocol.h"
 #include "menu.h"
+#include "../navigation/gnss_transform.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -47,6 +48,11 @@ static void write_u32_or_float(const void *val_ptr)
         tx_buf[tx_idx++] = p[2];
         tx_buf[tx_idx++] = p[3];
     }
+}
+
+static void write_float_value(float val)
+{
+    write_u32_or_float(&val);
 }
 
 static void write_double(const double *val_ptr)
@@ -151,6 +157,37 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
             printf("[WIFI] Host cmd START_CAR ignored (motor disabled).\r\n");
 #endif
         }
+        break;
+    }
+
+    case WIFI_HOST_CTRL_START_GPS_REPLAY:
+    {
+        const uint8_t accepted = g_motor_enable;
+        if (accepted)
+        {
+            g_replay_start_request = 1U;
+            ack_status = WIFI_HOST_ACK_ACCEPTED;
+#if DEBUG_LOG_ENABLE
+            printf("[WIFI] Host cmd START_GPS_REPLAY accepted.\r\n");
+#endif
+        }
+        else
+        {
+            ack_status = WIFI_HOST_ACK_REJECTED;
+#if DEBUG_LOG_ENABLE
+            printf("[WIFI] Host cmd START_GPS_REPLAY ignored (motor disabled).\r\n");
+#endif
+        }
+        break;
+    }
+
+    case WIFI_HOST_CTRL_STOP_GPS_REPLAY:
+    {
+        g_replay_stop_request = 1U;
+        ack_status = WIFI_HOST_ACK_ACCEPTED;
+#if DEBUG_LOG_ENABLE
+        printf("[WIFI] Host cmd STOP_GPS_REPLAY accepted.\r\n");
+#endif
         break;
     }
 
@@ -356,6 +393,12 @@ void wifi_protocol_send_data(void)
     // D. host point editor fields
     write_u8(robot_ctrl.mark_trigger);
     write_u8(robot_ctrl.point_type);
+
+    // E. projected GNSS XY for pure GPS marker/replay (unit: mm)
+    write_float_value(gnss_trans.x * 1000.0f);
+    write_float_value(gnss_trans.y * 1000.0f);
+    write_u8(gnss_trans.is_valid);
+    write_u8(gnss_trans.is_origin_set);
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;

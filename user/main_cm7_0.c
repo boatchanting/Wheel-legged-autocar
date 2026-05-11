@@ -266,6 +266,7 @@ InertialNav_Init();//惯性导航初始化
 #endif
 
 gnss_init(TAU1201);//gnss导航初始化
+Gnss_Transform_Init();//GNSS经纬度投影为相对平面坐标，供纯GPS打点/复刻使用
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;
@@ -365,7 +366,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
-                // // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
+                // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
                 // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
@@ -593,6 +594,36 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
         Buzzer_Beep_By_PointType(2);//beep x3
     }
+
+    #if GNSS_NAV == 1
+    // ---------------------------------------------------------
+    //  【gps-nav】静态点表模式：开始纯GPS复刻
+    // ---------------------------------------------------------
+    if (g_motor_enable == 1 && g_replay_start_request == 1)
+    {
+        g_replay_start_request = 0;
+        Gnss_Transform_Reset_Origin();
+        GpsNavReplay_Start();
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Starting pure GPS replay...\r\n");
+        #endif
+        Buzzer_Beep_By_PointType(2);
+    }
+
+    // ---------------------------------------------------------
+    //  【gps-nav】停止纯GPS复刻
+    // ---------------------------------------------------------
+    if (g_replay_stop_request == 1)
+    {
+        g_replay_stop_request = 0;
+        GpsNavReplay_Stop();
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Pure GPS replay stopped.\r\n");
+        #endif
+    }
+    #endif
+
+
         // 此处编写需要循环执行的代码
     }
 }

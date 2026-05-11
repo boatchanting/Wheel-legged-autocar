@@ -128,61 +128,16 @@ void Remote_Control_Process(void)
         return; // 失控则不进行后续处理
 
     }
-
-    // ==== 增加的 5 次消抖逻辑开始 ====
-    static int16 last_raw_ch[6] = {0};       // 记录上一次的原始数据
-    static int16 debounced_ch[6] = {0};      // 消抖后输出的最终数据
-    static uint8 stable_cnt[6] = {0};        // 连续相同次数计数器
-    static uint8 is_first_run = 1;           // 首次运行标志
-
-    // 上电首次运行，直接初始化缓冲，避免起步有延迟卡顿
-    if (is_first_run)
-    {
-        for (int i = 0; i < 6; i++)
-        {
-            debounced_ch[i] = uart_receiver.channel[i];
-            last_raw_ch[i] = uart_receiver.channel[i];
-            stable_cnt[i] = 0;
-        }
-        is_first_run = 0;
-    }
-
-    // 对6个通道进行独立消抖判定
-    for (int i = 0; i < 6; i++)
-    {
-        if (uart_receiver.channel[i] == last_raw_ch[i])
-        {
-            // 数据没变，计数增加
-            if (stable_cnt[i] < 5)
-            {
-                stable_cnt[i]++;
-            }
-            // 达到5次相同的条件，更新有效结果数组
-            if (stable_cnt[i] >= 5)
-            {
-                debounced_ch[i] = uart_receiver.channel[i];
-            }
-        }
-        else
-        {
-            // 数据发生变化，重新开始计数，并记录新的变化值
-            stable_cnt[i] = 0;
-            last_raw_ch[i] = uart_receiver.channel[i];
-        }
-    }
-    // ==== 增加的 5 次消抖逻辑结束 ====
-
-    // 改用消抖后的数组 debounced_ch 赋值变量
-    int16 ch1_steer = debounced_ch[0];
+    int16 ch1_steer = uart_receiver.channel[0];
 #if SUBS_CATEGORY == 1
-    int16 ch2_thro  = debounced_ch[1];
+    int16 ch2_thro  = uart_receiver.channel[1];
 #else
-    int16 ch2_thro  = 1952 - debounced_ch[1];
+    int16 ch2_thro  = 1952 - uart_receiver.channel[1];
 #endif
-    int16 ch3_mark  = debounced_ch[2];
-    int16 ch4_mode  = debounced_ch[3];
-    int16 ch5_brake = debounced_ch[4];
-    int16 ch6_off   = debounced_ch[5];
+    int16 ch3_mark  = uart_receiver.channel[2];
+    int16 ch4_mode  = uart_receiver.channel[3];
+    int16 ch5_brake = uart_receiver.channel[4];
+    int16 ch6_off   = uart_receiver.channel[5];
 
     // --------------------------------------------------------
     // Step 2: 处理最高优先级逻辑 (CH6 总开关)
@@ -195,7 +150,27 @@ void Remote_Control_Process(void)
         robot_ctrl.motor_enable = 0;//如果遥控器断联，直接停机【优化点】不能直接停机
         return; // 遥控器完全回中且总开关关闭，则不进行后续处理
     }
-    if (ch6_off > RC_SW_THRESHOLD) 
+    
+    // CH6 消抖逻辑：5次连续采样确认状态变化
+    static uint8 ch6_debounce_count = 0;
+    static uint8 ch6_last_valid_state = 0; // 0=电机使能, 1=电机关
+    uint8 ch6_current_raw = (ch6_off > RC_SW_THRESHOLD) ? 1 : 0;
+    
+    if (ch6_current_raw != ch6_last_valid_state)
+    {
+        ch6_debounce_count++;
+        if (ch6_debounce_count >= 5)
+        {
+            ch6_last_valid_state = ch6_current_raw;
+            ch6_debounce_count = 0;
+        }
+    }
+    else
+    {
+        ch6_debounce_count = 0;
+    }
+    
+    if (ch6_last_valid_state == 1) 
     {
         robot_ctrl.brake_active = 0;
         g_brake_active = 0;
