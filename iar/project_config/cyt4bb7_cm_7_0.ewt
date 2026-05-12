@@ -1460,6 +1460,9 @@
             <file>
                 <name>$PROJ_DIR$\..\..\code\config\sys_options.h</name>
             </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\config\wifi_options.h</name>
+            </file>
         </group>
         <group>
             <name>navigation</name>
