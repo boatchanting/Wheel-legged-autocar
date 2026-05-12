@@ -31,6 +31,7 @@ uint8_t roll_balance_enable = 0; // 横滚平衡环使能开关
 volatile int16 g_target_pwm_roll_adj = 0; // 目标横滚调整分量
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
+static uint8 brake_lockout = 0;     // 重置屏蔽锁
 
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
 {
@@ -41,6 +42,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     float brake_max = 0.0f;
     float brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
 
+    // 1. 正常的刹车条件判断
     if (motor_enable && (jump_flag == 0U) && (abs_speed > BRAKE_SPEED_DEADBAND))
     {
         uint8 decel_request = (uint8)((actual_speed * target_speed <= 0.0f) || (abs_target < abs_speed));
@@ -60,6 +62,16 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         }
     }
 
+    // 2. 【核心新增】处理屏蔽锁
+    if (brake_lockout)
+    {
+        // 外部还在强制要求刹车，但因为处于 Reset 后的锁定状态，我们强行压制输出为 0
+        brake_ff_target = 0.0f;
+        brake_ff_pwm = 0.0f;
+        return 0.0f;
+    }
+
+    // 3. 正常的输出计算
     brake_ff_target = (brake_gain > 0.0f) ? Float_Constrain(-brake_gain * actual_speed, -brake_max, brake_max) : 0.0f;
     brake_ff_pwm += Float_Constrain(brake_ff_target - brake_ff_pwm, -BRAKE_RAMP_DOWN, brake_ramp_up);
     return brake_ff_pwm;
@@ -67,8 +79,10 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
 
 void Brake_Feedforward_Reset(void)
 {
+    // 清空内部变量
     brake_ff_pwm = 0.0f;
     brake_ff_target = 0.0f;
+    brake_lockout = 1; // 【核心】上锁！无视接下来外部的强制刹车条件，直到外部条件自然释放为止
 }
 
 float Brake_Feedforward_GetPwm(void)

@@ -431,6 +431,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             //     printf("ISR: Motor disabled, replay stopped.\r\n");
             // }
             NavReplay_Stop();//【nav】复现停止
+            Brake_Feedforward_Reset();//【brake】锁定刹车关闭
             #if GNSS_NAV == 1
                 GpsNavReplay_Stop();//【gnss】复现停止
             #endif
