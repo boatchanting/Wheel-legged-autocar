@@ -5,5 +5,5 @@
 #include "car_select.h"//选择哪个小车
 
 #include "sys_options.h"//系统配置
-
+#include "wifi_options.h"//WIFI
 #endif // __CONFIG_H__

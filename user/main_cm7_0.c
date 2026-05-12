@@ -159,7 +159,7 @@ servo_executor_init();
     disp_y += 16;
 #endif
 
-#if WIFI_USE    
+#if WIFI_CORE0_USE
     // 初始化 WiFi 模块
     wifi_init();                                                                // 初始化WIFI模块
     uart_write_string(UART_INDEX, "WiFi Module Initialized.");                  // 输出WIFI初始化完成信息
@@ -182,13 +182,13 @@ servo_executor_init();
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
 
-    #if WIFI_CAMERA_AND_ASSISTANT    
-    // 初始化摄像头和逐飞助手
-    wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
-    uart_write_string(UART_INDEX, "Camera Initialized.");                       // 输出摄像头初始化完成信息
+    #if WIFI_CORE0_ASSISTANT
+    // 初始化逐飞助手数据接口
+    wifi_assistant_init();                                                         // 初始化逐飞助手数据接口
+    uart_write_string(UART_INDEX, "Assistant Initialized.");                       // 输出逐飞助手初始化完成信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');
-    //初始化摄像头和通信模块结束
+    //初始化逐飞助手通信结束
     #endif
 #endif
  gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // 初始化 蜂鸣器 引脚 低电平 默认 推挽输出模式
@@ -349,11 +349,11 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
             //     }
             //     ekf_print_div = 0;
             // }
-            #if WIFI_USE
+            #if WIFI_CORE0_CUSTOM_PROTOCOL
                 wifi_protocol_send_data();//自定义wifi协议（惯导/GNSS/打点状态）
             #endif
                 //TelemetryIpc_Core0_PublishPvcDefault();
-            #if WIFI_CAMERA_AND_ASSISTANT && WIFI_USE  
+            #if WIFI_CORE0_ASSISTANT
                 //逐飞助手示波器发送代码        
                 // //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
@@ -453,7 +453,7 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
         //     uart_write_buffer(UART_INDEX, fifo_get_data, fifo_data_count);      // 将读取到的数据发送出去
         // }
 
-        #if WIFI_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
+        #if WIFI_CORE0_USE && WIFI_IMAGE_SEND//wifi开关和图像发送开关均开启则发送图像
         // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
         {

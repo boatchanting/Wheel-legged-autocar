@@ -82,6 +82,11 @@ void wifi_connect_tcp_server(void)
     }
 }
 
+void wifi_assistant_init(void)
+{
+    seekfree_assistant_interface_init(SEEKFREE_ASSISTANT_WIFI_SPI);
+}
+
 void wifi_camera_init(void)
 {
     // 推荐先初始化摄像头，后初始化逐飞助手

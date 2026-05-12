@@ -34,6 +34,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
+#include "../code/config/wifi_options.h"
 #include "../code1/wifi.h"
 #include "../code1/wifi_diff_stream.h"
 #include "../code1/wifi_protocol.h"
@@ -68,7 +69,19 @@ int main(void)
     // 初始化摄像头和逐飞助手
     //wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
     //wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 30U, 2U);                  // init realtime diff stream (keyframe interval = 30)
+#if WIFI_CORE1_USE
+    wifi_init();
+    wifi_connect_tcp_server();
+    #if WIFI_CORE1_ASSISTANT
+    wifi_camera_init();
+    #endif
+    #if WIFI_CORE1_CUSTOM_IMAGE
+    wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 30U, 2U);
+    #endif
+#endif
+#if !(WIFI_CORE1_USE && WIFI_CORE1_ASSISTANT)
     mt9v03x_init();//初始化摄像头
+#endif
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     line_vision_init();                                                         // 初始化任务区直线/单边桥视觉检测
     bumpy_vision_init();                                                        // 初始化颠簸路段视觉检测
@@ -86,7 +99,9 @@ int main(void)
     
     while(true)
     {
-        //wifi_protocol_poll_rx();
+        #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
+        wifi_protocol_poll_rx();
+        #endif
         //wifi_protocol_send_oscilloscope();
         // 此处编写需要循环执行的代码
                 // 处理摄像头图像数据
@@ -134,7 +149,12 @@ int main(void)
             //if((frame_skip_counter % FRAME_SKIP_RATIO) == 0U)
             //{
                 // 发送图像
-                //wifi_diff_stream_send_gray_frame((const uint8 *)compressed_image_copy[0]);
+                #if WIFI_CORE1_USE && WIFI_CORE1_ASSISTANT
+                seekfree_assistant_camera_send();
+                #endif
+                #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
+                wifi_diff_stream_send_gray_frame((const uint8 *)compressed_image_copy[0]);
+                #endif
             //}
             //frame_skip_counter++;
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
