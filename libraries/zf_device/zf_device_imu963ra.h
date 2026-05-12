@@ -105,9 +105,9 @@ typedef enum
     IMU963RA_MAG_SAMPLE_8G,                                                     // 磁力计量程 8G (MAG = Magnetometer 磁力计) (G = Gs 高斯)
 }imu963ra_mag_sample_config;
 
-#define IMU963RA_ACC_SAMPLE_DEFAULT     ( IMU963RA_ACC_SAMPLE_SGN_8G )          // 在这设置默认的 加速度计 初始化量程
-#define IMU963RA_GYRO_SAMPLE_DEFAULT    ( IMU963RA_GYRO_SAMPLE_SGN_2000DPS )    // 在这设置默认的 陀螺仪   初始化量程
-#define IMU963RA_MAG_SAMPLE_DEFAULT     ( IMU963RA_MAG_SAMPLE_8G )              // 在这设置默认的 磁力计   初始化量程
+#define IMU963RA_ACC_SAMPLE_DEFAULT     ( IMU963RA_ACC_SAMPLE_SGN_8G )          // 在这设置默认的 加速度计 初始化量程8g
+#define IMU963RA_GYRO_SAMPLE_DEFAULT    ( IMU963RA_GYRO_SAMPLE_SGN_2000DPS )    // 在这设置默认的 陀螺仪   初始化量程2000dps
+#define IMU963RA_MAG_SAMPLE_DEFAULT     ( IMU963RA_MAG_SAMPLE_8G )              // 在这设置默认的 磁力计   初始化量程8g
 #define IMU963RA_TIMEOUT_COUNT                      (0x00FF)                    // IMU963RA 超时计数
 //================================================定义 IMU963RA 基本配置================================================
 
@@ -147,13 +147,13 @@ typedef enum
 #define IMU963RA_MAG_FBR                            (0x0B)
 #define IMU963RA_MAG_CHIP_ID                        (0x0D)
 
-#define IMU963RA_ACC_SAMPLE                         (0x3C)                      // 加速度计量程
+#define IMU963RA_ACC_SAMPLE                         (0x6C)                      // 加速度计量程0x3c
 // 设置为:0x30 加速度量程为:±2G      获取到的加速度计数据 除以16393，可以转化为带物理单位的数据，单位：g(m/s^2)
 // 设置为:0x38 加速度量程为:±4G      获取到的加速度计数据 除以8197， 可以转化为带物理单位的数据，单位：g(m/s^2)
 // 设置为:0x3C 加速度量程为:±8G      获取到的加速度计数据 除以4098， 可以转化为带物理单位的数据，单位：g(m/s^2)
 // 设置为:0x34 加速度量程为:±16G     获取到的加速度计数据 除以2049， 可以转化为带物理单位的数据，单位：g(m/s^2)
 
-#define IMU963RA_GYR_SAMPLE                         (0x5C)                      // 陀螺仪量程
+#define IMU963RA_GYR_SAMPLE                         (0x8C)                      // 陀螺仪量程0x5c
 // 设置为:0x52 陀螺仪量程为:±125dps  获取到的陀螺仪数据除以228.6，   可以转化为带物理单位的数据，单位为：°/s
 // 设置为:0x50 陀螺仪量程为:±250dps  获取到的陀螺仪数据除以114.3，   可以转化为带物理单位的数据，单位为：°/s
 // 设置为:0x54 陀螺仪量程为:±500dps  获取到的陀螺仪数据除以57.1，    可以转化为带物理单位的数据，单位为：°/s
@@ -161,15 +161,15 @@ typedef enum
 // 设置为:0x5C 陀螺仪量程为:±2000dps 获取到的陀螺仪数据除以14.3，    可以转化为带物理单位的数据，单位为：°/s
 // 设置为:0x51 陀螺仪量程为:±4000dps 获取到的陀螺仪数据除以7.1，     可以转化为带物理单位的数据，单位为：°/s
 
-#define IMU963RA_MAG_SAMPLE                         (0x19)                      // 地磁计量程
+#define IMU963RA_MAG_SAMPLE                         (0x1D)                      // 地磁计量程0x19
 // 设置为:0x19 磁力计量程为:8G     获取到的加速度计数据 除以3000， 可以转化为带物理单位的数据，单位：G(高斯)
 // 设置为:0x09 磁力计量程为:2G     获取到的加速度计数据 除以12000，可以转化为带物理单位的数据，单位：G(高斯)
 //================================================定义 IMU963RA 内部地址================================================
 
 
 //================================================声明 IMU963RA 全局变量================================================
-extern int16 imu963ra_acc_x,  imu963ra_acc_y,  imu963ra_acc_z;                  // 三轴陀螺仪数据      GYRO (陀螺仪)
-extern int16 imu963ra_gyro_x, imu963ra_gyro_y, imu963ra_gyro_z;                 // 三轴加速度计数据     ACC  (accelerometer 加速度计)
+extern int16 imu963ra_acc_x,  imu963ra_acc_y,  imu963ra_acc_z;                  // 三轴加速度计数据     ACC  (accelerometer 加速度计)
+extern int16 imu963ra_gyro_x, imu963ra_gyro_y, imu963ra_gyro_z;                 // 三轴陀螺仪数据      GYRO (陀螺仪)
 extern int16 imu963ra_mag_x,  imu963ra_mag_y,  imu963ra_mag_z;                  // 三轴磁力计数据      MAG  (magnetometer 磁力计)
 extern float imu963ra_transition_factor[3];                                     // 转换实际值的比例
 //================================================声明 IMU963RA 全局变量================================================

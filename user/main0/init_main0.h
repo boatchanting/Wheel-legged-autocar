@@ -57,5 +57,5 @@ extern volatile uint8_t vision_detected_bumpy_point; // 模拟视觉检测到“
 // 0核主初始化函数声明
 // ---------------------------
 void Main0_Init(void);
-
+extern uint8 imu_refresh_test_printed; // IMU刷新率测试结果只打印一次
 #endif // _INIT_MAIN0_H_
