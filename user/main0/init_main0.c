@@ -62,7 +62,7 @@ servo_executor_init();
     disp_y += 16;
 #endif
 
-#if WIFI_USE    
+#if WIFI_CORE0_USE
     // 初始化 WiFi 模块
     wifi_init();                                                                // 初始化WIFI模块
     uart_write_string(UART_INDEX, "WiFi Module Initialized.");                  // 输出WIFI初始化完成信息
@@ -85,13 +85,13 @@ servo_executor_init();
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
 
-    #if WIFI_CAMERA_AND_ASSISTANT    
-    // 初始化摄像头和逐飞助手
-    wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
-    uart_write_string(UART_INDEX, "Camera Initialized.");                       // 输出摄像头初始化完成信息
+    #if WIFI_CORE0_ASSISTANT
+    // 初始化逐飞助手数据接口
+    wifi_assistant_init();                                                         // 初始化逐飞助手数据接口
+    uart_write_string(UART_INDEX, "Assistant Initialized.");                       // 输出逐飞助手初始化完成信息
     uart_write_byte(UART_INDEX, '\r');                                          // 输出回车
     uart_write_byte(UART_INDEX, '\n');
-    //初始化摄像头和通信模块结束
+    //初始化逐飞助手通信结束
     #endif
 #endif
  gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // 初始化 蜂鸣器 引脚 低电平 默认 推挽输出模式
@@ -219,6 +219,7 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
     system_delay_ms(1000); 
     ips200_clear();
 #endif
+
 #if IMU_REFRESH_TEST_ENABLE
 uint8 imu_refresh_test_printed = 0; // IMU刷新率测试结果只打印一次
 #endif
