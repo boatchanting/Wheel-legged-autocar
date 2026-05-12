@@ -235,6 +235,9 @@ static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
     packet->bumpy_bbox_area = ctrl->bbox_area;
     packet->bumpy_white_threshold_x10 = ctrl->white_threshold_x10;
     packet->bumpy_dark_threshold_x10 = ctrl->dark_threshold_x10;
+    packet->bumpy_target_x_ipm_mm = ctrl->target_x_ipm_mm;
+    packet->bumpy_target_y_ipm_mm = ctrl->target_y_ipm_mm;
+    packet->bumpy_steer_error_ipm_mm = ctrl->steer_error_ipm_mm;
     packet->bumpy_start_seen = bumpy.start_seen;
     packet->bumpy_end_seen = bumpy.end_seen;
     packet->bumpy_local_s_mm = ctrl->local_s_mm;

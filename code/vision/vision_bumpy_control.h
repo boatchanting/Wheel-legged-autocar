@@ -27,7 +27,11 @@ extern "C" {
 #define VISION_BUMPY_STALE_TIMEOUT_TICKS       (120U)  // 数据包过期超时时间(2ms周期计数, 120=240ms)
 #define VISION_BUMPY_K_STEER_DEG_PER_PX        (-0.30f) // 像素到角度的转换系数(度/像素)
 #define VISION_BUMPY_MAX_ERR_DEG               (18.0f) // 最大转向误差角度限制(度)
-#define VISION_BUMPY_DEADBAND_DEG              (180.0f) // 转向误差死区(度), 小于此值的误差将被忽略
+#define VISION_BUMPY_DEADBAND_DEG              (0.20f) // 转向误差死区(度), 小于此值的误差将被忽略
+#define VISION_BUMPY_PID_KP                    (0.85f)
+#define VISION_BUMPY_PID_KI                    (0.03f)
+#define VISION_BUMPY_PID_KD                    (0.05f)
+#define VISION_BUMPY_PID_I_LIMIT               (12.0f)
 
 /* 枚举类型定义区 */
 /**
@@ -40,6 +44,17 @@ typedef enum
     VISION_BUMPY_CTRL_TRACK,       // 跟踪状态(稳定跟踪凹凸路面)
     VISION_BUMPY_CTRL_STALE,       // 过期状态(数据包过期或无效)
 } vision_bumpy_control_state_e;
+
+typedef struct
+{
+    float Kp;
+    float Ki;
+    float Kd;
+    float error;
+    float last_error;
+    float integral;
+    float output;
+} vision_bumpy_pid_t;
 
 /* 结构体类型定义区 */
 /**
@@ -60,6 +75,7 @@ typedef struct
     vision_bumpy_control_state_e state;    // 当前控制状态
     int16 steer_error_px_x100;             // 转向误差像素值(放大100倍)
     float err_degree_cmd;                  // 转向误差角度指令(度)
+    vision_bumpy_pid_t pid;
 } vision_bumpy_control_status_t;
 
 /* 全局变量声明区 */
