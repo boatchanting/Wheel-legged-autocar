@@ -2373,6 +2373,15 @@
     </group>
     <group>
         <name>user</name>
+        <group>
+            <name>main0</name>
+            <file>
+                <name>$PROJ_DIR$\..\..\user\main0\init_main0.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\user\main0\init_main0.h</name>
+            </file>
+        </group>
         <file>
             <name>$PROJ_DIR$\..\..\user\cm7_0_isr.c</name>
         </file>
