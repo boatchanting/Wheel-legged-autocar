@@ -1,4 +1,5 @@
 #include "bumpy_vision.h"
+#include "ipm_transform.h"
 
 #if BUMPY_VISION_ENABLE
 
@@ -1055,6 +1056,10 @@ static void bumpy_copy_detect_to_frame_result(const bumpy_detect_result_t *detec
                                               bumpy_vision_frame_result_t *result)
 {
     float confidence = 0.0f;
+    IPM_Point_t ipm_point;
+    int16 target_x_px_int;
+    uint8 target_x_px_u8;
+    uint8 target_y_px_u8;
 
     bumpy_clear_frame_result(result);
 
@@ -1075,6 +1080,30 @@ static void bumpy_copy_detect_to_frame_result(const bumpy_detect_result_t *detec
 
     result->target_x_px_x100 = bumpy_float_to_i16_x100(detect->centerline.target_x);
     result->steer_error_px_x100 = bumpy_float_to_i16_x100(detect->centerline.steer_error_px);
+    target_x_px_int = (int16)(detect->centerline.target_x + 0.5f);
+    if (target_x_px_int < 0)
+    {
+        target_x_px_int = 0;
+    }
+    if (target_x_px_int > (BUMPY_IMAGE_W - 1))
+    {
+        target_x_px_int = (BUMPY_IMAGE_W - 1);
+    }
+    target_x_px_u8 = (uint8)target_x_px_int;
+    target_y_px_u8 = (result->centerline_bottom_y == 0xFFU) ? (BUMPY_IMAGE_H - 1U) : result->centerline_bottom_y;
+    ipm_point = IPM_GetPhysicalCoord(target_x_px_u8, target_y_px_u8);
+    if (ipm_point.is_valid)
+    {
+        result->target_x_ipm_mm = ipm_point.x_mm;
+        result->target_y_ipm_mm = ipm_point.y_mm;
+        result->steer_error_ipm_mm = ipm_point.x_mm;
+    }
+    else
+    {
+        result->target_x_ipm_mm = 0;
+        result->target_y_ipm_mm = 0;
+        result->steer_error_ipm_mm = 0;
+    }
 
     result->white_threshold_x10 = (uint16)(detect->white_threshold * 10.0f);
     result->dark_threshold_x10 = (uint16)(detect->dark_threshold * 10.0f);

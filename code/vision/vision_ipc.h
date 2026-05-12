@@ -167,6 +167,9 @@ typedef struct
     uint16 bumpy_bbox_area;
     uint16 bumpy_white_threshold_x10;
     uint16 bumpy_dark_threshold_x10;
+    int16 bumpy_target_x_ipm_mm;
+    int16 bumpy_target_y_ipm_mm;
+    int16 bumpy_steer_error_ipm_mm;
     uint8 bumpy_start_seen;
     uint8 bumpy_end_seen;
     uint16 bumpy_local_s_mm;

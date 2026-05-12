@@ -67,6 +67,27 @@ static float vision_bumpy_calc_err_degree(const volatile vision_ipc_packet_t *pa
     return err;
 }
 
+static void vision_bumpy_pid_reset(vision_bumpy_pid_t *pid)
+{
+    pid->error = 0.0f;
+    pid->last_error = 0.0f;
+    pid->integral = 0.0f;
+    pid->output = 0.0f;
+}
+
+static float vision_bumpy_pid_calc(vision_bumpy_pid_t *pid, float error)
+{
+    float derivative;
+    pid->error = error;
+    pid->integral += error;
+    pid->integral = vision_bumpy_constrain_f(pid->integral, -VISION_BUMPY_PID_I_LIMIT, VISION_BUMPY_PID_I_LIMIT);
+    derivative = pid->error - pid->last_error;
+    pid->output = pid->Kp * pid->error + pid->Ki * pid->integral + pid->Kd * derivative;
+    pid->last_error = pid->error;
+    pid->output = vision_bumpy_constrain_f(pid->output, -VISION_BUMPY_MAX_ERR_DEG, VISION_BUMPY_MAX_ERR_DEG);
+    return pid->output;
+}
+
 /**
  * @brief   应用空闲输出状态
  * @details 将控制状态设置为空闲，并清零误差指令
@@ -75,6 +96,7 @@ static void vision_bumpy_apply_idle_outputs(void)
 {
     g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_IDLE;  // 设置状态为空闲
     g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;           // 清零误差指令
+    vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow; // 更新全局状态
 }
 
@@ -90,6 +112,10 @@ void VisionBumpyControl_Init(void)
     g_bumpy_control_enable = VISION_BUMPY_CONTROL_DEFAULT_ACTIVE;   // 设置默认使能状态
     g_bumpy_ctrl_shadow.enabled = g_bumpy_control_enable;           // 更新影子变量中的使能状态
     g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_IDLE;              // 设置初始状态为空闲
+    g_bumpy_ctrl_shadow.pid.Kp = VISION_BUMPY_PID_KP;
+    g_bumpy_ctrl_shadow.pid.Ki = VISION_BUMPY_PID_KI;
+    g_bumpy_ctrl_shadow.pid.Kd = VISION_BUMPY_PID_KD;
+    vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;             // 更新全局状态
 
 #if VISION_BUMPY_CONTROL_PROFILE_ENABLE
@@ -178,6 +204,7 @@ void VisionBumpyControl_Update_2ms(void)
         g_bumpy_ctrl_shadow.confidence_u16 = 0U;                    // 清零置信度
         g_bumpy_ctrl_shadow.steer_error_px_x100 = 0;               // 清零转向误差
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                  // 清零误差指令
+        vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
         g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;        // 更新全局状态
 #if VISION_BUMPY_CONTROL_PROFILE_ENABLE
         RUNTIME_PROFILE_END(&g_vision_bumpy_control_profiler, VISION_BUMPY_CONTROL_PROFILE_TIMER);  // 结束性能分析
@@ -197,17 +224,18 @@ void VisionBumpyControl_Update_2ms(void)
     if (packet->bumpy_stable_detected)                                 // 如果稳定检测到凹凸路面
     {
         g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_TRACK;          // 设置状态为跟踪
-        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_calc_err_degree(packet);  // 计算误差指令
+        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_pid_calc(&g_bumpy_ctrl_shadow.pid, vision_bumpy_calc_err_degree(packet));  // 计算误差指令
     }
     else if (packet->bumpy_detected)                                  // 如果检测到但不稳定
     {
         g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_SEARCH;         // 设置状态为搜索
-        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_calc_err_degree(packet) * 0.6f;  // 计算误差指令(降低增益)
+        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_pid_calc(&g_bumpy_ctrl_shadow.pid, vision_bumpy_calc_err_degree(packet) * 0.6f);  // 计算误差指令(降低增益)
     }
     else                                                              // 如果未检测到
     {
         g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_SEARCH;         // 设置状态为搜索
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                     // 清零误差指令
+        vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
     }
 
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;              // 更新全局状态
