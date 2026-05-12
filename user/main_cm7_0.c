@@ -73,6 +73,19 @@ volatile uint8 pit_state = 0;  //通道0中断标志位
 uint8 pit_state_1 = 0;//通道1中断标志位
 volatile runtime_profiler_t g_ekf_profiler = {0};
 
+#if IMU_REFRESH_TEST_ENABLE
+extern volatile uint32 g_imu_refresh_test_elapsed_ms;
+extern volatile uint32 g_imu_refresh_test_gyro_change_count;
+extern volatile uint32 g_imu_refresh_test_acc_change_count;
+extern volatile uint32 g_imu_refresh_test_mag_change_count;
+extern volatile uint32 g_imu_refresh_test_gyro_freq_x100;
+extern volatile uint32 g_imu_refresh_test_acc_freq_x100;
+extern volatile uint32 g_imu_refresh_test_mag_freq_x100;
+extern volatile uint8 g_imu_refresh_test_done;
+extern volatile uint8 g_imu_refresh_test_start_beep_request;
+extern volatile uint8 g_imu_refresh_test_done_beep_request;
+#endif
+
 
 // *************************** EKF中断声明 ***************************
 extern void IMU_Calibrate_All_Gyro(void); // 校准陀螺仪声明
@@ -318,6 +331,9 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
 #endif
  uint8 display_count = 0; // 用于屏幕刷新分频
  uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
+#if IMU_REFRESH_TEST_ENABLE
+ uint8 imu_refresh_test_printed = 0; // IMU刷新率测试结果只打印一次
+#endif
 
 vision_detected_marker = 0;//雷区调用,测试用
 vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
@@ -328,6 +344,41 @@ vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
 
     while(true)
     {
+#if IMU_REFRESH_TEST_ENABLE
+        if (g_imu_refresh_test_start_beep_request != 0U)
+        {
+            g_imu_refresh_test_start_beep_request = 0;
+            Buzzer_Beep_By_PointType(0); // 姿态角收敛后，IMU刷新率测试开始响一声
+        }
+
+        if (g_imu_refresh_test_done_beep_request != 0U)
+        {
+            g_imu_refresh_test_done_beep_request = 0;
+            Buzzer_Beep_By_PointType(0); // IMU刷新率测试结束响一声
+        }
+
+        if ((g_imu_refresh_test_done != 0U) && (imu_refresh_test_printed == 0U))
+        {
+            printf("[IMU_REFRESH] time=%lu ms\r\n",
+                   (unsigned long)g_imu_refresh_test_elapsed_ms);
+            printf("[IMU_REFRESH] gyro: changes=%lu, freq=%lu.%02lu Hz\r\n",
+                   (unsigned long)g_imu_refresh_test_gyro_change_count,
+                   (unsigned long)(g_imu_refresh_test_gyro_freq_x100 / 100U),
+                   (unsigned long)(g_imu_refresh_test_gyro_freq_x100 % 100U));
+            printf("[IMU_REFRESH] acc : changes=%lu, freq=%lu.%02lu Hz\r\n",
+                   (unsigned long)g_imu_refresh_test_acc_change_count,
+                   (unsigned long)(g_imu_refresh_test_acc_freq_x100 / 100U),
+                   (unsigned long)(g_imu_refresh_test_acc_freq_x100 % 100U));
+#if IMU_CATEGORY == 3
+            printf("[IMU_REFRESH] mag : changes=%lu, freq=%lu.%02lu Hz\r\n",
+                   (unsigned long)g_imu_refresh_test_mag_change_count,
+                   (unsigned long)(g_imu_refresh_test_mag_freq_x100 / 100U),
+                   (unsigned long)(g_imu_refresh_test_mag_freq_x100 % 100U));
+#endif
+            imu_refresh_test_printed = 1;
+        }
+#endif
+
         // 检查中断标志位 (由 isr.c 中的 pit0_ch0_isr 置位)
         if(pit_state == 1)//10mswifi，100ms屏幕刷新
         {

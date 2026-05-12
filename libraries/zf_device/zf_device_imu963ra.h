@@ -168,8 +168,8 @@ typedef enum
 
 
 //================================================声明 IMU963RA 全局变量================================================
-extern int16 imu963ra_acc_x,  imu963ra_acc_y,  imu963ra_acc_z;                  // 三轴陀螺仪数据      GYRO (陀螺仪)
-extern int16 imu963ra_gyro_x, imu963ra_gyro_y, imu963ra_gyro_z;                 // 三轴加速度计数据     ACC  (accelerometer 加速度计)
+extern int16 imu963ra_acc_x,  imu963ra_acc_y,  imu963ra_acc_z;                  // 三轴加速度计数据     ACC  (accelerometer 加速度计)
+extern int16 imu963ra_gyro_x, imu963ra_gyro_y, imu963ra_gyro_z;                 // 三轴陀螺仪数据      GYRO (陀螺仪)
 extern int16 imu963ra_mag_x,  imu963ra_mag_y,  imu963ra_mag_z;                  // 三轴磁力计数据      MAG  (magnetometer 磁力计)
 extern float imu963ra_transition_factor[3];                                     // 转换实际值的比例
 //================================================声明 IMU963RA 全局变量================================================
