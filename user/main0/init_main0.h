@@ -52,7 +52,7 @@ extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
 // =================================================================================
 // 导航记录控制标志位与视觉标志位 外部声明
 extern volatile uint8_t vision_detected_bumpy_point; // 模拟视觉检测到“颠簸入口”
-
+extern uint8 imu_refresh_test_printed; // IMU刷新率测试结果只打印一次
 // ---------------------------
 // 0核主初始化函数声明
 // ---------------------------

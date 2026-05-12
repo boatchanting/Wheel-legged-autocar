@@ -219,7 +219,9 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
     system_delay_ms(1000); 
     ips200_clear();
 #endif
-
+#if IMU_REFRESH_TEST_ENABLE
+uint8 imu_refresh_test_printed = 0; // IMU刷新率测试结果只打印一次
+#endif
     vision_detected_marker = 0;//雷区调用,测试用
     vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
     //-------------------------------------------------------------------

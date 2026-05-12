@@ -70,6 +70,178 @@ volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
+
+#if IMU_REFRESH_TEST_ENABLE
+#define IMU_REFRESH_TEST_TIME_MS (10000U)
+
+typedef struct
+{
+    int16 x;
+    int16 y;
+    int16 z;
+} imu_refresh_axis_raw_t;
+
+typedef struct
+{
+    imu_refresh_axis_raw_t gyro;
+    imu_refresh_axis_raw_t acc;
+    imu_refresh_axis_raw_t mag;
+} imu_refresh_raw_t;
+
+volatile uint32 g_imu_refresh_test_elapsed_ms = 0;
+volatile uint32 g_imu_refresh_test_gyro_change_count = 0;
+volatile uint32 g_imu_refresh_test_acc_change_count = 0;
+volatile uint32 g_imu_refresh_test_mag_change_count = 0;
+volatile uint32 g_imu_refresh_test_gyro_freq_x100 = 0;
+volatile uint32 g_imu_refresh_test_acc_freq_x100 = 0;
+volatile uint32 g_imu_refresh_test_mag_freq_x100 = 0;
+volatile uint8 g_imu_refresh_test_running = 0;
+volatile uint8 g_imu_refresh_test_done = 0;
+volatile uint8 g_imu_refresh_test_start_beep_request = 0;
+volatile uint8 g_imu_refresh_test_done_beep_request = 0;
+
+static imu_refresh_raw_t g_imu_refresh_test_last = {0};
+static uint8 g_imu_refresh_test_has_last = 0;
+
+static uint8 imu_refresh_axis_changed(const imu_refresh_axis_raw_t *now, const imu_refresh_axis_raw_t *last)
+{
+    return (uint8)((now->x != last->x) ||
+                  (now->y != last->y) ||
+                  (now->z != last->z));
+}
+
+static void imu_refresh_read_all_raw(imu_refresh_raw_t *raw)
+{
+#if IMU_CATEGORY == 1
+    imu660ra_get_gyro();
+    imu660ra_get_acc();
+    raw->gyro.x = imu660ra_gyro_x;
+    raw->gyro.y = imu660ra_gyro_y;
+    raw->gyro.z = imu660ra_gyro_z;
+    raw->acc.x = imu660ra_acc_x;
+    raw->acc.y = imu660ra_acc_y;
+    raw->acc.z = imu660ra_acc_z;
+    raw->mag.x = 0;
+    raw->mag.y = 0;
+    raw->mag.z = 0;
+#elif IMU_CATEGORY == 2
+    imu660rb_get_gyro();
+    imu660rb_get_acc();
+    raw->gyro.x = imu660rb_gyro_x;
+    raw->gyro.y = imu660rb_gyro_y;
+    raw->gyro.z = imu660rb_gyro_z;
+    raw->acc.x = imu660rb_acc_x;
+    raw->acc.y = imu660rb_acc_y;
+    raw->acc.z = imu660rb_acc_z;
+    raw->mag.x = 0;
+    raw->mag.y = 0;
+    raw->mag.z = 0;
+#elif IMU_CATEGORY == 3
+    imu963ra_get_gyro();
+    imu963ra_get_acc();
+    imu963ra_get_mag();
+    raw->gyro.x = imu963ra_gyro_x;
+    raw->gyro.y = imu963ra_gyro_y;
+    raw->gyro.z = imu963ra_gyro_z;
+    raw->acc.x = imu963ra_acc_x;
+    raw->acc.y = imu963ra_acc_y;
+    raw->acc.z = imu963ra_acc_z;
+    raw->mag.x = imu963ra_mag_x;
+    raw->mag.y = imu963ra_mag_y;
+    raw->mag.z = imu963ra_mag_z;
+#else
+#error "Unsupported IMU_CATEGORY value"
+#endif
+}
+#endif
+
+static void imu_refresh_read_gyro_1ms(void)
+{
+#if IMU_CATEGORY == 1
+    imu660ra_get_gyro();
+#elif IMU_CATEGORY == 2
+    imu660rb_get_gyro();
+#elif IMU_CATEGORY == 3
+    imu963ra_get_gyro();
+#else
+#error "Unsupported IMU_CATEGORY value"
+#endif
+}
+
+static void ImuRefreshTest_Update1ms(void)
+{
+#if IMU_REFRESH_TEST_ENABLE
+    imu_refresh_raw_t now;
+
+    if (g_imu_refresh_test_done)
+    {
+        imu_refresh_read_gyro_1ms();
+        return;
+    }
+
+    if (!g_yaw_initialized)
+    {
+        imu_refresh_read_gyro_1ms();
+        return;
+    }
+
+    imu_refresh_read_all_raw(&now);
+
+    if (!g_imu_refresh_test_running)
+    {
+        g_imu_refresh_test_last = now;
+        g_imu_refresh_test_has_last = 1;
+        g_imu_refresh_test_elapsed_ms = 0;
+        g_imu_refresh_test_gyro_change_count = 0;
+        g_imu_refresh_test_acc_change_count = 0;
+        g_imu_refresh_test_mag_change_count = 0;
+        g_imu_refresh_test_gyro_freq_x100 = 0;
+        g_imu_refresh_test_acc_freq_x100 = 0;
+        g_imu_refresh_test_mag_freq_x100 = 0;
+        g_imu_refresh_test_running = 1;
+        g_imu_refresh_test_start_beep_request = 1;
+        return;
+    }
+
+    g_imu_refresh_test_elapsed_ms++;
+    if (g_imu_refresh_test_has_last && imu_refresh_axis_changed(&now.gyro, &g_imu_refresh_test_last.gyro))
+    {
+        g_imu_refresh_test_gyro_change_count++;
+        g_imu_refresh_test_last.gyro = now.gyro;
+    }
+    if (g_imu_refresh_test_has_last && imu_refresh_axis_changed(&now.acc, &g_imu_refresh_test_last.acc))
+    {
+        g_imu_refresh_test_acc_change_count++;
+        g_imu_refresh_test_last.acc = now.acc;
+    }
+#if IMU_CATEGORY == 3
+    if (g_imu_refresh_test_has_last && imu_refresh_axis_changed(&now.mag, &g_imu_refresh_test_last.mag))
+    {
+        g_imu_refresh_test_mag_change_count++;
+        g_imu_refresh_test_last.mag = now.mag;
+    }
+#endif
+
+    if (g_imu_refresh_test_elapsed_ms >= IMU_REFRESH_TEST_TIME_MS)
+    {
+        g_imu_refresh_test_gyro_freq_x100 =
+            (g_imu_refresh_test_gyro_change_count * 100000U) / g_imu_refresh_test_elapsed_ms;
+        g_imu_refresh_test_acc_freq_x100 =
+            (g_imu_refresh_test_acc_change_count * 100000U) / g_imu_refresh_test_elapsed_ms;
+#if IMU_CATEGORY == 3
+        g_imu_refresh_test_mag_freq_x100 =
+            (g_imu_refresh_test_mag_change_count * 100000U) / g_imu_refresh_test_elapsed_ms;
+#else
+        g_imu_refresh_test_mag_freq_x100 = 0;
+#endif
+        g_imu_refresh_test_running = 0;
+        g_imu_refresh_test_done = 1;
+        g_imu_refresh_test_done_beep_request = 1;
+    }
+#else
+    imu_refresh_read_gyro_1ms();
+#endif
+}
 // **************************** PIT中断函数 ****************************
 
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
@@ -87,7 +259,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         VisionThreeStageControl_Update_2ms();
     }
 
-    imu660ra_get_gyro(); //获取陀螺仪数据，供平衡环，转向环使用【优化点】
+    ImuRefreshTest_Update1ms(); // 每1ms读取当前IMU，测试开启时分别统计陀螺仪/加速度计/磁力计跳变次数
 
     // 颠簸路段状态机（1ms调度）：
     // 1) 锁定 target_speed_set = -150.0f
