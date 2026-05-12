@@ -387,6 +387,7 @@ uint8 imu963ra_init (void)
         // 设置为 0x38 加速度量程为 ±4  G    获取到的加速度计数据除以 8197   可以转化为带物理单位的数据 单位 g(m/s^2)
         // 设置为 0x3C 加速度量程为 ±8  G    获取到的加速度计数据除以 4098   可以转化为带物理单位的数据 单位 g(m/s^2)
         // 设置为 0x34 加速度量程为 ±16 G    获取到的加速度计数据除以 2049   可以转化为带物理单位的数据 单位 g(m/s^2)
+        // 量程由 IMU963RA_ACC_SAMPLE_DEFAULT 决定，刷新率取 IMU963RA_ACC_SAMPLE 的 ODR 位。
         switch(IMU963RA_ACC_SAMPLE_DEFAULT)
         {
             default:
@@ -396,22 +397,22 @@ uint8 imu963ra_init (void)
             }break;
             case IMU963RA_ACC_SAMPLE_SGN_2G:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, 0x30);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, (IMU963RA_ACC_SAMPLE & 0xF3) | 0x00);
                 imu963ra_transition_factor[0] = 16393;
             }break;
             case IMU963RA_ACC_SAMPLE_SGN_4G:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, 0x38);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, (IMU963RA_ACC_SAMPLE & 0xF3) | 0x08);
                 imu963ra_transition_factor[0] = 8197;
             }break;
             case IMU963RA_ACC_SAMPLE_SGN_8G:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, 0x3C);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, (IMU963RA_ACC_SAMPLE & 0xF3) | 0x0C);
                 imu963ra_transition_factor[0] = 4098;
             }break;
             case IMU963RA_ACC_SAMPLE_SGN_16G:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, 0x34);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL1_XL, (IMU963RA_ACC_SAMPLE & 0xF3) | 0x04);
                 imu963ra_transition_factor[0] = 2049;
             }break;
         }
@@ -427,6 +428,7 @@ uint8 imu963ra_init (void)
         // 设置为 0x58 陀螺仪量程为 ±1000 dps    获取到的陀螺仪数据除以 28.6    可以转化为带物理单位的数据 单位为 °/s
         // 设置为 0x5C 陀螺仪量程为 ±2000 dps    获取到的陀螺仪数据除以 14.3    可以转化为带物理单位的数据 单位为 °/s
         // 设置为 0x51 陀螺仪量程为 ±4000 dps    获取到的陀螺仪数据除以 7.1     可以转化为带物理单位的数据 单位为 °/s
+        // 量程由 IMU963RA_GYRO_SAMPLE_DEFAULT 决定，刷新率取 IMU963RA_GYR_SAMPLE 的 ODR 位。
         switch(IMU963RA_GYRO_SAMPLE_DEFAULT)
         {
             default:
@@ -436,32 +438,32 @@ uint8 imu963ra_init (void)
             }break;
             case IMU963RA_GYRO_SAMPLE_SGN_125DPS:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, 0x52);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, (IMU963RA_GYR_SAMPLE & 0xF0) | 0x02);
                 imu963ra_transition_factor[1] = 228.6;
             }break;
             case IMU963RA_GYRO_SAMPLE_SGN_250DPS:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, 0x50);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, (IMU963RA_GYR_SAMPLE & 0xF0) | 0x00);
                 imu963ra_transition_factor[1] = 114.3;
             }break;
             case IMU963RA_GYRO_SAMPLE_SGN_500DPS:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, 0x54);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, (IMU963RA_GYR_SAMPLE & 0xF0) | 0x04);
                 imu963ra_transition_factor[1] = 57.1;
             }break;
             case IMU963RA_GYRO_SAMPLE_SGN_1000DPS:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, 0x58);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, (IMU963RA_GYR_SAMPLE & 0xF0) | 0x08);
                 imu963ra_transition_factor[1] = 28.6;
             }break;
             case IMU963RA_GYRO_SAMPLE_SGN_2000DPS:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, 0x5C);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, (IMU963RA_GYR_SAMPLE & 0xF0) | 0x0C);
                 imu963ra_transition_factor[1] = 14.3;
             }break;
             case IMU963RA_GYRO_SAMPLE_SGN_4000DPS:
             {
-                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, 0x51);
+                imu963ra_write_acc_gyro_register(IMU963RA_CTRL2_G, (IMU963RA_GYR_SAMPLE & 0xF0) | 0x01);
                 imu963ra_transition_factor[1] = 7.1;
             }break;
         }
@@ -498,6 +500,7 @@ uint8 imu963ra_init (void)
         // IMU963RA_MAG_ADDR 寄存器
         // 设置为 0x09 磁力计量程为 2G   获取到的磁力计数据除以 12000   可以转化为带物理单位的数据 单位 G(高斯)
         // 设置为 0x19 磁力计量程为 8G   获取到的磁力计数据除以 3000    可以转化为带物理单位的数据 单位 G(高斯)
+        // 量程由 IMU963RA_MAG_SAMPLE_DEFAULT 决定，刷新率取 IMU963RA_MAG_SAMPLE 的 ODR 位。
         switch(IMU963RA_MAG_SAMPLE_DEFAULT)
         {
             default:
@@ -507,12 +510,12 @@ uint8 imu963ra_init (void)
             }break;
             case IMU963RA_MAG_SAMPLE_2G:
             {
-                imu963ra_write_mag_register(IMU963RA_MAG_ADDR, IMU963RA_MAG_CONTROL1, 0x09);
+                imu963ra_write_mag_register(IMU963RA_MAG_ADDR, IMU963RA_MAG_CONTROL1, (IMU963RA_MAG_SAMPLE & 0xCF) | 0x00);
                 imu963ra_transition_factor[2] = 12000;
             }break;
             case IMU963RA_MAG_SAMPLE_8G:
             {
-                imu963ra_write_mag_register(IMU963RA_MAG_ADDR, IMU963RA_MAG_CONTROL1, 0x19);
+                imu963ra_write_mag_register(IMU963RA_MAG_ADDR, IMU963RA_MAG_CONTROL1, (IMU963RA_MAG_SAMPLE & 0xCF) | 0x10);
                 imu963ra_transition_factor[2] = 3000;
             }break;
         }
