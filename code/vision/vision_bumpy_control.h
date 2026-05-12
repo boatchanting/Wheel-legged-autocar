@@ -28,7 +28,7 @@ extern "C" {
 #define VISION_BUMPY_K_STEER_DEG_PER_PX        (-0.30f) // 像素到角度的转换系数(度/像素)
 #define VISION_BUMPY_MAX_ERR_DEG               (18.0f) // 最大转向误差角度限制(度)
 #define VISION_BUMPY_DEADBAND_DEG              (0.20f) // 转向误差死区(度), 小于此值的误差将被忽略
-#define VISION_BUMPY_PID_KP                    (0.85f)
+#define VISION_BUMPY_PID_KP                    (1.00f)
 #define VISION_BUMPY_PID_KI                    (0.03f)
 #define VISION_BUMPY_PID_KD                    (0.05f)
 #define VISION_BUMPY_PID_I_LIMIT               (12.0f)
