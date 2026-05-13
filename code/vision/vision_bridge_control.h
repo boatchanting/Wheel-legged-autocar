@@ -44,6 +44,10 @@ extern "C" {
 #define VISION_BRIDGE_TASK_K_YAW_DEG_PER_DEG         (0.65f)     /* 比例 P：车头每偏 1 度，方向盘多打 0.65 度 */
 #define VISION_BRIDGE_TASK_MAX_ERR_DEG               (16.0f)     /* 限幅：方向盘最多打 16 度，防打死 */
 #define VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG      (10.0f)     /* 锁死航向盲跑时，最多修 10 度 */
+#define VISION_BRIDGE_TASK_PID_KP                    (1.00f)     /* 方向 PID 比例增益 */
+#define VISION_BRIDGE_TASK_PID_KI                    (0.010f)    /* 方向 PID 积分增益 */
+#define VISION_BRIDGE_TASK_PID_KD                    (0.080f)    /* 方向 PID 微分增益 */
+#define VISION_BRIDGE_TASK_PID_INTEGRAL_LIMIT        (35.0f)     /* 积分限幅，防积分饱和 */
 
 /* --- 5. 各阶段速度与姿态设置 --- */
 #define VISION_BRIDGE_TASK_ALIGN_SPEED_SET           (0.0f)      /* 对齐时：速度为 0（边停边对） */
@@ -91,6 +95,17 @@ typedef struct
     uint16 exit_lost_ticks;              /* 下桥时，连续看不到桥的计时 */
     uint16 bridge_hold_ticks;            /* 看见黑块后的保持倒计时 */
 } vision_bridge_task_status_t;
+
+typedef struct
+{
+    float Kp;
+    float Ki;
+    float Kd;
+    float error;
+    float last_error;
+    float integral;
+    float output;
+} vision_bridge_pid_t;
 
 /* --- 7. 外部变量与函数接口 --- */
 extern volatile uint8 g_bridge_vision_task_enable;           /* 桥梁任务总开关 */

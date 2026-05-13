@@ -9,6 +9,7 @@
  * =================================================================================
  */
 #include "line_vision.h"
+#include "ipm_transform.h"
 
 #if LINE_VISION_ENABLE
 
@@ -687,7 +688,24 @@ static void line_detect_frame(const uint8 *gray, line_vision_frame_result_t *res
         const float line_x_bottom = k * (float)bottom_y + b;
         const float line_x_lookahead = k * (float)lookahead_y + b;
         const float lateral_error_px = line_x_bottom - ((float)LINE_IMAGE_W - 1.0f) * 0.5f; /* 偏差 = 线的位置 - 屏幕中心 */
-        const float yaw_error_deg = atanf(k) * 57.29578f; /* 算角度，弧度转度 */
+        float yaw_error_deg = atanf(k) * 57.29578f; /* 算角度，弧度转度 */
+        IPM_Point_t ipm_bottom_pt;
+        IPM_Point_t ipm_lookahead_pt;
+
+        /* 逆透视(IPM)：将图像坐标转换到物理坐标系，提高桥前/桥后控制的一致性 */
+        ipm_bottom_pt = IPM_GetPhysicalCoord((uint8)line_constrain_f(line_x_bottom, 0.0f, (float)(LINE_IMAGE_W - 1U)),
+                                             bottom_y);
+        ipm_lookahead_pt = IPM_GetPhysicalCoord((uint8)line_constrain_f(line_x_lookahead, 0.0f, (float)(LINE_IMAGE_W - 1U)),
+                                                lookahead_y);
+        if (ipm_bottom_pt.is_valid && ipm_lookahead_pt.is_valid)
+        {
+            const float dx_mm = (float)ipm_lookahead_pt.x_mm - (float)ipm_bottom_pt.x_mm;
+            const float dy_mm = (float)ipm_lookahead_pt.y_mm - (float)ipm_bottom_pt.y_mm;
+            if ((dx_mm != 0.0f) || (dy_mm != 0.0f))
+            {
+                yaw_error_deg = atan2f(dx_mm, dy_mm) * 57.29578f;
+            }
+        }
         
         /* 给这条找出的线打分 */
         const float row_score = line_min_f((float)point_count /

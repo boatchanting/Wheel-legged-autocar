@@ -54,6 +54,15 @@ typedef struct
 
 /* 这个就是真正的“记事本”本尊，只有这个文件能用 */
 static vision_bridge_task_ctx_t s_bridge_task;
+static vision_bridge_pid_t s_bridge_line_pid = {
+    VISION_BRIDGE_TASK_PID_KP,
+    VISION_BRIDGE_TASK_PID_KI,
+    VISION_BRIDGE_TASK_PID_KD,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f
+};
 
 /* --- 基础数学工具函数 --- */
 
@@ -128,14 +137,33 @@ static float vision_bridge_calc_line_err_degree(const volatile vision_ipc_packet
     const float lateral_px = (float)packet->line_lateral_px_x100 * 0.01f;
     const float yaw_deg = (float)packet->line_yaw_error_deg_x100 * 0.01f;
     /* 算综合误差 */
-    const float err = VISION_BRIDGE_TASK_LINE_SIGN *
-                      (lateral_px * VISION_BRIDGE_TASK_K_LAT_DEG_PER_PX +
-                       yaw_deg * VISION_BRIDGE_TASK_K_YAW_DEG_PER_DEG);
+    const float line_error = VISION_BRIDGE_TASK_LINE_SIGN *
+                             (lateral_px * VISION_BRIDGE_TASK_K_LAT_DEG_PER_PX +
+                              yaw_deg * VISION_BRIDGE_TASK_K_YAW_DEG_PER_DEG);
+
+    s_bridge_line_pid.error = line_error;
+    s_bridge_line_pid.integral += s_bridge_line_pid.error;
+    s_bridge_line_pid.integral = vision_bridge_constrain_f(s_bridge_line_pid.integral,
+                                                           -VISION_BRIDGE_TASK_PID_INTEGRAL_LIMIT,
+                                                           VISION_BRIDGE_TASK_PID_INTEGRAL_LIMIT);
+    s_bridge_line_pid.output = s_bridge_line_pid.Kp * s_bridge_line_pid.error +
+                               s_bridge_line_pid.Ki * s_bridge_line_pid.integral +
+                               s_bridge_line_pid.Kd * (s_bridge_line_pid.error - s_bridge_line_pid.last_error);
+    s_bridge_line_pid.last_error = s_bridge_line_pid.error;
 
     /* 限制在最大允许的范围内，防止车子突然猛打方向 */
-    return vision_bridge_constrain_f(err,
-                                     -VISION_BRIDGE_TASK_MAX_ERR_DEG,
-                                     VISION_BRIDGE_TASK_MAX_ERR_DEG);
+    s_bridge_line_pid.output = vision_bridge_constrain_f(s_bridge_line_pid.output,
+                                                         -VISION_BRIDGE_TASK_MAX_ERR_DEG,
+                                                         VISION_BRIDGE_TASK_MAX_ERR_DEG);
+    return s_bridge_line_pid.output;
+}
+
+static void vision_bridge_reset_line_pid(void)
+{
+    s_bridge_line_pid.error = 0.0f;
+    s_bridge_line_pid.last_error = 0.0f;
+    s_bridge_line_pid.integral = 0.0f;
+    s_bridge_line_pid.output = 0.0f;
 }
 
 /**
@@ -308,6 +336,7 @@ static void vision_bridge_cleanup(uint8 stop_car)
     
     /* 清空“记事本” */
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
+    vision_bridge_reset_line_pid();
     g_bridge_vision_task_status.enabled = 0U;
     g_bridge_vision_task_status.state = VISION_BRIDGE_TASK_IDLE;
 }
@@ -322,6 +351,7 @@ void VisionBridgeTask_Init(void)
 {
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
     memset((void *)&g_bridge_vision_task_status, 0, sizeof(g_bridge_vision_task_status));
+    vision_bridge_reset_line_pid();
     g_bridge_vision_task_enable = 0U;
 }
 
@@ -359,6 +389,7 @@ uint8 VisionBridgeTask_IsActive(void)
 static void vision_bridge_enter_task(void)
 {
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
+    vision_bridge_reset_line_pid();
     s_bridge_task.state = VISION_BRIDGE_TASK_ENTER_PVC; /* 第一步：进 PVC */
     s_bridge_task.start_x_mm = inertial_nav.x;
     s_bridge_task.start_y_mm = inertial_nav.y;
@@ -466,6 +497,7 @@ void VisionBridgeTask_Update_2ms(void)
             if (packet->line_bridge_stable_detected)
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
+                vision_bridge_reset_line_pid();
                 err_cmd = vision_bridge_calc_yaw_hold_err(); /* 锁死方向 */
                 err_degree = err_cmd;
                 vision_bridge_apply_high_posture(); /* 抬高底盘，防侧翻 */
@@ -493,6 +525,7 @@ void VisionBridgeTask_Update_2ms(void)
             else
             {
                 /* 啥也看不见，那就保持原来的方向别动 */
+                vision_bridge_reset_line_pid();
                 err_cmd = vision_bridge_calc_yaw_hold_err();
                 err_degree = err_cmd;
                 s_bridge_task.align_ok_ticks = 0U;
@@ -526,6 +559,7 @@ void VisionBridgeTask_Update_2ms(void)
             if (s_bridge_task.bridge_hold_ticks > 0U)
             {
                 vision_bridge_apply_high_posture(); /* 保持高底盘 */
+                vision_bridge_reset_line_pid();
                 err_cmd = vision_bridge_calc_yaw_hold_err(); /* 盲跑，锁死方向 */
                 speed_cmd = VISION_BRIDGE_TASK_BRIDGE_SPEED_SET; /* 桥上速度 */
             }
@@ -542,6 +576,7 @@ void VisionBridgeTask_Update_2ms(void)
                 else
                 {
                     /* 线也看不见，只能盲跑了 */
+                    vision_bridge_reset_line_pid();
                     err_cmd = vision_bridge_calc_yaw_hold_err();
                     speed_cmd = VISION_BRIDGE_TASK_BLIND_SPEED_SET;
                 }
