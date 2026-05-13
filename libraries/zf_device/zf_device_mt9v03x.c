@@ -56,12 +56,14 @@
 #include "zf_device_mt9v03x.h"
 
 vuint8 mt9v03x_finish_flag = 0;                                                 // 一场图像采集完成标志位
-uint8 mt9v03x_image[MT9V03X_H][MT9V03X_W];     
+uint8 mt9v03x_image[2][MT9V03X_H][MT9V03X_W];
+volatile uint8 mt9v03x_read_idx = 0;
+volatile uint8 mt9v03x_write_idx = 0;     
 
 static uint8 perfect_proportion = 0;
 
 #pragma location = 0x28026024                                                   // 将下面这个数组定义到指定的RAM地址
-__no_init uint8  mt9v03x_image_temp[MT9V03X_H][MT9V03X_W];                      
+__no_init uint8  mt9v03x_image_temp[2][MT9V03X_H][MT9V03X_W];                      
 #pragma location = 0x28006bf0
 __no_init uint16 mt9v03x_h_num;
 #pragma location = 0x28006bf2
@@ -71,10 +73,16 @@ void camera_finish_callback(void)
 {  
     Cy_Tcpwm_Counter_ClearTC_Intr(TCPWM0_GRP0_CNT59);
     
-    SCB_InvalidateDCache_by_Addr(mt9v03x_image_temp[0], MT9V03X_IMAGE_SIZE);
+    SCB_InvalidateDCache_by_Addr(mt9v03x_image_temp[mt9v03x_write_idx][0], MT9V03X_IMAGE_SIZE);
 
-    memcpy(mt9v03x_image[0], mt9v03x_image_temp[0], MT9V03X_IMAGE_SIZE);
-    
+    memcpy(mt9v03x_image[mt9v03x_write_idx][0], mt9v03x_image_temp[mt9v03x_write_idx][0], MT9V03X_IMAGE_SIZE);
+
+    // 双缓冲切换：将刚写完的缓冲区交给主循环读取
+    mt9v03x_read_idx = mt9v03x_write_idx;
+    // 翻转写索引，准备下一帧写入
+    mt9v03x_write_idx = 1 - mt9v03x_write_idx;
+    // 关键：更新下一次DMA写入目标地址到新的写缓冲区（依赖底层DVP DMA按照该固定地址阵列写入）
+
     mt9v03x_finish_flag = 1;
 }
 
