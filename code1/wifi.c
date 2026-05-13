@@ -60,7 +60,7 @@ uint8 compressed_image_copy[PVC_IMAGE_H][PVC_IMAGE_W];
  * @note   请在主循环(摄像头采集完成回调)中，memcpy 到 image_copy 后调用本函数，
  *         然后在将 compressed_image_copy 传给算法和进行渲染
  */
-void compress_image_to_target(void) 
+void compress_image_to_target(const uint8 (*src_image)[MT9V03X_W]) 
 {
     for (int y = 0; y < PVC_IMAGE_H; y++) 
     {
@@ -70,10 +70,10 @@ void compress_image_to_target(void)
             int src_x = x * 2; // 原图 188x120 对应的起始列
             
             // 获取 2x2 区域的 4 个像素灰度值，求和后右移 2 位实现快速求平均值
-            uint32 sum = image_copy[src_y][src_x] +
-                         image_copy[src_y][src_x + 1] +
-                         image_copy[src_y + 1][src_x] +
-                         image_copy[src_y + 1][src_x + 1];
+            uint32 sum = src_image[src_y][src_x] +
+                         src_image[src_y][src_x + 1] +
+                         src_image[src_y + 1][src_x] +
+                         src_image[src_y + 1][src_x + 1];
                          
             compressed_image_copy[y][x] = (uint8)(sum >> 2); 
         }

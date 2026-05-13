@@ -123,7 +123,7 @@ void encode_double_to_two_floats(double value, float* out_high, float* out_low);
 
 // 【新增】原图像降采样压缩函数声明 (188x120 -> 94x60)
 // 请在主循环/摄像头中断里：memcpy将原图像拷贝到 image_copy 之后调用此函数。
-void compress_image_to_target(void);
+void compress_image_to_target(const uint8 (*src_image)[MT9V03X_W]);
 
 // 【修改注释】图像渲染辅助函数，用于将检测指标画在 compressed_image_copy 上以便上位机观察
 #define VISION_IMAGE_RENDER_ENABLE          (1)
