@@ -307,7 +307,8 @@ int main(void)
             vision_detected_bumpy_point = 0; // 清除标志位，防止连续触发
         }
 
-        // 模拟视觉触发单边桥测试
+        // 模拟视觉触发单边桥测试，惯性导航控制
+        /*
         if (vision_detected_bridge_point == 1) 
         {
             // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
@@ -317,7 +318,18 @@ int main(void)
             }
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
         }
+        */
 
+        // 模拟视觉触发单边桥测试，视觉控制
+         if (vision_detected_bridge_point == 1) 
+        {
+            // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
+            if (!VisionBridgeTask_IsActive()) 
+            {
+                VisionBridgeTask_Start(); // 启动单边桥测试状态机
+            }
+            vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
+        }
 
 
         // ---------------------------------------------------------

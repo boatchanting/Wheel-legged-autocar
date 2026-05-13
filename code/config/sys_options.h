@@ -2,7 +2,7 @@
 #define __SYS_OPTIONS_H__
 
 #define WIFI_USE 0 // 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
-#define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
+#define WIFI_CORE_SELECT 1 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
 #define WIFI_PROTOCOL_SELECT 2 // 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
 #define G_MOTOR_ENABLE_INIT 0 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
