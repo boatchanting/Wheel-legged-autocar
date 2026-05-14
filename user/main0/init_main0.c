@@ -199,7 +199,7 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
 
 // *****************中断在这后面开*****************
     
-    // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.005对应)
+    // 1. 初始化定时器中断，周期 1ms (必须与ekf.c中的dt=0.001对应)
     // EKF 运行时间测试
     timer_init(TC_TIME2_CH0, TIMER_US);
     timer_start(TC_TIME2_CH0);

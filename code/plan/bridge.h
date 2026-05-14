@@ -40,7 +40,8 @@
 // 【单边桥高姿态专属 PID 参数】 (用于抬腿时的线性插值，防止原地震荡)
 // 中环 (角度环) : 抬高后惯性变大，需要稍微加大推力，大幅增加阻尼
 #define ANG_KP_HIGH          -20.0f   // 微增
-#define ANG_KD_HIGH          -9.0f   //  显著增加阻尼，防止荡秋千
+// 周期换算：5ms -> 3ms，ratio=0.6，Kd /= 0.6
+#define ANG_KD_HIGH          -15.0f   //  显著增加阻尼，防止荡秋千
 #define ANG_MECH_ZERO_HIGH   0.0f    // 实车需重新测定最高姿态时的绝对平衡点
 
 // 内环 (角速度环) : 抬高后机械变软，减小响应防止高频共振“嗡嗡”响
@@ -48,7 +49,8 @@
 
 //舵机速度环
 #define SERVO_SPEED_KP_HIGH         -3.5f   // 微减
-#define SERVO_SPEED_KI_HIGH   -0.04f    // 
+// 周期换算：20ms -> 9ms，ratio=0.45，Ki *= 0.45
+#define SERVO_SPEED_KI_HIGH   -0.018f    //
 // 转向环 : 重心变高容易侧翻，转向必须变柔和
 #define TURN_ANG_KP_HIGH     -9.0f   // [原-6.0] 减小绝对值
 #define TURN_GYR_KP_HIGH     25.0f   // [原20.0]  减小绝对值
