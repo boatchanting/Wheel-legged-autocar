@@ -40,3 +40,8 @@ iar/project_config/cyt4bb7_cm_7_1.eww
 __pycache__/
 *.pyc
 tools/05_通用数据处理工具/视频网页上位机/output_realtime
+
+# CYT2BL3FOC 无刷双驱电机驱动器忽略文件
+CYT2BL3FOC/project/iar/settings/
+CYT2BL3FOC/project/iar/project_config/settings/
+CYT2BL3FOC/project/iar/Debug_m4/
