@@ -530,21 +530,25 @@ extern uint8_t roll_balance_enable; // rolling环使能开关
 extern volatile uint8 g_brake_active;
 
 // 全局刹车前馈参数
-#define BRAKE_SPEED_DEADBAND     5.0f
-#define BRAKE_LOW_SPEED_TH       40.0f
-#define BRAKE_ERR_LIGHT          40.0f
-#define BRAKE_ERR_MED            120.0f
-#define BRAKE_ERR_HEAVY          220.0f
-#define BRAKE_GAIN_LIGHT         8.0f
-#define BRAKE_GAIN_MED           14.0f
-#define BRAKE_GAIN_HEAVY         22.0f
-#define BRAKE_MAX_LIGHT          1200.0f
-#define BRAKE_MAX_MED            2200.0f
-#define BRAKE_MAX_HEAVY          3500.0f
-#define BRAKE_RAMP_UP_LIGHT      200.0f
-#define BRAKE_RAMP_UP_MED        400.0f
-#define BRAKE_RAMP_UP_HEAVY      700.0f
-#define BRAKE_RAMP_DOWN          800.0f
+#define BRAKE_SPEED_DEADBAND     5.0f     /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
+#define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
+#define BRAKE_ERR_MIN            40.0f    /* 启用比例判定前的最小绝对速度差，避免速度很小时比例被放大误判 */
+#define BRAKE_TARGET_DECEL_MIN   30.0f    /* 目标速度下降超过该值才认为是主动减速指令，避免稳态微调触发前馈刹车 */
+#define BRAKE_CH5_LIGHT_SPEED    80.0f    /* CH5 急停低于该速度只给轻刹，避免低速急停过猛 */
+#define BRAKE_CH5_MED_SPEED      220.0f   /* CH5 急停低于该速度给中刹，高于该速度才给重刹 */
+#define BRAKE_RATIO_LIGHT        0.15f    /* 轻刹触发比例：速度差达到当前速度的 15% 才进入轻刹 */
+#define BRAKE_RATIO_MED          0.25f    /* 中刹触发比例：速度差达到当前速度的 25% 才进入中刹 */
+#define BRAKE_RATIO_HEAVY        0.50f    /* 重刹触发比例：速度差达到当前速度的 50% 才进入重刹，CH5 急停不受此限制 */
+#define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
+#define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
+#define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
+#define BRAKE_MAX_HEAVY          3500.0f  /* 重刹前馈 PWM 最大幅值，限制急停时的最大反向力矩 */
+#define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
+#define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
+#define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
+#define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
