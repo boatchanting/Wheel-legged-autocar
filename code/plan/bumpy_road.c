@@ -21,6 +21,14 @@
 #define BUMPY_ROAD_APPROACH_SPEED_SET    (-200.0f)      // 接近障碍物时的速度(mm/s)，负值表示前进
 #define BUMPY_ROAD_APPROACH_DURATION_MS  (200U)         // 接近持续时间(ms)，之后触发跳跃
 
+#if IMU_CATEGORY == 3
+    #define BUMPY_ROAD_ACC_SCALE          (4098.0f)
+#else
+    #define BUMPY_ROAD_ACC_SCALE          (4096.0f)
+#endif
+#define BUMPY_ROAD_VERT_ACC_TH_G          (0.25f)        // 上路肩竖直加速度阈值(g)
+#define BUMPY_ROAD_BOOST_RATIO            (2.0f)         // 上路肩加速倍率(相对进入元素速度)
+
 
 typedef struct
 {
@@ -33,6 +41,7 @@ typedef struct
     uint32_t stall_counter_ms;
     uint32_t backing_start_tick_ms;
     uint32_t approach_start_tick_ms;
+    uint8_t boost_active;
 } BumpyRoadContext_t;
 
 static BumpyRoadContext_t s_bumpy_ctx =
@@ -43,6 +52,7 @@ static BumpyRoadContext_t s_bumpy_ctx =
     0.0f,
     0U,
     BUMPY_ROAD_NO_JUMP_TICK,
+    0U,
     0U,
     0U,
     0U
@@ -99,6 +109,7 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.stall_counter_ms = 0U;
     s_bumpy_ctx.backing_start_tick_ms = 0U;
     s_bumpy_ctx.approach_start_tick_ms = 0U;
+    s_bumpy_ctx.boost_active = 0U;
 
 }
 
@@ -117,6 +128,7 @@ void BumpyRoad_Trigger(void)
     s_bumpy_ctx.stall_counter_ms = 0U;
     s_bumpy_ctx.backing_start_tick_ms = 0U;
     s_bumpy_ctx.approach_start_tick_ms = 0U;
+    s_bumpy_ctx.boost_active = 0U;
 
     /* 进入任务时独占控制权：开启1核颠簸视觉，并启用0核方向控制器。 */
     g_special_action_trigger = 1U;
@@ -148,7 +160,24 @@ void BumpyRoad_Update_1ms(void)
 
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
-        target_speed_set = BUMPY_ROAD_LOCK_SPEED_SET;
+        float target_speed_cmd = BUMPY_ROAD_LOCK_SPEED_SET;
+
+        if ((jump_flag == 0U) && (s_bumpy_ctx.boost_active == 0U))
+        {
+            const float acc_z_g = (imu_data.acc_z / BUMPY_ROAD_ACC_SCALE) - imu_data.grav_z;
+
+            if (fabsf(acc_z_g) > BUMPY_ROAD_VERT_ACC_TH_G)
+            {
+                s_bumpy_ctx.boost_active = 1U;
+            }
+        }
+
+        if (s_bumpy_ctx.boost_active)
+        {
+            target_speed_cmd = BUMPY_ROAD_LOCK_SPEED_SET * BUMPY_ROAD_BOOST_RATIO;
+        }
+
+        target_speed_set = target_speed_cmd;
         BumpyRoad_ApplyVisionSteer();
 
         if (jump_flag == 0U)
