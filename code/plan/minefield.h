@@ -18,10 +18,10 @@ void Minefield_Init(void);
 uint8_t Minefield_Is_Active(void);
 
 /**
- * @brief 旋转动作核心控制函数 (需在2ms Gyro环中调用)
+ * @brief 旋转动作核心控制函数 (需在2ms Gyro环中调用，当前Core0调度1ms)
  * 
  * @param gyro_z_deg      当前Z轴角速度 (单位: °/s)
- * @param dt_s            调用周期时间 (单位: 秒，通常为 0.002f)
+ * @param dt_s            调用周期时间 (单位: 秒，通常为 0.002f，当前Core0转向角速度环为0.001f)
  * @param current_yaw_deg 当前的总偏航角 (用于结束时重置目标)
  * @param target_yaw_ptr  指向全局目标偏航角变量的指针 (用于修改 g_initial_yaw)
  * 

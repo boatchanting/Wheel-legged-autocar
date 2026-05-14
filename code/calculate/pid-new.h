@@ -379,9 +379,11 @@ extern float current_actual_speed;
 // 4. 舵机速度环参数 (周期20ms)
 //    作用：控制舵机的转动速度，使其平滑地达到目标位置，避免突然动作
 // ----------------------------------------------------------------------------
-#define SERVO_SPEED_KP  -5.0f   // [比例控制] 控制舵机速度响应的快慢
+// 当前Core0调度目标周期：9ms
+#define SERVO_SPEED_KP  -4.5f   // [比例控制] 控制舵机速度响应的快慢
 #define SERVO_SPEED_KI  0.0f   // [积分控制] 
-#define SERVO_SPEED_KD  -0.08f   // [微分控制] 
+// 周期换算：20ms -> 9ms，ratio=0.45，Kd /= 0.45
+#define SERVO_SPEED_KD  -0.17f   // [微分控制]
 #define SERVO_SPEED_MAX_I  100000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
@@ -391,6 +393,7 @@ extern float current_actual_speed;
 // 1. 速度环参数 (最外环 - 周期约 20ms~50ms)
 //    作用：通过改变车身倾角，让车“跑”起来去追重心，从而保持位置或达到目标速度。
 // ----------------------------------------------------------------------------
+// 当前Core0 ISR未调用 Speed_Loop_Control，未按9ms换算此组参数
 #define SPD_KP      0.0f   // [响应力度] 值越大，车对速度误差越敏感，加速越猛，但容易超调晃动
 #define SPD_KI      0.0f  // [消除静差] 值越大，车越能克服阻力达到目标速度，但回正越慢
 #define SPD_KD      0.0f    // [抑制震荡] 速度环一般不加D，因为编码器噪声大，且不需要极快响应
@@ -404,9 +407,11 @@ extern float current_actual_speed;
 //    作用：根据期望角度(来自机械零点+速度环)，计算出需要的角速度。
 //    这是维持直立最关键的一环。
 // ----------------------------------------------------------------------------
+// 当前Core0调度目标周期：3ms
 #define ANG_KP      -12.0f   //[直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。
 #define ANG_KI      0.0f    // [一般不用] 平衡车本身是不稳定系统，加积分容易导致无法直立，除非是完全静态的高精度控制。
-#define ANG_KD      -8.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。
+// 周期换算：5ms -> 3ms，ratio=0.6，Kd /= 0.6
+#define ANG_KD      -13.3333f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。
 
 #define ANG_MAX_I   0.0f    // 积分限幅
 #define ANG_MAX_O   8000.0f // [最大角速度] 限制期望的旋转速度，防止电机指令过大。
@@ -441,6 +446,7 @@ extern float current_actual_speed;
 //    作用：根据视觉/编码器计算的角度误差，生成期望转向角速度
 //    特性：无积分项（避免转向累积误差），支持赛道场景自适应增益
 // ----------------------------------------------------------------------------
+// 当前Core0调度目标周期：3ms
 #define TURN_ANG_KP     -8.0f   // -12[转向刚度] 值越大转向越灵敏，但易振荡
 #define TURN_ANG_KI     0.0f   // [一般不用] 无积分项，避免转向累积误差
 #define TURN_ANG_KD     0.0f   // [转向阻尼] 抑制转向超调，值过大会导致响应迟钝
@@ -452,9 +458,11 @@ extern float current_actual_speed;
 // 6. 转向角速度环参数 (内环 - 周期2ms)
 //    作用：快速跟踪期望角速度，直接输出转向专用PWM
 // ----------------------------------------------------------------------------
+// 当前Core0调度目标周期：1ms
 #define TURN_GYR_KP     20.0f    // 35[响应速度] 决定转向电机响应刚度
 #define TURN_GYR_KI     0.0f     // [一般不用] 无积分项，避免转向累积误差
-#define TURN_GYR_KD     8.0f     // 12[抖动抑制] 消除高频抖动
+// 周期换算：2ms -> 1ms，ratio=0.5，Kd /= 0.5
+#define TURN_GYR_KD     16.0f     // 12[抖动抑制] 消除高频抖动
 #define TURN_GYR_MAX_I  0.0f     // [一般不用] 无积分项，避免转向累积误差
 #define TURN_GYR_DEAD_ZONE 0.0f  // [死区] 消除低速时的非线性迟滞
 #define TURN_GYR_MAX_O  8000.0f  // [PWM限幅] 普通赛道转向PWM上限
@@ -528,23 +536,35 @@ extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 extern volatile float target_speed_set;
 extern uint8_t roll_balance_enable; // rolling环使能开关
 extern volatile uint8 g_brake_active;
+extern volatile uint8 g_reverse_brake_active;
 
 // 全局刹车前馈参数
-#define BRAKE_SPEED_DEADBAND     5.0f
-#define BRAKE_LOW_SPEED_TH       40.0f
-#define BRAKE_ERR_LIGHT          40.0f
-#define BRAKE_ERR_MED            120.0f
-#define BRAKE_ERR_HEAVY          220.0f
-#define BRAKE_GAIN_LIGHT         8.0f
-#define BRAKE_GAIN_MED           14.0f
-#define BRAKE_GAIN_HEAVY         22.0f
-#define BRAKE_MAX_LIGHT          1200.0f
-#define BRAKE_MAX_MED            2200.0f
-#define BRAKE_MAX_HEAVY          3500.0f
-#define BRAKE_RAMP_UP_LIGHT      200.0f
-#define BRAKE_RAMP_UP_MED        400.0f
-#define BRAKE_RAMP_UP_HEAVY      700.0f
-#define BRAKE_RAMP_DOWN          800.0f
+#define BRAKE_SPEED_DEADBAND     15.0f     /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
+#define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
+#define BRAKE_ZERO_TARGET_MAX    10.0f    /* 目标速度绝对值低于该值时，允许进入零速停车迟滞区 */
+#define BRAKE_ZERO_HOLD_ENTER    18.0f    /* 刹停过程中速度低于该值时进入零速迟滞区并清空刹车前馈 */
+#define BRAKE_ZERO_HOLD_EXIT     30.0f    /* 零速迟滞区退出阈值；只有速度重新明显离开零区才允许再次建压 */
+#define BRAKE_ERR_MIN            40.0f    /* 启用比例判定前的最小绝对速度差，避免速度很小时比例被放大误判 */
+#define BRAKE_ERR_MED_MIN        80.0f    /* 中刹最小绝对速度差，避免低速小幅速度差仅因比例大而升级 */
+#define BRAKE_ERR_HEAVY_MIN      150.0f   /* 重刹最小绝对速度差，必须有足够大的真实降速需求 */
+#define BRAKE_MED_SPEED_TH       120.0f   /* 普通减速进入中刹的当前速度下限 */
+#define BRAKE_HEAVY_SPEED_TH     220.0f   /* 普通减速进入重刹的当前速度下限 */
+#define BRAKE_TARGET_DECEL_MIN   30.0f    /* 目标速度下降超过该值才认为是主动减速指令，避免稳态微调触发前馈刹车 */
+#define BRAKE_CH5_LIGHT_SPEED    80.0f    /* CH5 急停低于该速度只给轻刹，避免低速急停过猛 */
+#define BRAKE_CH5_MED_SPEED      220.0f   /* CH5 急停低于该速度给中刹，高于该速度才给重刹 */
+#define BRAKE_RATIO_LIGHT        0.15f    /* 轻刹触发比例：速度差达到当前速度的 15% 才进入轻刹 */
+#define BRAKE_RATIO_MED          0.25f    /* 中刹触发比例：速度差达到当前速度的 25% 才进入中刹 */
+#define BRAKE_RATIO_HEAVY        0.50f    /* 重刹触发比例：速度差达到当前速度的 50% 才进入重刹，CH5 急停不受此限制 */
+#define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
+#define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
+#define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
+#define BRAKE_MAX_HEAVY          3500.0f  /* 重刹前馈 PWM 最大幅值，限制急停时的最大反向力矩 */
+#define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
+#define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
+#define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
+#define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
