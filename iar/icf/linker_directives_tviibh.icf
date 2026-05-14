@@ -330,8 +330,9 @@ place in SFLASH_TOC2        {readonly section .sflash_toc2};
 place in WORK_FLASH         {readonly section .work_flash};
 
 define symbol __ICFEDIT_region_RAM_start__ = 0x28001000;
-define symbol __ICFEDIT_region_RAM_size_   = 0x00002000;
+define symbol __ICFEDIT_region_RAM_size_   = 0x00000800;
 define region ICFEDIT_region_RAM                      = mem:[from __ICFEDIT_region_RAM_start__           size __ICFEDIT_region_RAM_size_          ];
+define block GLOBAL_RAM_DATA with alignment = 32 { section .global_ram_data };
 
-place in ICFEDIT_region_RAM         {section .global_ram_data};
+place in ICFEDIT_region_RAM         { block GLOBAL_RAM_DATA };
 

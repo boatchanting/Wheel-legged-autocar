@@ -72,18 +72,21 @@ uint8 VisionIpc_Core1_TakeBumpyResetRequest(void);
 /**
  * @brief 专门发布一次 PVC 检测结果到共享内存
  * @param pvc_output 指向当前最新的 PVC 结果
+ * @return 1: 发布成功, 0: IPC 通道仍忙
  */
-void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output);
+uint8 VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output);
 
 /**
  * @brief 整合并发布当前所有激活模块的检测结果
+ * @return 1: 发布成功, 0: IPC 通道仍忙
  */
-void VisionIpc_Core1_PublishCurrent(void);
+uint8 VisionIpc_Core1_PublishCurrent(void);
 
 /**
  * @brief 发布空闲数据包（告诉 0 核当前没在做任何检测）
+ * @return 1: 发布成功, 0: IPC 通道仍忙
  */
-void VisionIpc_Core1_PublishIdle(void);
+uint8 VisionIpc_Core1_PublishIdle(void);
 
 #ifdef __cplusplus
 }

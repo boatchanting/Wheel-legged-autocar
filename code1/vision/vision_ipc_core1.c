@@ -1,19 +1,14 @@
 ﻿#include "vision_ipc_core1.h"
+#include "vision/vision_ipc_shared.h"
+#include "mpu/cy_mpu.h"
 #include <string.h>
 
 #if defined(__ICCARM__)
 #pragma data_alignment = 32
-#pragma location = VISION_IPC_COMMAND_ADDR
-/* g_vision_ipc_command 存放从 0 核发来的命令 */
-__no_init volatile vision_ipc_command_t g_vision_ipc_command;
-
-#pragma data_alignment = 32
-#pragma location = VISION_IPC_RESULT_ADDR
-/* g_vision_ipc_result 存放 1 核计算后要发给 0 核的视觉结果 */
-__no_init volatile vision_ipc_packet_t g_vision_ipc_result;
+#pragma location = ".global_ram_data"
+__no_init volatile vision_ipc_shared_layout_t g_vision_ipc_shared;
 #else
-volatile vision_ipc_command_t g_vision_ipc_command;
-volatile vision_ipc_packet_t g_vision_ipc_result;
+volatile vision_ipc_shared_layout_t g_vision_ipc_shared;
 #endif
 
 static vision_ipc_command_t g_core1_command_shadow;
@@ -32,6 +27,33 @@ static uint32 g_core1_last_published_line_frame_id = 0U;
 static uint32 g_core1_last_published_bumpy_frame_id = 0U;
 static uint32 g_core1_last_published_command_seq = 0U;
 static uint16 g_core1_last_published_enable_mask = 0U;
+
+static void vision_ipc_core1_init_mpu(void)
+{
+    cy_stc_mpu_region_cfg_t region_cfg;
+    cy_stc_mpu_global_ctrl_bits_t ctrl_bits;
+
+    region_cfg.addr = SHARED_PAYLOAD_BASE_ADDR;
+    region_cfg.size = CY_MPU_SIZE_2KB;
+    region_cfg.permission = CY_MPU_ACCESS_P_FULL_ACCESS;
+    region_cfg.attribute = CY_MPU_ATTR_NORM_SHR_MEM_NC;
+    region_cfg.execute = CY_MPU_INST_ACCESS_DIS;
+    region_cfg.srd = 0x00U;
+    region_cfg.enable = CY_MPU_ENABLE;
+    (void)Cy_MPU_SetRegion(&region_cfg, SHARED_PAYLOAD_MPU_REGION);
+
+    Cy_MPU_GetGlobalControlBits(&ctrl_bits);
+    if (ctrl_bits.mpuGlobalEnable == CY_MPU_GLOBAL_DISABLE)
+    {
+        ctrl_bits.mpuGlobalEnable = CY_MPU_GLOBAL_ENABLE;
+        ctrl_bits.privDefMapEn = CY_MPU_USE_DEFAULT_MAP_AS_BG;
+        ctrl_bits.faultNmiEn = CY_MPU_ENABLED_DURING_FAULT_NMI;
+        Cy_MPU_SetGlobalControlBits(&ctrl_bits);
+    }
+
+    __DSB();
+    __ISB();
+}
 
 static uint16 vision_confidence_to_u16(float confidence)
 {
@@ -64,19 +86,32 @@ static uint32 vision_max_u32(uint32 a, uint32 b)
     return (a > b) ? a : b;
 }
 
-static void vision_ipc_core1_write_packet(vision_ipc_packet_t *packet)
+static uint8 vision_ipc_core1_write_packet(vision_ipc_packet_t *packet)
 {
+    volatile stc_IPC_STRUCT_t *ipc = Cy_IPC_Drv_GetIpcBaseAddress(IPC_VISION_CHAN);
+
+    if (Cy_IPC_Drv_IsLockAcquired(ipc))
+    {
+        return 0U;
+    }
+
     packet->magic = VISION_IPC_RESULT_MAGIC;
     packet->version = VISION_IPC_VERSION;
     packet->size = (uint16)sizeof(vision_ipc_packet_t);
-    packet->seq = ++g_core1_result_seq;
+    packet->seq = g_core1_result_seq + 1U;
     packet->command_seq_echo = g_core1_command_shadow.seq;
 
     packet->crc = 0U;
     packet->crc = vision_ipc_packet_crc(packet);
 
-    g_vision_ipc_result = *packet;
-    SCB_CleanInvalidateDCache_by_Addr((void *)&g_vision_ipc_result, sizeof(g_vision_ipc_result));
+    g_vision_ipc_shared.result = *packet;
+    if (Cy_IPC_Drv_SendMsgWord(ipc, IPC_VISION_INTR_MASK, 0U) != CY_IPC_DRV_SUCCESS)
+    {
+        return 0U;
+    }
+
+    g_core1_result_seq = packet->seq;
+    return 1U;
 }
 
 static uint8 vision_ipc_core1_command_wants_pvc(const vision_ipc_command_t *cmd)
@@ -245,6 +280,8 @@ static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
 
 void VisionIpc_Core1_Init(void)
 {
+    vision_ipc_core1_init_mpu();
+
     /* 清空并初始化命令缓存 */
     memset(&g_core1_command_shadow, 0, sizeof(g_core1_command_shadow));
     g_core1_command_shadow.active_target = VISION_TARGET_NONE;
@@ -267,7 +304,7 @@ void VisionIpc_Core1_Init(void)
     g_core1_last_published_command_seq = 0U;
     g_core1_last_published_enable_mask = 0U;
 
-    VisionIpc_Core1_PublishIdle();
+    (void)VisionIpc_Core1_PublishIdle();
 }
 
 /**
@@ -294,8 +331,10 @@ void VisionIpc_Core1_Update_2ms(void)
     {
         if (g_core1_last_published_enable_mask != 0U)
         {
-            VisionIpc_Core1_PublishIdle();
-            g_core1_last_published_enable_mask = 0U;
+            if (VisionIpc_Core1_PublishIdle() != 0U)
+            {
+                g_core1_last_published_enable_mask = 0U;
+            }
         }
         return;
     }
@@ -336,12 +375,14 @@ void VisionIpc_Core1_Update_2ms(void)
     /* 5. 执行发布并更新记录 */
     if (should_publish)
     {
-        VisionIpc_Core1_PublishCurrent();
-        g_core1_last_published_pvc_frame_id = pvc_frame_id;
-        g_core1_last_published_line_frame_id = line_frame_id;
-        g_core1_last_published_bumpy_frame_id = bumpy_frame_id;
-        g_core1_last_published_command_seq = g_core1_command_shadow.seq;
-        g_core1_last_published_enable_mask = g_core1_command_shadow.enable_mask;
+        if (VisionIpc_Core1_PublishCurrent() != 0U)
+        {
+            g_core1_last_published_pvc_frame_id = pvc_frame_id;
+            g_core1_last_published_line_frame_id = line_frame_id;
+            g_core1_last_published_bumpy_frame_id = bumpy_frame_id;
+            g_core1_last_published_command_seq = g_core1_command_shadow.seq;
+            g_core1_last_published_enable_mask = g_core1_command_shadow.enable_mask;
+        }
     }
 }
 
@@ -358,9 +399,7 @@ void VisionIpc_Core1_PollCommand(void)
     uint8 next_line_enabled;
     uint8 next_bumpy_enabled;
 
-    /* 刷新数据缓存，确保从物理内存读到 0 核最新写入的命令 */
-    SCB_CleanInvalidateDCache_by_Addr((void *)&g_vision_ipc_command, sizeof(g_vision_ipc_command));
-    cmd = g_vision_ipc_command;
+    cmd = g_vision_ipc_shared.command;
 
     if (vision_ipc_command_is_valid(&cmd) == 0U)
     {
@@ -463,7 +502,7 @@ uint8 VisionIpc_Core1_TakeBumpyResetRequest(void)
     return 0U;
 }
 
-void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
+uint8 VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
 {
     vision_ipc_packet_t packet;
 
@@ -489,7 +528,7 @@ void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
     packet.yaw_error_deg_x100 = packet.pvc_yaw_error_deg_x100;
     
     /* 最终写入共享内存 */
-    vision_ipc_core1_write_packet(&packet);
+    return vision_ipc_core1_write_packet(&packet);
 }
 
 /**
@@ -497,7 +536,7 @@ void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
  * 
  * @note 这个函数会将 PVC 和 直线检测的结果整合到一个数据包里发给 0 核。
  */
-void VisionIpc_Core1_PublishCurrent(void)
+uint8 VisionIpc_Core1_PublishCurrent(void)
 {
     vision_ipc_packet_t packet;
 
@@ -573,7 +612,7 @@ void VisionIpc_Core1_PublishCurrent(void)
     }
 
     /* 写入共享内存 */
-    vision_ipc_core1_write_packet(&packet);
+    return vision_ipc_core1_write_packet(&packet);
 }
 
 /**
@@ -581,7 +620,7 @@ void VisionIpc_Core1_PublishCurrent(void)
  * 
  * @note 当所有视觉任务关闭时，发一个空包告诉 0 核 "我现在在休息"。
  */
-void VisionIpc_Core1_PublishIdle(void)
+uint8 VisionIpc_Core1_PublishIdle(void)
 {
     vision_ipc_packet_t packet;
 
@@ -591,5 +630,5 @@ void VisionIpc_Core1_PublishIdle(void)
     packet.valid_mask = VISION_VALID_COMMON;
     
     /* 写入共享内存 */
-    vision_ipc_core1_write_packet(&packet);
+    return vision_ipc_core1_write_packet(&packet);
 }
