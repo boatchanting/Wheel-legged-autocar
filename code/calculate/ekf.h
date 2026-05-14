@@ -5,9 +5,9 @@
 // 角度转弧度转换系数 (180/π)
 #define DEG_TO_RAD      (57.295779513082320876798154814105f)
 // 采样时间间隔 (秒)
-#define dt              (0.005f)
+#define dt              (0.001f)
 // 低通滤波系数 (0-1之间，值越大滤波效果越弱)
-#define K               (0.9f)
+#define K               (0.369043f)
 extern volatile float g_initial_yaw;         // 存储记录下来的初始偏航角
 extern volatile bool  g_yaw_initialized;     // 偏航角是否已成功初始化的标志
 

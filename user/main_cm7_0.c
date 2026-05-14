@@ -73,7 +73,7 @@ extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
 float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
-int g_motor_enable = 1; // 电机使能安全开关，1为使能，0为关机
+int g_motor_enable =G_MOTOR_ENABLE_INIT; // 电机使能安全开关，1为使能，0为关机
 // =================================================================================
 
 // =================================================================================
@@ -162,15 +162,15 @@ int main(void)
                 //TelemetryIpc_Core0_PublishPvcDefault();
             #if WIFI_CORE0_ASSISTANT
                 //逐飞助手示波器发送代码        
-                // //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                // seekfree_assistant_oscilloscope_data.data[3] = (float)gyro_loop_out;
-                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
-                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                seekfree_assistant_oscilloscope_data.data[3] = (float)gyro_loop_out;
+                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
 
 
                 // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
@@ -229,14 +229,14 @@ int main(void)
                 // // data[7] 远端白边行号
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                //     // 4. 设置本次发送的通道数量 (一共8个数据)
-                // seekfree_assistant_oscilloscope_data.channel_num = 8;
+                    // 4. 设置本次发送的通道数量 (一共8个数据)
+                seekfree_assistant_oscilloscope_data.channel_num = 8;
                     
-                //     // 5. 调用发送函数
-                // seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
+                    // 5. 调用发送函数
+                seekfree_assistant_oscilloscope_send(&seekfree_assistant_oscilloscope_data);
 
-                // //用于上位机向小车发送pid信息
-                // wifi_update_pid_params(); 
+                //用于上位机向小车发送pid信息
+                wifi_update_pid_params(); 
             #endif
             //下面撰写的是100ms执行一次的代码
             // --- 屏幕刷新逻辑 (降频处理) ---

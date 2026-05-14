@@ -363,13 +363,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     };//【测试】抬高双腿
 
     // ==========================================================
-    // 步骤 1: 速度环(舵机控制) (20ms 跑一次)
+    // 步骤 1: 速度环(舵机控制) (20ms 跑一次，现改为9ms)
     // ==========================================================
     if(g_is_push_mode==0)
     {  
 
 
-        if (loop_counter % 20 == 5 && g_yaw_initialized)  // 20ms周期，且偏航角已初始化，且不在推车模式
+        if (loop_counter % 9 == 5 && g_yaw_initialized)  // 20ms周期，现改为9ms周期，且偏航角已初始化，且不在推车模式
         {
             // 2.1 获取编码器速度
             //small_driver_get_speed();//这句话应该不用，它只要调用一次，逐飞的库里写了
@@ -398,9 +398,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         Brake_Feedforward_Reset();
     }
     // ==========================================================
-    // 步骤 2: 转向角度环 (6ms) - 外环
+    // 步骤 2: 转向角度环 (6ms，现改为3ms) - 外环
     // ==========================================================
-        if (loop_counter % 6 == 1)  // 6ms周期
+        if (loop_counter % 3 == 1)  // 6ms周期，现改为3ms周期
         {
             // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
             // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
@@ -458,16 +458,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             }
         }
     // ==========================================================
-    // 步骤 3: 平衡角度环 (5ms 跑一次)
+    // 步骤 3: 平衡角度环 (5ms 跑一次，现EKF为1ms、角度环为3ms)
     // ==========================================================
+    // 运行姿态解算 (EKF / 互补滤波)
+    EKF_UpData();
+    record_initial_yaw_task(loop_counter);//初始化偏航角，里面的代码只会在初始化的时候被调用一次，记录初始的偏航角
+    #if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
     if (loop_counter % 5 == 2)
     {
-        // 运行姿态解算 (EKF / 互补滤波)
-        EKF_UpData();
-        #if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
         EKF_Update_Heading();//磁力计北更新
-        #endif
-        record_initial_yaw_task(loop_counter);//初始化偏航角，里面的代码只会在初始化的时候被调用一次，记录初始的偏航角
+    }
+    #endif
+    if (loop_counter % 3 == 2)
+    {
         now_angle = euler_angle.pitch; // 获取解算后的角度 (单位：度)
 
         // --- [调用优化] ---
@@ -480,9 +483,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     
     // ==========================================================
-    // 步骤 4: 转向角速度环 (2ms) - 内环
+    // 步骤 4: 转向角速度环 (2ms，现改为1ms) - 内环
     // ==========================================================
-    if (loop_counter % 2 == 1 && g_yaw_initialized)  // 2ms周期
+    if (g_yaw_initialized)  // 2ms周期，现改为1ms周期
     {
         #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
@@ -500,8 +503,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
         //==================== [雷区旋转调用开始] =================
         // lq.1. 获取旋转控制器的输出
-        //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s), 当前Yaw角, 全局Yaw目标指针
-        float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.002f, euler_angle.yaw, &g_initial_yaw);
+        //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s，现为0.001s), 当前Yaw角, 全局Yaw目标指针
+        float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.001f, euler_angle.yaw, &g_initial_yaw);
 
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;
