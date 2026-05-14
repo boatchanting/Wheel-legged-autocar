@@ -1,0 +1,412 @@
+;********************************************************************************
+;* Copyright 2016-2017, Cypress Semiconductor Corporation. All rights reserved.
+;* You may use this file only in accordance with the license, terms, conditions,
+;* disclaimers, and limitations in the end user license agreement accompanying
+;* the software package with which this file was provided.
+;********************************************************************************
+
+
+        .file "startup_cm0plus.arm"
+
+;************************************************************************
+;* Local definitions
+;************************************************************************
+
+; Set a sufficient startup stack size for correct operation of C startup code (startup.c)
+STARTUP_STACK_SIZE_DOUBLE_WORDS    .equ 32
+
+VTOR                               .equ 0xe000ed08
+CPUSS_RAM0_CTL0                    .equ 0x40201300
+CPUSS_RAM1_CTL0                    .equ 0x40201380
+CPUSS_RAM2_CTL0                    .equ 0x402013a0
+
+
+;************************************************************************
+;* Import symbols
+;************************************************************************
+
+        .import CpuUserInt0_Handler
+        .import CpuUserInt1_Handler
+        .import CpuUserInt2_Handler
+        .import CpuUserInt3_Handler
+        .import CpuUserInt4_Handler
+        .import CpuUserInt5_Handler
+        .import CpuUserInt6_Handler
+        .import CpuUserInt7_Handler
+        .import __ghs_ind_crt0
+        .import __ghsend_stack
+        .import Startup_Init
+
+
+;************************************************************************
+;* Export symbols
+;************************************************************************
+
+        .export _start
+        .export __vector_table
+        .export __vector_table_0x1c
+        .export __Vectors
+        .export __Vectors_End
+        .export __Vectors_Size
+        .export __ramVectors
+        .export Cy_SaveIRQ
+        .export Cy_RestoreIRQ
+        .export Cy_u32StartupStackStartAddress
+        .export Cy_u32StartupStackEndAddress
+
+
+;************************************************************************
+;* Vector Table and RAM Vector Table
+;************************************************************************
+
+        .section ".intvec", "a"
+        ; align to 256 byte, because CM0_VECTOR_TABLE_BASE register only supports address bits [31:8] (Note: for VTOR a 128-byte alignment would be ok)
+        .align 256
+
+__vector_table:
+        DCD     __ghsend_stack
+        DCD     Reset_Handler
+        DCD     NMI_Handler
+        DCD     HardFault_Handler
+        DCD     0
+        DCD     0
+        DCD     0
+__vector_table_0x1c:
+        DCD     0
+        DCD     0
+        DCD     0
+        DCD     0
+        DCD     SVC_Handler
+        DCD     0
+        DCD     0
+        DCD     PendSV_Handler
+        DCD     SysTick_Handler
+
+        ; External interrupts              PowerMode    Description
+
+        DCD     CpuUserInt0_Handler      ; DeepSleep    CPU User Interrupt #0 ; updated in RAM vector table with corresponding SROM vector table entry (after ROM-to-RAM copy)
+        DCD     CpuUserInt1_Handler      ; DeepSleep    CPU User Interrupt #1 ; updated in RAM vector table with corresponding SROM vector table entry (after ROM-to-RAM copy)
+        DCD     CpuUserInt2_Handler      ; DeepSleep    CPU User Interrupt #2
+        DCD     CpuUserInt3_Handler      ; DeepSleep    CPU User Interrupt #3
+        DCD     CpuUserInt4_Handler      ; DeepSleep    CPU User Interrupt #4
+        DCD     CpuUserInt5_Handler      ; DeepSleep    CPU User Interrupt #5
+        DCD     CpuUserInt6_Handler      ; DeepSleep    CPU User Interrupt #6
+        DCD     CpuUserInt7_Handler      ; DeepSleep    CPU User Interrupt #7
+
+        ; These IRQs can only be triggered by SW via NVIC regs
+        DCD     CpuUserInt8_Handler      ; Active       CPU User Interrupt #8
+        DCD     CpuUserInt9_Handler      ; Active       CPU User Interrupt #9
+        DCD     CpuUserInt10_Handler     ; Active       CPU User Interrupt #10
+        DCD     CpuUserInt11_Handler     ; Active       CPU User Interrupt #11
+        DCD     CpuUserInt12_Handler     ; Active       CPU User Interrupt #12
+        DCD     CpuUserInt13_Handler     ; Active       CPU User Interrupt #13
+        DCD     CpuUserInt14_Handler     ; Active       CPU User Interrupt #14
+        DCD     CpuUserInt15_Handler     ; Active       CPU User Interrupt #15
+__Vectors_End:
+
+        .endo __vector_table
+
+__Vectors       .equ   __vector_table
+__Vectors_Size  .equ   __Vectors_End - __Vectors
+
+
+        .section ".intvec_ram", "awb"
+        ; use same alignment like vector table in ROM above (even though VTOR minimum requirement would be 128 bytes if not used in combination with CM0_VECTOR_TABLE_BASE register)
+        .align 256
+
+__ramVectors:
+        .space      __Vectors_Size
+
+
+;************************************************************************
+;* Helper functions
+;************************************************************************
+
+; Saves and disables the interrupts
+
+        .text
+Cy_SaveIRQ:
+        MRS   r0, PRIMASK
+        CPSID I
+        BX    LR
+
+        .endf Cy_SaveIRQ
+
+;-----------------------------------------
+
+; Restores the interrupts
+
+        .text
+Cy_RestoreIRQ:
+        MSR   PRIMASK, r0
+        BX    LR
+
+        .endf Cy_RestoreIRQ
+
+
+;************************************************************************
+;* Start-up Code
+;************************************************************************
+        .weak Reset_Handler
+        .section ".text", "ax"
+        .thumb
+
+Reset_Handler:
+_start:
+
+; Disable global interrupts
+        CPSID   I
+        
+; Update Vector Table Offset Register with address of user ROM table
+; (will be updated later to user RAM table address in C startup code)
+        LDR  r0, =__vector_table
+        LDR  r1, =VTOR
+        STR  r0, [r1]
+        DSB
+
+; CM0+ bus width is 32-bit, but SRAM is built with 64-bit based ECC on Traveo II parts with CM7 core
+; Set CPUSS->RAMx_CTL0.ECC_CHECK_DIS bits to avoid causing unintentional ECC faults during startup while SRAM ECC has not been initialized yet
+; Generic code can be used, even if RAMx_CTL0 (x > 0) registers are not implemented in a device
+; or if no ECC_CHECK_DIS bits are available in the registers in case of m4cpuss with 32-bit ECC SRAM
+        MOVS r0, #1
+        LSLS r0, r0, #19        
+        LDR  r1, =CPUSS_RAM0_CTL0
+        LDR  r2, [r1]
+        ORRS r2, r0
+        STR  r2, [r1]
+        LDR  r1, =CPUSS_RAM1_CTL0
+        LDR  r2, [r1]
+        ORRS r2, r0
+        STR  r2, [r1]
+        LDR  r1, =CPUSS_RAM2_CTL0
+        LDR  r2, [r1]
+        ORRS r2, r0
+        STR  r2, [r1]
+        
+; Initialize ECC of startup stack (needed for local variables in C startup code) by processing 8 bytes per loop iteration,
+; because the ECC initialization feature uses this generic granularity that will cover any memory (SRAM/TCM) in any TVII device
+; Prerequisite: Stack Pointer (SP) has not been modified (from the vector table init value) by above code (otherwise code must be adapted)
+        MOVS r0, #0 ; clear value
+        MOVS r1, #0 ; clear value
+        LDR  r2, Cy_u32StartupStackStartAddress
+startup_stack_ecc_init_loop:
+        STM  r2!, {r0, r1}
+        CMP  r2, sp
+        BNE  startup_stack_ecc_init_loop
+        
+; Call C startup code (no ANSI C context established yet!)
+        LDR  r7, =Startup_Init
+        BLX  r7
+        
+; Call system library
+        LDR  r5, pool_myaddr
+        SUB  r5, r5, 1          ; unset the low order bit
+myaddr:
+        MOV  r2, pc
+        SUB  r5, r2, r5         ; Now r5 contains picbase
+
+        MOV  r0, 0
+        MOV  fp, r0              ;* No previous frame *
+
+        LDR  r0, pool_baseptrs
+        ADD  r0, r0, r5 ;* Add in picbase *
+        MOV  r1, 0 ;* Clear argc reg *
+        MOV  r2, 0 ;* Clear argv reg *
+        MOV  r3, 0 ;* Clear envp reg *
+        MOV  r4, 0 ;* Clear global regs *
+        MOV  r5, 0
+        MOV  r6, 0
+
+        LDR  r7, =__ghs_ind_crt0
+        BLX  r7
+
+; Note: Control flow does not necessarily return here.
+; On some tool-chains (e.g. IAR) control flow will never return from
+; the system library.
+Cy_Main_Exited:
+        B    Cy_Main_Exited
+
+        .endf _start
+
+;************************************************************************
+;* Literal pool
+;************************************************************************
+
+        .align 4
+        
+        .ltorg
+
+        .align 4
+        
+Cy_u32StartupStackStartAddress:
+        DCD (__ghsend_stack - (#STARTUP_STACK_SIZE_DOUBLE_WORDS * 8))
+        .endo Cy_u32StartupStackStartAddress
+
+Cy_u32StartupStackEndAddress:
+        DCD (__ghsend_stack - 1)
+        .endo Cy_u32StartupStackEndAddress
+
+pool_myaddr:
+        DCD (myaddr + 4)
+        .endo pool_myaddr
+
+pool_baseptrs:
+        DCD baseptrs
+        .endo pool_baseptrs
+
+baseptrs:
+        DCD 1 ;* baseptrs version number *
+        DCD __ghsbegin_picbase
+        DCD __ghsbegin_robase
+        DCD __ghsbegin_pidbase
+        DCD __ghs_rambootcodestart
+        DCD __ghs_rambootcodeend
+        DCD __ghs_rombootcodestart
+        DCD __ghs_rombootcodeend
+        .endo baseptrs
+
+
+;************************************************************************
+;* Default and weak implementation of interrupt handlers
+;************************************************************************
+
+        .weak NMI_Handler
+        .text
+NMI_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak Cy_SysLib_FaultHandler
+        .text
+Cy_SysLib_FaultHandler:
+        B .
+
+;-----------------------------------------
+
+        .weak HardFault_Handler
+        .text
+HardFault_Handler:
+        MOVS r0, #4
+        MOV  r1, lr
+        TST  r0, r1
+        BEQ  L_MSP
+        MRS  r0, PSP
+        B    L_API_call
+L_MSP:
+        MRS  r0, MSP
+L_API_call:
+        ; Storing LR content for Creator call stack trace
+        PUSH {lr}
+        LDR  r1, =Cy_SysLib_FaultHandler
+        BLX  r1
+        POP  {pc}
+
+        .align 4
+
+;-----------------------------------------
+
+        .import Cy_SysLib_SvcHandler
+        .weak SVC_Handler
+        .text
+SVC_Handler:
+        MOVS r0, #4
+        MOV  r1, lr
+        TST  r0, r1
+        BEQ  L_SVC_MSP
+        MRS  r0, PSP
+L_SVC_MSP:
+        MRS  r0, MSP
+        ; Storing LR content for Creator call stack trace
+        PUSH {lr}
+        LDR  r1, =Cy_SysLib_SvcHandler
+        BLX  r1
+        POP  {pc}
+        .align 4
+
+;-----------------------------------------
+
+        .weak PendSV_Handler
+        .text
+PendSV_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak SysTick_Handler
+        .text
+SysTick_Handler:
+        B .
+
+;-----------------------------------------
+
+
+        ; External interrupts
+        ; Traveo II CPU User Interrupts 0-7 handlers are defined in the project interrupt mapping file
+        ; Traveo II CPU User Interrupts 8-15 can only be used as SW interrupts and need to be defined by user (weak implementation provided below)
+
+
+        .weak CpuUserInt8_Handler
+        .text
+CpuUserInt8_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak CpuUserInt9_Handler
+        .text
+CpuUserInt9_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak CpuUserInt10_Handler
+        .text
+CpuUserInt10_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak CpuUserInt11_Handler
+        .text
+CpuUserInt11_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak CpuUserInt12_Handler
+        .text
+CpuUserInt12_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak CpuUserInt13_Handler
+        .text
+CpuUserInt13_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak CpuUserInt14_Handler
+        .text
+CpuUserInt14_Handler:
+        B .
+
+;-----------------------------------------
+
+        .weak CpuUserInt15_Handler
+        .text
+CpuUserInt15_Handler:
+        B .
+
+;-----------------------------------------
+
+
+;************************************************************************
+;* File end
+;************************************************************************
+
+        END
+
+
