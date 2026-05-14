@@ -380,10 +380,10 @@ extern float current_actual_speed;
 //    作用：控制舵机的转动速度，使其平滑地达到目标位置，避免突然动作
 // ----------------------------------------------------------------------------
 // 当前Core0调度目标周期：9ms
-#define SERVO_SPEED_KP  -5.0f   // [比例控制] 控制舵机速度响应的快慢
+#define SERVO_SPEED_KP  -4.5f   // [比例控制] 控制舵机速度响应的快慢
 #define SERVO_SPEED_KI  0.0f   // [积分控制] 
 // 周期换算：20ms -> 9ms，ratio=0.45，Kd /= 0.45
-#define SERVO_SPEED_KD  -0.1778f   // [微分控制]
+#define SERVO_SPEED_KD  -0.17f   // [微分控制]
 #define SERVO_SPEED_MAX_I  100000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  1000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
@@ -536,11 +536,19 @@ extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 extern volatile float target_speed_set;
 extern uint8_t roll_balance_enable; // rolling环使能开关
 extern volatile uint8 g_brake_active;
+extern volatile uint8 g_reverse_brake_active;
 
 // 全局刹车前馈参数
-#define BRAKE_SPEED_DEADBAND     5.0f     /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
+#define BRAKE_SPEED_DEADBAND     15.0f     /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
 #define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
+#define BRAKE_ZERO_TARGET_MAX    10.0f    /* 目标速度绝对值低于该值时，允许进入零速停车迟滞区 */
+#define BRAKE_ZERO_HOLD_ENTER    18.0f    /* 刹停过程中速度低于该值时进入零速迟滞区并清空刹车前馈 */
+#define BRAKE_ZERO_HOLD_EXIT     30.0f    /* 零速迟滞区退出阈值；只有速度重新明显离开零区才允许再次建压 */
 #define BRAKE_ERR_MIN            40.0f    /* 启用比例判定前的最小绝对速度差，避免速度很小时比例被放大误判 */
+#define BRAKE_ERR_MED_MIN        80.0f    /* 中刹最小绝对速度差，避免低速小幅速度差仅因比例大而升级 */
+#define BRAKE_ERR_HEAVY_MIN      150.0f   /* 重刹最小绝对速度差，必须有足够大的真实降速需求 */
+#define BRAKE_MED_SPEED_TH       120.0f   /* 普通减速进入中刹的当前速度下限 */
+#define BRAKE_HEAVY_SPEED_TH     220.0f   /* 普通减速进入重刹的当前速度下限 */
 #define BRAKE_TARGET_DECEL_MIN   30.0f    /* 目标速度下降超过该值才认为是主动减速指令，避免稳态微调触发前馈刹车 */
 #define BRAKE_CH5_LIGHT_SPEED    80.0f    /* CH5 急停低于该速度只给轻刹，避免低速急停过猛 */
 #define BRAKE_CH5_MED_SPEED      220.0f   /* CH5 急停低于该速度给中刹，高于该速度才给重刹 */

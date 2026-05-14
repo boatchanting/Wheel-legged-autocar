@@ -33,7 +33,7 @@ static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
 static uint8 brake_lockout = 0;     // 重置屏蔽锁
-
+static uint8 brake_zero_hold = 0;
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
 {
     float abs_speed = fabsf(actual_speed);
@@ -46,6 +46,19 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     float brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
     uint8 brake_level = 0;
     uint8 target_decel_cmd = 0U;
+    uint8 decel_request = 0U;
+
+    if (brake_zero_hold)
+    {
+        if ((abs_target <= BRAKE_ZERO_TARGET_MAX) && (abs_speed <= BRAKE_ZERO_HOLD_EXIT))
+        {
+            brake_ff_target = 0.0f;
+            brake_ff_pwm = 0.0f;
+            brake_last_target_speed = target_speed;
+            return 0.0f;
+        }
+        brake_zero_hold = 0U;
+    }
 
     if ((target_speed * brake_last_target_speed < 0.0f) ||
         (abs_target + BRAKE_TARGET_DECEL_MIN < abs_last_target))
@@ -56,10 +69,10 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     // 1. 正常的刹车条件判断
     if (motor_enable && (jump_flag == 0U) && (abs_speed > BRAKE_SPEED_DEADBAND))
     {
-        uint8 decel_request = (uint8)((actual_speed * target_speed <= 0.0f) || (abs_target < abs_speed));
+        decel_request = (uint8)((actual_speed * target_speed <= 0.0f) || (abs_target < abs_speed));
         if (decel_request)
         {
-            if (g_brake_active)
+            if (g_brake_active || g_reverse_brake_active)
             {
                 if (abs_speed < BRAKE_CH5_LIGHT_SPEED) brake_level = 1U;
                 else if (abs_speed < BRAKE_CH5_MED_SPEED) brake_level = 2U;
@@ -68,13 +81,36 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
             else
             {
                 err_ratio = abs_err / abs_speed;
-                if ((abs_err >= BRAKE_ERR_MIN) && (err_ratio >= BRAKE_RATIO_HEAVY)) brake_level = 3U;
-                else if (target_decel_cmd && (abs_err >= BRAKE_ERR_MIN) && (err_ratio >= BRAKE_RATIO_MED)) brake_level = 2U;
-                else if (target_decel_cmd && (abs_err >= BRAKE_ERR_MIN) && (err_ratio >= BRAKE_RATIO_LIGHT)) brake_level = 1U;
+                if (target_decel_cmd && (abs_err >= BRAKE_ERR_MIN) && (err_ratio >= BRAKE_RATIO_LIGHT))
+                {
+                    brake_level = 1U;
+                }
+                if (target_decel_cmd &&
+                    (abs_speed >= BRAKE_MED_SPEED_TH) &&
+                    (abs_err >= BRAKE_ERR_MED_MIN) &&
+                    (err_ratio >= BRAKE_RATIO_MED))
+                {
+                    brake_level = 2U;
+                }
+                if ((abs_speed >= BRAKE_HEAVY_SPEED_TH) &&
+                    (abs_err >= BRAKE_ERR_HEAVY_MIN) &&
+                    (err_ratio >= BRAKE_RATIO_HEAVY))
+                {
+                    brake_level = 3U;
+                }
             }
 
-            if ((g_brake_active == 0U) && (abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1U)) brake_level = 1U;
+            if ((g_brake_active == 0U) && (g_reverse_brake_active == 0U) && (abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1U)) brake_level = 1U;
         }
+    }
+
+    if (decel_request && (abs_target <= BRAKE_ZERO_TARGET_MAX) && (abs_speed <= BRAKE_ZERO_HOLD_ENTER))
+    {
+        brake_zero_hold = 1U;
+        brake_ff_target = 0.0f;
+        brake_ff_pwm = 0.0f;
+        brake_last_target_speed = target_speed;
+        return 0.0f;
     }
 
     if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
@@ -108,6 +144,7 @@ void Brake_Feedforward_Reset(void)
     brake_ff_pwm = 0.0f;
     brake_ff_target = 0.0f;
     brake_last_target_speed = 0.0f;
+    brake_zero_hold = 0U;
     brake_lockout = 1; // 【核心】上锁！无视接下来外部的强制刹车条件，直到外部条件自然释放为止
 }
 
