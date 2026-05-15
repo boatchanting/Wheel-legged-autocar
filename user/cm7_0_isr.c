@@ -379,6 +379,47 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
             // 2.2 全局刹车前馈
             Brake_Feedforward_Update(target_speed_set, current_actual_speed, g_motor_enable, jump_flag);
+            {
+                uint8 accel_ff_replay_running = 0U;
+                uint8 accel_ff_inhibit = 0U;
+                float brake_pwm_now = Brake_Feedforward_GetPwm();
+
+                if (g_replay_state == REPLAY_RUNNING)
+                {
+                    accel_ff_replay_running = 1U;
+                }
+                #if GNSS_NAV == 1
+                if (g_gps_replay_state == REPLAY_RUNNING)
+                {
+                    accel_ff_replay_running = 1U;
+                }
+                #endif
+
+                if ((g_is_push_mode == 1U) ||
+                    (g_brake_active != 0U) ||
+                    (g_reverse_brake_active != 0U) ||
+                    (brake_pwm_now != 0.0f) ||
+                    (g_special_action_trigger != 0U) ||
+                    (BumpyRoad_Is_Active() != 0U) ||
+                    (VisionThreeStageControl_IsActive() != 0U) ||
+                    (VisionBridgeTask_IsActive() != 0U) ||
+                    (Bridge_Test_Triple_SingleSide_Is_Active()) ||
+                    (g_pvc_control_enable != 0U)
+                    #if GNSS_NAV == 1
+                    || (g_gps_special_action_trigger != 0U)
+                    #endif
+                   )
+                {
+                    accel_ff_inhibit = 1U;
+                }
+
+                Accel_Feedforward_Update(target_speed_set,
+                                         current_actual_speed,
+                                         g_motor_enable,
+                                         jump_flag,
+                                         accel_ff_replay_running,
+                                         accel_ff_inhibit);
+            }
 
 
             // 2.3 计算目标速度调整分量
@@ -396,6 +437,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         pid_servo_speed.output = 0;
 
         Brake_Feedforward_Reset();
+        Accel_Feedforward_Reset();
     }
     // ==========================================================
     // 步骤 2: 转向角度环 (6ms，现改为3ms) - 外环
@@ -584,6 +626,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 gyro_loop_out = 0;          // 清零平衡PWM
                 turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
                 PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
+                Accel_Feedforward_Reset();//【accel_ff】倒地保护时清空加速前馈
                 // 彻底关闭电机使能，可以取消下面这行的注释
                 //g_motor_enable = 0; 
                 NavReplay_Stop();//【nav】复现停止
@@ -607,6 +650,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // }
             NavReplay_Stop();//【nav】复现停止
             Brake_Feedforward_Reset();//【brake】锁定刹车关闭
+            Accel_Feedforward_Reset();//【accel_ff】锁定加速前馈关闭
             #if GNSS_NAV == 1
                 GpsNavReplay_Stop();//【gnss】复现停止
             #endif
@@ -621,8 +665,42 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
         // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
         float brake_pwm = Brake_Feedforward_GetPwm();
-        int16_t pwm_left  = (int16_t)( gyro_loop_out + brake_pwm + turn_gyro_loop_out);
-        int16_t pwm_right = (int16_t)(-gyro_loop_out - brake_pwm + turn_gyro_loop_out);
+        float accel_ff_pwm = Accel_Feedforward_GetPwm();
+        uint8 accel_ff_replay_running_fast = 0U;
+        if (g_replay_state == REPLAY_RUNNING)
+        {
+            accel_ff_replay_running_fast = 1U;
+        }
+        #if GNSS_NAV == 1
+        if (g_gps_replay_state == REPLAY_RUNNING)
+        {
+            accel_ff_replay_running_fast = 1U;
+        }
+        #endif
+        if ((accel_ff_replay_running_fast == 0U) ||
+            (g_motor_enable == 0) ||
+            (jump_flag != 0) ||
+            (g_is_push_mode == 1U) ||
+            (g_brake_active != 0U) ||
+            (g_reverse_brake_active != 0U) ||
+            (brake_pwm != 0.0f) ||
+            (g_special_action_trigger != 0U) ||
+            (BumpyRoad_Is_Active() != 0U) ||
+            (VisionThreeStageControl_IsActive() != 0U) ||
+            (VisionBridgeTask_IsActive() != 0U) ||
+            (Bridge_Test_Triple_SingleSide_Is_Active()) ||
+            (g_pvc_control_enable != 0U)
+            #if GNSS_NAV == 1
+            || (g_gps_special_action_trigger != 0U)
+            #endif
+           )
+        {
+            Accel_Feedforward_Reset();
+            accel_ff_pwm = 0.0f;
+        }
+        float drive_ff_pwm = brake_pwm + accel_ff_pwm;
+        int16_t pwm_left  = (int16_t)( gyro_loop_out + drive_ff_pwm + turn_gyro_loop_out);
+        int16_t pwm_right = (int16_t)(-gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out);
 
         // 统一限幅（防止叠加后超限）
         pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
@@ -731,11 +809,13 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     if ((robot_ctrl.brake_active != 0U) && (g_replay_state == REPLAY_RUNNING))
     {
         NavReplay_Stop();//【nav】复现停止
+        Accel_Feedforward_Reset();//【accel_ff】遥控刹车停止复刻时清空加速前馈
     }
     #if GNSS_NAV == 1
     if ((robot_ctrl.brake_active != 0U) && (g_gps_replay_state == REPLAY_RUNNING))
     {
         GpsNavReplay_Stop();//【gnss】复现停止
+        Accel_Feedforward_Reset();//【accel_ff】遥控刹车停止 GNSS 复刻时清空加速前馈
     }
     #endif
 
@@ -771,6 +851,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     // [可选: 保护] 如果处于未使能状态，强制目标速度归零，防止后台积分
     if(g_motor_enable == 0) {
         target_speed_set = 0.0f;
+        Accel_Feedforward_Reset();//【accel_ff】关机/急停时清空加速前馈
         // 同时清除遥控器内部积分，防止再次使能时车突然冲出去
         robot_ctrl.target_speed = 0.0f; 
     }

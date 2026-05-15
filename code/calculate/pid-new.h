@@ -1,6 +1,7 @@
 #ifndef CODE__PID_NEW_H__
 #define CODE__PID_NEW_H__
 #include "zf_common_headfile.h"
+#include "../config/sys_options.h"//系统配置开关
 #include "../config/car_select.h"//根据小车选择配置不同的PID参数
 #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
 // *************************** 【学习板小车】pid参数定义开始 ***************************
@@ -566,6 +567,18 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
 
+// 全局加速前馈参数
+#define ACCEL_FF_ERR_MIN         45.0f    /* 目标速度绝对值比当前速度绝对值至少大这么多，才认为速度没跟上 */
+#define ACCEL_FF_TARGET_STEP_MIN 30.0f    /* 目标速度绝对值相对上一周期至少增加这么多，才认为是急加速请求 */
+#define ACCEL_FF_SPEED_DEADBAND  15.0f    /* 目标/实际速度低于该值时视为低速死区，避免零点噪声误触发 */
+#define ACCEL_FF_GAIN            3.0f     /* 加速前馈增益，输出约为 gain * 速度缺口 */
+#define ACCEL_FF_MAX             1200.0f  /* 加速前馈 PWM 最大幅值，限制起步/提速时的额外力矩 */
+#define ACCEL_FF_RAMP_UP         160.0f   /* 加速前馈每个 9ms 更新周期允许增加的最大 PWM */
+#define ACCEL_FF_RAMP_DOWN       500.0f   /* 加速前馈退出时每个 9ms 更新周期允许释放的最大 PWM */
+#define ACCEL_FF_START_WINDOW_MS 350U     /* 复刻刚进入 RUNNING 后允许起步前馈的时间窗口 */
+#define ACCEL_FF_UPDATE_PERIOD_MS 9U      /* Accel_Feedforward_Update() 当前在 9ms 速度控制段调用 */
+#define ACCEL_FF_SIGN            1.0f     /* 前馈符号校正；若实车表现为减速，先改为 -1.0f，不要加大增益 */
+
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
 float Float_Constrain(float val, float min, float max);//限幅函数
@@ -580,6 +593,9 @@ float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡�
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
 void Brake_Feedforward_Reset(void);
 float Brake_Feedforward_GetPwm(void);
+float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag, uint8 replay_running, uint8 inhibit_accel);
+void Accel_Feedforward_Reset(void);
+float Accel_Feedforward_GetPwm(void);
 
 // 辅助宏：取绝对值
 #define MY_ABS(x) ((x) > 0 ? (x) : -(x))

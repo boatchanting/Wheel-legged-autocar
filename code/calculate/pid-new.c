@@ -34,6 +34,19 @@ static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
 static uint8 brake_lockout = 0;     // 重置屏蔽锁
 static uint8 brake_zero_hold = 0;
+static float accel_ff_pwm = 0.0f;              // 当前实际输出的加速前馈 PWM，经过斜率限制后用于最终融合
+static float accel_ff_target = 0.0f;           // 本周期期望加速前馈 PWM，先限幅再由 accel_ff_pwm 追踪
+static float accel_last_target_speed = 0.0f;   // 上一次 9ms 更新时的目标速度，用于判断目标速度是否明显抬升
+static uint16 accel_start_window_ticks = 0U;   // 复刻刚进入 RUNNING 后的起步窗口剩余 tick 数，每 tick 约 9ms
+static uint8 accel_last_replay_running = 0U;   // 上一次更新时复刻是否运行，用于检测 REPLAY_RUNNING 上升沿
+
+static void Accel_Feedforward_ClearOutput(void)
+{
+    accel_ff_pwm = 0.0f;
+    accel_ff_target = 0.0f;
+    accel_start_window_ticks = 0U;
+}
+
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
 {
     float abs_speed = fabsf(actual_speed);
@@ -151,6 +164,124 @@ void Brake_Feedforward_Reset(void)
 float Brake_Feedforward_GetPwm(void)
 {
     return brake_ff_pwm;
+}
+
+float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag, uint8 replay_running, uint8 inhibit_accel)
+{
+#if ACCEL_FF_ENABLE
+    float abs_target = fabsf(target_speed);
+    float abs_speed = fabsf(actual_speed);
+    float abs_last_target = fabsf(accel_last_target_speed);
+    uint8 start_window_active = 0U;
+    uint8 target_step_up = 0U;
+    uint8 speed_lag = 0U;
+    uint8 same_direction_or_start = 0U;
+    uint8 accel_request = 0U;
+
+    if ((motor_enable == 0U) ||
+        (jump_flag != 0U) ||
+        (replay_running == 0U) ||
+        (abs_target <= ACCEL_FF_SPEED_DEADBAND) ||
+        (inhibit_accel != 0U) ||
+        (g_brake_active != 0U) ||
+        (g_reverse_brake_active != 0U))
+    {
+        Accel_Feedforward_ClearOutput();
+        accel_last_target_speed = target_speed;
+        accel_last_replay_running = replay_running ? 1U : 0U;
+        return 0.0f;
+    }
+
+    if ((replay_running != 0U) && (accel_last_replay_running == 0U))
+    {
+        accel_start_window_ticks = (uint16)((ACCEL_FF_START_WINDOW_MS + ACCEL_FF_UPDATE_PERIOD_MS - 1U) /
+                                           ACCEL_FF_UPDATE_PERIOD_MS);
+    }
+    accel_last_replay_running = replay_running ? 1U : 0U;
+
+    start_window_active = (uint8)(accel_start_window_ticks > 0U);
+    if (accel_start_window_ticks > 0U)
+    {
+        accel_start_window_ticks--;
+    }
+
+    if (abs_target > ACCEL_FF_SPEED_DEADBAND)
+    {
+        if (((target_speed * accel_last_target_speed) > 0.0f) &&
+            ((abs_target - abs_last_target) >= ACCEL_FF_TARGET_STEP_MIN))
+        {
+            target_step_up = 1U;
+        }
+        else if ((abs_last_target <= ACCEL_FF_SPEED_DEADBAND) &&
+                 (abs_target >= ACCEL_FF_TARGET_STEP_MIN))
+        {
+            target_step_up = 1U;
+        }
+    }
+
+    speed_lag = (uint8)(abs_target > (abs_speed + ACCEL_FF_ERR_MIN));
+    same_direction_or_start = (uint8)(((target_speed * actual_speed) > 0.0f) ||
+                                      (abs_speed <= ACCEL_FF_SPEED_DEADBAND));
+    accel_request = (uint8)((abs_target > ACCEL_FF_SPEED_DEADBAND) &&
+                            (same_direction_or_start != 0U) &&
+                            (speed_lag != 0U) &&
+                            ((target_step_up != 0U) || (start_window_active != 0U)));
+
+    if (accel_request != 0U)
+    {
+        float speed_deficit = abs_target - abs_speed;
+        float target_dir = (target_speed >= 0.0f) ? 1.0f : -1.0f;
+        accel_ff_target = Float_Constrain(ACCEL_FF_SIGN * ACCEL_FF_GAIN * speed_deficit * target_dir,
+                                          -ACCEL_FF_MAX,
+                                          ACCEL_FF_MAX);
+    }
+    else
+    {
+        accel_ff_target = 0.0f;
+    }
+
+    {
+        float ramp_limit = ACCEL_FF_RAMP_UP;
+        if ((accel_ff_target == 0.0f) ||
+            ((accel_ff_pwm * accel_ff_target) < 0.0f) ||
+            (fabsf(accel_ff_target) < fabsf(accel_ff_pwm)))
+        {
+            ramp_limit = ACCEL_FF_RAMP_DOWN;
+        }
+        accel_ff_pwm += Float_Constrain(accel_ff_target - accel_ff_pwm, -ramp_limit, ramp_limit);
+    }
+
+    if ((accel_ff_target == 0.0f) && (fabsf(accel_ff_pwm) < 1.0f))
+    {
+        accel_ff_pwm = 0.0f;
+    }
+
+    accel_last_target_speed = target_speed;
+    return accel_ff_pwm;
+#else
+    (void)target_speed;
+    (void)actual_speed;
+    (void)motor_enable;
+    (void)jump_flag;
+    (void)replay_running;
+    (void)inhibit_accel;
+    Accel_Feedforward_ClearOutput();
+    accel_last_target_speed = 0.0f;
+    accel_last_replay_running = 0U;
+    return 0.0f;
+#endif
+}
+
+void Accel_Feedforward_Reset(void)
+{
+    Accel_Feedforward_ClearOutput();
+    accel_last_target_speed = 0.0f;
+    accel_last_replay_running = 0U;
+}
+
+float Accel_Feedforward_GetPwm(void)
+{
+    return accel_ff_pwm;
 }
 
 // ============================================================================
@@ -283,6 +414,7 @@ void PID_Param_Init(void) {
 
     // 重置目标速度
     target_speed_set = 0.0f;
+    Accel_Feedforward_Reset();
 }
 
 /**
@@ -396,6 +528,7 @@ void PID_Data_Reset(void) {
 
     // 重置目标速度
     target_speed_set = 0.0f;
+    Accel_Feedforward_Reset();
 }
 
 
