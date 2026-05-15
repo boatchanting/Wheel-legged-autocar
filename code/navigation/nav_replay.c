@@ -1274,7 +1274,7 @@ static float GpsNav_GetCurrentHeadingDeg(void)
     {
         float initial_heading = 0.0f;
 #if IMU_CATEGORY == 3
-        initial_heading = 226.0f;//heading
+        initial_heading = 358.0f;//heading
 #else
         initial_heading = gnss.direction;
 #endif
