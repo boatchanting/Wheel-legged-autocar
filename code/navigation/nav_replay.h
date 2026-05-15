@@ -13,11 +13,16 @@
 
 #define GPS_NAV_MIN_SAT_USED              4U
 
-// === Pure Pursuit 极简丝滑版配置 ===
-// 前瞻距离（决定过弯丝滑度，数值越大越喜欢切内道，2500.0f 表示看向前方 2.5 米）
-#define GPS_NAV_LOOKAHEAD_DIST            1000.0f 
 #define GPS_NAV_DIST_ARRIVE               500.0f   // 仅用于终点停车的判定距离 (0.5米)
 #define GPS_NAV_DIST_NEAR                 2200.0f  // 速度控制的远近临界值
+// ================= 分段状态机配置 =================
+#define NAV_POINT_FLAG_CURVE              99U
+
+#define GPS_NAV_LOOKAHEAD_STRAIGHT        3500.0f
+#define GPS_NAV_LOOKAHEAD_CURVE           1000.0f
+
+#define GPS_NAV_SPEED_FAST_STRAIGHT       -700.0f
+#define GPS_NAV_SPEED_SLOW_CURVE          -120.0f
 
 #define GPS_NAV_HEADING_OFFSET_DEG        0.0f
 #define GPS_NAV_SPEED_FAST                -600.0f

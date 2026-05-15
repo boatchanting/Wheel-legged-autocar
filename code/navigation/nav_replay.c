@@ -1231,6 +1231,14 @@ void NavReplay_Process(void)
 //         // Motor_Control(target_speed_set, err_degree);
 
 #if GNSS_NAV == 1
+typedef enum
+{
+    NAV_SEG_STRAIGHT = 0,
+    NAV_SEG_CURVE
+} NavSegState_e;
+
+static NavSegState_e g_nav_seg_state = NAV_SEG_STRAIGHT;
+
 NavReplayState_e g_gps_replay_state = REPLAY_IDLE;
 uint8 g_gps_current_point_type = NAV_POINT_PATH;
 uint8 g_gps_special_action_trigger = 0;
@@ -1331,6 +1339,7 @@ void GpsNavReplay_Start(void)
     g_gps_target_idx = 0U;
     g_gps_special_action_trigger = 0U;
     g_gps_current_point_type = NAV_POINT_PATH;
+    g_nav_seg_state = NAV_SEG_STRAIGHT;
     g_gps_replay_state = REPLAY_RUNNING;
     target_speed_set = GPS_NAV_SPEED_STOP;
     err_degree = 0.0f;
@@ -1370,7 +1379,9 @@ void GpsNavReplay_Process(void)
     // 1. 状态与 GPS 有效性校验
     if (g_gps_replay_state != REPLAY_RUNNING) return;
 
-    if (!gnss_trans.is_valid || !gnss_trans.is_origin_set || gnss.state != 1U || gnss.satellite_used < GPS_NAV_MIN_SAT_USED)
+    if (!gnss_trans.is_valid || !gnss_trans.is_origin_set || 
+        gnss.state != 1U || 
+        gnss.satellite_used < GPS_NAV_MIN_SAT_USED)
     {
         target_speed_set = GPS_NAV_SPEED_STOP;
         err_degree = 0.0f;
@@ -1413,6 +1424,19 @@ void GpsNavReplay_Process(void)
     }
     else
     {
+        // === 分段状态机更新 ===
+        // 如果当前目标点是 99，则进入曲线段（进入后锁定）
+        if (nav_ram_data.points[g_gps_target_idx].point_type == NAV_POINT_FLAG_CURVE)
+        {
+            g_nav_seg_state = NAV_SEG_CURVE;
+        }
+
+        // 根据状态选择前瞻距离
+        float lookahead_dist =
+            (g_nav_seg_state == NAV_SEG_CURVE)
+            ? GPS_NAV_LOOKAHEAD_CURVE
+            : GPS_NAV_LOOKAHEAD_STRAIGHT;
+
         // === 3. 极简 Pure Pursuit：只寻目标，绝不回头 ===
         uint8 skips = 0;
         while (g_gps_target_idx < nav_ram_data.point_count - 1)
@@ -1436,8 +1460,8 @@ void GpsNavReplay_Process(void)
                 if (len_sq > 0.001f && dot >= len_sq) is_passed = 1;
             }
 
-            // 核心逻辑：如果点在 2.5米 圈内，或者已经被甩在身后，立刻抛弃它！吃下一个！
-            if (dist_current < GPS_NAV_LOOKAHEAD_DIST || is_passed)
+            // 核心逻辑：如果点在当前前瞻圈内，或者已经被甩在身后，立刻抛弃它！吃下一个！
+            if (dist_current < lookahead_dist || is_passed)
             {
                 g_gps_target_idx++;
                 skips++;
@@ -1482,11 +1506,15 @@ void GpsNavReplay_Process(void)
     // === 5. 动态速度控制（提高保底动力防卡死） ===
     float dist_to_target = CalcDistance(cx, cy, target_x, target_y);
     float base_speed;
-    
-    if (dist_to_target > GPS_NAV_DIST_NEAR && abs_err < 10.0f) {
-        base_speed = GPS_NAV_SPEED_FAST; 
-    } else {
-        base_speed = GPS_NAV_SPEED_SLOW; 
+
+    // 分段基础速度
+    if (g_nav_seg_state == NAV_SEG_STRAIGHT)
+    {
+        base_speed = GPS_NAV_SPEED_FAST_STRAIGHT;
+    }
+    else
+    {
+        base_speed = GPS_NAV_SPEED_SLOW_CURVE;
     }
 
     // 弯道动态降速
