@@ -34,7 +34,7 @@
 // ========================= 控制参数宏定义 =========================
 // 距离阈值 (单位: mm)
 
-#define NAV_DIST_ARRIVE         20.0f   // 到达判定阈值
+#define NAV_DIST_ARRIVE         100.0f   // 到达判定阈值
 #define NAV_YAW_TOLERANCE        1.0f    //转向阈值，先转再走
 #define NAV_START_HEADING_TOLERANCE 0.3f // 复刻起步前，绝对航向对齐阈值(度)，这个需要使用地磁计航向角，暂时不用调【优化点】
 

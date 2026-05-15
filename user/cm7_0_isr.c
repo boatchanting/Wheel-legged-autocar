@@ -38,6 +38,7 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
 #include "plan/bumpy_road.h"
+#include "navigation/cf_fusion.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
@@ -69,6 +70,9 @@ volatile struct {
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
+#if GNSS_NAV == 2
+static uint8_t s_cf_record_reset_done = 1U;
+#endif
 uint32_t loop_counter = 0;
 
 #if IMU_REFRESH_TEST_ENABLE
@@ -250,6 +254,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     pit_isr_flag_clear(PIT_CH0);
     loop_counter++;
 
+#if GNSS_NAV == 2
+    if (g_nav_start_recording)
+    {
+        s_cf_record_reset_done = 0U;
+    }
+    else if (g_nav_recording && !s_cf_record_reset_done)
+    {
+        Gnss_Transform_Reset_Origin();
+        CF_Fusion_ResetLocalFrame(CF_MANUAL_LAUNCH_HEADING_DEG);
+        s_cf_record_reset_done = 1U;
+    }
+#endif
+
     if ((loop_counter % 2U) == 0U)
     {
         VisionIpc_Core0_Update_2ms();
@@ -331,7 +348,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
     }
 
-    #if GNSS_NAV == 1
+    #if GNSS_NAV == 1 || GNSS_NAV == 2
     //【gnss.1】GNSS定位更新
     if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
@@ -339,6 +356,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             gnss_data_parse();           //开始解析数据
             Gnss_Transform_Update();//gnss转换为高斯克吕格投影
         } // GNSS更新
+    }
+    #endif
+
+    #if GNSS_NAV == 2
+    if (loop_counter % 10 == 2 && g_yaw_initialized)
+    {
+        CF_Fusion_Update();
     }
     #endif
 
@@ -748,7 +772,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
-    #if GNSS_NAV == 0
+    #if GNSS_NAV == 0 || GNSS_NAV == 2
         if ((g_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 

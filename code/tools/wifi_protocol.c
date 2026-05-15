@@ -1,5 +1,6 @@
 #include "wifi_protocol.h"
 #include "menu.h"
+#include "../navigation/cf_fusion.h"
 #include "../navigation/gnss_transform.h"
 
 // ------------------------------------------------------------------
@@ -399,6 +400,12 @@ void wifi_protocol_send_data(void)
     write_float_value(gnss_trans.y * 1000.0f);
     write_u8(gnss_trans.is_valid);
     write_u8(gnss_trans.is_origin_set);
+
+    // F. complementary-fusion XY for CF marker/replay (unit: mm)
+    write_float_value(cf_fusion.x);
+    write_float_value(cf_fusion.y);
+    write_u8(cf_fusion.ready);
+    write_u8(cf_fusion.gnss_ready);
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;

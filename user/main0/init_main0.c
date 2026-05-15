@@ -1,4 +1,5 @@
 #include "main0/init_main0.h"
+#include "navigation/cf_fusion.h"
 
 void Main0_Init(void)
 {
@@ -170,6 +171,7 @@ InertialNav_Init();//惯性导航初始化
 
 gnss_init(TAU1201);//gnss导航初始化
 Gnss_Transform_Init();//GNSS经纬度投影为相对平面坐标，供纯GPS打点/复刻使用
+CF_Fusion_Init();//互补滤波融合导航初始化
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;

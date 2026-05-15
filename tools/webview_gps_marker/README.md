@@ -25,6 +25,52 @@ python tools/webview_gps_marker/csv_to_gps_nav_table.py <你的csv路径>
 输出文件：
 - `code/navigation/gps_nav_replay_route_table.h`
 
+## 互补滤波打点上位机
+
+运行：
+
+```bash
+python tools/webview_gps_marker/cf_marker_host.py
+```
+
+功能：
+
+- 实时显示互补滤波输出的平面轨迹
+- 保留惯导上位机的自动打点、手动增删点、拖点、点类型编辑、开始发车
+- 导出 CSV：`total_count,start_heading,index,x,y,relative_yaw,heading,point_type`
+
+生成互补滤波静态点表：
+
+```bash
+python tools/webview_gps_marker/csv_to_cf_nav_table.py <你的csv路径>
+```
+
+不传路径时，会自动使用 `tools/webview_gps_marker/` 下最新的 `cf_mark_points_*.csv`。
+
+输出文件：
+- `code/navigation/cf_nav_replay_route_table.h`
+
+对 `cf_nav_replay_route_table.h` 做插值平滑：
+
+```bash
+python tools/webview_gps_marker/cf_chazhi.py
+```
+
+推荐流程：
+
+1. `python tools/webview_gps_marker/cf_marker_host.py`
+2. 导出 `cf_mark_points_*.csv`
+3. 在 `code/config/sys_options.h` 里手动填写 `CF_MANUAL_LAUNCH_HEADING_DEG`
+4. `python tools/webview_gps_marker/csv_to_cf_nav_table.py`
+5. `python tools/webview_gps_marker/cf_chazhi.py`
+
+说明：
+
+- `cf_chazhi.py` 会直接读取并回写 `code/navigation/cf_nav_replay_route_table.h`
+- 这一步适合在已经完成初始打点后，再做离线路径平滑与重采样
+- `csv_to_cf_nav_table.py` 和 `cf_chazhi.py` 都会读取 `CF_MANUAL_LAUNCH_HEADING_DEG`
+- CF 方案默认不依赖磁力计 `start_heading`，点表里写入的是手动配置的发车绝对航向
+
 ## 使用约束
 
 - 这套方案是“纯 GPS 打点 + 纯 GPS 复刻”，不依赖惯导坐标和陀螺航向。

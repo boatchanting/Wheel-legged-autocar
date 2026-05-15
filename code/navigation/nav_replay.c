@@ -1,7 +1,12 @@
 #include "nav_replay.h"
 #include "../common.h"
+#if GNSS_NAV == 2
+#include "cf_nav_replay_route_table.h"
+#else
 #include "nav_replay_route_table.h"
+#endif
 #include "gps_nav_replay_route_table.h"
+#include "cf_fusion.h"
 #include "gnss_transform.h"
 #include "../config/sys_options.h"
 #include "vision/vision_bridge_control.h"
@@ -28,6 +33,9 @@ static uint8 s_start_heading_stable_count = 0;
 
 #if CURRENT_NAV_PLAN == 1
 static void NavReplay_ResetProcessState(void);
+static float NavReplay_CurrentXmm(void);
+static float NavReplay_CurrentYmm(void);
+static float NavReplay_CurrentYawDeg(void);
 #endif
 
 // ========================= 辅助函数 =========================
@@ -103,6 +111,13 @@ void NavReplay_Start(void)
 
 #if CURRENT_NAV_PLAN == 1
     NavReplay_ResetProcessState();
+#if GNSS_NAV == 2
+    if (NAV_REPLAY_START_HEADING_VALID == 0)
+    {
+        Gnss_Transform_Reset_Origin();
+        CF_Fusion_ResetLocalFrame(CF_MANUAL_LAUNCH_HEADING_DEG);
+    }
+#endif
 #endif
     
     #if DEBUG_LOG_ENABLE
@@ -143,6 +158,33 @@ static float prev_curve_f = 0.0f;
 #define NAV_START_ALIGN_STABLE_COUNT 6U
 #endif
 
+static float NavReplay_CurrentXmm(void)
+{
+#if GNSS_NAV == 2
+    return cf_fusion.x;
+#else
+    return inertial_nav.x;
+#endif
+}
+
+static float NavReplay_CurrentYmm(void)
+{
+#if GNSS_NAV == 2
+    return cf_fusion.y;
+#else
+    return inertial_nav.y;
+#endif
+}
+
+static float NavReplay_CurrentYawDeg(void)
+{
+#if GNSS_NAV == 2
+    return cf_fusion.yaw;
+#else
+    return inertial_nav.relative_yaw;
+#endif
+}
+
 // 高效平方距离计算
 static inline float CalcDistanceSq(float x1, float y1, float x2, float y2) {
     float dx = x1 - x2;
@@ -169,7 +211,7 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
 
     // 只往后搜，不回头
     for (int i = current_idx; i <= end_idx; i++) {
-        float d_sq = CalcDistanceSq(inertial_nav.x, inertial_nav.y, 
+        float d_sq = CalcDistanceSq(NavReplay_CurrentXmm(), NavReplay_CurrentYmm(),
                                     nav_ram_data.points[i].x, nav_ram_data.points[i].y);
         if (d_sq < min_dist_sq) {
             min_dist_sq = d_sq;
@@ -220,7 +262,7 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
             float dx = nav_ram_data.points[far_idx].x - nav_ram_data.points[start_idx].x;
             float dy = nav_ram_data.points[far_idx].y - nav_ram_data.points[start_idx].y;
             float path_angle = -atan2f(dy, -dx) * 57.29578f;
-            float angle_diff = fabsf(NormalizeAngle(path_angle - inertial_nav.relative_yaw));
+            float angle_diff = fabsf(NormalizeAngle(path_angle - NavReplay_CurrentYawDeg()));
             
             float factor = (angle_diff / 60.0f) * (1.2f - 0.2f * step);
             if (factor > max_curve) max_curve = factor;
@@ -299,6 +341,15 @@ static void NavReplay_ResetLaunchPose(void)
     g_target_idx = 0;
     g_current_point_type = NAV_POINT_PATH;
     g_special_action_trigger = 0;
+
+#if GNSS_NAV == 2
+    Gnss_Transform_Reset_Origin();
+    #if NAV_REPLAY_START_HEADING_VALID == 0
+    CF_Fusion_ResetLocalFrame(CF_MANUAL_LAUNCH_HEADING_DEG);
+    #else
+    CF_Fusion_ResetLocalFrame(NAV_REPLAY_START_HEADING_DEG);
+    #endif
+#endif
 
     NavReplay_ResetProcessState();
     err_degree = 0.0f;
@@ -531,7 +582,8 @@ void NavReplay_Process(void)
         if (ld_scan_limit > nav_ram_data.point_count) ld_scan_limit = nav_ram_data.point_count;
 
         for (int i = base_idx; i < ld_scan_limit; i++) {
-            float d_sq = CalcDistanceSq(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
+            float d_sq = CalcDistanceSq(NavReplay_CurrentXmm(), NavReplay_CurrentYmm(),
+                                        nav_ram_data.points[i].x, nav_ram_data.points[i].y);
             tx = nav_ram_data.points[i].x; ty = nav_ram_data.points[i].y;
             if (d_sq >= lookahead_dist_sq || nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
                 break;
@@ -539,8 +591,8 @@ void NavReplay_Process(void)
         }
 
         // 计算航向
-        float target_yaw = -atan2f(ty - inertial_nav.y, -(tx - inertial_nav.x)) * 57.29578f;
-        float raw_err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
+        float target_yaw = -atan2f(ty - NavReplay_CurrentYmm(), -(tx - NavReplay_CurrentXmm())) * 57.29578f;
+        float raw_err_degree = NormalizeAngle(target_yaw - NavReplay_CurrentYawDeg());
 
         // 曲率计算与暴力速度规划
         float curve_f = Calculate_Upcoming_Curve_Factor(base_idx, CURVE_PREVIEW_DIST);

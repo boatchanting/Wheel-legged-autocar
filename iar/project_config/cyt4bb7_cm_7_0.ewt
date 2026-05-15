@@ -1467,6 +1467,12 @@
         <group>
             <name>navigation</name>
             <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\cf_fusion.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\cf_fusion.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\gnss_ram.h</name>
             </file>
             <file>
