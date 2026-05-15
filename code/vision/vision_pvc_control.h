@@ -94,10 +94,13 @@ extern "C" {
 
 /*
  * 【方向盘 PID 参数】
- * 公式：打角 = 横向偏差 * 比例(0.20) + 角度偏差 * 比例(0.50)
+ * 说明：把横向偏差+航向偏差先合成一个目标误差，再交给 PID 输出平滑打角。
  */
-#define VISION_PVC_CONTROL_K_LAT_DEG_PER_MM       (0.20f) /* 车子偏了 1 毫米，方向盘打 0.20 度 */
-#define VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG      (0.50f) /* 车头偏了 1 度，方向盘多打 0.50 度 */
+#define VISION_PVC_CONTROL_PID_KP                 (0.20f) /* 比例项：误差越大，打角越大 */
+#define VISION_PVC_CONTROL_PID_KI                 (0.002f)/* 积分项：消除长期小偏差 */
+#define VISION_PVC_CONTROL_PID_KD                 (0.12f) /* 微分项：抑制抖动 */
+#define VISION_PVC_CONTROL_PID_I_LIMIT            (120.0f)/* 积分限幅，防止积分饱和 */
+#define VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG      (0.50f) /* 车头偏了 1 度，方向盘误差补偿 */
 #define VISION_PVC_CONTROL_MAX_ERR_DEG            (18.0f) /* 方向盘最多打 18 度，防止打死翻车 */
 
 /* --- 3. 数据结构定义 --- */
@@ -134,6 +137,17 @@ typedef struct
     float speed_cmd;             /* 当前准备给电机下发的速度指令 */
 } vision_pvc_control_status_t;
 
+typedef struct
+{
+    float kp;                    /* 比例系数 */
+    float ki;                    /* 积分系数 */
+    float kd;                    /* 微分系数 */
+    float error;                 /* 当前误差 */
+    float last_error;            /* 上一次误差 */
+    float integral;              /* 误差积分 */
+    float output;                /* 当前输出 */
+} vision_pvc_pid_t;
+
 /* --- 4. 对外公开的全局变量与函数 --- */
 
 extern volatile vision_pvc_control_status_t g_vision_pvc_control_status; /* 仪表盘 */
@@ -146,6 +160,7 @@ extern volatile runtime_profiler_t g_vision_pvc_control_profiler;        /* 测�
  *   如果为 1：0 核接管车子，让车子自动开进 PVC 里。
  */
 extern volatile uint8 g_pvc_control_enable;
+extern volatile vision_pvc_pid_t g_vision_pvc_steer_pid;
 
 /**
  * @brief 初始化 PVC 控制模块

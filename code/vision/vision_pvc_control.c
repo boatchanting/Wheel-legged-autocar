@@ -18,6 +18,7 @@ extern int g_motor_enable;                  /* 电机有没有通电 */
 volatile vision_pvc_control_status_t g_vision_pvc_control_status = {0}; /* 状态仪表盘 */
 volatile runtime_profiler_t g_vision_pvc_control_profiler = {0};        /* 算力测速表 */
 volatile uint8 g_pvc_control_enable = VISION_PVC_CONTROL_DEFAULT_ACTIVE;/* 控制开关 */
+volatile vision_pvc_pid_t g_vision_pvc_steer_pid = {0};               /* PVC 方向 PID 控制器 */
 
 /* 内部用的影子变量，算完再一次性更新给外面看，防止数据看到一半变了 */
 static vision_pvc_control_status_t g_pvc_ctrl_shadow;
@@ -60,19 +61,34 @@ static float vision_pvc_constrain_f(float value, float min_value, float max_valu
  */
 static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
-    /* 横向偏差算出来的打角 */
-    const float lateral_deg =
-        (float)packet->pvc_lateral_mm * VISION_PVC_CONTROL_K_LAT_DEG_PER_MM;
-    /* 车头偏角算出来的打角（目前 1 核没算这个，传过来的是 0） */
-    const float yaw_deg =
-        ((float)packet->pvc_yaw_error_deg_x100 * 0.01f) * VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG;
-    /* 两个加起来，再乘上方向符号（如果反了可以变成负的） */
-    const float err = VISION_PVC_CONTROL_LATERAL_SIGN * (lateral_deg + yaw_deg);
+    float base_error;
+    float yaw_comp;
+    float derivative;
+    float output;
 
-    /* 限幅，别把舵机打坏了 */
-    return vision_pvc_constrain_f(err,
-                                  -VISION_PVC_CONTROL_MAX_ERR_DEG,
-                                  VISION_PVC_CONTROL_MAX_ERR_DEG);
+    /* 横向偏差作为主误差 */
+    base_error = VISION_PVC_CONTROL_LATERAL_SIGN * (float)packet->pvc_lateral_mm;
+    /* 车头偏角补偿到同一误差方向（当前 1 核如果没算，值就是 0） */
+    yaw_comp = VISION_PVC_CONTROL_LATERAL_SIGN *
+               (((float)packet->pvc_yaw_error_deg_x100 * 0.01f) * VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG);
+
+    g_vision_pvc_steer_pid.error = base_error + yaw_comp;
+    g_vision_pvc_steer_pid.integral += g_vision_pvc_steer_pid.error;
+    g_vision_pvc_steer_pid.integral = vision_pvc_constrain_f(g_vision_pvc_steer_pid.integral,
+                                                              -VISION_PVC_CONTROL_PID_I_LIMIT,
+                                                              VISION_PVC_CONTROL_PID_I_LIMIT);
+
+    derivative = g_vision_pvc_steer_pid.error - g_vision_pvc_steer_pid.last_error;
+
+    output = g_vision_pvc_steer_pid.kp * g_vision_pvc_steer_pid.error
+           + g_vision_pvc_steer_pid.ki * g_vision_pvc_steer_pid.integral
+           + g_vision_pvc_steer_pid.kd * derivative;
+
+    g_vision_pvc_steer_pid.last_error = g_vision_pvc_steer_pid.error;
+    g_vision_pvc_steer_pid.output = vision_pvc_constrain_f(output,
+                                                           -VISION_PVC_CONTROL_MAX_ERR_DEG,
+                                                           VISION_PVC_CONTROL_MAX_ERR_DEG);
+    return g_vision_pvc_steer_pid.output;
 }
 
 /**
@@ -138,6 +154,12 @@ void VisionPvcControl_Init(void)
     g_pvc_control_enable = VISION_PVC_CONTROL_DEFAULT_ACTIVE;
     g_pvc_ctrl_shadow.enabled = g_pvc_control_enable;
     g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_IDLE;
+
+    memset((void *)&g_vision_pvc_steer_pid, 0, sizeof(g_vision_pvc_steer_pid));
+    g_vision_pvc_steer_pid.kp = VISION_PVC_CONTROL_PID_KP;
+    g_vision_pvc_steer_pid.ki = VISION_PVC_CONTROL_PID_KI;
+    g_vision_pvc_steer_pid.kd = VISION_PVC_CONTROL_PID_KD;
+
     g_vision_pvc_control_status = g_pvc_ctrl_shadow;
 
 #if VISION_PVC_CONTROL_PROFILE_ENABLE
@@ -164,6 +186,10 @@ void VisionPvcControl_SetEnable(uint8 enable)
     /* 如果关掉了，就把发给底盘的指令清零 */
     if (g_pvc_control_enable == 0U)
     {
+        g_vision_pvc_steer_pid.error = 0.0f;
+        g_vision_pvc_steer_pid.last_error = 0.0f;
+        g_vision_pvc_steer_pid.integral = 0.0f;
+        g_vision_pvc_steer_pid.output = 0.0f;
         vision_pvc_apply_idle_outputs();
     }
 }
