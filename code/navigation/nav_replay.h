@@ -39,8 +39,8 @@
 #define NAV_START_HEADING_TOLERANCE 0.3f // 复刻起步前，绝对航向对齐阈值(度)，这个需要使用地磁计航向角，暂时不用调【优化点】
 
 // 速度设定 (负数为前进，数值对应 motor rpm 或 pwm 级)
-#define NAV_SPEED_FAST          (-400.0f) // 高速行驶速度
-#define NAV_SPEED_SLOW          (-200.0f)  // 低速逼近速度 (-60 约等于 20cm/s) 
+#define NAV_SPEED_FAST          (-300.0f) // 高速行驶速度
+#define NAV_SPEED_SLOW          (-100.0f)  // 低速逼近速度 (-60 约等于 20cm/s) 
 
 #define NAV_SPEED_STOP          (0.0f)
 
