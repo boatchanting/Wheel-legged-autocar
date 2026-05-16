@@ -17,7 +17,7 @@ from scipy.interpolate import Akima1DInterpolator, PchipInterpolator, interp1d, 
 plt.rcParams["font.sans-serif"] = ["SimHei"]
 plt.rcParams["axes.unicode_minus"] = False
 
-INTERPOLATE_DIST = 20.0
+INTERPOLATE_DIST = 50.0
 
 SPECIAL_POINTS_MAP = {
     1: ("转圆点", "#FF00FF", "o"),
