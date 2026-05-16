@@ -5,11 +5,11 @@
 MenuState_t current_state = MENU_STATE_MAIN; 
 uint8_t menu_index = MENU_STATE_SUBJECT;
 // 新增：推车模式全局标志位（供底层PID控制环使用）
-uint8_t g_is_push_mode = 0; // 0: 非推车模式，正常PID控制；1: 推车模式
+uint8_t g_is_push_mode = 0; // 0: 非推车模式，正常PID控制�?: 推车模式
 uint8_t menu_values[MENU_STATE_COUNT] = {0};
 const uint8_t menu_max_values[MENU_STATE_COUNT] = {
     1,  // MENU_STATE_MAIN
-    4,  // MENU_STATE_SUBJECT: 1-3，推车模式4
+    4,  // MENU_STATE_SUBJECT: 1-3，推车模�?
     2,  // MENU_STATE_CALIBRATION: 1=自动, 2=手动
     2,  // MENU_STATE_ACTION_SELECT: 1=Record, 2=Start
     1,  // MENU_STATE_ACTION_CONFIRM
@@ -23,20 +23,25 @@ float current_angles[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
 void Menu_TriggerRecordAction(void)
 {
-    gpio_toggle_level(P19_0);       // 指示灯切换
+    gpio_toggle_level(P19_0);       // 指示灯切�?
     if (g_motor_enable && g_yaw_initialized)
     {
-        g_nav_start_recording = 1;  // 开始录制，会在 main 中调用惯导系统初始化和点记录初始化
+        g_nav_start_recording = 1;  // 开始录制，会在 main 中调用惯导系统初始化和点记录初始�?
         g_nav_recording = 1;
     }
 }
 
 void Menu_TriggerStartAction(void)
 {
-    gpio_toggle_level(P19_0);       // 指示灯切换
+    gpio_toggle_level(P19_0);       // 指示灯切�?
     if (g_motor_enable)
     {
+#if GNSS_NAV == 2
+        g_replay_start_request = 1;
+        g_load_flash_request = 0;
+#else
         g_load_flash_request = 1;   // 请求读取测试
+#endif
         g_save_flash_request = 0;   // 清除保存请求
         g_nav_recording = 0;        // 确保停止录制
     }
@@ -156,7 +161,7 @@ static void Menu_ShowActionSelectScreen(void)
 
 static void Menu_ShowActionConfirmScreen(void)
 {
-    // 显示选择的动作
+    // 显示选择的动�?
     uint8_t action = menu_values[MENU_STATE_ACTION_SELECT];
     uint8_t subject = menu_values[MENU_STATE_SUBJECT]; // 获取当前科目
     
@@ -182,10 +187,10 @@ static void Menu_ShowActionConfirmScreen(void)
     ips200_show_float(125, 215, motor_speeds[1], 5, 1);
     ips200_show_string(155, 260, g_motor_enable ? "Yes" : "No");
     
-    // 下面打印"未发车"
+    // 下面打印"未发�?
     ips200_set_color(RGB565_YELLOW, RGB565_BLACK);
     if (subject == 4) {
-        ips200_show_string(0, 15*16, "Pushing Phase Active"); // 显示为推车阶段
+        ips200_show_string(0, 15*16, "Pushing Phase Active"); // 显示为推车阶�?
     } else {
         ips200_show_string(0, 15*16, "Not Started          ");
     }
@@ -209,7 +214,7 @@ static void Menu_ShowActionRunningScreen(void)
     // 下面打印"发车成功"
     ips200_set_color(RGB565_GREEN, RGB565_BLACK);
     if (subject == 4) {
-        ips200_show_string(0, 15*16, "Pushing Phase Active"); // 显示为推车阶段
+        ips200_show_string(0, 15*16, "Pushing Phase Active"); // 显示为推车阶�?
     } else {
         ips200_show_string(0, 15*16, "Started Successfully");
     }
@@ -241,7 +246,7 @@ static void Menu_ShowActionCompleteScreen(void)
 
 }
 
-// ==================== 主显示函数 ====================
+// ==================== 主显示函�?====================
 void Menu_ShowStatic(void)
 {
     uint8_t action = menu_values[MENU_STATE_ACTION_SELECT];
@@ -268,7 +273,7 @@ void Menu_ShowStatic(void)
             if (menu_values[MENU_STATE_SUBJECT] == 4)
             {
                 gpio_toggle_level(P19_0);
-                g_is_push_mode = 1; // 打开底层推车控制逻辑！！！
+                g_is_push_mode = 1; // 打开底层推车控制逻辑！！�?
             }
             else if(action==1)
             {
@@ -281,15 +286,15 @@ void Menu_ShowStatic(void)
             Menu_ShowMainScreen(); // 先显示主界面框架
             break;
         case MENU_STATE_ACTION_COMPLETE:
-            // 不管什么模式，到了完成界面都关闭推车模式
+            // 不管什么模式，到了完成界面都关闭推车模�?
             g_is_push_mode = 0; 
             if(action==1)
             {
-                gpio_toggle_level(P19_0);       // 指示灯切换
+                gpio_toggle_level(P19_0);       // 指示灯切�?
                 if (g_nav_recording)
                 {
                     g_nav_recording = 0; // 停止录制
-                    // 只有电机仍开启才保存（防止倒地保存）
+                    // 只有电机仍开启才保存（防止倒地保存�?
                     if (g_motor_enable) 
                     {
                         g_save_flash_request = 1; // 通知 main 循环执行 Flash 写操作。不能在中断中进行写入，以免阻塞中断
@@ -304,7 +309,7 @@ void Menu_ShowStatic(void)
             }
             if(action==2)
             {
-                gpio_toggle_level(P19_0);       // 指示灯切换
+                gpio_toggle_level(P19_0);       // 指示灯切�?
             }
             Menu_ShowActionCompleteScreen();
             break;
@@ -323,7 +328,7 @@ void Menu_ShowDynamic(void)
     //small_driver_get_speed();
     motor_speeds[0] = motor_value.receive_left_speed_data;
     motor_speeds[1] = motor_value.receive_right_speed_data;
-    // 在ACTION_RUNNING状态下显示动态数据
+    // 在ACTION_RUNNING状态下显示动态数�?
     if (current_state == MENU_STATE_ACTION_RUNNING)
     {
         Menu_ShowActionRunningScreen();
@@ -332,7 +337,7 @@ void Menu_ShowDynamic(void)
     {
         Menu_ShowActionConfirmScreen();
     }
-    // 在主界面显示动态数据
+    // 在主界面显示动态数�?
     else if (current_state == MENU_STATE_MAIN)
     {
         State_Dynamic_Screen();
@@ -377,7 +382,7 @@ void Menu_HandleKey(void)
     }
     
     // ==========================================================
-    // 3. 左键 (KEY_2)：返回 / 锁住
+    // 3. 左键 (KEY_2)：返�?/ 锁住
     // ==========================================================
     if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
     {
@@ -400,12 +405,12 @@ void Menu_HandleKey(void)
                 break;
                 
             case MENU_STATE_ACTION_RUNNING:
-                // 【核心退出逻辑：如果是推车模式，直接退回科目选择并锁死！】
+                // 【核心退出逻辑：如果是推车模式，直接退回科目选择并锁死！�?
                 if (menu_values[MENU_STATE_SUBJECT] == 4) {
                     current_state = MENU_STATE_SUBJECT; 
-                    g_is_push_mode = 0; // 强行清0，车轮瞬间变硬锁死！
+                    g_is_push_mode = 0; // 强行�?，车轮瞬间变硬锁死！
                 } else {
-                    current_state = MENU_STATE_ACTION_CONFIRM; // 普通模式退回确认界面
+                    current_state = MENU_STATE_ACTION_CONFIRM; // 普通模式退回确认界�?
                 }
                 break;
                 
@@ -418,18 +423,18 @@ void Menu_HandleKey(void)
     }
     
     // ==========================================================
-    // 4. 右键 (KEY_4)：前进 / 开启推车模式
+    // 4. 右键 (KEY_4)：前�?/ 开启推车模�?
     // ==========================================================
     else if (key_get_state(KEY_4) == KEY_SHORT_PRESS)
     {
         switch (current_state)
         {
             case MENU_STATE_SUBJECT:
-                // 【核心跳转逻辑：如果选了4，直接飞越到运行界面！】
+                // 【核心跳转逻辑：如果选了4，直接飞越到运行界面！�?
                 if (menu_values[MENU_STATE_SUBJECT] == 4) {
                     current_state = MENU_STATE_ACTION_RUNNING; 
                 } else {
-                    current_state = MENU_STATE_CALIBRATION; // 选1,2,3则正常进入标定选择
+                    current_state = MENU_STATE_CALIBRATION; // �?,2,3则正常进入标定选择
                 }
                 
                 menu_index = current_state;
@@ -453,7 +458,7 @@ void Menu_HandleKey(void)
                 break;
                 
             case MENU_STATE_ACTION_RUNNING:
-                current_state = MENU_STATE_ACTION_COMPLETE; // 运行中按右键，进入完成界面（自动锁车）
+                current_state = MENU_STATE_ACTION_COMPLETE; // 运行中按右键，进入完成界面（自动锁车�?
                 menu_index = current_state;
                 break;
                 
@@ -465,7 +470,7 @@ void Menu_HandleKey(void)
     }
     
     // ==========================================================
-    // 5. 上下键 (KEY_1 / KEY_3)：调整数值
+    // 5. 上下�?(KEY_1 / KEY_3)：调整数�?
     // ==========================================================
     else if (key_get_state(KEY_1) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
     {
@@ -489,7 +494,7 @@ void Menu_HandleKey(void)
     }
 }
 
-// ==================== 初始化 ====================
+// ==================== 初始�?====================
 void Menu_Init(void)
 {
     current_state = MENU_STATE_MAIN;
@@ -503,3 +508,5 @@ void Menu_Init(void)
     
     need_redraw = 1;
 }
+
+

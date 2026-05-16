@@ -1,4 +1,5 @@
 #include "nav_ram.h"
+#include "fused_nav.h"
 
 //-------------------------------------------------------------------------------------------------------------------
 //  全局 RAM 数据实例
@@ -51,9 +52,15 @@ uint8 NavRam_RecordPoint(uint8 point_type)
     idx = nav_ram_data.point_count;
 
     // 直接读取当前惯导解算结果
+#if GNSS_NAV == 2
+    nav_ram_data.points[idx].x = fused_nav.fused_x;
+    nav_ram_data.points[idx].y = fused_nav.fused_y;
+    nav_ram_data.points[idx].target_yaw_deg = fused_nav.fused_yaw;
+#else
     nav_ram_data.points[idx].x = inertial_nav.x;
     nav_ram_data.points[idx].y = inertial_nav.y;
     nav_ram_data.points[idx].target_yaw_deg = inertial_nav.relative_yaw;
+#endif
 #if IMU_CATEGORY == 3
     nav_ram_data.points[idx].heading_deg = heading;
 #else

@@ -327,6 +327,10 @@ int main(void)
         {            
             InertialNav_Init();
             NavRam_Init();
+#if GNSS_NAV == 2
+            FusedNav_Init();
+            Gnss_Transform_Reset_Origin();
+#endif
             #if DEBUG_LOG_ENABLE
                 printf("[NAV] Init OK: x=%.2f y=%.2f yaw=%.2f\r\n",
                        inertial_nav.x,
@@ -387,6 +391,7 @@ int main(void)
     // ---------------------------------------------------------
     //  【nav.4】静态点表模式：加载 C 点表并开始复现
     // ---------------------------------------------------------
+    #if GNSS_NAV != 2
     if (g_motor_enable == 1 && g_load_flash_request == 1)
     {
         g_load_flash_request = 0;
@@ -401,6 +406,15 @@ int main(void)
 
         Buzzer_Beep_By_PointType(2);//beep x3
     }
+    #else
+    if (g_load_flash_request == 1)
+    {
+        g_load_flash_request = 0;
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Static inertial route start ignored in GNSS_NAV=2 mode.\r\n");
+        #endif
+    }
+    #endif
 
     #if GNSS_NAV == 1
     // ---------------------------------------------------------
@@ -430,6 +444,30 @@ int main(void)
     }
     #endif
 
+    #if GNSS_NAV == 2
+    if (g_motor_enable == 1 && g_replay_start_request == 1)
+    {
+        g_replay_start_request = 0;
+        InertialNav_Init();
+        FusedNav_Init();
+        Gnss_Transform_Reset_Origin();
+        NavReplay_Start();
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Starting fused replay...\r\n");
+        #endif
+        Buzzer_Beep_By_PointType(2);
+    }
+
+    if (g_replay_stop_request == 1)
+    {
+        g_replay_stop_request = 0;
+        NavReplay_Stop();
+        #if DEBUG_LOG_ENABLE
+        printf("Main: Fused replay stopped.\r\n");
+        #endif
+    }
+    #endif
+
 
         // 此处编写需要循环执行的代码
     }
@@ -449,5 +487,7 @@ void uart_rx_interrupt_handler (void)
         fifo_write_buffer(&uart_data_fifo, &get_data, 1);                       // 将数据写入 fifo 中
     }
 }
+
+
 
 

@@ -170,6 +170,9 @@ InertialNav_Init();//惯性导航初始化
 
 gnss_init(TAU1201);//gnss导航初始化
 Gnss_Transform_Init();//GNSS经纬度投影为相对平面坐标，供纯GPS打点/复刻使用
+#if GNSS_NAV == 2
+    FusedNav_Init();
+#endif
 #if DEBUG_DISPLAY
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;

@@ -1,6 +1,7 @@
 #include "wifi_protocol.h"
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
+#include "../navigation/fused_nav.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -329,6 +330,28 @@ void wifi_protocol_poll_rx(void)
 // ------------------------------------------------------------------
 void wifi_protocol_send_data(void)
 {
+    float nav_x_to_send = inertial_nav.x;
+    float nav_y_to_send = inertial_nav.y;
+    float nav_vx_to_send = inertial_nav.vx_body;
+    float nav_vy_to_send = inertial_nav.vy_body;
+    float nav_relative_yaw_to_send = inertial_nav.relative_yaw;
+    float gps_x_to_send = gnss_trans.x * 1000.0f;
+    float gps_y_to_send = gnss_trans.y * 1000.0f;
+    uint8_t gps_valid_to_send = gnss_trans.is_valid;
+    uint8_t gps_origin_set_to_send = gnss_trans.is_origin_set;
+
+#if GNSS_NAV == 2
+    nav_x_to_send = fused_nav.fused_x;
+    nav_y_to_send = fused_nav.fused_y;
+    nav_vx_to_send = fused_nav.vx_body;
+    nav_vy_to_send = fused_nav.vy_body;
+    nav_relative_yaw_to_send = fused_nav.fused_yaw;
+    gps_x_to_send = fused_nav.fused_x;
+    gps_y_to_send = fused_nav.fused_y;
+    gps_valid_to_send = fused_nav.gps_is_valid;
+    gps_origin_set_to_send = fused_nav.start_heading_locked;
+#endif
+
     // Poll host command first. This runs in the same 10 ms cycle as telemetry.
     wifi_protocol_poll_rx();
 
@@ -345,10 +368,10 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&loop_counter);
 
     // B. inertial nav
-    write_u32_or_float(&inertial_nav.x);
-    write_u32_or_float(&inertial_nav.y);
-    write_u32_or_float(&inertial_nav.vx_body);
-    write_u32_or_float(&inertial_nav.vy_body);
+    write_u32_or_float(&nav_x_to_send);
+    write_u32_or_float(&nav_y_to_send);
+    write_u32_or_float(&nav_vx_to_send);
+    write_u32_or_float(&nav_vy_to_send);
 
     // C. GNSS fields
     write_u16(gnss.time.year);
@@ -388,17 +411,17 @@ void wifi_protocol_send_data(void)
     float heading_to_send = 0.0f;
 #endif
     write_u32_or_float(&heading_to_send);
-    write_u32_or_float(&inertial_nav.relative_yaw);
+    write_u32_or_float(&nav_relative_yaw_to_send);
 
     // D. host point editor fields
     write_u8(robot_ctrl.mark_trigger);
     write_u8(robot_ctrl.point_type);
 
     // E. projected GNSS XY for pure GPS marker/replay (unit: mm)
-    write_float_value(gnss_trans.x * 1000.0f);
-    write_float_value(gnss_trans.y * 1000.0f);
-    write_u8(gnss_trans.is_valid);
-    write_u8(gnss_trans.is_origin_set);
+    write_float_value(gps_x_to_send);
+    write_float_value(gps_y_to_send);
+    write_u8(gps_valid_to_send);
+    write_u8(gps_origin_set_to_send);
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;

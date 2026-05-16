@@ -1,4 +1,4 @@
-/*********************************************************************************************************************
+﻿/*********************************************************************************************************************
 * CYT4BB Opensourec Library 即（ CYT4BB 开源库）是一个基于官方 SDK 接口的第三方开源库
 * Copyright (c) 2022 SEEKFREE 逐飞科技
 *
@@ -43,6 +43,7 @@
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
+#include "navigation/fused_nav.h"
 
 // 声明外部函数
 
@@ -68,7 +69,7 @@ volatile struct {
 
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
-static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
+static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波 z 轴角速度，用于转向角速度环
 uint32_t loop_counter = 0;
 
 #if IMU_REFRESH_TEST_ENABLE
@@ -242,11 +243,36 @@ static void ImuRefreshTest_Update1ms(void)
     imu_refresh_read_gyro_1ms();
 #endif
 }
+
+static uint8 NavSample_GetAccelMm(float *acc_lat_left_mm_s2, float *acc_lon_forward_mm_s2)
+{
+#if IMU_CATEGORY == 1 && CAR_SELECT == 0
+    *acc_lat_left_mm_s2 = 9806.65f * ((float)imu_data.acc_x / 4096.0f - (float)imu_data.grav_x);
+    *acc_lon_forward_mm_s2 = 9806.65f * ((float)imu_data.acc_y / 4096.0f - (float)imu_data.grav_y);
+    return 1U;
+#elif IMU_CATEGORY == 1 && CAR_SELECT == 3
+    *acc_lat_left_mm_s2 = -9806.65f * ((float)imu_data.acc_y / 4096.0f - (float)imu_data.grav_y);
+    *acc_lon_forward_mm_s2 = 9806.65f * ((float)imu_data.acc_x / 4096.0f - (float)imu_data.grav_x);
+    return 1U;
+#elif IMU_CATEGORY == 3 && CAR_SELECT == 0
+    *acc_lat_left_mm_s2 = 9806.65f * ((float)imu_data.acc_y / 4098.0f - (float)imu_data.grav_y);
+    *acc_lon_forward_mm_s2 = 9806.65f * ((float)imu_data.grav_x - (float)imu_data.acc_x / 4098.0f);
+    return 1U;
+#elif IMU_CATEGORY == 3 && CAR_SELECT == 3
+    *acc_lat_left_mm_s2 = 9806.65f * ((float)imu_data.acc_x / 4098.0f - (float)imu_data.grav_x);
+    *acc_lon_forward_mm_s2 = 9806.65f * ((float)imu_data.acc_y / 4098.0f - (float)imu_data.grav_y);
+    return 1U;
+#else
+    *acc_lat_left_mm_s2 = 0.0f;
+    *acc_lon_forward_mm_s2 = 0.0f;
+    return 0U;
+#endif
+}
 // **************************** PIT中断函数 ****************************
 
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
 {
-    // 1. 清除中断标志位 (必须第一步做)
+    // 1. 清除中断标志位(必须第一步做)
     pit_isr_flag_clear(PIT_CH0);
     loop_counter++;
 
@@ -274,54 +300,41 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // 按下记录按钮之前的惯性导航不可信==========================================================
     if(loop_counter % 10 == 1 && g_yaw_initialized)
     {
+        float nav_acc_lat_left_mm_s2 = 0.0f;
+        float nav_acc_lon_forward_mm_s2 = 0.0f;
         if (jump_flag == 0)
         {
-            // 调用导航更新函数
-            #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
-            InertialNav_Update(
-                euler_angle.yaw,                                 // 当前偏航角
-                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-                9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-                (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data      // 右轮速
-            );
-            #endif
-            #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
-            InertialNav_Update(
-                euler_angle.yaw,                                 // 当前偏航角
-                -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),              // 纵向加速度 (前+)
-                (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data      // 右轮速
-            );
-            #endif
-            #if IMU_CATEGORY == 3 &&CAR_SELECT == 0//imu963ra 如果小车不同再对小车加&&加以区分
-            
-            InertialNav_Update(
-                euler_angle.yaw,                                 // 当前偏航角
-                9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-                9806.65*((float)imu_data.grav_x-(float)imu_data.acc_x/4098), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-                (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data      // 右轮速
-            );
-            
-            #endif
-            #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
-            
-            InertialNav_Update(
-            euler_angle.yaw,                                 // 当前偏航角
-            9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
-            9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
-            (float)motor_value.receive_left_speed_data,
-            (float)motor_value.receive_right_speed_data
-            );
-            #endif
+            if (NavSample_GetAccelMm(&nav_acc_lat_left_mm_s2, &nav_acc_lon_forward_mm_s2))
+            {
+                InertialNav_Update(
+                    euler_angle.yaw,
+                    nav_acc_lat_left_mm_s2,
+                    nav_acc_lon_forward_mm_s2,
+                    (float)motor_value.receive_left_speed_data,
+                    (float)motor_value.receive_right_speed_data
+                );
+#if GNSS_NAV == 2
+                FusedNav_UpdateOdom_100Hz(
+                    inertial_nav.relative_yaw,
+                    nav_acc_lat_left_mm_s2,
+                    nav_acc_lon_forward_mm_s2,
+                    (float)motor_value.receive_left_speed_data,
+                    (float)motor_value.receive_right_speed_data,
+                    imu_data.gyro_z
+                );
+                FusedNav_CalcOutput();
+#endif
+            }
         }
         else
         {
             // 跳跃期间轮胎可能空转，冻结惯导速度状态，避免里程突增。
             inertial_nav.vx_body = 0.0f;
             inertial_nav.vy_body = 0.0f;
+#if GNSS_NAV == 2
+            FusedNav_FreezeVelocity();
+            FusedNav_CalcOutput();
+#endif
         }
 
         // 此后, 可以直接使用 inertial_nav.x 和 inertial_nav.y
@@ -331,13 +344,17 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
     }
 
-    #if GNSS_NAV == 1
+    #if GNSS_NAV != 0
     //【gnss.1】GNSS定位更新
     if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
             Gnss_Transform_Update();//gnss转换为高斯克吕格投影
+#if GNSS_NAV == 2
+            FusedNav_UpdateGpsIfFresh();
+            FusedNav_CalcOutput();
+#endif
         } // GNSS更新
     }
     #endif
@@ -403,7 +420,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         if (loop_counter % 3 == 1)  // 6ms周期，现改为3ms周期
         {
             // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
-            // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
+            // 示例：视觉识别到赛道偏左5° -> err_degree = +5.0f
             // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
              // 只有在偏航角成功初始化后，才执行航向保持控制
             // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
@@ -475,7 +492,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
         // --- [调用优化] ---
         // 变化点：删除了第3个参数 "mechanical_zero"，因为它已经包含在 pid_angle.compensation 中了
-        // 参数1: speed_loop_out (速度环算出来的目标角度)。这个就给0即可，舵机速度环的输出不要给到这里
+        // 参数1: speed_loop_out (速度环算出来的目标角度，直接作为角度环输入即可，舵机速度环的输出不要给到这里)
         // 参数2: now_angle (当前角度)
         // 返回: angle_loop_out (期望的角速度)
         angle_loop_out = Angle_Loop_Control(speed_loop_out, now_angle);
@@ -487,10 +504,10 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     if (g_yaw_initialized)  // 2ms周期，现改为1ms周期
     {
-        #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
+        #if IMU_CATEGORY == 1 //如果小车不同再对小车加 && 加以区分
         int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
         #endif
-        #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
+        #if IMU_CATEGORY == 3 //如果小车不同再对小车加 && 加以区分
         int16_t raw_gyro_z = imu963ra_gyro_z;  //根据实际安装方向调整符号
         #endif
 
@@ -503,7 +520,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
         //==================== [雷区旋转调用开始] =================
         // lq.1. 获取旋转控制器的输出
-        //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s，现为0.001s), 当前Yaw角, 全局Yaw目标指针
+        //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s，现为0.001s), 当前Yaw值 全局Yaw目标指针
         float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.001f, euler_angle.yaw, &g_initial_yaw);
 
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
@@ -527,41 +544,41 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     
     // 5.1 获取原始陀螺仪数据
-    //陀螺仪数据获取已经在中断函数最前面的地方获取完成
-    #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
-    int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
+    //陀螺仪数据获取已经在中断函数最前面的地方获取完了
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加 && 加以区分
+    int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车][学习板小车使用]
     #endif
-    #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
-    int16 raw_gyro_y = -imu660ra_gyro_y; // 根据实际安装方向调整符号[学习板小车3使用]
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加 && 加以区分
+    int16 raw_gyro_y = -imu660ra_gyro_y; // 根据实际安装方向调整符号[学习板小车使用]
     #endif
-    #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
+    #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加 && 加以区分
     int16 raw_gyro_y = -imu963ra_gyro_y; // 根据实际安装方向调整符号
     #endif
-    #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
-    int16 raw_gyro_y = imu963ra_gyro_x; // 根据实际安装方向调整符号[学习板小车3使用]
+    #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加 && 加以区分
+    int16 raw_gyro_y = imu963ra_gyro_x; // 根据实际安装方向调整符号[学习板小车使用]
     #endif
-    // 5.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
+    // 5.2 传感器底噪过滤(这是为了防止静止时数值跳动，保留)
     float gyro_val = (float)raw_gyro_y;
     if (fabs(gyro_val) < 5.0f) gyro_val = 0;
 
     // 5.3 单位转换 [重要]
-    // 既然 pid.c 里限幅是 3000 (这显然是度/秒或者LSB，不可能是弧度)，
-    // 建议统一转换为 【度/秒 (deg/s)】。这里可以改
-    // 假设灵敏度是 16.384 LSB/(dps) (即±2000dps量程)
+    // 既然 pid.c 里限幅是 3000 (这显然是度/秒或者LSB，不可能是弧度/秒)
+    // 建议统一转换为【度/秒(deg/s)】。这里可以改
+    // 假设灵敏度是 16.384 LSB/(dps) (即2000dps量程)
     float now_gyro_deg = gyro_val / 16.384f; 
 
-    // 5.4 简单的低通滤波 (平滑噪声)
+    // 5.4 简单的低通滤波(平滑噪声)
     now_gyro = 0.8f * now_gyro + 0.2f * now_gyro_deg;
 
     // --- [调用优化] ---
-    // 变化点：移除了手动减零偏逻辑 (GYRO_SENSOR_OFFSET 宏在函数内处理)
-    // 变化点：移除了手动死区补偿 (GYR_DEAD_ZONE 宏在函数内处理)
+    // 变化点：移除了手动减零偏逻辑 (GYRO_SENSOR_OFFSET 宏在函数内处理
+    // 变化点：移除了手动死区补偿(GYR_DEAD_ZONE 宏在函数内处理)
     // 参数1: angle_loop_out (角度环算出来的期望角速度)
     // 参数2: now_gyro (当前实际角速度)
     // 返回: gyro_loop_out (最终PWM)
     gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
 
-    // 6.rolling平衡环(5ms一次)
+    // 6. rolling平衡，每5ms一次
     if (loop_counter % 5 == 3){
         Roll_Balance_Control(euler_angle.roll, roll_degree);
     }
@@ -618,8 +635,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     if (g_yaw_initialized)
     {
-        // - 平衡控制：差动输出 (±gyro_loop_out) → 维持直立
-        // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
+        // - 平衡控制：差动输出(±gyro_loop_out) -> 维持直立
+        // - 转向控制：同向输出(+turn_gyro_loop_out) -> 实现旋转
         float brake_pwm = Brake_Feedforward_GetPwm();
         int16_t pwm_left  = (int16_t)( gyro_loop_out + brake_pwm + turn_gyro_loop_out);
         int16_t pwm_right = (int16_t)(-gyro_loop_out - brake_pwm + turn_gyro_loop_out);
@@ -636,7 +653,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // 如果此时平衡环继续工作，轮子会疯狂加速。
             // 建议：直接给0，或者给一个极小的保持速度。
             // 进阶玩法：利用动量轮效应调整空中姿态，可以在这里写逻辑
-            // 但为了安全，先置0。
+            // 但为了安全，先置0）
             // 进入跳跃模式，根据精确的阶段执行不同电机策略
         switch(g_current_jump_phase)
         {
@@ -756,6 +773,14 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
+    #if GNSS_NAV == 2
+        if ((g_replay_state != REPLAY_RUNNING) &&
+        (!VisionThreeStageControl_IsActive()) &&
+        (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
+        && (VisionBridgeTask_IsActive() == 0U)
+        && g_pvc_control_enable ==0
+    )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
+    #endif
     {
         // [映射 2: 转向角度]
     // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
@@ -763,7 +788,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
 
     // [映射 3: 速度控制]
     // 主函数定义: 负数代表向前 (-60 = 20m/s)
-    // 遥控器逻辑: 假设推油门 robot_ctrl.target_speed 为正数
+    // 遥控器逻辑: 假设推油门 robot_ctrl.target_speed 为正值
     // 转换逻辑: 取反
     target_speed_set = -robot_ctrl.target_speed;
     }
@@ -1028,7 +1053,7 @@ void gpio_20_exti_isr()                  // 外部 GPIO_20 中断服务函数
         
     //     if (g_motor_enable && g_yaw_initialized)
     //     {      
-    //         g_nav_start_recording = 1;//开始录制，会在main中调用惯导系统初始化和点的记录的初始化,然后再变回1
+    //         g_nav_start_recording = 1;//开始录制，会在main中调用惯导系统初始化和点的记录的初始化，然后再变回1
     //         g_nav_recording = 1;
     //     }
     // }
@@ -1209,3 +1234,7 @@ void uart4_isr (void)
     }
 }
 // **************************** 串口中断函数 ****************************
+
+
+
+

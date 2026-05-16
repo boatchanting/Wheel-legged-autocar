@@ -1473,6 +1473,12 @@
                 <name>$PROJ_DIR$\..\..\code\navigation\gnss_replay.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\fused_nav.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\fused_nav.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\gnss_transform.c</name>
             </file>
             <file>
