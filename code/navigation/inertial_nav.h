@@ -36,7 +36,7 @@
 
 #define NAV_DISTANCE_SCALE_FACTOR   1.0f // <--- 在这里填入你计算出的校准值，未调用【优化点】
 #define WHEEL_BASE_MM       175.0f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       5.183f//大致为车轮半径
+#define SPEED_TO_MM_S       4.936f//大致为车轮半径
 #endif
 
 // --- 坐标系数据结构 ---
