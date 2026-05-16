@@ -568,16 +568,20 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
 
 // 全局加速前馈参数
-#define ACCEL_FF_ERR_MIN         45.0f    /* 目标速度绝对值比当前速度绝对值至少大这么多，才认为速度没跟上 */
+#define ACCEL_FF_ERR_MIN         30.0f    /* 目标速度绝对值比当前速度绝对值至少大这么多，才认为速度没跟上 */
 #define ACCEL_FF_TARGET_STEP_MIN 30.0f    /* 目标速度绝对值相对上一周期至少增加这么多，才认为是急加速请求 */
 #define ACCEL_FF_SPEED_DEADBAND  15.0f    /* 目标/实际速度低于该值时视为低速死区，避免零点噪声误触发 */
-#define ACCEL_FF_GAIN            3.0f     /* 加速前馈增益，输出约为 gain * 速度缺口 */
-#define ACCEL_FF_MAX             1200.0f  /* 加速前馈 PWM 最大幅值，限制起步/提速时的额外力矩 */
-#define ACCEL_FF_RAMP_UP         160.0f   /* 加速前馈每个 9ms 更新周期允许增加的最大 PWM */
-#define ACCEL_FF_RAMP_DOWN       500.0f   /* 加速前馈退出时每个 9ms 更新周期允许释放的最大 PWM */
-#define ACCEL_FF_START_WINDOW_MS 350U     /* 复刻刚进入 RUNNING 后允许起步前馈的时间窗口 */
+#define ACCEL_FF_GAIN            6.0f     /* 加速前馈增益，输出约为 gain * 速度缺口 */
+#define ACCEL_FF_MAX             2200.0f  /* 加速前馈 PWM 最大幅值，限制起步/提速时的额外力矩 */
+#define ACCEL_FF_RAMP_UP         450.0f   /* 加速前馈每个 9ms 更新周期允许增加的最大 PWM */
+#define ACCEL_FF_RAMP_DOWN       700.0f   /* 加速前馈退出时每个 9ms 更新周期允许释放的最大 PWM */
+#define ACCEL_FF_START_WINDOW_MS 500U     /* 复刻刚进入 RUNNING 后允许起步前馈的时间窗口 */
+#define ACCEL_FF_BOOST_WINDOW_MS 450U     /* 运行中目标速度明显抬升后，保持加速前馈判定的短窗口 */
 #define ACCEL_FF_UPDATE_PERIOD_MS 9U      /* Accel_Feedforward_Update() 当前在 9ms 速度控制段调用 */
 #define ACCEL_FF_SIGN            1.0f     /* 前馈符号校正；若实车表现为减速，先改为 -1.0f，不要加大增益 */
+#define ACCEL_FF_BUZZER_PWM_TH   150.0f   /* 大幅加速前馈蜂鸣阈值；调试任意前馈是否输出时可临时降到 150 */
+#define ACCEL_FF_BUZZER_ON_MS    40U      /* 大幅加速前馈触发后的蜂鸣持续时间，ISR 中按 1ms 计数 */
+#define ACCEL_FF_BUZZER_COOLDOWN_MS 500U  /* 蜂鸣冷却时间，避免前馈持续较大时连续响 */
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用

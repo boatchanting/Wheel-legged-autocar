@@ -70,6 +70,9 @@ volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
 uint32_t loop_counter = 0;
+static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
+static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
+static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
 
 #if IMU_REFRESH_TEST_ENABLE
 #define IMU_REFRESH_TEST_TIME_MS (10000U)
@@ -240,6 +243,41 @@ static void ImuRefreshTest_Update1ms(void)
     }
 #else
     imu_refresh_read_gyro_1ms();
+#endif
+}
+
+static void Accel_Feedforward_Buzzer_Update(float accel_pwm)
+{
+#if ACCEL_FF_BUZZER_ENABLE
+    uint8 large_active = (uint8)(fabsf(accel_pwm) >= ACCEL_FF_BUZZER_PWM_TH);
+
+    if (accel_ff_buzzer_on_ticks > 0U)
+    {
+        gpio_set_level(BUZZER_PIN, GPIO_HIGH);
+        accel_ff_buzzer_on_ticks--;
+        if (accel_ff_buzzer_on_ticks == 0U)
+        {
+            gpio_set_level(BUZZER_PIN, GPIO_LOW);
+        }
+    }
+    else if (accel_ff_buzzer_cooldown_ticks > 0U)
+    {
+        accel_ff_buzzer_cooldown_ticks--;
+    }
+
+    if ((large_active != 0U) &&
+        (accel_ff_buzzer_was_large == 0U) &&
+        (accel_ff_buzzer_on_ticks == 0U) &&
+        (accel_ff_buzzer_cooldown_ticks == 0U))
+    {
+        accel_ff_buzzer_on_ticks = ACCEL_FF_BUZZER_ON_MS;
+        accel_ff_buzzer_cooldown_ticks = ACCEL_FF_BUZZER_COOLDOWN_MS;
+        gpio_set_level(BUZZER_PIN, GPIO_HIGH);
+    }
+
+    accel_ff_buzzer_was_large = large_active;
+#else
+    (void)accel_pwm;
 #endif
 }
 // **************************** PIT中断函数 ****************************
@@ -698,6 +736,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             Accel_Feedforward_Reset();
             accel_ff_pwm = 0.0f;
         }
+        Accel_Feedforward_Buzzer_Update(accel_ff_pwm);
         float drive_ff_pwm = brake_pwm + accel_ff_pwm;
         int16_t pwm_left  = (int16_t)( gyro_loop_out + drive_ff_pwm + turn_gyro_loop_out);
         int16_t pwm_right = (int16_t)(-gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out);

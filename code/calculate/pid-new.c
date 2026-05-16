@@ -37,8 +37,13 @@ static uint8 brake_zero_hold = 0;
 static float accel_ff_pwm = 0.0f;              // 当前实际输出的加速前馈 PWM，经过斜率限制后用于最终融合
 static float accel_ff_target = 0.0f;           // 本周期期望加速前馈 PWM，先限幅再由 accel_ff_pwm 追踪
 static float accel_last_target_speed = 0.0f;   // 上一次 9ms 更新时的目标速度，用于判断目标速度是否明显抬升
-static uint16 accel_start_window_ticks = 0U;   // 复刻刚进入 RUNNING 后的起步窗口剩余 tick 数，每 tick 约 9ms
+static uint16 accel_start_window_ticks = 0U;   // 复刻启动/目标跃升后的加速窗口剩余 tick 数，每 tick 约 9ms
 static uint8 accel_last_replay_running = 0U;   // 上一次更新时复刻是否运行，用于检测 REPLAY_RUNNING 上升沿
+
+static uint16 Accel_Feedforward_MsToTicks(uint16 time_ms)
+{
+    return (uint16)((time_ms + ACCEL_FF_UPDATE_PERIOD_MS - 1U) / ACCEL_FF_UPDATE_PERIOD_MS);
+}
 
 static void Accel_Feedforward_ClearOutput(void)
 {
@@ -178,10 +183,15 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     uint8 same_direction_or_start = 0U;
     uint8 accel_request = 0U;
 
+    if ((replay_running != 0U) && (accel_last_replay_running == 0U))
+    {
+        accel_start_window_ticks = Accel_Feedforward_MsToTicks(ACCEL_FF_START_WINDOW_MS);
+    }
+    accel_last_replay_running = replay_running ? 1U : 0U;
+
     if ((motor_enable == 0U) ||
         (jump_flag != 0U) ||
         (replay_running == 0U) ||
-        (abs_target <= ACCEL_FF_SPEED_DEADBAND) ||
         (inhibit_accel != 0U) ||
         (g_brake_active != 0U) ||
         (g_reverse_brake_active != 0U))
@@ -190,19 +200,6 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         accel_last_target_speed = target_speed;
         accel_last_replay_running = replay_running ? 1U : 0U;
         return 0.0f;
-    }
-
-    if ((replay_running != 0U) && (accel_last_replay_running == 0U))
-    {
-        accel_start_window_ticks = (uint16)((ACCEL_FF_START_WINDOW_MS + ACCEL_FF_UPDATE_PERIOD_MS - 1U) /
-                                           ACCEL_FF_UPDATE_PERIOD_MS);
-    }
-    accel_last_replay_running = replay_running ? 1U : 0U;
-
-    start_window_active = (uint8)(accel_start_window_ticks > 0U);
-    if (accel_start_window_ticks > 0U)
-    {
-        accel_start_window_ticks--;
     }
 
     if (abs_target > ACCEL_FF_SPEED_DEADBAND)
@@ -217,6 +214,33 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         {
             target_step_up = 1U;
         }
+
+        if (target_step_up != 0U)
+        {
+            uint16 boost_ticks = Accel_Feedforward_MsToTicks(ACCEL_FF_BOOST_WINDOW_MS);
+            if (accel_start_window_ticks < boost_ticks)
+            {
+                accel_start_window_ticks = boost_ticks;
+            }
+        }
+    }
+
+    start_window_active = (uint8)(accel_start_window_ticks > 0U);
+    if (accel_start_window_ticks > 0U)
+    {
+        accel_start_window_ticks--;
+    }
+
+    if (abs_target <= ACCEL_FF_SPEED_DEADBAND)
+    {
+        accel_ff_target = 0.0f;
+        accel_ff_pwm += Float_Constrain(accel_ff_target - accel_ff_pwm, -ACCEL_FF_RAMP_DOWN, ACCEL_FF_RAMP_DOWN);
+        if (fabsf(accel_ff_pwm) < 1.0f)
+        {
+            accel_ff_pwm = 0.0f;
+        }
+        accel_last_target_speed = target_speed;
+        return accel_ff_pwm;
     }
 
     speed_lag = (uint8)(abs_target > (abs_speed + ACCEL_FF_ERR_MIN));
