@@ -31,40 +31,29 @@
 #define NAV_REPLAY_USE_STATIC_ROUTE_TABLE   1
 
 
-#if CURRENT_NAV_PLAN == 1 //科目一参数
-// ========================= 控制参数宏定义 =========================
-// 距离阈值 (单位: mm)
-
-#define NAV_DIST_ARRIVE         20.0f   // 到达判定阈值
-#define NAV_YAW_TOLERANCE        1.0f    //转向阈值，先转再走
-#define NAV_START_HEADING_TOLERANCE 0.3f // 复刻起步前，绝对航向对齐阈值(度)，这个需要使用地磁计航向角，暂时不用调【优化点】
-
-// 速度设定 (负数为前进，数值对应 motor rpm 或 pwm 级)
-#define NAV_SPEED_FAST          (-400.0f) // 高速行驶速度
-#define NAV_SPEED_SLOW          (-200.0f)  // 低速逼近速度 (-60 约等于 20cm/s) 
-
-#define NAV_SPEED_STOP          (0.0f)
-
-// =================================================================
-// 【性能调优宏定义区】 - 修改此处参数即可改变行驶风格
-// =================================================================
-
-// --- 1. 纯追踪 (Pure Pursuit) 导航参数 ---
-#define PP_LD_MIN_CURVE        500.0f   // 弯道最小前瞻 (mm)。越小越贴线，但容易抖动。要求精度25mm建议不低于300。
-#define PP_LD_MIN_STRAIGHT     1.2f     // 直道前瞻倍率。针对3m大点距，建议设为当前点距的1.1-1.5倍。
-#define PP_LD_SPEED_GAIN       0.7f     // 速度增益系数。Ld = Ld_min + Speed * Gain。高速时看的更远。
-#define CURVE_PREVIEW_DIST     1200.0f   // 曲率预判距离 (mm)。探测多远处的弯道，决定提早减速的时机。
-
-// --- 2. 速度规划 (Speed Planning) 参数 ---
-#define SPD_CURVE_DEADZONE     0.02f     // 曲率感应死区 (0-1)。低于此值的弯道视为直道，不减速，释放速度。
-#define SPD_CURVE_EXPONENT     2.5f     // 曲率减速指数。1.0为线性，2.0为平方律。越大则轻微弯道速度越快。
-#define SPD_ANGLE_PENALTY      0.15f     // 转向角度惩罚权重 (0-1)。值越小，纠偏时减速越少，动力更足。
-#define SPD_ANGLE_TOLERANCE    60.0f    // 转向角度容忍门槛 (度)。角度偏差在此范围内不触发剧烈减速。
-
-// --- 3. 丝滑滤波 (Smoothness) 参数 ---
-#define FILTER_ALPHA_ANGLE     0.45f    // 角度滤波系数 (0-1)。值越大越跟手，值越小越丝滑。
-#define FILTER_ALPHA_SPEED     1.0f    // 速度滤波系数 (0-1)。值越大提速越猛，值越小加速越柔和。
-#define SLEW_RATE_ANGLE        35.0f    // 单次周期最大转角变化 (度)。防止电机/舵机瞬间猛打。
+#if CURRENT_NAV_PLAN == 1 || CURRENT_NAV_PLAN == 2
+/** @brief 到点判定距离阈值（mm），用于终点/特殊点到达判定 */
+#define NAV_DIST_ARRIVE                 20.0f
+/** @brief 起跑航向对齐阈值（deg），越小起跑姿态越严格 */
+#define NAV_START_HEADING_TOLERANCE      0.3f
+/** @brief 停车速度指令，0 表示停止 */
+#define NAV_SPEED_STOP                   0.0f
+/** @brief 纯追踪最小前瞻距离（mm），增大可抑制抖动但会变钝 */
+#define PP_LD_MIN_CURVE                500.0f
+/** @brief 直道前瞻倍率（无量纲），按点间距放大前瞻基准 */
+#define PP_LD_MIN_STRAIGHT              1.2f
+/** @brief 前瞻速度增益（mm/(cmd·cycle)），速度越大看得越远 */
+#define PP_LD_SPEED_GAIN                0.7f
+/** @brief 转向误差一阶低通系数（0~1），越大越跟手 */
+#define FILTER_ALPHA_ANGLE              0.45f
+/** @brief 速度指令一阶低通系数（0~1），越大越接近离线规划原值 */
+#define FILTER_ALPHA_SPEED              0.9f
+/** @brief 单周期最大角度变化限幅（deg），抑制突变打角 */
+#define SLEW_RATE_ANGLE                35.0f
+/** @brief 近停点锁死触发距离（mm），小于该值才允许锁航向 */
+#define NAV_STOP_LOCK_DIST_MM          50.0f
+/** @brief 近停点判定的零速阈值（速度指令单位），小于该值视作“停止点” */
+#define NAV_STOP_LOCK_SPEED_EPS         1.0f
 #endif
 
 #if CURRENT_NAV_PLAN == 3
