@@ -22,8 +22,8 @@ extern volatile vision_ipc_packet_t g_vision_ipc_latest;
 /* --- 对外公开的函数接口 --- */
 
 /**
- * @brief 初始化 0 核的 IPC
- * @note  开机时调用，把通讯器准备好，各种变量清零。
+ * @brief 初始化 0 核视觉双核通信
+ * @note  开机时调用，配置共享区 MPU NC、EVTGEN 接收中断与本核 shadow。
  */
 void VisionIpc_Core0_Init(void);
 
@@ -46,14 +46,14 @@ void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable);
 void VisionIpc_Core0_SetBumpyEnable(uint8 enable);
 
 /**
- * @brief 0 核 IPC 的定时更新（建议放在 2ms 定时中断里）
- * @note  它会负责把 0 核的新命令发出去，然后把 1 核的新数据读回来。
+ * @brief 0 核视觉通信的兼容周期接口
+ * @note  保留给现有调度调用，EVTGEN 方案下无需主动轮询共享区。
  */
 void VisionIpc_Core0_Update_2ms(void);
 
 /**
- * @brief 主动去共享内存里看看 1 核有没有发来新数据
- * @return 1: 拿到了新数据; 0: 没新数据
+ * @brief 查询是否有新的结果 shadow 尚未被消费
+ * @return 1: 有新的结果; 0: 没有
  */
 uint8 VisionIpc_Core0_PollResult(void);
 

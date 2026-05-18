@@ -1,10 +1,9 @@
 /*
  * =================================================================================
  * 文件: vision_ipc_core0.c
- * 作用: 0 核 (Core 0) 进程间通信 (IPC) 驱动的具体实现。
- * 说明: 这里是 0 核与 1 核通信的“发报机”和“收报机”。
- *       发报：把控制层的命令打包后写入共享内存。
- *       收报：通过 IPC Notify 中断接收 1 核的新结果，并原子更新本地最新快照。
+ * 作用: 0 核 (Core 0) 视觉双核通信实现。
+ * 说明: 0 核负责下发视觉任务命令，并通过 EVTGEN 中断接收 1 核发布的视觉结果。
+ *       共享区使用 MPU Non-Cacheable，结果 ISR 只做清中断 + shadow 拷贝 + 置新标志。
  * =================================================================================
  */
 #include "vision/vision_ipc_core0.h"
@@ -20,16 +19,15 @@ __no_init volatile vision_ipc_shared_layout_t g_vision_ipc_shared;
 volatile vision_ipc_shared_layout_t g_vision_ipc_shared;
 #endif
 
-/* 0 核自己用的“最新战报”，其他模块都来读这个变量 */
 volatile vision_ipc_packet_t g_vision_ipc_latest = {0};
 
-/* --- 内部静态变量 --- */
 static vision_ipc_command_t g_core0_command_shadow;
+static volatile uint8 g_vision_result_new = 0U;
 static uint32 g_core0_last_result_seq = 0U;
-static volatile uint8 g_core0_command_dirty = 0U;
-static volatile uint8 g_core0_result_pending = 0U;
+static uint32 g_core0_last_result_timestamp = 0U;
+static uint32 g_core0_command_timestamp = 0U;
 
-static void vision_ipc_core0_ipc_isr(void);
+static void vision_ipc_core0_evtgen_isr(void);
 
 static void vision_ipc_core0_init_mpu(void)
 {
@@ -58,102 +56,116 @@ static void vision_ipc_core0_init_mpu(void)
     __ISB();
 }
 
-static void vision_ipc_core0_init_rx(void)
+static void vision_ipc_core0_init_evtgen_common(void)
 {
-    cy_stc_sysint_irq_t irq_cfg;
-    volatile stc_IPC_INTR_STRUCT_t *intr;
-
-    irq_cfg.sysIntSrc = (cy_en_intr_t)(cpuss_interrupts_ipc_0_IRQn + IPC_VISION_INTR);
-    irq_cfg.intIdx = IPC_VISION_INTR_IDX;
-    irq_cfg.isEnabled = true;
-    (void)Cy_SysInt_InitIRQ(&irq_cfg);
-    Cy_SysInt_SetSystemIrqVector(irq_cfg.sysIntSrc, vision_ipc_core0_ipc_isr);
-
-    intr = Cy_IPC_Drv_GetIntrBaseAddr(IPC_VISION_INTR);
-    Cy_IPC_Drv_SetInterruptMask(intr, 0U, (uint32_t)(1UL << IPC_VISION_CHAN));
-
-    NVIC_ClearPendingIRQ(IPC_VISION_INTR_IDX);
-    NVIC_SetPriority(IPC_VISION_INTR_IDX, IPC_VISION_INTR_PRIORITY);
-    NVIC_EnableIRQ(IPC_VISION_INTR_IDX);
+    EVTGEN0->unCTL.u32Register |= EVTGEN_CTL_ENABLED_Msk;
+    EVTGEN0->unINTR_MASK.u32Register |= VISION_EVTGEN_USED_MASK;
+    EVTGEN0->unINTR.u32Register = VISION_EVTGEN_USED_MASK;
+    (void)EVTGEN0->unINTR.u32Register;
 }
 
-/**
- * @brief 把草稿纸上的新命令真正发送出去
- * @note  打上包头、算好校验码，然后写进共享内存。
- */
-static void vision_ipc_core0_flush_command(void)
+static void vision_ipc_core0_init_evtgen_rx(void)
 {
+    cy_stc_sysint_irq_t irq_cfg;
+
+    irq_cfg.sysIntSrc = (cy_en_intr_t)VISION_EVTGEN_SYS_INT_SRC;
+    irq_cfg.intIdx = VISION_EVTGEN_CPU_INT_IDX;
+    irq_cfg.isEnabled = true;
+    (void)Cy_SysInt_InitIRQ(&irq_cfg);
+    Cy_SysInt_SetSystemIrqVector(irq_cfg.sysIntSrc, vision_ipc_core0_evtgen_isr);
+
+    NVIC_ClearPendingIRQ(VISION_EVTGEN_CPU_INT_IDX);
+    NVIC_SetPriority(VISION_EVTGEN_CPU_INT_IDX, VISION_EVTGEN_PRIORITY);
+    NVIC_EnableIRQ(VISION_EVTGEN_CPU_INT_IDX);
+}
+
+static void vision_ipc_core0_publish_command(uint8 notify_peer)
+{
+    volatile vision_ipc_command_channel_t *channel = &g_vision_ipc_shared.command_channel;
+
     g_core0_command_shadow.magic = VISION_IPC_CMD_MAGIC;
     g_core0_command_shadow.version = VISION_IPC_VERSION;
     g_core0_command_shadow.size = (uint16)sizeof(vision_ipc_command_t);
-
     g_core0_command_shadow.crc = 0U;
     g_core0_command_shadow.crc = vision_ipc_command_crc(&g_core0_command_shadow);
 
-    g_vision_ipc_shared.command = g_core0_command_shadow;
+    channel->payload = g_core0_command_shadow;
+    channel->frame_seq = g_core0_command_shadow.seq;
+    channel->publish_us = 0U;
+    channel->flags = VISION_CHANNEL_FLAG_VALID;
+    channel->timestamp = ++g_core0_command_timestamp;
+
+    if (notify_peer != 0U)
+    {
+        EVTGEN0->unINTR_SET.u32Register = VISION_EVTGEN_COMMAND_MASK;
+    }
 }
 
-static void vision_ipc_core0_ipc_isr(void)
+static void vision_ipc_core0_evtgen_isr(void)
 {
-    const uint32 notify_mask = (uint32)(1UL << IPC_VISION_CHAN);
-    const uint32 notify_status_mask = (notify_mask << 16U);
-    volatile stc_IPC_INTR_STRUCT_t *intr = Cy_IPC_Drv_GetIntrBaseAddr(IPC_VISION_INTR);
-    volatile stc_IPC_STRUCT_t *ipc = Cy_IPC_Drv_GetIpcBaseAddress(IPC_VISION_CHAN);
+    const uint32 masked = EVTGEN0->unINTR_MASKED.u32Register;
     vision_ipc_packet_t packet;
-    uint32 msg_word = 0U;
 
-    if ((Cy_IPC_Drv_GetInterruptStatusMasked(intr) & notify_status_mask) == 0U)
+    if ((masked & VISION_EVTGEN_RESULT_MASK) == 0U)
     {
         return;
     }
 
-    Cy_IPC_Drv_ClearInterrupt(intr, 0U, notify_mask);
-    (void)Cy_IPC_Drv_GetInterruptStatus(intr);
+    EVTGEN0->unINTR.u32Register = VISION_EVTGEN_RESULT_MASK;
+    (void)EVTGEN0->unINTR.u32Register;
 
-    if (Cy_IPC_Drv_ReadMsgWord(ipc, &msg_word) != CY_IPC_DRV_SUCCESS)
+    if ((g_vision_ipc_shared.result_channel.flags & VISION_CHANNEL_FLAG_VALID) == 0U)
+    {
+        return;
+    }
+    if (g_vision_ipc_shared.result_channel.timestamp == g_core0_last_result_timestamp)
     {
         return;
     }
 
-    packet = g_vision_ipc_shared.result;
+    memcpy(&packet,
+           (const void *)&g_vision_ipc_shared.result_channel.payload,
+           sizeof(packet));
 
-    if ((vision_ipc_packet_is_valid(&packet) != 0U) &&
-        (packet.seq != g_core0_last_result_seq))
+    if (vision_ipc_packet_is_valid(&packet) == 0U)
     {
-        uint32 primask = __get_PRIMASK();
-
-        g_core0_last_result_seq = packet.seq;
-
-        __disable_irq();
-        g_vision_ipc_latest = packet;
-        g_core0_result_pending = 1U;
-        if (primask == 0U)
-        {
-            __enable_irq();
-        }
+        return;
+    }
+    if (g_vision_ipc_shared.result_channel.frame_seq != packet.seq)
+    {
+        return;
+    }
+    if (packet.seq == g_core0_last_result_seq)
+    {
+        return;
     }
 
-    (void)msg_word;
-    (void)Cy_IPC_Drv_LockRelease(ipc, IPC_VISION_INTR_MASK);
+    g_core0_last_result_seq = packet.seq;
+    g_core0_last_result_timestamp = g_vision_ipc_shared.result_channel.timestamp;
+
+    memcpy((void *)&g_vision_ipc_latest, (const void *)&packet, sizeof(packet));
+    g_vision_result_new = 1U;
 }
 
 void VisionIpc_Core0_Init(void)
 {
     memset(&g_core0_command_shadow, 0, sizeof(g_core0_command_shadow));
     memset((void *)&g_vision_ipc_latest, 0, sizeof(g_vision_ipc_latest));
+    g_vision_result_new = 0U;
     g_core0_last_result_seq = 0U;
-    g_core0_result_pending = 0U;
+    g_core0_last_result_timestamp = 0U;
+    g_core0_command_timestamp = 0U;
 
     vision_ipc_core0_init_mpu();
-    vision_ipc_core0_init_rx();
+    vision_ipc_core0_init_evtgen_common();
+    vision_ipc_core0_init_evtgen_rx();
 
     g_core0_command_shadow.active_target = VISION_TARGET_NONE;
     g_core0_command_shadow.enable_mask = 0U;
     g_core0_command_shadow.pvc_min_score_u16 = 580U;
     g_core0_command_shadow.seq = 1U;
-    g_core0_command_dirty = 0U;
 
-    vision_ipc_core0_flush_command();
+    vision_ipc_core0_publish_command(0U);
 }
 
 void VisionIpc_Core0_SetTask(uint8 active_target, uint16 enable_mask)
@@ -161,12 +173,13 @@ void VisionIpc_Core0_SetTask(uint8 active_target, uint16 enable_mask)
     g_core0_command_shadow.active_target = active_target;
     g_core0_command_shadow.enable_mask = enable_mask;
     g_core0_command_shadow.seq++;
-    g_core0_command_dirty = 1U;
+
+    vision_ipc_core0_publish_command(1U);
 }
 
 void VisionIpc_Core0_SetPvcEnable(uint8 enable)
 {
-    if (enable)
+    if (enable != 0U)
     {
         VisionIpc_Core0_SetTask(VISION_TARGET_PVC_ENTRY, VISION_MASK_PVC_ENTRY);
     }
@@ -178,7 +191,7 @@ void VisionIpc_Core0_SetPvcEnable(uint8 enable)
 
 void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
 {
-    if (enable)
+    if (enable != 0U)
     {
         VisionIpc_Core0_SetTask(VISION_TARGET_BRIDGE, VISION_MASK_BRIDGE);
     }
@@ -190,7 +203,7 @@ void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
 
 void VisionIpc_Core0_SetBumpyEnable(uint8 enable)
 {
-    if (enable)
+    if (enable != 0U)
     {
         VisionIpc_Core0_SetTask(VISION_TARGET_BUMPY, VISION_MASK_BUMPY);
     }
@@ -202,26 +215,12 @@ void VisionIpc_Core0_SetBumpyEnable(uint8 enable)
 
 void VisionIpc_Core0_Update_2ms(void)
 {
-    if (g_core0_command_dirty)
-    {
-        vision_ipc_core0_flush_command();
-        g_core0_command_dirty = 0U;
-    }
 }
 
 uint8 VisionIpc_Core0_PollResult(void)
 {
-    uint32 primask = __get_PRIMASK();
-    uint8 pending;
-
-    __disable_irq();
-    pending = g_core0_result_pending;
-    g_core0_result_pending = 0U;
-    if (primask == 0U)
-    {
-        __enable_irq();
-    }
-
+    uint8 pending = g_vision_result_new;
+    g_vision_result_new = 0U;
     return pending;
 }
 

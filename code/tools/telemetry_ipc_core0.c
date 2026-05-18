@@ -7,6 +7,7 @@
 
 static telemetry_ipc_packet_t g_telemetry_shadow;
 static uint32 g_telemetry_seq = 0U;
+static uint32 g_telemetry_timestamp = 0U;
 
 void TelemetryIpc_Core0_Init(void)
 {
@@ -18,7 +19,12 @@ void TelemetryIpc_Core0_Init(void)
     g_telemetry_shadow.seq = 0U;
     g_telemetry_shadow.crc = 0U;
     g_telemetry_shadow.crc = telemetry_ipc_packet_crc(&g_telemetry_shadow);
-    g_vision_ipc_shared.telemetry = g_telemetry_shadow;
+    g_telemetry_timestamp = 0U;
+    g_vision_ipc_shared.telemetry_channel.payload = g_telemetry_shadow;
+    g_vision_ipc_shared.telemetry_channel.frame_seq = g_telemetry_shadow.seq;
+    g_vision_ipc_shared.telemetry_channel.publish_us = 0U;
+    g_vision_ipc_shared.telemetry_channel.flags = VISION_CHANNEL_FLAG_VALID;
+    g_vision_ipc_shared.telemetry_channel.timestamp = ++g_telemetry_timestamp;
 }
 
 void TelemetryIpc_Core0_PublishPvcDefault(void)
@@ -42,5 +48,9 @@ void TelemetryIpc_Core0_PublishPvcDefault(void)
 
     g_telemetry_shadow.crc = 0U;
     g_telemetry_shadow.crc = telemetry_ipc_packet_crc(&g_telemetry_shadow);
-    g_vision_ipc_shared.telemetry = g_telemetry_shadow;
+    g_vision_ipc_shared.telemetry_channel.payload = g_telemetry_shadow;
+    g_vision_ipc_shared.telemetry_channel.frame_seq = g_telemetry_shadow.seq;
+    g_vision_ipc_shared.telemetry_channel.publish_us = 0U;
+    g_vision_ipc_shared.telemetry_channel.flags = VISION_CHANNEL_FLAG_VALID;
+    g_vision_ipc_shared.telemetry_channel.timestamp = ++g_telemetry_timestamp;
 }

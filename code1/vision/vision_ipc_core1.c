@@ -1,6 +1,7 @@
 ﻿#include "vision_ipc_core1.h"
 #include "vision/vision_ipc_shared.h"
 #include "mpu/cy_mpu.h"
+#include "sysint/cy_sysint.h"
 #include <string.h>
 
 #if defined(__ICCARM__)
@@ -13,10 +14,13 @@ volatile vision_ipc_shared_layout_t g_vision_ipc_shared;
 
 static vision_ipc_command_t g_core1_command_shadow;
 static uint32 g_core1_result_seq = 0U;
+static uint32 g_core1_result_timestamp = 0U;
+static uint32 g_core1_last_command_timestamp = 0U;
 
 static volatile uint8 g_core1_pvc_enabled = 0U;
 static volatile uint8 g_core1_line_enabled = 0U;
 static volatile uint8 g_core1_bumpy_enabled = 0U;
+static volatile uint8 g_vision_command_new = 0U;
 
 static volatile uint8 g_core1_pvc_reset_request = 0U;
 static volatile uint8 g_core1_line_reset_request = 0U;
@@ -27,6 +31,9 @@ static uint32 g_core1_last_published_line_frame_id = 0U;
 static uint32 g_core1_last_published_bumpy_frame_id = 0U;
 static uint32 g_core1_last_published_command_seq = 0U;
 static uint16 g_core1_last_published_enable_mask = 0U;
+
+static void vision_ipc_core1_evtgen_isr(void);
+static void vision_ipc_core1_consume_command_channel(void);
 
 static void vision_ipc_core1_init_mpu(void)
 {
@@ -53,6 +60,29 @@ static void vision_ipc_core1_init_mpu(void)
 
     __DSB();
     __ISB();
+}
+
+static void vision_ipc_core1_init_evtgen_common(void)
+{
+    EVTGEN0->unCTL.u32Register |= EVTGEN_CTL_ENABLED_Msk;
+    EVTGEN0->unINTR_MASK.u32Register |= VISION_EVTGEN_USED_MASK;
+    EVTGEN0->unINTR.u32Register = VISION_EVTGEN_USED_MASK;
+    (void)EVTGEN0->unINTR.u32Register;
+}
+
+static void vision_ipc_core1_init_evtgen_rx(void)
+{
+    cy_stc_sysint_irq_t irq_cfg;
+
+    irq_cfg.sysIntSrc = (cy_en_intr_t)VISION_EVTGEN_SYS_INT_SRC;
+    irq_cfg.intIdx = VISION_EVTGEN_CPU_INT_IDX;
+    irq_cfg.isEnabled = true;
+    (void)Cy_SysInt_InitIRQ(&irq_cfg);
+    Cy_SysInt_SetSystemIrqVector(irq_cfg.sysIntSrc, vision_ipc_core1_evtgen_isr);
+
+    NVIC_ClearPendingIRQ(VISION_EVTGEN_CPU_INT_IDX);
+    NVIC_SetPriority(VISION_EVTGEN_CPU_INT_IDX, VISION_EVTGEN_PRIORITY);
+    NVIC_EnableIRQ(VISION_EVTGEN_CPU_INT_IDX);
 }
 
 static uint16 vision_confidence_to_u16(float confidence)
@@ -86,14 +116,9 @@ static uint32 vision_max_u32(uint32 a, uint32 b)
     return (a > b) ? a : b;
 }
 
-static uint8 vision_ipc_core1_write_packet(vision_ipc_packet_t *packet)
+static uint8 vision_ipc_core1_write_packet(vision_ipc_packet_t *packet, uint8 notify_peer)
 {
-    volatile stc_IPC_STRUCT_t *ipc = Cy_IPC_Drv_GetIpcBaseAddress(IPC_VISION_CHAN);
-
-    if (Cy_IPC_Drv_IsLockAcquired(ipc))
-    {
-        return 0U;
-    }
+    volatile vision_ipc_result_channel_t *channel = &g_vision_ipc_shared.result_channel;
 
     packet->magic = VISION_IPC_RESULT_MAGIC;
     packet->version = VISION_IPC_VERSION;
@@ -104,14 +129,100 @@ static uint8 vision_ipc_core1_write_packet(vision_ipc_packet_t *packet)
     packet->crc = 0U;
     packet->crc = vision_ipc_packet_crc(packet);
 
-    g_vision_ipc_shared.result = *packet;
-    if (Cy_IPC_Drv_SendMsgWord(ipc, IPC_VISION_INTR_MASK, 0U) != CY_IPC_DRV_SUCCESS)
+    channel->payload = *packet;
+    channel->frame_seq = packet->seq;
+    channel->publish_us = 0U;
+    channel->flags = VISION_CHANNEL_FLAG_VALID;
+    channel->timestamp = ++g_core1_result_timestamp;
+
+    if (notify_peer != 0U)
     {
-        return 0U;
+        EVTGEN0->unINTR_SET.u32Register = VISION_EVTGEN_RESULT_MASK;
     }
 
     g_core1_result_seq = packet->seq;
     return 1U;
+}
+
+static void vision_ipc_core1_apply_command(const vision_ipc_command_t *cmd)
+{
+    uint8 next_pvc_enabled;
+    uint8 next_line_enabled;
+    uint8 next_bumpy_enabled;
+
+    g_core1_command_shadow = *cmd;
+    g_vision_command_new = 1U;
+
+    next_pvc_enabled = vision_ipc_core1_command_wants_pvc(&g_core1_command_shadow);
+    next_line_enabled = vision_ipc_core1_command_wants_line(&g_core1_command_shadow);
+    next_bumpy_enabled = vision_ipc_core1_command_wants_bumpy(&g_core1_command_shadow);
+
+    if (next_pvc_enabled != g_core1_pvc_enabled)
+    {
+        g_core1_pvc_reset_request = 1U;
+        g_core1_pvc_enabled = next_pvc_enabled;
+        g_core1_last_published_pvc_frame_id = 0U;
+    }
+    if (next_line_enabled != g_core1_line_enabled)
+    {
+        g_core1_line_reset_request = 1U;
+        g_core1_line_enabled = next_line_enabled;
+        g_core1_last_published_line_frame_id = 0U;
+    }
+    if (next_bumpy_enabled != g_core1_bumpy_enabled)
+    {
+        g_core1_bumpy_reset_request = 1U;
+        g_core1_bumpy_enabled = next_bumpy_enabled;
+        g_core1_last_published_bumpy_frame_id = 0U;
+    }
+}
+
+static void vision_ipc_core1_consume_command_channel(void)
+{
+    vision_ipc_command_t cmd;
+    const volatile vision_ipc_command_channel_t *channel = &g_vision_ipc_shared.command_channel;
+
+    if ((channel->flags & VISION_CHANNEL_FLAG_VALID) == 0U)
+    {
+        return;
+    }
+    if (channel->timestamp == g_core1_last_command_timestamp)
+    {
+        return;
+    }
+
+    memcpy(&cmd, (const void *)&channel->payload, sizeof(cmd));
+    if (vision_ipc_command_is_valid(&cmd) == 0U)
+    {
+        return;
+    }
+    if (channel->frame_seq != cmd.seq)
+    {
+        return;
+    }
+    if (cmd.seq == g_core1_command_shadow.seq)
+    {
+        g_core1_last_command_timestamp = channel->timestamp;
+        return;
+    }
+
+    g_core1_last_command_timestamp = channel->timestamp;
+    vision_ipc_core1_apply_command(&cmd);
+}
+
+static void vision_ipc_core1_evtgen_isr(void)
+{
+    const uint32 masked = EVTGEN0->unINTR_MASKED.u32Register;
+
+    if ((masked & VISION_EVTGEN_COMMAND_MASK) == 0U)
+    {
+        return;
+    }
+
+    EVTGEN0->unINTR.u32Register = VISION_EVTGEN_COMMAND_MASK;
+    (void)EVTGEN0->unINTR.u32Register;
+
+    vision_ipc_core1_consume_command_channel();
 }
 
 static uint8 vision_ipc_core1_command_wants_pvc(const vision_ipc_command_t *cmd)
@@ -281,6 +392,8 @@ static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
 void VisionIpc_Core1_Init(void)
 {
     vision_ipc_core1_init_mpu();
+    vision_ipc_core1_init_evtgen_common();
+    vision_ipc_core1_init_evtgen_rx();
 
     /* 清空并初始化命令缓存 */
     memset(&g_core1_command_shadow, 0, sizeof(g_core1_command_shadow));
@@ -289,10 +402,13 @@ void VisionIpc_Core1_Init(void)
     g_core1_command_shadow.pvc_min_score_u16 = 580U;
 
     g_core1_result_seq = 0U;
+    g_core1_result_timestamp = 0U;
+    g_core1_last_command_timestamp = 0U;
 
     g_core1_pvc_enabled = 0U;
     g_core1_line_enabled = 0U;
     g_core1_bumpy_enabled = 0U;
+    g_vision_command_new = 0U;
 
     g_core1_pvc_reset_request = 0U;
     g_core1_line_reset_request = 0U;
@@ -304,7 +420,15 @@ void VisionIpc_Core1_Init(void)
     g_core1_last_published_command_seq = 0U;
     g_core1_last_published_enable_mask = 0U;
 
-    (void)VisionIpc_Core1_PublishIdle();
+    VisionIpc_Core1_PollCommand();
+    {
+        vision_ipc_packet_t packet;
+        memset(&packet, 0, sizeof(packet));
+        packet.active_target = g_core1_command_shadow.active_target;
+        packet.stable_target = VISION_TARGET_NONE;
+        packet.valid_mask = VISION_VALID_COMMON;
+        (void)vision_ipc_core1_write_packet(&packet, 0U);
+    }
 }
 
 /**
@@ -322,8 +446,6 @@ void VisionIpc_Core1_Update_2ms(void)
     uint32 line_frame_id = 0U;
     uint32 bumpy_frame_id = 0U;
     uint8 should_publish = 0U;
-
-    VisionIpc_Core1_PollCommand();
 
     if ((g_core1_pvc_enabled == 0U) &&
         (g_core1_line_enabled == 0U) &&
@@ -394,46 +516,7 @@ void VisionIpc_Core1_Update_2ms(void)
  */
 void VisionIpc_Core1_PollCommand(void)
 {
-    vision_ipc_command_t cmd;
-    uint8 next_pvc_enabled;
-    uint8 next_line_enabled;
-    uint8 next_bumpy_enabled;
-
-    cmd = g_vision_ipc_shared.command;
-
-    if (vision_ipc_command_is_valid(&cmd) == 0U)
-    {
-        return;
-    }
-    if (cmd.seq == g_core1_command_shadow.seq)
-    {
-        return;
-    }
-
-    g_core1_command_shadow = cmd;
-
-    next_pvc_enabled = vision_ipc_core1_command_wants_pvc(&g_core1_command_shadow);
-    next_line_enabled = vision_ipc_core1_command_wants_line(&g_core1_command_shadow);
-    next_bumpy_enabled = vision_ipc_core1_command_wants_bumpy(&g_core1_command_shadow);
-
-    if (next_pvc_enabled != g_core1_pvc_enabled)
-    {
-        g_core1_pvc_reset_request = 1U;
-        g_core1_pvc_enabled = next_pvc_enabled;
-        g_core1_last_published_pvc_frame_id = 0U;
-    }
-    if (next_line_enabled != g_core1_line_enabled)
-    {
-        g_core1_line_reset_request = 1U;
-        g_core1_line_enabled = next_line_enabled;
-        g_core1_last_published_line_frame_id = 0U;
-    }
-    if (next_bumpy_enabled != g_core1_bumpy_enabled)
-    {
-        g_core1_bumpy_reset_request = 1U;
-        g_core1_bumpy_enabled = next_bumpy_enabled;
-        g_core1_last_published_bumpy_frame_id = 0U;
-    }
+    vision_ipc_core1_consume_command_channel();
 }
 
 /**
@@ -528,7 +611,7 @@ uint8 VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
     packet.yaw_error_deg_x100 = packet.pvc_yaw_error_deg_x100;
     
     /* 最终写入共享内存 */
-    return vision_ipc_core1_write_packet(&packet);
+    return vision_ipc_core1_write_packet(&packet, 1U);
 }
 
 /**
@@ -612,7 +695,7 @@ uint8 VisionIpc_Core1_PublishCurrent(void)
     }
 
     /* 写入共享内存 */
-    return vision_ipc_core1_write_packet(&packet);
+    return vision_ipc_core1_write_packet(&packet, 1U);
 }
 
 /**
@@ -630,5 +713,5 @@ uint8 VisionIpc_Core1_PublishIdle(void)
     packet.valid_mask = VISION_VALID_COMMON;
     
     /* 写入共享内存 */
-    return vision_ipc_core1_write_packet(&packet);
+    return vision_ipc_core1_write_packet(&packet, 1U);
 }
