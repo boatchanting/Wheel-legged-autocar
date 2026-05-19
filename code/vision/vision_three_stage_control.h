@@ -17,6 +17,8 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+extern volatile float err_degree;           /* 方向盘打多少度 */
+extern volatile float target_speed_set;     /* 目标速度（负数代表前进） */
 
 /* ---------------- 编译开关与默认配置 ---------------- */
 #define VISION_THREE_STAGE_CONTROL_ENABLE                (1)
