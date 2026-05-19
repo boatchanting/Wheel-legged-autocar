@@ -1498,6 +1498,43 @@
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay.h</name>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\nav_options.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\nav_replay.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\template\nav_plan_template.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\template\nav_plan_template.c</name>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_pure_pursuit.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_pure_pursuit.c</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_gnss.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_gnss.c</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_minefield.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_minefield.c</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan3\plan3_precise.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan3\plan3_precise.c</name>
+              </file>
+              </file>
+
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\ram2flash.c</name>
