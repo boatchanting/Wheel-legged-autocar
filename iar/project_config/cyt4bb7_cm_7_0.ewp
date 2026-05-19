@@ -1209,10 +1209,10 @@
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_gnss.c</name>
               </file>
               <file>
-                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_minefield.h</name>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_pure_pursuit.h</name>
               </file>
               <file>
-                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_minefield.c</name>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_pure_pursuit.c</name>
               </file>
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan3\plan3_precise.h</name>

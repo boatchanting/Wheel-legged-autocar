@@ -1,5 +1,5 @@
-#ifndef _PLAN2_MINEFIELD_H_
-#define _PLAN2_MINEFIELD_H_
+#ifndef _PLAN2_PURE_PURSUIT_H_
+#define _PLAN2_PURE_PURSUIT_H_
 extern NavReplayState_e g_replay_state;
 extern uint8 g_current_point_type;
 extern uint8 g_special_action_trigger;

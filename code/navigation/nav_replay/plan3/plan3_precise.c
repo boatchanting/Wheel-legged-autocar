@@ -1,6 +1,6 @@
 #include "../nav_replay.h"
-#include "../../common.h"
-#include "../nav_replay_route_table.h"
+#include "../../../common.h"
+#include "../../nav_replay_route_table.h"
 #if (CURRENT_NAV_PLAN == 3) && !(GNSS_NAV == 1 && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS))
 extern volatile float target_speed_set; extern volatile float err_degree;
 NavReplayState_e g_replay_state = REPLAY_IDLE; uint8 g_current_point_type = NAV_POINT_PATH; uint8 g_special_action_trigger = 0;

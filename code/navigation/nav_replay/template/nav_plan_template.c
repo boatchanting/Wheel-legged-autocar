@@ -1,5 +1,5 @@
 #include "../nav_replay.h"
-#if 1
+#if 0
 NavReplayState_e g_replay_state = REPLAY_IDLE;
 uint8 g_current_point_type = NAV_POINT_PATH;
 uint8 g_special_action_trigger = 0;

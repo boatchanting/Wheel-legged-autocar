@@ -19,7 +19,7 @@ typedef enum
     #include "plan1/plan1_pure_pursuit.h"
   #endif
 #elif CURRENT_NAV_PLAN == 2
-  #include "plan2/plan2_minefield.h"
+  #include "plan2/plan2_pure_pursuit.h"
 #elif CURRENT_NAV_PLAN == 3
   #include "plan3/plan3_precise.h"
 #else

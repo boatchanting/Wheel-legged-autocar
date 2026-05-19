@@ -3,6 +3,8 @@
 
 #include "zf_common_headfile.h"
 
+extern volatile float err_degree;           /* 方向盘打多少度 */
+extern volatile float target_speed_set;     /* 目标速度（负数代表前进） */
 /**
  * @brief 颠簸路段状态机状态
  */
