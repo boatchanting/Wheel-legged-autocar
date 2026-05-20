@@ -1197,10 +1197,10 @@
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\template\nav_plan_template.c</name>
               <file>
-                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_pure_pursuit.h</name>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_pure_pursuit_speed_planning.h</name>
               </file>
               <file>
-                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_pure_pursuit.c</name>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_pure_pursuit_speed_planning.c</name>
               </file>
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_gnss.h</name>

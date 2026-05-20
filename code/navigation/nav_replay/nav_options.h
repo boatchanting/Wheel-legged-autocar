@@ -6,12 +6,12 @@
 // ========================================================
 // [ 科目一 (Plan 1) 算法方案定义 ]
 // ========================================================
-#define PLAN1_METHOD_PURE_PURSUIT 1 // 方案A：惯导纯追踪算法方案
+#define PLAN1_PURE_PURSUIT_SPEED_PLANNING 1 // 方案A：惯导纯追踪算法方案
 #define PLAN1_METHOD_GNSS         2 // 方案B：GNSS纯追踪算法方案
 
 // 科目一方案
 #ifndef NAV_PLAN1_METHOD
-#define NAV_PLAN1_METHOD PLAN1_METHOD_PURE_PURSUIT
+#define NAV_PLAN1_METHOD PLAN1_PURE_PURSUIT_SPEED_PLANNING
 #endif
 
 // ========================================================

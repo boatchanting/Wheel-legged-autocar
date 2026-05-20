@@ -28,12 +28,12 @@ typedef enum
         #endif
         #include "plan1/plan1_gnss.h"
         
-    #elif NAV_PLAN1_METHOD == PLAN1_METHOD_PURE_PURSUIT
+    #elif NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING
         // 【资源浪费提醒】：如果选中惯导，但系统总开关依然开了 GNSS，弹出黄色警告提醒。
         #if GNSS_NAV == 1
             #warning "[Nav Warning] Global GNSS_NAV=1, but Plan 1 uses INS pure pursuit method! GNSS data is invalid for tracking, check for wasted CPU."
         #endif
-        #include "plan1/plan1_pure_pursuit.h"
+        #include "plan1/plan1_pure_pursuit_speed_planning.h"
         
     #else
         // 【越界检查】：填了一个不存在的方案编号
