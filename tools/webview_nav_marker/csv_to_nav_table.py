@@ -193,7 +193,8 @@ def format_header(points: List[RoutePoint], src_path: Path, start_heading: Optio
     """
     now = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     count = len(points)
-    heading_valid = 1 if start_heading is not None else 0
+    # heading_valid = 1 if start_heading is not None else 0
+    heading_valid = 0 #默认设置不使用heading校准
     heading_deg = 0.0 if start_heading is None else start_heading
 
     lines = [
