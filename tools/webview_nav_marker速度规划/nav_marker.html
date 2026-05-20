@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>惯导打点上位机</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--bd:#d9e0ea;--txt:#1f2a37;--muted:#5f6c7d;--ok:#0e9f6e;--pri:#2f6fed;--warn:#c43d3d}
+*{box-sizing:border-box}
+body{margin:0;font-family:"Microsoft YaHei","PingFang SC",sans-serif;background:var(--bg);color:var(--txt);height:100vh;display:flex;flex-direction:column}
+.top{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 10px;background:#fff;border-bottom:1px solid var(--bd)}
+.left,.right{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.title{font-weight:700;font-size:17px}
+.tag{padding:4px 8px;border-radius:999px;border:1px solid var(--bd);font-size:12px;background:#eef3f9}
+.ok{color:#0a7a54;background:#eaf9f2;border-color:#95d8bf}
+.warn{color:#8c5f1f;background:#fff6e7;border-color:#efd8aa}
+.err{color:#972f2f;background:#fff1f1;border-color:#efc1c1}
+button,select,input{border:1px solid var(--bd);background:#fff;border-radius:8px;padding:6px 9px;font-size:12px}
+button{cursor:pointer}
+button.active{background:var(--pri);color:#fff;border-color:var(--pri)}
+button.primary{background:var(--ok);color:#fff;border-color:var(--ok)}
+button.danger{background:var(--warn);color:#fff;border-color:var(--warn)}
+input{width:108px}
+.main{flex:1;display:grid;grid-template-columns:minmax(520px,1fr) 420px;gap:10px;padding:10px;min-height:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;min-height:0}
+.canvas-card{position:relative;display:flex;overflow:hidden}
+#cv{width:100%;height:100%;display:block;cursor:grab;background:#f9fbff}
+.hint{position:absolute;left:10px;bottom:10px;background:#fff;border:1px solid var(--bd);border-radius:8px;padding:6px 8px;font-size:12px;color:var(--muted);line-height:1.4}
+.side{display:flex;flex-direction:column;gap:10px;padding:10px}
+.box{border:1px solid var(--bd);border-radius:8px;padding:8px}
+.box h3{margin:0 0 8px;font-size:14px}
+.kv{display:grid;grid-template-columns:88px 1fr;gap:5px;font-size:12px}
+.k{color:var(--muted)}
+.ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
+.table-wrap{flex:1;min-height:0;overflow:auto;border:1px solid var(--bd);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th,td{padding:5px;border-bottom:1px solid #edf1f6;text-align:center;white-space:nowrap}
+th{position:sticky;top:0;background:#f5f8fd}
+tr.sel{background:#eaf2ff}
+.toast{position:fixed;right:12px;bottom:12px;background:#fff;border:1px solid var(--bd);padding:8px 10px;border-radius:8px;opacity:0;transform:translateY(12px);transition:.2s;font-size:12px;max-width:460px}
+.toast.show{opacity:1;transform:none}
+@media(max-width:1200px){.main{grid-template-columns:1fr}.side{max-height:48vh}}
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="left">
+    <div class="title">惯导打点上位机</div>
+    <div id="st" class="tag warn">等待数据</div>
+    <div id="fps" class="tag">FPS:0</div>
+    <div id="trajN" class="tag">轨迹:0</div>
+    <div id="markN" class="tag">标记:0</div>
+    <div id="payload" class="tag">Payload:--</div>
+    <div id="vxBody" class="tag">Vx:--</div>
+  </div>
+  <div class="right">
+    <button id="bFollow" class="active">跟踪视角</button>
+    <button id="bAdaptive">自适应视角</button>
+    <button id="bFit">适配全图</button>
+    <button id="bReset">重置视图</button>
+    <button id="bAdd">添加当前点</button>
+    <button id="bExport" class="primary">导出CSV</button>
+  </div>
+</div>
+<div class="main">
+  <div class="card canvas-card">
+    <canvas id="cv"></canvas>
+    <div class="hint">拖拽平移 | 滚轮缩放 | 双击加点 | 拖动点可位移<br/>特殊点显示目标偏航箭头，下位机 mark_trigger=1 自动打点</div>
+  </div>
+  <div class="card side">
+    <div class="box">
+      <h3>选中点编辑</h3>
+      <div class="kv">
+        <div class="k">序号</div><div id="si">-</div>
+        <div class="k">X(mm)</div><div id="sx">-</div>
+        <div class="k">Y(mm)</div><div id="sy">-</div>
+        <div class="k">偏航角</div><div id="syaw">-</div>
+        <div class="k">Heading</div><div id="sheading">-</div>
+        <div class="k">来源</div><div id="ss">-</div>
+      </div>
+      <div class="ops">
+        <label>类型<select id="selType"></select></label>
+        <label>偏航<input id="inpYaw" type="number" step="0.1" /></label>
+        <label>Heading<input id="inpHeading" type="number" step="0.1" /></label>
+        <button id="bDel" class="danger">删除选中</button>
+        <button id="bClrM">清空标记</button>
+        <button id="bClrT">清空轨迹</button>
+        <button id="bStartCar">开始发车</button>
+        <div id="txState" class="tag warn">尚未回传</div>
+      </div>
+    </div>
+    <div class="box" style="display:flex;flex-direction:column;min-height:0;flex:1">
+      <h3>标记点列表</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>X</th>
+              <th>Y</th>
+              <th>Yaw</th>
+              <th>Heading</th>
+              <th>Type</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div style="font-size:12px;color:var(--muted);margin-top:6px">导出列: total_count,start_heading,index,x,y,relative_yaw,heading,point_type</div>
+    </div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+const TYPES=[{value:0,label:'0 PATH'},{value:1,label:'1 CIRCLE'},{value:2,label:'2 SLOPE'},{value:3,label:'3 JUMP'},{value:4,label:'4 BRIDGE'},{value:5,label:'5 BUMP'}];
+const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#059669'};
+const HOST_CTRL_CLEAR_TRAJECTORY=1;
+const HOST_CTRL_START_CAR=2;
+// 在 S 中加入 vx_body 变量
+const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0};
+const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
+// 在 E 元素绑定中加入 vxBody 节点映射
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const ctx=E.cv.getContext('2d');
+let txStatusTimer=null;
+
+function tip(t){E.toast.textContent=t;E.toast.classList.add('show');clearTimeout(tip.t);tip.t=setTimeout(()=>E.toast.classList.remove('show'),3600)}
+function clampType(v){v=Number(v);if(Number.isNaN(v))return 0;return Math.max(0,Math.min(5,Math.round(v)))}
+function normalizeYaw(v){v=Number(v);if(!Number.isFinite(v))return 0;while(v>180)v-=360;while(v<=-180)v+=360;return v}
+function normalizeHeading(v){v=Number(v);if(!Number.isFinite(v))return 0;v%=360;if(v<0)v+=360;return v}
+function fillType(sel,v){sel.innerHTML=TYPES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');sel.value=String(clampType(v))}
+function size(){return{w:E.cv.clientWidth,h:E.cv.clientHeight}}
+function resize(){const dpr=window.devicePixelRatio||1;const s=size();E.cv.width=Math.max(1,Math.floor(s.w*dpr));E.cv.height=Math.max(1,Math.floor(s.h*dpr));ctx.setTransform(dpr,0,0,dpr,0,0);draw()}
+function center(){const s=size();return{x:s.w*0.5+V.ox,y:s.h*0.5+V.oy}}
+function w2s(x,y){const c=center();return{x:c.x+x*V.scale,y:c.y-y*V.scale}}
+function s2w(x,y){const c=center();return{x:(x-c.x)/V.scale,y:-(y-c.y)/V.scale}}
+function getSel(){return S.marks.find(m=>m.id===S.sel)||null}
+function addMark(x,y,t,src,targetYaw,headingDeg){const m={id:S.nextId++,x:Number(x),y:Number(y),type:clampType(t),src:src||'manual',targetYaw:normalizeYaw(targetYaw),heading:normalizeHeading(headingDeg)};S.marks.push(m);if(S.marks.length>S.maxMarks)S.marks.splice(0,S.marks.length-S.maxMarks);S.sel=m.id;syncMarks();draw()}
+function rmSel(){if(S.sel==null)return;const n=S.marks.length;S.marks=S.marks.filter(m=>m.id!==S.sel);if(S.marks.length!==n){S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()}}
+function fitAll(){const pts=[];for(const p of S.traj)pts.push({x:p.x,y:p.y});for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
+function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale}
+function hit(px,py){let best=null,bd=9999;for(const m of S.marks){const p=w2s(m.x,m.y);const d=Math.hypot(px-p.x,py-p.y);if(d<12&&d<bd){best=m;bd=d}}return best}
+function grid(w,h){let sp=1000*V.scale;while(sp<24)sp*=2;while(sp>120)sp*=0.5;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let sx=((c.x%sp)+sp)%sp;for(let x=sx;x<w;x+=sp){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let sy=((c.y%sp)+sp)%sp;for(let y=sy;y<h;y+=sp){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}}
+function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
+function drawTraj(){if(S.traj.length<2)return;ctx.strokeStyle='#2f6fed';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<S.traj.length;i++){const p=w2s(S.traj[i].x,S.traj[i].y);if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y)}ctx.stroke();const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
+function drawArrow(px,py,yawDeg,color,selected){const rad=yawDeg*Math.PI/180;const len=selected?30:24;const dx=-Math.cos(rad);const dy=Math.sin(rad);const tailX=px-dx*len*0.35;const tailY=py-dy*len*0.35;const tipX=px+dx*len;const tipY=py+dy*len;ctx.strokeStyle=color;ctx.lineWidth=selected?3:2;ctx.beginPath();ctx.moveTo(tailX,tailY);ctx.lineTo(tipX,tipY);ctx.stroke();const head=7;const ang=Math.atan2(tipY-tailY,tipX-tailX);ctx.beginPath();ctx.moveTo(tipX,tipY);ctx.lineTo(tipX-head*Math.cos(ang-Math.PI/7),tipY-head*Math.sin(ang-Math.PI/7));ctx.lineTo(tipX-head*Math.cos(ang+Math.PI/7),tipY-head*Math.sin(ang+Math.PI/7));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
+function drawMarks(){for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=COLORS[m.type]||'#374151';ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();if(m.type!==0)drawArrow(p.x,p.y,m.targetYaw,col,sel);if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
+function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawMarks()}
+// 渲染 vxBody 内容
+function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
+function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent='-';E.sy.textContent='-';E.syaw.textContent='-';E.sheading.textContent='-';E.ss.textContent='-';fillType(E.selType,0);E.inpYaw.value='';E.inpHeading.value='';return}const idx=S.marks.findIndex(v=>v.id===m.id);E.si.textContent=String(idx);E.sx.textContent=m.x.toFixed(1);E.sy.textContent=m.y.toFixed(1);E.syaw.textContent=m.targetYaw.toFixed(1);E.sheading.textContent=m.heading.toFixed(1);E.ss.textContent=m.src;fillType(E.selType,m.type);E.inpYaw.value=m.targetYaw.toFixed(1);E.inpHeading.value=m.heading.toFixed(1)}
+function syncRows(){E.rows.innerHTML=S.marks.map((m,i)=>{const opts=TYPES.map(t=>`<option value="${t.value}" ${m.type===t.value?'selected':''}>${t.value}</option>`).join('');return `<tr class="${m.id===S.sel?'sel':''}"><td>${i}</td><td>${m.x.toFixed(0)}</td><td>${m.y.toFixed(0)}</td><td>${m.targetYaw.toFixed(1)}</td><td>${m.heading.toFixed(1)}</td><td><select class="rt" data-id="${m.id}">${opts}</select></td><td><button class="rf" data-id="${m.id}">选中</button><button class="rd" data-id="${m.id}">删</button></td></tr>`}).join('');E.rows.querySelectorAll('.rf').forEach(b=>b.onclick=()=>{S.sel=Number(b.dataset.id);syncMarks();draw()});E.rows.querySelectorAll('.rd').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.id);S.marks=S.marks.filter(v=>v.id!==id);if(S.sel===id)S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()});E.rows.querySelectorAll('.rt').forEach(s=>s.onchange=()=>{const id=Number(s.dataset.id);const m=S.marks.find(v=>v.id===id);if(!m)return;m.type=clampType(s.value);if(S.sel===id)syncSel();draw()})}
+function syncMarks(){syncTop();syncSel();syncRows()}
+function setConn(ok,text,cls){E.st.className='tag '+cls;E.st.textContent=text;if(ok)S.lastDataAt=performance.now()}
+function setTxStatus(state,autoReset=true){if(state==='ok'){E.txState.className='tag ok';E.txState.textContent='回传成功'}else if(state==='err'){E.txState.className='tag err';E.txState.textContent='回传失败'}else{E.txState.className='tag warn';E.txState.textContent='尚未回传'}if(autoReset&&state!=='idle'){clearTimeout(txStatusTimer);txStatusTimer=setTimeout(()=>setTxStatus('idle',false),3000)}else if(state==='idle'){clearTimeout(txStatusTimer);txStatusTimer=null}}
+function exportPayload(){return S.marks.map((m,i)=>({index:i,x:m.x,y:m.y,relative_yaw:m.targetYaw,heading:m.heading,point_type:m.type}))}
+async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pywebview.api)return{success:false,msg:'后端 API 未就绪'};try{return await window.pywebview.api.send_host_control(code)}catch(e){return{success:false,msg:'命令发送异常:'+(e.message||e)}}}
+
+// 提取并保存 it.vx_body 信息
+function feed(frames){
+  if(!Array.isArray(frames)||!frames.length)return;
+  for(const it of frames){
+    const x=Number(it.nav_x),y=Number(it.nav_y),yaw=normalizeYaw(it.relative_yaw||0),hdg=normalizeHeading(it.heading||0);
+    if(Number.isFinite(x)&&Number.isFinite(y)){
+      S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg};
+      S.traj.push({x,y})
+    }
+    const trig=Number(it.mark_trigger)||0;
+    if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',yaw,hdg);S.lastMarkLoop=Number(it.loop)||0}
+    S.lastTrigger=trig;
+    S.payload=it.payload_size||'--';
+    S.vx_body=it.vx_body!=null?Number(it.vx_body).toFixed(3):'--'; 
+  }
+  if(S.traj.length>S.maxTraj)S.traj.splice(0,S.traj.length-S.maxTraj);
+  S.rx+=frames.length;S.lastDataAt=performance.now();
+  if(V.adaptive)fitAll();else if(V.follow)follow();
+  syncTop();draw()
+}
+
+async function pollData(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,120);return}try{const d=await window.pywebview.api.get_new_data();if(d&&d.length){setConn(true,'\u5df2\u8fde\u63a5','ok');feed(d)}}catch(_){setConn(false,'\u63a5\u53e3\u5f02\u5e38','err')}setTimeout(pollData,38)}
+let stTick=0;
+async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
+function updateSelectedYaw(){const m=getSel();if(!m)return;const raw=Number(E.inpYaw.value);if(!Number.isFinite(raw))return;m.targetYaw=normalizeYaw(raw);syncSel();syncRows();draw()}
+function updateSelectedHeading(){const m=getSel();if(!m)return;const raw=Number(E.inpHeading.value);if(!Number.isFinite(raw))return;m.heading=normalizeHeading(raw);syncSel();syncRows();draw()}
+function initCanvas(){const c=E.cv;c.onmousedown=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;const m=hit(x,y);S.mx=x;S.my=y;if(m){S.sel=m.id;S.dragId=m.id;c.style.cursor='move'}else{S.pan=true;c.style.cursor='grabbing'}syncMarks();draw()};c.onmousemove=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;if(S.dragId!=null){const m=S.marks.find(v=>v.id===S.dragId);if(m){const p=s2w(x,y);m.x=p.x;m.y=p.y;syncSel();syncRows();draw()}return}if(S.pan){const dx=x-S.mx,dy=y-S.my;V.ox+=dx;V.oy+=dy;S.mx=x;S.my=y;V.follow=false;E.bFollow.classList.remove('active');draw()}};const stop=()=>{S.dragId=null;S.pan=false;c.style.cursor='grab'};c.onmouseup=stop;c.onmouseleave=stop;c.onwheel=(ev)=>{ev.preventDefault();const r=c.getBoundingClientRect(),sx=ev.clientX-r.left,sy=ev.clientY-r.top;const p=s2w(sx,sy);V.scale*=ev.deltaY>0?0.9:1.1;V.scale=Math.max(0.0015,Math.min(2.5,V.scale));const s=size();V.ox=sx-s.w*0.5-p.x*V.scale;V.oy=sy-s.h*0.5+p.y*V.scale;V.follow=false;E.bFollow.classList.remove('active');draw()};c.ondblclick=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top,p=s2w(x,y);const yaw=S.last?S.last.targetYaw:0;const heading=S.last?S.last.heading:0;addMark(p.x,p.y,Number(E.selType.value||0),'manual',yaw,heading);tip('\u5df2\u65b0\u589e\u6807\u8bb0\u70b9')}}
+function initBtns(){
+fillType(E.selType,0);
+E.selType.onchange=()=>{const m=getSel();if(!m)return;m.type=clampType(E.selType.value);syncRows();draw()};
+E.inpYaw.onchange=updateSelectedYaw;
+E.inpHeading.onchange=updateSelectedHeading;
+E.bFollow.onclick=()=>{V.follow=!V.follow;E.bFollow.classList.toggle('active',V.follow);if(V.follow){follow();draw()}};
+E.bAdaptive.onclick=()=>{V.adaptive=!V.adaptive;E.bAdaptive.classList.toggle('active',V.adaptive);if(V.adaptive){fitAll();draw()}};
+E.bFit.onclick=()=>{fitAll();draw()};
+E.bReset.onclick=()=>{V.scale=0.035;V.ox=0;V.oy=0;draw()};
+E.bAdd.onclick=()=>{if(!S.last){tip('\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u8f68\u8ff9\u70b9');return}addMark(S.last.x,S.last.y,Number(E.selType.value||S.last.pt||0),'manual',S.last.targetYaw,S.last.heading);tip('\u5df2\u6dfb\u52a0\u5f53\u524d\u70b9')};
+E.bDel.onclick=()=>{rmSel();tip('\u5df2\u5220\u9664\u9009\u4e2d\u70b9')};
+E.bClrM.onclick=()=>{S.marks=[];S.sel=null;syncMarks();draw();tip('\u5df2\u6e05\u7a7a\u6807\u8bb0\u70b9')};
+E.bClrT.onclick=async()=>{
+S.traj=[];S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
+if(S.api&&window.pywebview&&window.pywebview.api){try{await window.pywebview.api.clear_history()}catch(_){ }}
+draw();syncTop();tip('\u5df2\u6e05\u7a7a\u8f68\u8ff9');
+const sendResult=await sendHostControl(HOST_CTRL_CLEAR_TRAJECTORY);
+if(sendResult&&sendResult.success){setTxStatus('ok');tip(sendResult.msg||'\u5df2\u6536\u5230\u5c0f\u8f66\u56de\u4f20')}else{setTxStatus('err');tip(sendResult&&sendResult.msg?sendResult.msg:'\u8f68\u8ff9\u5df2\u6e05\u7a7a\uff0c\u4f46\u901a\u77e5\u5c0f\u8f66\u5931\u8d25')}
+};
+E.bStartCar.onclick=async()=>{
+const sendResult=await sendHostControl(HOST_CTRL_START_CAR);
+setTxStatus(sendResult.success?'ok':'err');
+tip(sendResult&&sendResult.msg?sendResult.msg:'\u5f00\u59cb\u53d1\u8f66\u547d\u4ee4\u5df2\u53d1\u9001')
+};
+E.bExport.onclick=async()=>{const p=exportPayload();if(!p.length){tip('\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u6807\u8bb0\u70b9');return}if(!S.api||!window.pywebview||!window.pywebview.api){tip('\u540e\u7aef API \u672a\u5c31\u7eea');return}try{const r=await window.pywebview.api.export_mark_points_csv(p);tip(r&&r.msg?r.msg:'\u5bfc\u51fa\u5b8c\u6210')}catch(e){tip('\u5bfc\u51fa\u5931\u8d25:'+(e.message||e))}}
+}
+function initApi(){const ck=()=>{if(window.pywebview&&window.pywebview.api){S.api=true;return true}return false};window.addEventListener('pywebviewready',()=>{S.api=true});const t=setInterval(()=>{if(ck())clearInterval(t)},80)}
+function initFps(){setInterval(()=>{S.fps=S.rx;S.rx=0;syncTop()},1000)}
+function boot(){initBtns();initCanvas();initApi();initFps();resize();syncMarks();setTxStatus('idle',false);pollData();pollStatus();window.addEventListener('resize',resize)}
+document.addEventListener('DOMContentLoaded',boot);
+</script>
+</body>
+</html>
