@@ -1,5 +1,14 @@
-#include "../nav_replay.h"
-#if 0
+#include "../nav_replay.h" 
+/*
+NAV_PLAN 开发模版，外部调用为 
+extern NavReplayState_e g_replay_state;
+extern uint8 g_current_point_type;
+extern uint8 g_special_action_trigger;
+void NavReplay_Start(void);
+void NavReplay_Stop(void);
+void NavReplay_Process(void);
+*/
+#if (CURRENT_NAV_PLAN == 99)
 NavReplayState_e g_replay_state = REPLAY_IDLE;
 uint8 g_current_point_type = NAV_POINT_PATH;
 uint8 g_special_action_trigger = 0;
