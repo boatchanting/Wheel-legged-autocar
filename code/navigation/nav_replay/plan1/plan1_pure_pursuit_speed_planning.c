@@ -1,7 +1,7 @@
 #include "../nav_replay.h"
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
-#if (CURRENT_NAV_PLAN == 1) && !(GNSS_NAV == 1 && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS))
+#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING)
 extern volatile float target_speed_set;
 extern volatile float err_degree;
 
