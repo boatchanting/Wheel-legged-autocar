@@ -11,7 +11,7 @@
 
 // 科目一方案
 #ifndef NAV_PLAN1_METHOD
-#define NAV_PLAN1_METHOD PLAN1_METHOD_GNSS
+#define NAV_PLAN1_METHOD PLAN1_PURE_PURSUIT_SPEED_PLANNING
 #endif
 
 // ========================================================
