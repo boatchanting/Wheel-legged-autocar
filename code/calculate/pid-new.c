@@ -33,18 +33,28 @@ static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
 static uint8 brake_lockout = 0;     // 重置屏蔽锁
-static uint8 brake_zero_hold = 0;
+static uint8 brake_zero_hold = 0;   // 刹停零速迟滞锁，避免停车附近反复建压/释放
+static uint8 brake_overspeed_ticks = 0U;  // 持续超速计数，达到 BRAKE_OVERSPEED_HOLD_TICKS 后才允许纠偏刹车
 static float accel_ff_pwm = 0.0f;              // 当前实际输出的加速前馈 PWM，经过斜率限制后用于最终融合
 static float accel_ff_target = 0.0f;           // 本周期期望加速前馈 PWM，先限幅再由 accel_ff_pwm 追踪
 static float accel_last_target_speed = 0.0f;   // 上一次 9ms 更新时的目标速度，用于判断目标速度是否明显抬升
 static uint16 accel_start_window_ticks = 0U;   // 复刻启动/目标跃升后的加速窗口剩余 tick 数，每 tick 约 9ms
 static uint8 accel_last_replay_running = 0U;   // 上一次更新时复刻是否运行，用于检测 REPLAY_RUNNING 上升沿
 
+/**
+ * @brief 将毫秒窗口换算成加速前馈调用 tick 数
+ * @param time_ms 需要保持加速补偿的时间，单位 ms
+ * @return 对应的 9ms 控制周期数量；调大窗口宏会让起步/出弯补偿持续更久
+ */
 static uint16 Accel_Feedforward_MsToTicks(uint16 time_ms)
 {
     return (uint16)((time_ms + ACCEL_FF_UPDATE_PERIOD_MS - 1U) / ACCEL_FF_UPDATE_PERIOD_MS);
 }
 
+/**
+ * @brief 清空加速前馈内部输出和补偿窗口
+ * @note 电机关闭、跳跃、强制刹车、特殊任务接管时调用，避免残留前馈继续推车
+ */
 static void Accel_Feedforward_ClearOutput(void)
 {
     accel_ff_pwm = 0.0f;
@@ -64,6 +74,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     float brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
     uint8 brake_level = 0;
     uint8 target_decel_cmd = 0U;
+    uint8 overspeed_request = 0U;
     uint8 decel_request = 0U;
 
     if (brake_zero_hold)
@@ -76,6 +87,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
             return 0.0f;
         }
         brake_zero_hold = 0U;
+        brake_overspeed_ticks = 0U;
     }
 
     if ((target_speed * brake_last_target_speed < 0.0f) ||
@@ -84,10 +96,32 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         target_decel_cmd = 1U;
     }
 
+    // 持续超速计数：只有真实速度连续高于目标速度一段时间，才允许走“纠偏刹车”路径。
+    // 这样可以避免目标速度轻微下调或编码器瞬时噪声，直接触发急刹。
+    overspeed_request = (uint8)(abs_speed > (abs_target + BRAKE_OVERSPEED_ERR_MIN));
+    if (overspeed_request != 0U)
+    {
+        if (brake_overspeed_ticks < 255U)
+        {
+            brake_overspeed_ticks++;
+        }
+    }
+    else
+    {
+        brake_overspeed_ticks = 0U;
+    }
+
     // 1. 正常的刹车条件判断
     if (motor_enable && (jump_flag == 0U) && (abs_speed > BRAKE_SPEED_DEADBAND))
     {
-        decel_request = (uint8)((actual_speed * target_speed <= 0.0f) || (abs_target < abs_speed));
+        // 刹车请求分三类：
+        // 1) 目标速度跨零/反向：必须刹；
+        // 2) 目标速度主动大幅下降：计划性收速，只允许轻/中刹逐级建立；
+        // 3) 持续超速：真实超速纠偏，满足更高门槛后才允许重刹。
+        decel_request = (uint8)((actual_speed * target_speed <= 0.0f) ||
+                                ((target_decel_cmd != 0U) && (abs_err >= BRAKE_ERR_MIN)) ||
+                                ((brake_overspeed_ticks >= BRAKE_OVERSPEED_HOLD_TICKS) &&
+                                 (abs_err >= BRAKE_OVERSPEED_ERR_MIN)));
         if (decel_request)
         {
             if (g_brake_active || g_reverse_brake_active)
@@ -110,7 +144,8 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
                 {
                     brake_level = 2U;
                 }
-                if ((abs_speed >= BRAKE_HEAVY_SPEED_TH) &&
+                if ((brake_overspeed_ticks >= BRAKE_OVERSPEED_HOLD_TICKS) &&
+                    (abs_speed >= BRAKE_HEAVY_SPEED_TH) &&
                     (abs_err >= BRAKE_ERR_HEAVY_MIN) &&
                     (err_ratio >= BRAKE_RATIO_HEAVY))
                 {
@@ -163,6 +198,7 @@ void Brake_Feedforward_Reset(void)
     brake_ff_target = 0.0f;
     brake_last_target_speed = 0.0f;
     brake_zero_hold = 0U;
+    brake_overspeed_ticks = 0U;
     brake_lockout = 1; // 【核心】上锁！无视接下来外部的强制刹车条件，直到外部条件自然释放为止
 }
 
@@ -171,6 +207,16 @@ float Brake_Feedforward_GetPwm(void)
     return brake_ff_pwm;
 }
 
+/**
+ * @brief 加速前馈更新
+ * @param target_speed 导航/复刻给出的目标速度
+ * @param actual_speed 编码器/速度估计得到的当前速度
+ * @param motor_enable 电机使能，0 时清空前馈
+ * @param jump_flag 跳跃保护标志，非 0 时清空前馈
+ * @param replay_running 复刻运行标志，仅复刻运行时允许起步和出弯加速补偿
+ * @param inhibit_accel 外部仲裁屏蔽标志，刹车较强或视觉/特殊任务接管时置 1
+ * @return 本周期加速前馈 PWM；调大 ACCEL_FF_GAIN/RAMP_UP/MAX 会增强起步和出弯推力
+ */
 float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag, uint8 replay_running, uint8 inhibit_accel)
 {
 #if ACCEL_FF_ENABLE
@@ -296,6 +342,10 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
 #endif
 }
 
+/**
+ * @brief 外部强制复位加速前馈
+ * @note 复刻停止、锁定刹车或任务切换时调用，防止下一次发车继承上次前馈状态
+ */
 void Accel_Feedforward_Reset(void)
 {
     Accel_Feedforward_ClearOutput();
@@ -303,6 +353,10 @@ void Accel_Feedforward_Reset(void)
     accel_last_replay_running = 0U;
 }
 
+/**
+ * @brief 读取当前加速前馈 PWM
+ * @return 已经经过斜率限制后的加速前馈输出，用于 ISR 中和刹车前馈仲裁
+ */
 float Accel_Feedforward_GetPwm(void)
 {
     return accel_ff_pwm;

@@ -222,6 +222,41 @@ static void NavReplay_ResetProcessState(void)
     NavReplay_ClearStopLock();
 }
 
+/**
+ * @brief 目标速度分段限斜率
+ * @param raw_speed 本周期路表/速度规划给出的原始目标速度，符号方向保持不变
+ * @return 经过单周期步长限制后的目标速度
+ * @note 代替单纯低通滤波：加速、普通减速、高速减速、跨零停车分别使用不同步长，
+ *       调大 NAV_SPEED_SLEW_UP_* 会让起步/出弯提速更直接；
+ *       调大 NAV_SPEED_SLEW_DOWN_* 会让弯前收速更快，但过大会更像急刹。
+ */
+static float NavReplay_SpeedSlew_Update(float raw_speed)
+{
+    float abs_raw = fabsf(raw_speed);
+    float abs_prev = fabsf(s_prev_speed_set);
+    float diff = raw_speed - s_prev_speed_set;
+    float step_limit;
+
+    if ((raw_speed * s_prev_speed_set) < 0.0f)
+    {
+        step_limit = NAV_SPEED_SLEW_DOWN_CROSS_ZERO;
+    }
+    else if (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS))
+    {
+        step_limit = (abs_prev < NAV_SPEED_SLEW_LOW_SPEED_TH) ? NAV_SPEED_SLEW_UP_LOW : NAV_SPEED_SLEW_UP_NORMAL;
+    }
+    else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_prev)
+    {
+        step_limit = (abs_prev > NAV_SPEED_SLEW_FAST_DECEL_TH) ? NAV_SPEED_SLEW_DOWN_FAST : NAV_SPEED_SLEW_DOWN_NORMAL;
+    }
+    else
+    {
+        step_limit = NAV_SPEED_SLEW_UP_NORMAL;
+    }
+
+    return s_prev_speed_set + Float_Constrain(diff, -step_limit, step_limit);
+}
+
 #if IMU_CATEGORY == 3
 /**
  * @brief 处理 IMU 起跑航向对齐流程
@@ -610,7 +645,7 @@ void NavReplay_Process(void)
         raw_speed = NAV_SPEED_STOP;
     }
 
-    target_speed_set = FILTER_ALPHA_SPEED * raw_speed + (1.0f - FILTER_ALPHA_SPEED) * s_prev_speed_set;
+    target_speed_set = NavReplay_SpeedSlew_Update(raw_speed);
     s_prev_speed_set = target_speed_set;
     g_current_point_type = nav_ram_data.points[base_idx].point_type;
 }
