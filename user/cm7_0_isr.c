@@ -433,10 +433,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 }
                 #endif
 
+                // 加速前馈计算阶段的屏蔽条件：
+                // 刹车前馈达到 BRAKE_ACCEL_INHIBIT_PWM 或特殊/视觉任务接管时，不再生成新的加速补偿；
+                // 小于该阈值的轻刹交给后面的最终仲裁处理，避免出弯瞬间加速前馈被完全清掉。
                 if ((g_is_push_mode == 1U) ||
                     (g_brake_active != 0U) ||
                     (g_reverse_brake_active != 0U) ||
-                    (brake_pwm_now != 0.0f) ||
+                    (fabsf(brake_pwm_now) >= BRAKE_ACCEL_INHIBIT_PWM) ||
                     (g_special_action_trigger != 0U) ||
                     (BumpyRoad_Is_Active() != 0U) ||
                     (VisionThreeStageControl_IsActive() != 0U) ||
@@ -721,7 +724,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             (g_is_push_mode == 1U) ||
             (g_brake_active != 0U) ||
             (g_reverse_brake_active != 0U) ||
-            (brake_pwm != 0.0f) ||
+            (fabsf(brake_pwm) >= BRAKE_BLEND_CUT_PWM) ||
             (g_special_action_trigger != 0U) ||
             (BumpyRoad_Is_Active() != 0U) ||
             (VisionThreeStageControl_IsActive() != 0U) ||
@@ -736,8 +739,21 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             Accel_Feedforward_Reset();
             accel_ff_pwm = 0.0f;
         }
-        Accel_Feedforward_Buzzer_Update(accel_ff_pwm);
-        float drive_ff_pwm = brake_pwm + accel_ff_pwm;
+        // 前馈仲裁：
+        // 1) brake_pwm >= BRAKE_BLEND_CUT_PWM：刹车主导，加速前馈不参与最终输出；
+        // 2) brake_pwm 很小但非零：小窗口共存，仅保留 ACCEL_BLEND_KEEP_RATIO 比例的加速前馈；
+        // 3) brake_pwm 为 0：加速前馈完整输出。
+        float accel_ff_pwm_effective = accel_ff_pwm;
+        if ((fabsf(brake_pwm) >= BRAKE_BLEND_CUT_PWM) && (fabsf(accel_ff_pwm_effective) > 0.0f))
+        {
+            accel_ff_pwm_effective = 0.0f;
+        }
+        else if ((fabsf(brake_pwm) > 0.0f) && (fabsf(accel_ff_pwm_effective) > 0.0f))
+        {
+            accel_ff_pwm_effective *= ACCEL_BLEND_KEEP_RATIO;
+        }
+        Accel_Feedforward_Buzzer_Update(accel_ff_pwm_effective);
+        float drive_ff_pwm = brake_pwm + accel_ff_pwm_effective;
         int16_t pwm_left  = (int16_t)( gyro_loop_out + drive_ff_pwm + turn_gyro_loop_out);
         int16_t pwm_right = (int16_t)(-gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out);
 

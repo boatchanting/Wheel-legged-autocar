@@ -550,12 +550,14 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_ERR_HEAVY_MIN      150.0f   /* 重刹最小绝对速度差，必须有足够大的真实降速需求 */
 #define BRAKE_MED_SPEED_TH       120.0f   /* 普通减速进入中刹的当前速度下限 */
 #define BRAKE_HEAVY_SPEED_TH     220.0f   /* 普通减速进入重刹的当前速度下限 */
-#define BRAKE_TARGET_DECEL_MIN   30.0f    /* 目标速度下降超过该值才认为是主动减速指令，避免稳态微调触发前馈刹车 */
+#define BRAKE_TARGET_DECEL_MIN   40.0f    /* 目标速度下降超过该值才认为是主动减速指令；调大可减少弯前误刹，调小会更早介入收速 */
+#define BRAKE_OVERSPEED_ERR_MIN  60.0f    /* 持续超速判定阈值：实际速度绝对值比目标速度绝对值大这么多才算真超速 */
+#define BRAKE_OVERSPEED_HOLD_TICKS 3U     /* 超速持续 tick 数，当前刹车前馈约 9ms 调用一次；3U 约等于 27ms，调大可抑制瞬时噪声误刹 */
 #define BRAKE_CH5_LIGHT_SPEED    80.0f    /* CH5 急停低于该速度只给轻刹，避免低速急停过猛 */
 #define BRAKE_CH5_MED_SPEED      220.0f   /* CH5 急停低于该速度给中刹，高于该速度才给重刹 */
-#define BRAKE_RATIO_LIGHT        0.15f    /* 轻刹触发比例：速度差达到当前速度的 15% 才进入轻刹 */
-#define BRAKE_RATIO_MED          0.25f    /* 中刹触发比例：速度差达到当前速度的 25% 才进入中刹 */
-#define BRAKE_RATIO_HEAVY        0.50f    /* 重刹触发比例：速度差达到当前速度的 50% 才进入重刹，CH5 急停不受此限制 */
+#define BRAKE_RATIO_LIGHT        0.18f    /* 轻刹触发比例：速度差达到当前速度的 18% 才进入轻刹；调大可减少轻微速度差触发 */
+#define BRAKE_RATIO_MED          0.28f    /* 中刹触发比例：速度差达到当前速度的 28% 才进入中刹；调大可降低弯前中刹概率 */
+#define BRAKE_RATIO_HEAVY        0.55f    /* 重刹触发比例：速度差达到当前速度的 55% 才进入重刹，CH5 急停不受此限制 */
 #define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
@@ -571,18 +573,20 @@ extern volatile uint8 g_reverse_brake_active;
 #define ACCEL_FF_ERR_MIN         30.0f    /* 目标速度绝对值比当前速度绝对值至少大这么多，才认为速度没跟上 */
 #define ACCEL_FF_TARGET_STEP_MIN 30.0f    /* 目标速度绝对值相对上一周期至少增加这么多，才认为是急加速请求 */
 #define ACCEL_FF_SPEED_DEADBAND  15.0f    /* 目标/实际速度低于该值时视为低速死区，避免零点噪声误触发 */
-#define ACCEL_FF_GAIN            6.0f     /* 加速前馈增益，输出约为 gain * 速度缺口 */
-#define ACCEL_FF_MAX             2200.0f  /* 加速前馈 PWM 最大幅值，限制起步/提速时的额外力矩 */
-#define ACCEL_FF_RAMP_UP         450.0f   /* 加速前馈每个 9ms 更新周期允许增加的最大 PWM */
+#define ACCEL_FF_GAIN            10.0f    /* 加速前馈增益，输出约为 gain * 速度缺口；起步还慢先小步加大，若抬头/冲击明显则回退 */
+#define ACCEL_FF_MAX             3000.0f  /* 加速前馈 PWM 最大幅值，限制起步/提速时的额外力矩；只限制峰值，不决定建立速度 */
+#define ACCEL_FF_RAMP_UP         800.0f   /* 加速前馈每个 9ms 更新周期允许增加的最大 PWM；调大起步更有劲，过大会有突兀冲击 */
 #define ACCEL_FF_RAMP_DOWN       700.0f   /* 加速前馈退出时每个 9ms 更新周期允许释放的最大 PWM */
-#define ACCEL_FF_START_WINDOW_MS 500U     /* 复刻刚进入 RUNNING 后允许起步前馈的时间窗口 */
-#define ACCEL_FF_BOOST_WINDOW_MS 450U     /* 运行中目标速度明显抬升后，保持加速前馈判定的短窗口 */
+#define ACCEL_FF_START_WINDOW_MS 800U     /* 复刻刚进入 RUNNING 后允许起步前馈的时间窗口；起步补偿不够可适当加大 */
+#define ACCEL_FF_BOOST_WINDOW_MS 550U     /* 运行中目标速度明显抬升后，保持加速前馈判定的短窗口；影响出弯/直道提速补偿持续时间 */
 #define ACCEL_FF_UPDATE_PERIOD_MS 9U      /* Accel_Feedforward_Update() 当前在 9ms 速度控制段调用 */
 #define ACCEL_FF_SIGN            1.0f     /* 前馈符号校正；若实车表现为减速，先改为 -1.0f，不要加大增益 */
 #define ACCEL_FF_BUZZER_PWM_TH   150.0f   /* 大幅加速前馈蜂鸣阈值；调试任意前馈是否输出时可临时降到 150 */
 #define ACCEL_FF_BUZZER_ON_MS    40U      /* 大幅加速前馈触发后的蜂鸣持续时间，ISR 中按 1ms 计数 */
 #define ACCEL_FF_BUZZER_COOLDOWN_MS 500U  /* 蜂鸣冷却时间，避免前馈持续较大时连续响 */
-
+#define BRAKE_ACCEL_INHIBIT_PWM  500.0f   /* 加速前馈计算阶段的刹车屏蔽阈值；刹车前馈小于该值时仍允许加速前馈继续计算 */
+#define BRAKE_BLEND_CUT_PWM      500.0f   /* 最终 PWM 融合阶段的刹车主导阈值；刹车达到该值后加速前馈不再参与输出 */
+#define ACCEL_BLEND_KEEP_RATIO   0.35f    /* 轻刹/小窗口共存时保留的加速前馈比例；调大出弯更有力，调小更偏保守 */
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
 float Float_Constrain(float val, float min, float max);//限幅函数
@@ -594,12 +598,31 @@ float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
+
+/**
+ * @brief 刹车前馈更新：根据目标/实际速度差输出轻刹、中刹或重刹 PWM
+ * @param target_speed 当前目标速度
+ * @param actual_speed 当前实际速度
+ * @param motor_enable 电机使能，0 时释放刹车前馈
+ * @param jump_flag 跳跃保护标志，非 0 时释放刹车前馈
+ * @return 本周期刹车前馈 PWM，通常与实际速度方向相反
+ */
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
-void Brake_Feedforward_Reset(void);
-float Brake_Feedforward_GetPwm(void);
+void Brake_Feedforward_Reset(void);//清空刹车前馈并短暂上锁，避免复位后立即被旧条件重新触发
+float Brake_Feedforward_GetPwm(void);//读取当前刹车前馈 PWM，供 ISR 前馈仲裁使用
+/**
+ * @brief 加速前馈更新：在复刻起步和目标速度明显抬升时补额外驱动力
+ * @param target_speed 当前目标速度
+ * @param actual_speed 当前实际速度
+ * @param motor_enable 电机使能，0 时清空加速前馈
+ * @param jump_flag 跳跃保护标志，非 0 时清空加速前馈
+ * @param replay_running 复刻运行标志，非 0 时才允许加速补偿
+ * @param inhibit_accel 外部仲裁屏蔽标志，刹车较强/特殊任务接管时置 1
+ * @return 本周期加速前馈 PWM；起步慢优先小步调大 ACCEL_FF_GAIN、ACCEL_FF_RAMP_UP
+ */
 float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag, uint8 replay_running, uint8 inhibit_accel);
-void Accel_Feedforward_Reset(void);
-float Accel_Feedforward_GetPwm(void);
+void Accel_Feedforward_Reset(void);//清空加速前馈和起步/出弯补偿窗口
+float Accel_Feedforward_GetPwm(void);//读取当前加速前馈 PWM，供 ISR 与刹车前馈融合
 
 // 辅助宏：取绝对值
 #define MY_ABS(x) ((x) > 0 ? (x) : -(x))

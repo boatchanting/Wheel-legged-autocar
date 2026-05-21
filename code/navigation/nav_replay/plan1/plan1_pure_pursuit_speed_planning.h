@@ -23,6 +23,15 @@
 /** @brief 单周期最大角度变化限幅（deg），抑制突变打角 */
 #define SLEW_RATE_ANGLE                35.0f
 /** @brief 近停点锁死触发距离（mm），小于该值才允许锁航向 */
+// 速度目标限斜率参数：NavReplay_Process() 每 10ms 左右调用一次，数值表示每次允许 target_speed_set 改变的最大量
+#define NAV_SPEED_SLEW_EPS             1.0f    // 速度变化死区，小于该值认为没有明显加/减速，避免浮点噪声反复切换斜率档位
+#define NAV_SPEED_SLEW_LOW_SPEED_TH    80.0f   // 低速加速分界；低于该速度使用 NAV_SPEED_SLEW_UP_LOW，避免起步瞬间过猛
+#define NAV_SPEED_SLEW_FAST_DECEL_TH   220.0f  // 高速减速分界；高于该速度允许更大的降速步长，弯前更快收敛
+#define NAV_SPEED_SLEW_UP_LOW          30.0f   // 低速/起步加速步长；加大起步更冲，减小更柔
+#define NAV_SPEED_SLEW_UP_NORMAL       45.0f   // 正常加速步长；加大出弯提速更快，过大会带来速度目标突跳
+#define NAV_SPEED_SLEW_DOWN_NORMAL     65.0f   // 普通减速步长；加大弯前收速更积极，减小弯前更顺但可能慢半拍
+#define NAV_SPEED_SLEW_DOWN_FAST       95.0f   // 高速减速步长；主要处理高速进弯，过大会增加“急刹”体感
+#define NAV_SPEED_SLEW_DOWN_CROSS_ZERO 120.0f  // 目标速度跨零或停车时的步长；加大停车更干脆，减小停车更平滑
 #define NAV_STOP_LOCK_DIST_MM          50.0f
 /** @brief 近停点判定的零速阈值（速度指令单位），小于该值视作“停止点” */
 #define NAV_STOP_LOCK_SPEED_EPS         1.0f
