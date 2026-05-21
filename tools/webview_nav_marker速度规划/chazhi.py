@@ -36,9 +36,9 @@ INTERPOLATE_DIST = 50.0
 # 1. 调大后，长直道会更积极地提速，但也会提高制动压力和出弯后的再加速幅度。
 # 2. 调小后，整体风格更保守，调试更稳，但会直接压低直道平均速度。
 # 经验例子：
-# 1. 设为 1800 时，理论上速度规划不会给出高于 1800mm/s 的目标速度。
+# 1. 设为 4500 时，理论上速度规划不会给出高于 4500mm/s 的目标速度。
 # 2. 如果实车在直道末端总是来不及刹住，除了看减速度参数，也应先确认这个上限是否定得过高。
-PATH_SPEED_MAX_MM_S = 3500.0
+PATH_SPEED_MAX_MM_S = 4500.0
 
 
 # 最大可用加速度（mm/s^2）。
@@ -49,7 +49,7 @@ PATH_SPEED_MAX_MM_S = 3500.0
 # 经验例子：
 # 1. 如果规划结果里长直道前半段升速太慢，明明车还能继续冲，可适当增大它。
 # 2. 如果实车总在出弯后突然猛窜、驱动轮容易空转，可适当减小它。
-MAX_ACCEL_MM_S2 = 1500.0
+MAX_ACCEL_MM_S2 = 3000.0
 
 
 # 最大可用减速度（mm/s^2）。
@@ -60,7 +60,7 @@ MAX_ACCEL_MM_S2 = 1500.0
 # 经验例子：
 # 1. 如果圆环点前经常刹不住、停止点有明显前冲，优先检查这个值是不是过大。
 # 2. 如果车明明刹得住，却在很早之前就开始“怂”下来，可以适当增大它。
-MAX_DECEL_MM_S2 = 1800.0
+MAX_DECEL_MM_S2 = 3000.0
 
 
 # 最大横向加速度（mm/s^2）。
@@ -71,7 +71,25 @@ MAX_DECEL_MM_S2 = 1800.0
 # 经验例子：
 # 1. 如果 U 型弯里总推头、外扩或甩尾，通常应先减小它。
 # 2. 如果车在弯中明显还很稳，但规划速度低得离谱，可能是这个值设得太保守。
-MAX_LATERAL_ACCEL_MM_S2 = 1200.0
+MAX_LATERAL_ACCEL_MM_S2 = 3000.0
+
+
+# 普通弯道最低巡航速度（mm/s）。
+# 作用：曲率限速只允许把普通路径点压到这个速度，不再因为局部曲率尖峰把弯中速度压得过低。
+# 调参影响：
+# 1. 调大后，弯中速度谷值变浅，能减少“先刹车再追赶”的感觉。
+# 2. 调小后，急弯更保守，外扩风险更低，但弯道会更慢。
+# 注意：终点和圆环点仍然会被强制规划为 0，不受该下限影响。
+PATH_CURVE_SPEED_MIN_MM_S = 2200.0
+
+
+# 曲率平滑窗口点数。
+# 作用：对离散曲率取滑动平均，抑制插值点局部毛刺导致的单点极速限速。
+# 调参影响：
+# 1. 调大后，速度曲线更顺，弯前急刹更少，但过大会掩盖真正的急弯。
+# 2. 调小后，速度规划更贴合局部几何，但对打点噪声和插值尖峰更敏感。
+# 经验：50mm 点距下先用 5；如果弯速仍有尖峰式下探，再考虑 7。
+CURVATURE_SMOOTH_WINDOW = 5
 
 
 # 速度指令换算系数（rpm -> mm/s）。
@@ -305,7 +323,7 @@ def generate_header(
         f.write("#ifndef _NAV_REPLAY_ROUTE_TABLE_H_\n")
         f.write("#define _NAV_REPLAY_ROUTE_TABLE_H_\n\n")
         f.write('#include "nav_ram.h"\n\n')
-        f.write("// 由 tools/webview_nav_marker/chazhi.py 自动生成\n")
+        f.write("// 由 tools/webview_nav_marker速度规划/chazhi.py 自动生成\n")
         f.write(f"// 生成时间：{timestamp}\n")
         f.write(f"// 插值方法：{method_name}\n")
         f.write(f"// 插值间距：约 {INTERPOLATE_DIST}mm\n")
@@ -314,6 +332,8 @@ def generate_header(
             f"a+={MAX_ACCEL_MM_S2:.1f}mm/s^2, "
             f"a-={MAX_DECEL_MM_S2:.1f}mm/s^2, "
             f"alat={MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2, "
+            f"curve_min={PATH_CURVE_SPEED_MIN_MM_S:.1f}mm/s, "
+            f"k_smooth={CURVATURE_SMOOTH_WINDOW}, "
             f"SPEED_TO_MM_S={SPEED_TO_MM_S:.3f}\n\n"
         )
         f.write(f"#define NAV_REPLAY_START_HEADING_VALID {start_heading_valid}\n")
@@ -579,12 +599,27 @@ def apply_speed_plan(points: List[RoutePoint]) -> None:
 
     s_vals = cumulative_arc_length(points)
     curvature = signed_curvature(points)
+    abs_curvature = np.abs(curvature)
     speed_limit = np.full(len(points), PATH_SPEED_MAX_MM_S, dtype=float)
 
-    for i, kappa in enumerate(curvature):
+    if CURVATURE_SMOOTH_WINDOW > 1 and len(points) >= CURVATURE_SMOOTH_WINDOW:
+        # 对曲率做轻量滑动平均，避免单个插值毛刺把弯道速度压得过低。
+        smooth_window = int(CURVATURE_SMOOTH_WINDOW)
+        if smooth_window % 2 == 0:
+            smooth_window += 1
+        smooth_pad = smooth_window // 2
+        smooth_kernel = np.ones(smooth_window, dtype=float) / float(smooth_window)
+        abs_curvature = np.convolve(
+            np.pad(abs_curvature, (smooth_pad, smooth_pad), mode="edge"),
+            smooth_kernel,
+            mode="valid",
+        )
+
+    for i, kappa in enumerate(abs_curvature):
         curve_limit = PATH_SPEED_MAX_MM_S
-        if abs(kappa) > CURVATURE_EPS:
-            curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / max(abs(kappa), CURVATURE_EPS))
+        if kappa > CURVATURE_EPS:
+            curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / max(kappa, CURVATURE_EPS))
+            curve_limit = max(PATH_CURVE_SPEED_MIN_MM_S, curve_limit)
         speed_limit[i] = min(PATH_SPEED_MAX_MM_S, curve_limit)
 
     speed_limit[-1] = 0.0
@@ -679,7 +714,9 @@ def main() -> int:
         f"vmax={PATH_SPEED_MAX_MM_S:.1f}mm/s, "
         f"a+={MAX_ACCEL_MM_S2:.1f}mm/s^2, "
         f"a-={MAX_DECEL_MM_S2:.1f}mm/s^2, "
-        f"alat={MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2"
+        f"alat={MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2, "
+        f"curve_min={PATH_CURVE_SPEED_MIN_MM_S:.1f}mm/s, "
+        f"k_smooth={CURVATURE_SMOOTH_WINDOW}"
     )
     return 0
 
