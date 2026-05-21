@@ -29,6 +29,7 @@ volatile float turn_gyro_loop_out = 0.0f;// 转向角速度环输出（PWM）
 volatile float final_motor_pwm = 0.0f;
 uint8_t roll_balance_enable = ROLL_BALANCE_ENABLE_INIT; // Rolling balance loop enable switch
 volatile int16 g_target_pwm_roll_adj = 0; // 目标横滚调整分量
+volatile float active_turn_roll_target = 0.0f; // 转向主动侧倾目标（度）
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
@@ -369,6 +370,62 @@ float Accel_Feedforward_GetPwm(void)
 /**
  * @brief 限幅函数
  */
+/**
+ * @brief Update/clear the active roll target generated from normal steering.
+ */
+void Turn_Active_Roll_Target_Reset(void)
+{
+    active_turn_roll_target = 0.0f;
+}
+
+float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
+{
+    float desired = 0.0f;
+    float ramp_limit = TURN_ACTIVE_ROLL_RAMP_DOWN;
+    float abs_speed_raw = fabsf(current_actual_speed);
+    float abs_yaw_rate_dps = fabsf(turn_cmd);
+
+    if ((roll_balance_enable == 0U) || (hard_clear != 0U))
+    {
+        active_turn_roll_target = 0.0f;
+        return 0.0f;
+    }
+
+    if ((abs_speed_raw > TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
+        (abs_yaw_rate_dps > TURN_ACTIVE_ROLL_YAW_RATE_DEAD_DPS))
+    {
+        float forward_speed_mps = TURN_ACTIVE_ROLL_FORWARD_SPEED_SIGN *
+                                  current_actual_speed *
+                                  TURN_ACTIVE_ROLL_SPEED_TO_MPS;
+        float yaw_rate_radps = turn_cmd * TURN_ACTIVE_ROLL_DEG_TO_RAD;
+        float lateral_accel_mps2 = forward_speed_mps * yaw_rate_radps;
+
+        desired = TURN_ACTIVE_ROLL_SIGN *
+                  atan2f(lateral_accel_mps2, TURN_ACTIVE_ROLL_GRAVITY_MPS2) *
+                  TURN_ACTIVE_ROLL_RAD_TO_DEG;
+        desired = Float_Constrain(desired, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
+    }
+
+    if ((fabsf(desired) > fabsf(active_turn_roll_target)) &&
+        ((desired * active_turn_roll_target) >= 0.0f))
+    {
+        ramp_limit = TURN_ACTIVE_ROLL_RAMP_UP;
+    }
+
+    active_turn_roll_target += Float_Constrain(desired - active_turn_roll_target,
+                                               -ramp_limit,
+                                               ramp_limit);
+
+    if (fabsf(active_turn_roll_target) < 0.01f)
+    {
+        active_turn_roll_target = 0.0f;
+    }
+
+    return active_turn_roll_target;
+}
+/**
+ * @brief Clamp helper.
+ */
 float Float_Constrain(float val, float min, float max) {
     if (val > max) return max;
     if (val < min) return min;
@@ -487,12 +544,13 @@ void PID_Param_Init(void) {
     pid_roll.output = 0;
 
      // 重置横滚环使能位
-    roll_balance_enable = 0;
+    roll_balance_enable = ROLL_BALANCE_ENABLE_INIT;
     g_target_pwm_roll_adj = 0;
 
     // 重置目标速度
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
+    Turn_Active_Roll_Target_Reset();
 }
 
 /**
@@ -607,6 +665,7 @@ void PID_Data_Reset(void) {
     // 重置目标速度
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
+    Turn_Active_Roll_Target_Reset();
 }
 
 
@@ -944,14 +1003,15 @@ float Gyro_Loop_Control(float angle_loop_output, float actual_gyro)
 float Roll_Balance_Control(float actual_roll,float target_roll)
 {
     // 0. 安全检查
-    if (roll_balance_enable == 0) {
+    if (roll_balance_enable == 0U) {
+        active_turn_roll_target = 0.0f;
         g_target_pwm_roll_adj = 0; // 这里的含义稍后解释
         return 0.0f;
     }
 
     // 1. 计算误差 (目标 - 实际)
     // 目标是 0 度
-    float error = target_roll - actual_roll; 
+    float error = target_roll - actual_roll;
 
     // 2. 计算 PD 输出 (标准 PID 公式)
     // 注意：这里计算的是一个“总矫正力”，正负代表方向
@@ -976,7 +1036,7 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
     // < 0 : 表示右侧需要缩短 (绝对值越大缩得越多)
     // = 0 : 大家都不动
     
-    g_target_pwm_roll_adj = (int16)total_out; 
+    g_target_pwm_roll_adj = (int16)total_out;
     
     return total_out;
 }

@@ -646,7 +646,33 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     // 6.rolling平衡环(5ms一次)
     if (loop_counter % 5 == 3){
-        Roll_Balance_Control(euler_angle.roll, roll_degree);
+        uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
+                                            (g_motor_enable == 0U) ||
+                                            (jump_flag != 0U) ||
+                                            ((now_angle - ANG_MECH_ZERO) > 70.0f) ||
+                                            ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
+                                            (g_is_push_mode != 0U) ||
+                                            (g_brake_active != 0U) ||
+                                            (g_reverse_brake_active != 0U) ||
+                                            (Minefield_Is_Active() != 0U) ||
+                                            (BumpyRoad_Is_Active() != 0U) ||
+                                            (VisionThreeStageControl_IsActive() != 0U) ||
+                                            (VisionBridgeTask_IsActive() != 0U) ||
+                                            (Bridge_Test_Triple_SingleSide_Is_Active() != 0U) ||
+                                            (g_pvc_control_enable != 0U) ||
+                                            ((fabsf(target_speed_set) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
+                                             (fabsf(current_actual_speed) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND))
+                                            #if GNSS_NAV == 1
+                                            || (g_gps_special_action_trigger != 0U)
+                                            #endif
+                                           );
+        Turn_Active_Roll_Target_Update(turn_angle_loop_out, turn_roll_hard_clear);
+        float effective_roll_target = roll_degree;
+        if (turn_roll_hard_clear == 0U)
+        {
+            effective_roll_target += active_turn_roll_target;
+        }
+        Roll_Balance_Control(euler_angle.roll, effective_roll_target);
     }
 
 
