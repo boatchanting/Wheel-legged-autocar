@@ -21,6 +21,18 @@ uint8_t need_redraw = 1;
 float motor_speeds[2] = {0.0f, 0.0f};
 float current_angles[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 
+#define MENU_KEY_UP                 KEY_1
+#define MENU_KEY_LEFT               KEY_2
+#define MENU_KEY_DOWN               KEY_3
+#if (CAR_SELECT == 2) || (CAR_SELECT == 3)
+#define MENU_KEY_RIGHT              KEY_5
+#define MENU_KEY_ONE_CLICK_START    KEY_4
+#define MENU_HAS_ONE_CLICK_START    1
+#else
+#define MENU_KEY_RIGHT              KEY_4
+#define MENU_HAS_ONE_CLICK_START    0
+#endif
+
 void Menu_TriggerRecordAction(void)
 {
     gpio_toggle_level(P19_0);       // 指示灯切换
@@ -343,19 +355,28 @@ void Menu_ShowDynamic(void)
 // ==================== 按键处理（状态机重写版） ====================
 void Menu_HandleKey(void)
 {
+    #if MENU_HAS_ONE_CLICK_START
+    if (key_get_state(MENU_KEY_ONE_CLICK_START) == KEY_SHORT_PRESS)
+    {
+        Menu_TriggerStartAction();
+        key_clear_state(MENU_KEY_ONE_CLICK_START);
+        return;
+    }
+    #endif
+
     // 1. 在主界面：任意键进入菜单
     if (current_state == MENU_STATE_MAIN)
     {
-        if (key_get_state(KEY_1) == KEY_SHORT_PRESS ||
-            key_get_state(KEY_2) == KEY_SHORT_PRESS ||
-            key_get_state(KEY_3) == KEY_SHORT_PRESS ||
-            key_get_state(KEY_4) == KEY_SHORT_PRESS)
+        if (key_get_state(MENU_KEY_UP) == KEY_SHORT_PRESS ||
+            key_get_state(MENU_KEY_LEFT) == KEY_SHORT_PRESS ||
+            key_get_state(MENU_KEY_DOWN) == KEY_SHORT_PRESS ||
+            key_get_state(MENU_KEY_RIGHT) == KEY_SHORT_PRESS)
         {
             current_state = MENU_STATE_SUBJECT;
             menu_index = MENU_STATE_SUBJECT;
             menu_values[menu_index] = 1;
             need_redraw = 1;
-            key_clear_state(KEY_1); key_clear_state(KEY_2); key_clear_state(KEY_3); key_clear_state(KEY_4);
+            key_clear_all_state();
         }
         return;
     }
@@ -363,23 +384,23 @@ void Menu_HandleKey(void)
     // 2. 在完成界面：任意键返回主界面
     if (current_state == MENU_STATE_ACTION_COMPLETE)
     {
-        if (key_get_state(KEY_1) == KEY_SHORT_PRESS ||
-            key_get_state(KEY_2) == KEY_SHORT_PRESS ||
-            key_get_state(KEY_3) == KEY_SHORT_PRESS ||
-            key_get_state(KEY_4) == KEY_SHORT_PRESS)
+        if (key_get_state(MENU_KEY_UP) == KEY_SHORT_PRESS ||
+            key_get_state(MENU_KEY_LEFT) == KEY_SHORT_PRESS ||
+            key_get_state(MENU_KEY_DOWN) == KEY_SHORT_PRESS ||
+            key_get_state(MENU_KEY_RIGHT) == KEY_SHORT_PRESS)
         {
             current_state = MENU_STATE_MAIN;
             menu_index = MENU_STATE_SUBJECT;
             need_redraw = 1;
-            key_clear_state(KEY_1); key_clear_state(KEY_2); key_clear_state(KEY_3); key_clear_state(KEY_4);
+            key_clear_all_state();
         }
         return;
     }
     
     // ==========================================================
-    // 3. 左键 (KEY_2)：返回 / 锁住
+    // 3. 左键：返回 / 锁住
     // ==========================================================
-    if (key_get_state(KEY_2) == KEY_SHORT_PRESS)
+    if (key_get_state(MENU_KEY_LEFT) == KEY_SHORT_PRESS)
     {
         switch (current_state)
         {
@@ -414,13 +435,13 @@ void Menu_HandleKey(void)
         }
         menu_index = current_state;
         need_redraw = 1;
-        key_clear_state(KEY_2);
+        key_clear_state(MENU_KEY_LEFT);
     }
     
     // ==========================================================
-    // 4. 右键 (KEY_4)：前进 / 开启推车模式
+    // 4. 右键：前进 / 开启推车模式
     // ==========================================================
-    else if (key_get_state(KEY_4) == KEY_SHORT_PRESS)
+    else if (key_get_state(MENU_KEY_RIGHT) == KEY_SHORT_PRESS)
     {
         switch (current_state)
         {
@@ -461,13 +482,13 @@ void Menu_HandleKey(void)
                 break;
         }
         need_redraw = 1;
-        key_clear_state(KEY_4);
+        key_clear_state(MENU_KEY_RIGHT);
     }
     
     // ==========================================================
-    // 5. 上下键 (KEY_1 / KEY_3)：调整数值
+    // 5. 上下键：调整数值
     // ==========================================================
-    else if (key_get_state(KEY_1) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
+    else if (key_get_state(MENU_KEY_UP) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
     {
         if (current_state != MENU_STATE_MAIN)
         {
@@ -475,9 +496,9 @@ void Menu_HandleKey(void)
             else { menu_values[menu_index] = menu_max_values[menu_index]; }
             need_redraw = 1;
         }
-        key_clear_state(KEY_1);
+        key_clear_state(MENU_KEY_UP);
     }
-    else if (key_get_state(KEY_3) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
+    else if (key_get_state(MENU_KEY_DOWN) == KEY_SHORT_PRESS && current_state <= MENU_STATE_ACTION_SELECT)
     {
         if (current_state != MENU_STATE_MAIN)
         {
@@ -485,7 +506,7 @@ void Menu_HandleKey(void)
             else { menu_values[menu_index] = 1; }
             need_redraw = 1;
         }
-        key_clear_state(KEY_3);
+        key_clear_state(MENU_KEY_DOWN);
     }
 }
 
