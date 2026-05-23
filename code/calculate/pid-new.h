@@ -593,9 +593,10 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_BLEND_CUT_PWM      500.0f   /* 最终 PWM 融合阶段的刹车主导阈值；刹车达到该值后加速前馈不再参与输出 */
 #define ACCEL_BLEND_KEEP_RATIO   0.35f    /* 轻刹/小窗口共存时保留的加速前馈比例；调大出弯更有力，调小更偏保守 */
 
-// 转向主动 Rolling 目标参数：只计算 roll_degree 目标，执行仍走 Roll_Balance_Control()。
-#define TURN_ACTIVE_ROLL_YAW_RATE_DEAD_DPS 10.0f       /* 实际 yaw 角速度死区，单位 deg/s；低于该值不生成主动侧倾 */
-#define TURN_ACTIVE_ROLL_SPEED_DEADBAND    20.0f       /* 原始纵向速度死区；低速和原地旋转时主动侧倾回零 */
+// 转向主动 Rolling 参数：向心加速度先得到可执行 roll_degree，再查表生成四腿差动，Rolling 环只做小幅反馈。
+#define TURN_ACTIVE_ROLL_YAW_RATE_DEAD_DPS 15.0f       /* yaw 角速度死区，单位 deg/s；使用期望/实际较大值，调头前可提前压弯 */
+#define TURN_ACTIVE_ROLL_SPEED_DEADBAND    25.0f       /* 原始纵向速度死区；低速和原地旋转时主动侧倾回零 */
+#define TURN_ACTIVE_ROLL_SPEED_PREVIEW_RATIO 0.50f     /* 纵向速度预加载比例；0只看实际速度，1完全看目标速度 */
 #if CAR_SELECT == 0
 #define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0034596f  /* current_actual_speed 到 m/s 的换算系数，CAR_SELECT 0 */
 #elif CAR_SELECT == 2
@@ -608,17 +609,17 @@ extern volatile uint8 g_reverse_brake_active;
 #define TURN_ACTIVE_ROLL_DEG_TO_RAD        0.0174532925f/* 角度转弧度系数 */
 #define TURN_ACTIVE_ROLL_RAD_TO_DEG        57.2957795f /* 弧度转角度系数 */
 #define TURN_ACTIVE_ROLL_SIGN              -1.0f        /* 主动侧倾方向修正，实车方向反了改为 -1.0f */
-#define TURN_ACTIVE_ROLL_MAX               30.0f        /* 主动侧倾目标限幅，单位 deg */
-#define TURN_ACTIVE_ROLL_RAMP_UP           0.20f       /* roll_degree 每 5ms 最大建立步长，单位 deg */
-#define TURN_ACTIVE_ROLL_RAMP_DOWN         0.30f       /* roll_degree 每 5ms 最大回零步长，单位 deg */
+#define TURN_ACTIVE_ROLL_MAX               18.0f        /* 向心加速度理论侧倾角限幅，单位 deg；实际 roll_degree 还会受高度差再次限幅 */
+#define TURN_ACTIVE_ROLL_RAMP_UP           0.35f       /* roll_degree 每 5ms 最大建立步长，单位 deg；调大可让调头前腿更快伸开 */
+#define TURN_ACTIVE_ROLL_RAMP_DOWN         0.45f       /* roll_degree 每 5ms 最大回零步长，单位 deg */
 #define TURN_ACTIVE_ROLL_HALF_TRACK_CM     11.2f        /* 左右轮距的一半，目标横滚角换算左右高度差时使用 */
-#define TURN_ACTIVE_ROLL_HEIGHT_MAX_CM     2.5f        /* 对称动作时单侧最大高度差，单位 cm；收腿触底后伸腿侧会尝试补足左右高度差 */
+#define TURN_ACTIVE_ROLL_HEIGHT_MAX_CM     3.5f        /* 对称动作时单侧最大高度差，单位 cm；收腿触底后伸腿侧会尝试补足左右高度差 */
 #define TURN_ACTIVE_ROLL_SHRINK_HEIGHT_MARGIN_CM 0.20f /* 收腿侧至少保留的高度余量，低车身时提前改用另一侧伸腿 */
 #define TURN_ACTIVE_ROLL_SHRINK_DUTY_MARGIN 40         /* 收腿侧 duty 安全余量，避免贴着舵机限位抖动 */
 #define TURN_ACTIVE_ROLL_TARGET_DEAD_DEG   0.8f        /* 目标横滚角死区，低于该角度不查表动作，避免腿部小幅抖动 */
 #define TURN_ACTIVE_ROLL_DUTY_DEADBAND     25          /* 查表差动 duty 死区，低于该值认为动作不可见并清零 */
-#define TURN_ACTIVE_ROLL_FB_KEEP_RATIO     0.25f       /* 普通转向主动侧倾时保留的 Rolling 反馈比例，避免前馈和反馈打架 */
-#define TURN_ACTIVE_ROLL_FB_MAX_PWM        180.0f      /* 普通转向主动侧倾时 Rolling 反馈最大 PWM，防止一侧收腿抖动 */
+#define TURN_ACTIVE_ROLL_FB_KEEP_RATIO     0.10f       /* 普通转向主动侧倾时保留的 Rolling 反馈比例，调小可减少前馈和反馈打架 */
+#define TURN_ACTIVE_ROLL_FB_MAX_PWM        80.0f       /* 普通转向主动侧倾时 Rolling 反馈最大 PWM，防止一侧收腿抖动 */
 
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用

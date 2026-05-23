@@ -39,6 +39,7 @@ volatile float g_turn_active_roll_request_degree = 0.0f; // 未斜率限制前�
 volatile float g_turn_active_roll_forward_speed_mps = 0.0f; // 向心加速度计算用纵向速度
 volatile float g_turn_active_roll_yaw_rate_radps = 0.0f; // 向心加速度计算用实际 yaw 角速度
 volatile float g_turn_active_roll_lateral_accel_mps2 = 0.0f; // v*w 计算得到的向心加速度
+static uint8 turn_active_roll_extend_only_side = 0U; // 主动侧倾伸腿锁存：0未锁，1左侧不收只伸右侧，2右侧不收只伸左侧
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
@@ -377,13 +378,30 @@ float Accel_Feedforward_GetPwm(void)
 // ============================================================================
 
 /**
+ * @brief 由最大高度差换算主动侧倾能实际执行的最大横滚角
+ * @note roll_degree 不允许超过这个角度，避免腿部已经饱和时 Rolling 环继续硬追目标。
+ */
+static float Turn_Active_Roll_Executable_Max_Deg(void)
+{
+    float max_roll = atan2f(TURN_ACTIVE_ROLL_HEIGHT_MAX_CM,
+                            TURN_ACTIVE_ROLL_HALF_TRACK_CM) *
+                     TURN_ACTIVE_ROLL_RAD_TO_DEG;
+
+    return Float_Constrain(max_roll, 0.0f, TURN_ACTIVE_ROLL_MAX);
+}
+
+/**
  * @brief 根据纵向速度和转向角速度计算普通转向主动侧倾目标
  * @note 这里只返回目标横滚角，不写舵机执行量；斜率限制由调用处用 roll_degree 完成。
  */
 float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
 {
     float desired = 0.0f;
-    float abs_speed_raw = fabsf(current_actual_speed);
+    float executable_max_deg = Turn_Active_Roll_Executable_Max_Deg();
+    float speed_for_roll_raw = current_actual_speed +
+                               TURN_ACTIVE_ROLL_SPEED_PREVIEW_RATIO *
+                               (target_speed_set - current_actual_speed);
+    float abs_speed_raw = fabsf(speed_for_roll_raw);
     float abs_yaw_rate_dps = fabsf(turn_cmd);
 
     g_turn_active_roll_request_degree = 0.0f;
@@ -400,7 +418,7 @@ float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
         (abs_yaw_rate_dps > TURN_ACTIVE_ROLL_YAW_RATE_DEAD_DPS))
     {
         float forward_speed_mps = TURN_ACTIVE_ROLL_FORWARD_SPEED_SIGN *
-                                  current_actual_speed *
+                                  speed_for_roll_raw *
                                   TURN_ACTIVE_ROLL_SPEED_TO_MPS;
         float yaw_rate_radps = turn_cmd * TURN_ACTIVE_ROLL_DEG_TO_RAD;
         float lateral_accel_mps2 = forward_speed_mps * yaw_rate_radps;
@@ -412,7 +430,9 @@ float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
         desired = TURN_ACTIVE_ROLL_SIGN *
                   atan2f(lateral_accel_mps2, TURN_ACTIVE_ROLL_GRAVITY_MPS2) *
                   TURN_ACTIVE_ROLL_RAD_TO_DEG;
-        desired = Float_Constrain(desired, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
+        desired = Float_Constrain(desired,
+                                  -executable_max_deg,
+                                  executable_max_deg);
     }
 
     g_turn_active_roll_request_degree = desired;
@@ -430,6 +450,7 @@ static void Turn_Active_Roll_Duty_Clear(void)
     g_turn_active_roll_forward_speed_mps = 0.0f;
     g_turn_active_roll_yaw_rate_radps = 0.0f;
     g_turn_active_roll_lateral_accel_mps2 = 0.0f;
+    turn_active_roll_extend_only_side = 0U;
 }
 
 static int16 Turn_Active_Roll_Duty_Deadband(int16 duty)
@@ -494,6 +515,7 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
     float height_delta_cm;
     float plan_roll;
     float plan_height_delta_cm;
+    float executable_max_deg;
     float shrink_capacity_cm;
     float left_height_cm;
     float right_height_cm;
@@ -510,6 +532,7 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
     int32 pre_turn_duty_lr;
     uint8 left_shrink_not_enough = 0U;
     uint8 right_shrink_not_enough = 0U;
+    uint8 shrink_side = 0U;
 
     if ((roll_balance_enable == 0U) || (hard_clear != 0U) ||
         (servo_height < P_min) || (servo_height > P_max))
@@ -518,7 +541,10 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
         return;
     }
 
-    target_roll = Float_Constrain(target_roll, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
+    executable_max_deg = Turn_Active_Roll_Executable_Max_Deg();
+    target_roll = Float_Constrain(target_roll,
+                                  -executable_max_deg,
+                                  executable_max_deg);
     if (fabsf(target_roll) < TURN_ACTIVE_ROLL_TARGET_DEAD_DEG)
     {
         Turn_Active_Roll_Duty_Clear();
@@ -543,12 +569,29 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
     {
         plan_roll = target_roll;
     }
-    plan_roll = Float_Constrain(plan_roll, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
+    plan_roll = Float_Constrain(plan_roll,
+                                -executable_max_deg,
+                                executable_max_deg);
     plan_height_delta_cm = TURN_ACTIVE_ROLL_HALF_TRACK_CM *
                            tanf(plan_roll * TURN_ACTIVE_ROLL_DEG_TO_RAD);
     plan_height_delta_cm = Float_Constrain(plan_height_delta_cm,
                                            -TURN_ACTIVE_ROLL_HEIGHT_MAX_CM,
                                            TURN_ACTIVE_ROLL_HEIGHT_MAX_CM);
+
+    if (plan_height_delta_cm > 0.0f)
+    {
+        shrink_side = 1U;
+    }
+    else if (plan_height_delta_cm < 0.0f)
+    {
+        shrink_side = 2U;
+    }
+
+    if ((turn_active_roll_extend_only_side != 0U) &&
+        (turn_active_roll_extend_only_side != shrink_side))
+    {
+        turn_active_roll_extend_only_side = 0U;
+    }
 
     left_height_cm = Float_Constrain(servo_height - height_delta_cm, P_min, P_max);
     right_height_cm = Float_Constrain(servo_height + height_delta_cm, P_min, P_max);
@@ -613,6 +656,24 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
                                            SERVO_MOTOR_PWM3_DIR,
                                            RR_LIMIT_DUTY_MIN,
                                            RR_LIMIT_DUTY_MAX) < shrink_probe_need_duty))
+    {
+        right_shrink_not_enough = 1U;
+    }
+
+    if ((shrink_side == 1U) && (left_shrink_not_enough != 0U))
+    {
+        turn_active_roll_extend_only_side = 1U;
+    }
+    else if ((shrink_side == 2U) && (right_shrink_not_enough != 0U))
+    {
+        turn_active_roll_extend_only_side = 2U;
+    }
+
+    if (turn_active_roll_extend_only_side == 1U)
+    {
+        left_shrink_not_enough = 1U;
+    }
+    else if (turn_active_roll_extend_only_side == 2U)
     {
         right_shrink_not_enough = 1U;
     }
