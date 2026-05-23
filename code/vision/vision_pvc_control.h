@@ -99,6 +99,12 @@ extern "C" {
 #define VISION_PVC_CONTROL_K_LAT_DEG_PER_MM       (0.20f) /* 车子偏了 1 毫米，方向盘打 0.20 度 */
 #define VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG      (0.50f) /* 车头偏了 1 度，方向盘多打 0.50 度 */
 #define VISION_PVC_CONTROL_MAX_ERR_DEG            (18.0f) /* 方向盘最多打 18 度，防止打死翻车 */
+#define VISION_PVC_CONTROL_PHY_INVALID_MM         (32767) /* IPC 里 IPM 物理坐标无效时的标记值 */
+#define VISION_PVC_CONTROL_DEADBAND_DEG           (0.30f) /* PID 输出死区：太小的方向修正直接清零 */
+#define VISION_PVC_CONTROL_PID_KP                 (1.00f) /* 方向位置式 PID 的比例系数 */
+#define VISION_PVC_CONTROL_PID_KI                 (0.02f) /* 方向位置式 PID 的积分系数 */
+#define VISION_PVC_CONTROL_PID_KD                 (0.05f) /* 方向位置式 PID 的微分系数 */
+#define VISION_PVC_CONTROL_PID_I_LIMIT            (12.0f) /* 方向位置式 PID 的积分限幅 */
 
 /* --- 3. 数据结构定义 --- */
 
@@ -113,6 +119,17 @@ typedef enum
     VISION_PVC_CTRL_ARRIVED,    /* 到达：停在里面了 */
     VISION_PVC_CTRL_STALE,      /* 数据过期：1 核死机或者通信断了 */
 } vision_pvc_control_state_e;
+
+typedef struct
+{
+    float Kp;
+    float Ki;
+    float Kd;
+    float error;
+    float last_error;
+    float integral;
+    float output;
+} vision_pvc_pid_t;
 
 /**
  * @brief 记录当前控制状态的“仪表盘”
@@ -132,6 +149,7 @@ typedef struct
     uint16 bbox_area_ratio_u16;  /* 画面里 PVC 占了多少（千分比） */
     float err_degree_cmd;        /* 当前准备给方向盘下发的指令 */
     float speed_cmd;             /* 当前准备给电机下发的速度指令 */
+    vision_pvc_pid_t pid;        /* PVC 方向控制 PID 过程量 */
 } vision_pvc_control_status_t;
 
 /* --- 4. 对外公开的全局变量与函数 --- */

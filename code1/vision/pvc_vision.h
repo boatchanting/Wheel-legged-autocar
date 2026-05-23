@@ -106,8 +106,8 @@ typedef struct
     float centroid_y;            /* PVC 的中心纵坐标 */
     float fill_ratio;            /* 填充率（面积/包围框面积） */
     float mean_gray;             /* 平均亮度（255 是纯白） */
-    int16 forward_mm;            /* 估算离车还有多远（单位：毫米，-1表示不知道） */
-    int16 lateral_mm;            /* 估算车偏离了中心多少（单位：毫米，正数偏右，负数偏左） */
+    int16 forward_mm;            /* 估算离车还有多远（单位：毫米，优先使用 IPM 前向坐标，-1表示不知道） */
+    int16 lateral_mm;            /* 估算车偏离了中心多少（单位：毫米，优先使用 IPM 横向坐标，正数偏右，负数偏左） */
     int16 phy_x_mm;              /* 基于 IPM 查表得到的真实物理 X 坐标（毫米） */
     int16 phy_y_mm;              /* 基于 IPM 查表得到的真实物理 Y 坐标（毫米） */
     int16 yaw_error_deg_x100;    /* 角度偏差（当前先不用，填 0） */

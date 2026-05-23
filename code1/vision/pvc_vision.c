@@ -509,8 +509,17 @@ static void pvc_copy_best_to_result(const pvc_component_t *best, pvc_vision_fram
     pvc_fill_physical_coord_from_ipm(best, result);
     
     /* 调用前面的估算函数，算出距离和偏差 */
-    result->forward_mm = pvc_estimate_forward_mm_from_row(best->ymax);
-    result->lateral_mm = pvc_estimate_lateral_mm_from_x(best->centroid_x);
+    if ((result->phy_x_mm != PVC_VISION_PHY_INVALID_MM) &&
+        (result->phy_y_mm != PVC_VISION_PHY_INVALID_MM))
+    {
+        result->forward_mm = result->phy_y_mm;
+        result->lateral_mm = result->phy_x_mm;
+    }
+    else
+    {
+        result->forward_mm = pvc_estimate_forward_mm_from_row(best->ymax);
+        result->lateral_mm = pvc_estimate_lateral_mm_from_x(best->centroid_x);
+    }
     result->yaw_error_deg_x100 = 0; /* 目前没有算角度，填 0 */
 }
 
