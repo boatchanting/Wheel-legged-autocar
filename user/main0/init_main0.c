@@ -16,7 +16,7 @@ void Main0_Init(void)
     // 定义一个变量用于记录屏幕打印的Y坐标（行号）
     uint16 disp_y = 0; 
     gpio_init(LED1, GPO, GPIO_HIGH, GPO_PUSH_PULL);                             // 初始化 LED1 输出 默认高电平 推挽输出模式（用于检测imu660ra是否初始化成功）
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     // 1. 设置屏幕方向（竖屏）
     ips200_set_dir(IPS200_PORTAIT);
     // 2. 设置颜色：绿色文字，黑色背景 (像黑客终端一样)
@@ -42,7 +42,7 @@ void Main0_Init(void)
     uart_write_byte(UART_INDEX, '\n');                                          // 输出换行
 
 // --- 屏幕打印 UART 初始化完成 ---
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "UART Init OK");
     disp_y += 16;
 #endif
@@ -54,13 +54,13 @@ void Main0_Init(void)
     uart_write_byte(UART_INDEX, '\n');
 
     // --- 屏幕打印无刷电机初始化完成 ---
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "Brushless Motor Init OK");
     disp_y += 16;
 #endif
 
 servo_executor_init();
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "Servo Init OK");
     disp_y += 16;
 #endif
@@ -99,7 +99,7 @@ servo_executor_init();
 #endif
  gpio_init(BUZZER_PIN, GPO, GPIO_LOW, GPO_PUSH_PULL);                             // 初始化 蜂鸣器 引脚 低电平 默认 推挽输出模式
 // --- 屏幕打印 WiFi 初始化完成 ---
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "WiFi Init OK");
     disp_y += 16;
 #endif
@@ -126,7 +126,7 @@ while(1)//检测imu660ra是否初始化成功
     #endif
     gpio_toggle_level(LED1);                                                // 翻转 LED 引脚输出电平 控制 LED 亮灭 初始化出错这个灯会闪的很慢
 }
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "IMU Init OK");
     disp_y += 16;
 #endif
@@ -134,13 +134,13 @@ while(1)//检测imu660ra是否初始化成功
 //★★★ 执行Z轴校准 ★★★
 // 此时车模/设备必须保持静止！
 IMU_Calibrate_All_Gyro();
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "IMU All Gyro Calibrated");
     disp_y += 16;
 #endif
 
 EKF_Init(); // 初始化扩展卡尔曼滤波
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "EKF Init OK");
     disp_y += 16;
 #endif
@@ -148,7 +148,7 @@ EKF_Init(); // 初始化扩展卡尔曼滤波
 #if REMOTE_CONTROL
     uart_receiver_init();//sbus接收机初始化
     Remote_Control_Init(); // 遥控器初始化函数声明
-    #if DEBUG_DISPLAY
+    #if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "Remote Control Init OK");
     disp_y += 16;
     #endif
@@ -160,20 +160,20 @@ PID_Param_Init();//pid其余参数初始化
 Momentum_Wheel_Control_Init();//pid跳跃控制，动量轮控制参数初始化
 //param_read_from_flash(); // 从 Flash 读取参数
 // param_save_to_flash()   ;     // 将当前参数保存到 Flash 
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "Flash Init OK");
     disp_y += 16;
 #endif
 
 InertialNav_Init();//惯性导航初始化
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "InertialNav Init OK");
     disp_y += 16;
 #endif
 
 gnss_init(TAU1201);//gnss导航初始化
 Gnss_Transform_Init();//GNSS经纬度投影为相对平面坐标，供纯GPS打点/复刻使用
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;
 #endif
@@ -187,7 +187,7 @@ VisionBumpyControl_Init(); // 颠簸路段：0核读取1核视觉并生成方向
 VisionBridgeTask_Init();
 VisionThreeStageControl_Init(); // three-stage vision jump state machine
 //===============惯性导航初始化结束==================
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "Button Init OK");
     disp_y += 16;
 #endif
@@ -195,7 +195,7 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
 
     uart_rx_interrupt(UART_INDEX, 1);                                           // 开启 UART_INDEX 的接收中断
     // --- 屏幕打印uart中断完成 ---
-#if DEBUG_DISPLAY
+#if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "UART INTERRUPT Init OK");
     disp_y += 16;
 #endif
@@ -217,7 +217,7 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
 
-#if DEBUG_DISPLAY    
+#if DEBUG_DISPLAY_CORE0    
     // 延时一会儿让人看清启动信息，然后清屏准备显示数据
     system_delay_ms(1000); 
     ips200_clear();

@@ -463,6 +463,16 @@ uint8 VisionIpc_Core1_TakeBumpyResetRequest(void)
     return 0U;
 }
 
+uint8 VisionIpc_Core1_GetActiveTarget(void)
+{
+    return g_core1_command_shadow.active_target;
+}
+
+uint16 VisionIpc_Core1_GetEnableMask(void)
+{
+    return g_core1_command_shadow.enable_mask;
+}
+
 void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output)
 {
     vision_ipc_packet_t packet;

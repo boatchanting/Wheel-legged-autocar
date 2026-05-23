@@ -73,6 +73,8 @@ uint8 VisionIpc_Core1_TakeBumpyResetRequest(void);
  * @brief 专门发布一次 PVC 检测结果到共享内存
  * @param pvc_output 指向当前最新的 PVC 结果
  */
+uint8 VisionIpc_Core1_GetActiveTarget(void);
+uint16 VisionIpc_Core1_GetEnableMask(void);
 void VisionIpc_Core1_PublishPvc(const volatile pvc_vision_output_t *pvc_output);
 
 /**

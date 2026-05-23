@@ -34,7 +34,8 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
-#include "../code/config/wifi_options.h"
+#include "../code/config/config.h"
+#include "../code1/tools/camera_menu.h"
 #include "../code1/wifi.h"
 #include "../code1/wifi_diff_stream.h"
 #include "../code1/wifi_protocol.h"
@@ -69,6 +70,9 @@ int main(void)
     // 初始化摄像头和逐飞助手
     //wifi_camera_init();                                                         // 初始化摄像头和逐飞助手
     //wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 30U, 2U);                  // init realtime diff stream (keyframe interval = 30)
+#if DEBUG_DISPLAY_CORE1
+    CameraMenu_Init();
+#endif
 #if WIFI_CORE1_USE
     wifi_init();
     wifi_connect_tcp_server();
@@ -155,6 +159,9 @@ int main(void)
                 #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
                 wifi_diff_stream_send_gray_frame((const uint8 *)compressed_image_copy[0]);
                 #endif
+#if DEBUG_DISPLAY_CORE1
+                CameraMenu_Update();
+#endif
             //}
             //frame_skip_counter++;
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上

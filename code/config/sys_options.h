@@ -28,4 +28,24 @@
 
 */
 
+#define DEBUG_DISPLAY_CORE_SELECT 0      // 0: 0鏍稿崟鐙睆骞? 1: 1鏍歌瑙夊睆骞?
+#define CAMERA_MENU_REFRESH_DIV 4U       // 1鏍稿睆骞曞垎棰戯紝姣?N甯ф柊鍥惧儚鍒锋柊涓€娆?
+#define CAMERA_MENU_DEBUG_LOG_ENABLE 0U  // 1: 鎵撳紑 1鏍?camera_menu 涓插彛璋冭瘯鎵撳嵃
+#define CAMERA_MENU_DEBUG_LOG_DIV 20U    // 1鏍?camera_menu 涓插彛鎵撳嵃鍒嗛
+
+#if (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT != 0) && (DEBUG_DISPLAY_CORE_SELECT != 1))
+#error "DEBUG display config error: invalid DEBUG_DISPLAY_CORE_SELECT."
+#endif
+
+#if (CAMERA_MENU_REFRESH_DIV == 0U)
+#error "DEBUG display config error: CAMERA_MENU_REFRESH_DIV must be greater than 0."
+#endif
+
+#if (CAMERA_MENU_DEBUG_LOG_DIV == 0U)
+#error "DEBUG display config error: CAMERA_MENU_DEBUG_LOG_DIV must be greater than 0."
+#endif
+
+#define DEBUG_DISPLAY_CORE0 (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT == 0))
+#define DEBUG_DISPLAY_CORE1 (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT == 1))
+
 #endif // __SYS_OPTIONS_H__
