@@ -98,6 +98,8 @@ typedef struct
     uint8 pvc_detected;
     uint8 pvc_stable_detected;
     uint16 pvc_confidence_u16;
+    int16 pvc_target_x_px_x100;
+    int16 pvc_steer_error_px_x100;
     int16 pvc_forward_mm;
     int16 pvc_lateral_mm;
     int16 pvc_phy_x_mm;

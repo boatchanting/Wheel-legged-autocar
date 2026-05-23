@@ -98,6 +98,67 @@ static uint8 pvc_component_height(const pvc_component_t *component)
     return (uint8)(component->ymax - component->ymin + 1U);
 }
 
+static int16 pvc_float_to_i16_x100(float value)
+{
+    if (value > 327.67f)
+    {
+        return 32767;
+    }
+    if (value < -327.68f)
+    {
+        return -32768;
+    }
+    return (int16)(value * 100.0f);
+}
+
+static float pvc_extract_target_x_from_bottom_rows(const uint8 *gray, const pvc_component_t *best)
+{
+    const uint8 y_start = (best->ymax >= (PVC_VISION_BOTTOM_TARGET_ROWS - 1U)) ?
+                          (uint8)(best->ymax - (PVC_VISION_BOTTOM_TARGET_ROWS - 1U)) :
+                          best->ymin;
+    float weighted_sum = 0.0f;
+    float weight_total = 0.0f;
+
+    for (uint8 y = y_start; y <= best->ymax; y++)
+    {
+        uint8 row_found = 0U;
+        uint8 row_xmin = best->xmax;
+        uint8 row_xmax = best->xmin;
+
+        for (uint8 x = best->xmin; x <= best->xmax; x++)
+        {
+            if (gray[(uint16)y * PVC_IMAGE_W + x] >= PVC_VISION_WHITE_THRESHOLD)
+            {
+                if (row_found == 0U)
+                {
+                    row_xmin = x;
+                    row_xmax = x;
+                    row_found = 1U;
+                }
+                else
+                {
+                    if (x < row_xmin) { row_xmin = x; }
+                    if (x > row_xmax) { row_xmax = x; }
+                }
+            }
+        }
+
+        if (row_found != 0U)
+        {
+            const float row_center_x = ((float)row_xmin + (float)row_xmax) * 0.5f;
+            const float weight = 1.0f + 0.08f * (float)(y - y_start);
+            weighted_sum += row_center_x * weight;
+            weight_total += weight;
+        }
+    }
+
+    if (weight_total > 0.0f)
+    {
+        return weighted_sum / weight_total;
+    }
+    return best->centroid_x;
+}
+
 /* --- 5. 核心逻辑：估算距离与偏差 --- */
 
 /**
@@ -198,6 +259,8 @@ static void pvc_clear_frame_result(pvc_vision_frame_result_t *result)
     result->bbox_ymax = 0xFFU;
     result->entry_bottom_y = 0xFFU;
     result->entry_top_y = 0xFFU;
+    result->target_x_px_x100 = 0;
+    result->steer_error_px_x100 = 0;
     result->phy_x_mm = PVC_VISION_PHY_INVALID_MM;
     result->phy_y_mm = PVC_VISION_PHY_INVALID_MM;
     result->forward_mm = -1; /* 距离设为 -1 表示未知 */
@@ -491,9 +554,12 @@ static uint8 pvc_filter_candidates(uint8 component_count)
  * @param best 得分最高的那一块白斑（最像 PVC 的）
  * @param result 要填写的输出结果表
  */
-static void pvc_copy_best_to_result(const pvc_component_t *best, pvc_vision_frame_result_t *result)
+static void pvc_copy_best_to_result(const uint8 *gray, const pvc_component_t *best, pvc_vision_frame_result_t *result)
 {
     /* 抄写基本数据 */
+    const float target_x = pvc_extract_target_x_from_bottom_rows(gray, best);
+    const float steer_error_px = target_x - (((float)PVC_IMAGE_W - 1.0f) * 0.5f);
+
     result->area = best->area;
     result->bbox_xmin = best->xmin;
     result->bbox_ymin = best->ymin;
@@ -506,20 +572,13 @@ static void pvc_copy_best_to_result(const pvc_component_t *best, pvc_vision_fram
     result->centroid_y = best->centroid_y;
     result->fill_ratio = best->fill_ratio;
     result->mean_gray = best->mean_gray;
+    result->target_x_px_x100 = pvc_float_to_i16_x100(target_x);
+    result->steer_error_px_x100 = pvc_float_to_i16_x100(steer_error_px);
     pvc_fill_physical_coord_from_ipm(best, result);
     
     /* 调用前面的估算函数，算出距离和偏差 */
-    if ((result->phy_x_mm != PVC_VISION_PHY_INVALID_MM) &&
-        (result->phy_y_mm != PVC_VISION_PHY_INVALID_MM))
-    {
-        result->forward_mm = result->phy_y_mm;
-        result->lateral_mm = result->phy_x_mm;
-    }
-    else
-    {
-        result->forward_mm = pvc_estimate_forward_mm_from_row(best->ymax);
-        result->lateral_mm = pvc_estimate_lateral_mm_from_x(best->centroid_x);
-    }
+    result->forward_mm = pvc_estimate_forward_mm_from_row(best->ymax);
+    result->lateral_mm = pvc_estimate_lateral_mm_from_x(target_x);
     result->yaw_error_deg_x100 = 0; /* 目前没有算角度，填 0 */
 }
 
@@ -545,7 +604,7 @@ static void pvc_detect_frame(const uint8 *gray, pvc_vision_frame_result_t *resul
     if (candidate_count > 0U)
     {
         const pvc_component_t *best = &g_pvc_scratch.candidates[0];
-        pvc_copy_best_to_result(best, result);
+        pvc_copy_best_to_result(gray, best, result);
         
         /* 5. 只有分数达到及格线，才算真的看到了 PVC */
         result->detected = (uint8)(best->score >= PVC_VISION_MIN_DECISION_SCORE);

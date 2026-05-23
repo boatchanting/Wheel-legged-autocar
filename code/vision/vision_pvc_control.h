@@ -71,9 +71,9 @@ extern "C" {
 /*
  * 【各阶段的速度设置】(负数代表往前走，因为这台车的电机方向可能反了)
  */
-#define VISION_PVC_CONTROL_SEARCH_SPEED_SET       (-35.0f)  /* 搜索阶段：没看清时，龟速 35 往前挪 */
+#define VISION_PVC_CONTROL_SEARCH_SPEED_SET       (-120.0f)  /* 搜索阶段：没看清时，龟速 35 往前挪 */
 #define VISION_PVC_CONTROL_TRACK_SPEED_SET        (-200.0f) /* 跟踪阶段：看清了且还很远，速度 200 冲过去 */
-#define VISION_PVC_CONTROL_CLOSE_SPEED_SET        (-80.0f)  /* 接近阶段：快到了，速度降到 80 */
+#define VISION_PVC_CONTROL_CLOSE_SPEED_SET        (-120.0f)  /* 接近阶段：快到了，速度降到 80 */
 #define VISION_PVC_CONTROL_ARRIVE_SPEED_SET       (0.0f)    /* 到达阶段：到了，速度 0 停车 */
 
 /*
@@ -96,10 +96,9 @@ extern "C" {
  * 【方向盘 PID 参数】
  * 公式：打角 = 横向偏差 * 比例(0.20) + 角度偏差 * 比例(0.50)
  */
-#define VISION_PVC_CONTROL_K_LAT_DEG_PER_MM       (0.20f) /* 车子偏了 1 毫米，方向盘打 0.20 度 */
+#define VISION_PVC_CONTROL_K_STEER_DEG_PER_PX     (-0.20f) /* 入口目标每偏 1 个像素，方向盘打 0.20 度 */
 #define VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG      (0.50f) /* 车头偏了 1 度，方向盘多打 0.50 度 */
 #define VISION_PVC_CONTROL_MAX_ERR_DEG            (18.0f) /* 方向盘最多打 18 度，防止打死翻车 */
-#define VISION_PVC_CONTROL_PHY_INVALID_MM         (32767) /* IPC 里 IPM 物理坐标无效时的标记值 */
 #define VISION_PVC_CONTROL_DEADBAND_DEG           (0.30f) /* PID 输出死区：太小的方向修正直接清零 */
 #define VISION_PVC_CONTROL_PID_KP                 (1.00f) /* 方向位置式 PID 的比例系数 */
 #define VISION_PVC_CONTROL_PID_KI                 (0.02f) /* 方向位置式 PID 的积分系数 */
@@ -143,6 +142,8 @@ typedef struct
     uint32 last_seq;             /* 上一张照片的编号 */
     uint16 stale_ticks;          /* 多少次没收到新照片了 */
     vision_pvc_control_state_e state; /* 现在处于什么阶段？ */
+    int16 target_x_px_x100;      /* 视觉侧给出的入口目标中心横坐标（像素，放大 100 倍） */
+    int16 steer_error_px_x100;   /* 视觉侧给出的像素误差（放大 100 倍） */
     int16 forward_mm;            /* 离入口还有多远 */
     int16 lateral_mm;            /* 偏离中心多少 */
     int16 yaw_error_deg_x100;    /* 角度偏了多少 */

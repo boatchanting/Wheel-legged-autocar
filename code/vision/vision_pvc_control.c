@@ -48,24 +48,6 @@ static float vision_pvc_constrain_f(float value, float min_value, float max_valu
     return value;
 }
 
-static int16 vision_pvc_select_forward_mm(const volatile vision_ipc_packet_t *packet)
-{
-    if (packet->pvc_phy_y_mm != VISION_PVC_CONTROL_PHY_INVALID_MM)
-    {
-        return packet->pvc_phy_y_mm;
-    }
-    return packet->pvc_forward_mm;
-}
-
-static int16 vision_pvc_select_lateral_mm(const volatile vision_ipc_packet_t *packet)
-{
-    if (packet->pvc_phy_x_mm != VISION_PVC_CONTROL_PHY_INVALID_MM)
-    {
-        return packet->pvc_phy_x_mm;
-    }
-    return packet->pvc_lateral_mm;
-}
-
 static void vision_pvc_pid_reset(vision_pvc_pid_t *pid)
 {
     pid->error = 0.0f;
@@ -105,15 +87,15 @@ static float vision_pvc_pid_calc(vision_pvc_pid_t *pid, float error)
  */
 static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
-    const int16 lateral_mm = vision_pvc_select_lateral_mm(packet);
+    const float steer_error_px = (float)packet->pvc_steer_error_px_x100 * 0.01f;
     /* 横向偏差算出来的打角 */
     const float lateral_deg =
-        (float)lateral_mm * VISION_PVC_CONTROL_K_LAT_DEG_PER_MM;
+        steer_error_px * VISION_PVC_CONTROL_K_STEER_DEG_PER_PX;
     /* 车头偏角算出来的打角（目前 1 核没算这个，传过来的是 0） */
     const float yaw_deg =
         ((float)packet->pvc_yaw_error_deg_x100 * 0.01f) * VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG;
-    /* 两个加起来，再乘上方向符号（如果反了可以变成负的） */
-    const float err = VISION_PVC_CONTROL_LATERAL_SIGN * (lateral_deg + yaw_deg);
+    /* 两个加起来，像素误差定义已经包含左右方向 */
+    const float err = lateral_deg + yaw_deg;
 
     /* 限幅，别把舵机打坏了 */
     return vision_pvc_constrain_f(err,
@@ -301,6 +283,8 @@ void VisionPvcControl_Update_2ms(void)
         g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_STALE; /* 数据过期了 */
         g_pvc_ctrl_shadow.stable_detected = 0U;
         g_pvc_ctrl_shadow.raw_detected = 0U;
+        g_pvc_ctrl_shadow.target_x_px_x100 = 0;
+        g_pvc_ctrl_shadow.steer_error_px_x100 = 0;
         g_pvc_ctrl_shadow.forward_mm = -1;
         g_pvc_ctrl_shadow.lateral_mm = 0;
         g_pvc_ctrl_shadow.yaw_error_deg_x100 = 0;
@@ -322,15 +306,17 @@ void VisionPvcControl_Update_2ms(void)
     /* 把 1 核的数据抄到仪表盘上 */
     g_pvc_ctrl_shadow.stable_detected = packet->pvc_stable_detected;
     g_pvc_ctrl_shadow.raw_detected = packet->pvc_detected;
-    g_pvc_ctrl_shadow.forward_mm = vision_pvc_select_forward_mm(packet);
-    g_pvc_ctrl_shadow.lateral_mm = vision_pvc_select_lateral_mm(packet);
+    g_pvc_ctrl_shadow.target_x_px_x100 = packet->pvc_target_x_px_x100;
+    g_pvc_ctrl_shadow.steer_error_px_x100 = packet->pvc_steer_error_px_x100;
+    g_pvc_ctrl_shadow.forward_mm = packet->pvc_forward_mm;
+    g_pvc_ctrl_shadow.lateral_mm = packet->pvc_lateral_mm;
     g_pvc_ctrl_shadow.yaw_error_deg_x100 = packet->pvc_yaw_error_deg_x100;
     g_pvc_ctrl_shadow.bbox_area_ratio_u16 = vision_pvc_calc_bbox_ratio_u16(packet);
 
     /* 3. 如果 1 核确认看到了 PVC */
     if (packet->pvc_stable_detected)
     {
-        const int16 forward_mm = g_pvc_ctrl_shadow.forward_mm;
+        const int16 forward_mm = packet->pvc_forward_mm;
         /* 算算方向盘该打多少 */
         const float turn_err = vision_pvc_pid_calc(&g_pvc_ctrl_shadow.pid,
                                                    vision_pvc_calc_err_degree(packet));
