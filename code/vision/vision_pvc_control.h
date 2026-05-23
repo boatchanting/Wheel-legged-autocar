@@ -71,10 +71,10 @@ extern "C" {
 /*
  * 【各阶段的速度设置】(负数代表往前走，因为这台车的电机方向可能反了)
  */
-#define VISION_PVC_CONTROL_SEARCH_SPEED_SET       (-35.0f)  /* 搜索阶段：没看清时，龟速 35 往前挪 */
-#define VISION_PVC_CONTROL_TRACK_SPEED_SET        (-200.0f) /* 跟踪阶段：看清了且还很远，速度 200 冲过去 */
-#define VISION_PVC_CONTROL_CLOSE_SPEED_SET        (-80.0f)  /* 接近阶段：快到了，速度降到 80 */
-#define VISION_PVC_CONTROL_ARRIVE_SPEED_SET       (0.0f)    /* 到达阶段：到了，速度 0 停车 */
+#define VISION_PVC_CONTROL_SEARCH_SPEED_SET       (-120.0f)  /* 搜索阶段：没看清时，龟速 35 往前挪 */
+#define VISION_PVC_CONTROL_TRACK_SPEED_SET        (-180.0f) /* 跟踪阶段：看清了且还很远，速度 200 冲过去 */
+#define VISION_PVC_CONTROL_CLOSE_SPEED_SET        (-120.0f)  /* 接近阶段：快到了，速度降到 80 */
+#define VISION_PVC_CONTROL_ARRIVE_SPEED_SET       (-100.0f)    /* 到达阶段：到了，速度 0 停车 */
 
 /*
  * 【距离的门槛设置】(单位：毫米)
@@ -96,9 +96,20 @@ extern "C" {
  * 【方向盘 PID 参数】
  * 公式：打角 = 横向偏差 * 比例(0.20) + 角度偏差 * 比例(0.50)
  */
-#define VISION_PVC_CONTROL_K_LAT_DEG_PER_MM       (0.20f) /* 车子偏了 1 毫米，方向盘打 0.20 度 */
+#define VISION_PVC_CONTROL_K_STEER_DEG_PER_PX_FAR  (-0.65f) /* 入口目标每偏 1 个像素，方向盘打 0.30 度 */
+#define VISION_PVC_CONTROL_K_STEER_DEG_PER_PX_NEAR (-0.35f)
+#define VISION_PVC_CONTROL_STEER_OFFSET_PX        (1.0f)   /* 视觉像素误差固定偏置：车总是偏左时增大该值，车总是偏右时减小该值 */
 #define VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG      (0.50f) /* 车头偏了 1 度，方向盘多打 0.50 度 */
 #define VISION_PVC_CONTROL_MAX_ERR_DEG            (18.0f) /* 方向盘最多打 18 度，防止打死翻车 */
+#define VISION_PVC_CONTROL_DEADBAND_DEG           (0.30f) /* PID 输出死区：太小的方向修正直接清零 */
+#define VISION_PVC_CONTROL_PID_KP                 (1.00f) /* 方向位置式 PID 的比例系数 */
+#define VISION_PVC_CONTROL_PID_KI                 (0.00f) /* 方向位置式 PID 的积分系数 */
+#define VISION_PVC_CONTROL_PID_KD                 (0.12f) /* 方向位置式 PID 的微分系数 */
+#define VISION_PVC_CONTROL_PID_I_LIMIT            (12.0f)
+#define VISION_PVC_CONTROL_ALIGN_SPEED_SET        (-70.0f)
+#define VISION_PVC_CONTROL_SETTLE_SPEED_SET       (-110.0f)
+#define VISION_PVC_CONTROL_FAR_ERR_PX             (6.0f)
+#define VISION_PVC_CONTROL_NEAR_ERR_PX            (3.0f) /* 方向位置式 PID 的积分限幅 */
 
 /* --- 3. 数据结构定义 --- */
 
@@ -114,6 +125,17 @@ typedef enum
     VISION_PVC_CTRL_STALE,      /* 数据过期：1 核死机或者通信断了 */
 } vision_pvc_control_state_e;
 
+typedef struct
+{
+    float Kp;
+    float Ki;
+    float Kd;
+    float error;
+    float last_error;
+    float integral;
+    float output;
+} vision_pvc_pid_t;
+
 /**
  * @brief 记录当前控制状态的“仪表盘”
  */
@@ -126,12 +148,15 @@ typedef struct
     uint32 last_seq;             /* 上一张照片的编号 */
     uint16 stale_ticks;          /* 多少次没收到新照片了 */
     vision_pvc_control_state_e state; /* 现在处于什么阶段？ */
+    int16 target_x_px_x100;      /* 视觉侧给出的入口目标中心横坐标（像素，放大 100 倍） */
+    int16 steer_error_px_x100;   /* 视觉侧给出的像素误差（放大 100 倍） */
     int16 forward_mm;            /* 离入口还有多远 */
     int16 lateral_mm;            /* 偏离中心多少 */
     int16 yaw_error_deg_x100;    /* 角度偏了多少 */
     uint16 bbox_area_ratio_u16;  /* 画面里 PVC 占了多少（千分比） */
     float err_degree_cmd;        /* 当前准备给方向盘下发的指令 */
     float speed_cmd;             /* 当前准备给电机下发的速度指令 */
+    vision_pvc_pid_t pid;        /* PVC 方向控制 PID 过程量 */
 } vision_pvc_control_status_t;
 
 /* --- 4. 对外公开的全局变量与函数 --- */

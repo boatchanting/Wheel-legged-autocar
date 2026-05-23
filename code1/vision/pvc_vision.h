@@ -77,6 +77,7 @@ extern "C" {
  */
 #define PVC_VISION_MIN_DECISION_SCORE     (0.58f)
 #define PVC_VISION_MAX_COMPONENTS         (32)   /* 内存限制：画面里最多允许找 32 块白斑 */
+#define PVC_VISION_BOTTOM_TARGET_ROWS     (12U)  /* 方向控制参考底部若干行，学习颠簸路段的目标点提取方式 */
 
 /*
  * 稳定策略参数：防抖动
@@ -106,6 +107,8 @@ typedef struct
     float centroid_y;            /* PVC 的中心纵坐标 */
     float fill_ratio;            /* 填充率（面积/包围框面积） */
     float mean_gray;             /* 平均亮度（255 是纯白） */
+    int16 target_x_px_x100;      /* 入口目标中心横坐标（像素，放大 100 倍） */
+    int16 steer_error_px_x100;   /* 控制用像素误差（目标中心 - 图像中心，放大 100 倍） */
     int16 forward_mm;            /* 估算离车还有多远（单位：毫米，-1表示不知道） */
     int16 lateral_mm;            /* 估算车偏离了中心多少（单位：毫米，正数偏右，负数偏左） */
     int16 phy_x_mm;              /* 基于 IPM 查表得到的真实物理 X 坐标（毫米） */

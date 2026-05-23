@@ -122,6 +122,8 @@ static void vision_ipc_core1_fill_pvc(vision_ipc_packet_t *packet,
     packet->pvc_detected = pvc.raw.detected;
     packet->pvc_stable_detected = pvc.stable_detected;
     packet->pvc_confidence_u16 = vision_confidence_to_u16(ctrl->confidence);
+    packet->pvc_target_x_px_x100 = ctrl->target_x_px_x100;
+    packet->pvc_steer_error_px_x100 = ctrl->steer_error_px_x100;
     packet->pvc_forward_mm = ctrl->forward_mm;
     packet->pvc_lateral_mm = ctrl->lateral_mm;
     packet->pvc_phy_x_mm = ctrl->phy_x_mm;

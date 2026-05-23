@@ -48,6 +48,38 @@ static float vision_pvc_constrain_f(float value, float min_value, float max_valu
     return value;
 }
 
+static void vision_pvc_pid_reset(vision_pvc_pid_t *pid)
+{
+    pid->error = 0.0f;
+    pid->last_error = 0.0f;
+    pid->integral = 0.0f;
+    pid->output = 0.0f;
+}
+
+static float vision_pvc_pid_calc(vision_pvc_pid_t *pid, float error)
+{
+    const float derivative = error - pid->last_error;
+
+    if ((error * pid->last_error) < 0.0f)
+    {
+        pid->integral = 0.0f;
+    }
+
+    pid->error = error;
+    pid->integral += error;
+    pid->integral = vision_pvc_constrain_f(pid->integral,
+                                           -VISION_PVC_CONTROL_PID_I_LIMIT,
+                                           VISION_PVC_CONTROL_PID_I_LIMIT);
+    pid->output = pid->Kp * pid->error +
+                  pid->Ki * pid->integral +
+                  pid->Kd * derivative;
+    pid->last_error = pid->error;
+    pid->output = vision_pvc_constrain_f(pid->output,
+                                         -VISION_PVC_CONTROL_MAX_ERR_DEG,
+                                         VISION_PVC_CONTROL_MAX_ERR_DEG);
+    return pid->output;
+}
+
 /* --- 核心计算函数 --- */
 
 /**
@@ -60,19 +92,32 @@ static float vision_pvc_constrain_f(float value, float min_value, float max_valu
  */
 static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
+    const float steer_error_px =
+        (float)packet->pvc_steer_error_px_x100 * 0.01f + VISION_PVC_CONTROL_STEER_OFFSET_PX;
+    const float steer_gain =
+        (vision_pvc_abs_f(steer_error_px) > VISION_PVC_CONTROL_NEAR_ERR_PX) ?
+        VISION_PVC_CONTROL_K_STEER_DEG_PER_PX_FAR :
+        VISION_PVC_CONTROL_K_STEER_DEG_PER_PX_NEAR;
     /* 横向偏差算出来的打角 */
     const float lateral_deg =
-        (float)packet->pvc_lateral_mm * VISION_PVC_CONTROL_K_LAT_DEG_PER_MM;
+        steer_error_px * steer_gain;
     /* 车头偏角算出来的打角（目前 1 核没算这个，传过来的是 0） */
     const float yaw_deg =
         ((float)packet->pvc_yaw_error_deg_x100 * 0.01f) * VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG;
-    /* 两个加起来，再乘上方向符号（如果反了可以变成负的） */
-    const float err = VISION_PVC_CONTROL_LATERAL_SIGN * (lateral_deg + yaw_deg);
+    /* 两个加起来，像素误差定义已经包含左右方向 */
+    const float err = lateral_deg + yaw_deg;
 
     /* 限幅，别把舵机打坏了 */
     return vision_pvc_constrain_f(err,
                                   -VISION_PVC_CONTROL_MAX_ERR_DEG,
                                   VISION_PVC_CONTROL_MAX_ERR_DEG);
+}
+
+static float vision_pvc_calc_abs_steer_error_px(const volatile vision_ipc_packet_t *packet)
+{
+    const float steer_error_px =
+        (float)packet->pvc_steer_error_px_x100 * 0.01f + VISION_PVC_CONTROL_STEER_OFFSET_PX;
+    return vision_pvc_abs_f(steer_error_px);
 }
 
 /**
@@ -123,6 +168,7 @@ static void vision_pvc_apply_idle_outputs(void)
     g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_IDLE;
     g_pvc_ctrl_shadow.speed_cmd = 0.0f;
     g_pvc_ctrl_shadow.err_degree_cmd = 0.0f;
+    vision_pvc_pid_reset(&g_pvc_ctrl_shadow.pid);
     g_vision_pvc_control_status = g_pvc_ctrl_shadow;
 }
 
@@ -138,6 +184,10 @@ void VisionPvcControl_Init(void)
     g_pvc_control_enable = VISION_PVC_CONTROL_DEFAULT_ACTIVE;
     g_pvc_ctrl_shadow.enabled = g_pvc_control_enable;
     g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_IDLE;
+    g_pvc_ctrl_shadow.pid.Kp = VISION_PVC_CONTROL_PID_KP;
+    g_pvc_ctrl_shadow.pid.Ki = VISION_PVC_CONTROL_PID_KI;
+    g_pvc_ctrl_shadow.pid.Kd = VISION_PVC_CONTROL_PID_KD;
+    vision_pvc_pid_reset(&g_pvc_ctrl_shadow.pid);
     g_vision_pvc_control_status = g_pvc_ctrl_shadow;
 
 #if VISION_PVC_CONTROL_PROFILE_ENABLE
@@ -250,6 +300,8 @@ void VisionPvcControl_Update_2ms(void)
         g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_STALE; /* 数据过期了 */
         g_pvc_ctrl_shadow.stable_detected = 0U;
         g_pvc_ctrl_shadow.raw_detected = 0U;
+        g_pvc_ctrl_shadow.target_x_px_x100 = 0;
+        g_pvc_ctrl_shadow.steer_error_px_x100 = 0;
         g_pvc_ctrl_shadow.forward_mm = -1;
         g_pvc_ctrl_shadow.lateral_mm = 0;
         g_pvc_ctrl_shadow.yaw_error_deg_x100 = 0;
@@ -257,6 +309,7 @@ void VisionPvcControl_Update_2ms(void)
         
         g_pvc_ctrl_shadow.err_degree_cmd = 0.0f;
         g_pvc_ctrl_shadow.speed_cmd = 0.0f;
+        vision_pvc_pid_reset(&g_pvc_ctrl_shadow.pid);
         err_degree = 0.0f; /* 停车并回正方向盘 */
         target_speed_set = 0.0f;
         
@@ -270,6 +323,8 @@ void VisionPvcControl_Update_2ms(void)
     /* 把 1 核的数据抄到仪表盘上 */
     g_pvc_ctrl_shadow.stable_detected = packet->pvc_stable_detected;
     g_pvc_ctrl_shadow.raw_detected = packet->pvc_detected;
+    g_pvc_ctrl_shadow.target_x_px_x100 = packet->pvc_target_x_px_x100;
+    g_pvc_ctrl_shadow.steer_error_px_x100 = packet->pvc_steer_error_px_x100;
     g_pvc_ctrl_shadow.forward_mm = packet->pvc_forward_mm;
     g_pvc_ctrl_shadow.lateral_mm = packet->pvc_lateral_mm;
     g_pvc_ctrl_shadow.yaw_error_deg_x100 = packet->pvc_yaw_error_deg_x100;
@@ -279,8 +334,10 @@ void VisionPvcControl_Update_2ms(void)
     if (packet->pvc_stable_detected)
     {
         const int16 forward_mm = packet->pvc_forward_mm;
+        const float abs_steer_error_px = vision_pvc_calc_abs_steer_error_px(packet);
         /* 算算方向盘该打多少 */
-        const float turn_err = vision_pvc_calc_err_degree(packet);
+        const float turn_err = vision_pvc_pid_calc(&g_pvc_ctrl_shadow.pid,
+                                                   vision_pvc_calc_err_degree(packet));
         /* 看看画面是不是被 PVC 占满了 */
         const uint8 bbox_stop = (uint8)(g_pvc_ctrl_shadow.bbox_area_ratio_u16 >=
                                         VISION_PVC_CONTROL_STOP_BBOX_RATIO_U16);
@@ -298,14 +355,23 @@ void VisionPvcControl_Update_2ms(void)
         /* 阶段 B：如果距离小于“接近门槛” */
         else if ((forward_mm >= 0) && (forward_mm <= VISION_PVC_CONTROL_CLOSE_FORWARD_MM))
         {
-            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 还在跑 */
-            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_CLOSE_SPEED_SET; /* 但要减速了 */
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 杩樺湪璺?*/
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_CLOSE_SPEED_SET; /* 浣嗚鍑忛€熶簡 */
         }
-        /* 阶段 C：离得还远 */
+        else if (abs_steer_error_px >= VISION_PVC_CONTROL_FAR_ERR_PX)
+        {
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK;
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_ALIGN_SPEED_SET;
+        }
+        else if (abs_steer_error_px >= VISION_PVC_CONTROL_NEAR_ERR_PX)
+        {
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK;
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_SETTLE_SPEED_SET;
+        }
         else
         {
-            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 正常跑 */
-            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_TRACK_SPEED_SET; /* 冲！ */
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 姝ｅ父璺?*/
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_TRACK_SPEED_SET; /* 鍐诧紒 */
         }
 
         target_speed_set = g_pvc_ctrl_shadow.speed_cmd;
@@ -313,10 +379,11 @@ void VisionPvcControl_Update_2ms(void)
     /* 4. 如果没确认，但这一瞬间仿佛看到了（不太稳定） */
     else if (packet->pvc_detected)
     {
-        const float turn_err = vision_pvc_calc_err_degree(packet);
+        const float turn_err = vision_pvc_pid_calc(&g_pvc_ctrl_shadow.pid,
+                                                   vision_pvc_calc_err_degree(packet) * 0.5f);
 
         g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_SEARCH; /* 搜索模式 */
-        g_pvc_ctrl_shadow.err_degree_cmd = turn_err * 0.5f; /* 既然不确定，方向盘就打轻一点（减半） */
+        g_pvc_ctrl_shadow.err_degree_cmd = turn_err; /* 既然不确定，方向盘就打轻一点（减半） */
         g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_SEARCH_SPEED_SET; /* 慢点开 */
         
         err_degree = g_pvc_ctrl_shadow.err_degree_cmd;
@@ -328,13 +395,14 @@ void VisionPvcControl_Update_2ms(void)
         g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_SEARCH; /* 搜索模式 */
         g_pvc_ctrl_shadow.err_degree_cmd = 0.0f; /* 找不到？那就直着往前开 */
         g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_SEARCH_SPEED_SET; /* 慢点开 */
+        vision_pvc_pid_reset(&g_pvc_ctrl_shadow.pid);
         
         err_degree = 0.0f;
         target_speed_set = g_pvc_ctrl_shadow.speed_cmd;
     }
 
     /* 死区设置：如果方向盘偏角非常小（小于 0.3 度），干脆就不打了，防止车子在直道上画龙 */
-    if (vision_pvc_abs_f(g_pvc_ctrl_shadow.err_degree_cmd) < 0.3f)
+    if (vision_pvc_abs_f(g_pvc_ctrl_shadow.err_degree_cmd) < VISION_PVC_CONTROL_DEADBAND_DEG)
     {
         g_pvc_ctrl_shadow.err_degree_cmd = 0.0f;
         err_degree = 0.0f;
