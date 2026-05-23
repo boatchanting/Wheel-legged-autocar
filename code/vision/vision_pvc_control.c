@@ -87,7 +87,8 @@ static float vision_pvc_pid_calc(vision_pvc_pid_t *pid, float error)
  */
 static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
-    const float steer_error_px = (float)packet->pvc_steer_error_px_x100 * 0.01f;
+    const float steer_error_px =
+        (float)packet->pvc_steer_error_px_x100 * 0.01f + VISION_PVC_CONTROL_STEER_OFFSET_PX;
     /* 横向偏差算出来的打角 */
     const float lateral_deg =
         steer_error_px * VISION_PVC_CONTROL_K_STEER_DEG_PER_PX;

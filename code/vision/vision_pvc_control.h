@@ -74,7 +74,7 @@ extern "C" {
 #define VISION_PVC_CONTROL_SEARCH_SPEED_SET       (-120.0f)  /* 搜索阶段：没看清时，龟速 35 往前挪 */
 #define VISION_PVC_CONTROL_TRACK_SPEED_SET        (-200.0f) /* 跟踪阶段：看清了且还很远，速度 200 冲过去 */
 #define VISION_PVC_CONTROL_CLOSE_SPEED_SET        (-120.0f)  /* 接近阶段：快到了，速度降到 80 */
-#define VISION_PVC_CONTROL_ARRIVE_SPEED_SET       (0.0f)    /* 到达阶段：到了，速度 0 停车 */
+#define VISION_PVC_CONTROL_ARRIVE_SPEED_SET       (-100.0f)    /* 到达阶段：到了，速度 0 停车 */
 
 /*
  * 【距离的门槛设置】(单位：毫米)
@@ -96,7 +96,8 @@ extern "C" {
  * 【方向盘 PID 参数】
  * 公式：打角 = 横向偏差 * 比例(0.20) + 角度偏差 * 比例(0.50)
  */
-#define VISION_PVC_CONTROL_K_STEER_DEG_PER_PX     (-0.20f) /* 入口目标每偏 1 个像素，方向盘打 0.20 度 */
+#define VISION_PVC_CONTROL_K_STEER_DEG_PER_PX     (-1.0f) /* 入口目标每偏 1 个像素，方向盘打 0.30 度 */
+#define VISION_PVC_CONTROL_STEER_OFFSET_PX        (1.0f)   /* 视觉像素误差固定偏置：车总是偏左时增大该值，车总是偏右时减小该值 */
 #define VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG      (0.50f) /* 车头偏了 1 度，方向盘多打 0.50 度 */
 #define VISION_PVC_CONTROL_MAX_ERR_DEG            (18.0f) /* 方向盘最多打 18 度，防止打死翻车 */
 #define VISION_PVC_CONTROL_DEADBAND_DEG           (0.30f) /* PID 输出死区：太小的方向修正直接清零 */
