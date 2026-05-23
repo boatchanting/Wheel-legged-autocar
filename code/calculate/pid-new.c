@@ -812,10 +812,11 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
     pid_servo_speed.error = speed_qiwang_now - speed_now;
 
     // 4. 自适应 Kp
-    float k, adaptive_kp;
+    float k, adaptive_kp, kp_boost;
     float e = expf(-fabsf(pid_servo_speed.error / 10.0f)); // 调整分母灵敏度
     k = ((1.0f - e) / (1.0f + e)) * 0.6f + 0.4f; // k 在 [0.4, 1.0] 之间
-    adaptive_kp = pid_servo_speed.kp * k * Accel_Feedforward_GetKpBoost();
+    kp_boost = Accel_Feedforward_GetKpBoost();
+    adaptive_kp = pid_servo_speed.kp * k * kp_boost;
 
     // 5. 位置式 PID 计算
     // 积分项 & 积分限幅
@@ -839,7 +840,24 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
                        (pid_servo_speed.kd * (pid_servo_speed.error - pid_servo_speed.last_error));
 
     // 6. 输出限幅与更新
-    pid_servo_speed.output = Float_Constrain(output_raw, -pid_servo_speed.max_output, pid_servo_speed.max_output);
+    {
+        float output_limit = pid_servo_speed.max_output;
+#if ACCEL_FF_ENABLE && (ACCEL_FF_MODE == ACCEL_FF_MODE_KP)
+        if (kp_boost > 1.0f)
+        {
+            output_limit *= kp_boost;
+            if (output_limit > ACCEL_KP_OUTPUT_MAX)
+            {
+                output_limit = ACCEL_KP_OUTPUT_MAX;
+            }
+            if (output_limit < pid_servo_speed.max_output)
+            {
+                output_limit = pid_servo_speed.max_output;
+            }
+        }
+#endif
+        pid_servo_speed.output = Float_Constrain(output_raw, -output_limit, output_limit);
+    }
     
     // 更新历史误差 (prev_error 也更新，保持结构完整性)
     pid_servo_speed.prev_error = pid_servo_speed.last_error;
