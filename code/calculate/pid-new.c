@@ -48,6 +48,7 @@ static uint8 brake_zero_hold = 0;   // 刹停零速迟滞锁，避免停车附�
 static uint8 brake_overspeed_ticks = 0U;  // 持续超速计数，达到 BRAKE_OVERSPEED_HOLD_TICKS 后才允许纠偏刹车
 static float accel_ff_pwm = 0.0f;              // 当前实际输出的加速前馈 PWM，经过斜率限制后用于最终融合
 static float accel_ff_target = 0.0f;           // 本周期期望加速前馈 PWM，先限幅再由 accel_ff_pwm 追踪
+static float accel_kp_boost = 1.0f;            // ACCEL_FF_MODE_KP: speed-control Kp multiplier
 static float accel_last_target_speed = 0.0f;   // 上一次 9ms 更新时的目标速度，用于判断目标速度是否明显抬升
 static uint16 accel_start_window_ticks = 0U;   // 复刻启动/目标跃升后的加速窗口剩余 tick 数，每 tick 约 9ms
 static uint8 accel_last_replay_running = 0U;   // 上一次更新时复刻是否运行，用于检测 REPLAY_RUNNING 上升沿
@@ -62,6 +63,18 @@ static uint16 Accel_Feedforward_MsToTicks(uint16 time_ms)
     return (uint16)((time_ms + ACCEL_FF_UPDATE_PERIOD_MS - 1U) / ACCEL_FF_UPDATE_PERIOD_MS);
 }
 
+static void Accel_Feedforward_UpdateKpBoost(uint8 accel_request)
+{
+    float target_boost = (accel_request != 0U) ? ACCEL_KP_BOOST_MAX : 1.0f;
+    float ramp_limit = (target_boost > accel_kp_boost) ? ACCEL_KP_BOOST_RAMP_UP : ACCEL_KP_BOOST_RAMP_DOWN;
+
+    accel_kp_boost += Float_Constrain(target_boost - accel_kp_boost, -ramp_limit, ramp_limit);
+    if (fabsf(accel_kp_boost - 1.0f) < 0.001f)
+    {
+        accel_kp_boost = 1.0f;
+    }
+}
+
 /**
  * @brief 清空加速前馈内部输出和补偿窗口
  * @note 电机关闭、跳跃、强制刹车、特殊任务接管时调用，避免残留前馈继续推车
@@ -70,6 +83,7 @@ static void Accel_Feedforward_ClearOutput(void)
 {
     accel_ff_pwm = 0.0f;
     accel_ff_target = 0.0f;
+    accel_kp_boost = 1.0f;
     accel_start_window_ticks = 0U;
 }
 
@@ -230,7 +244,7 @@ float Brake_Feedforward_GetPwm(void)
  */
 float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag, uint8 replay_running, uint8 inhibit_accel)
 {
-#if ACCEL_FF_ENABLE
+#if ACCEL_FF_ENABLE && (ACCEL_FF_MODE != ACCEL_FF_MODE_DISABLE)
     float abs_target = fabsf(target_speed);
     float abs_speed = fabsf(actual_speed);
     float abs_last_target = fabsf(accel_last_target_speed);
@@ -290,6 +304,13 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
 
     if (abs_target <= ACCEL_FF_SPEED_DEADBAND)
     {
+#if ACCEL_FF_MODE == ACCEL_FF_MODE_KP
+        Accel_Feedforward_UpdateKpBoost(0U);
+        accel_ff_target = 0.0f;
+        accel_ff_pwm = 0.0f;
+        accel_last_target_speed = target_speed;
+        return 0.0f;
+#else
         accel_ff_target = 0.0f;
         accel_ff_pwm += Float_Constrain(accel_ff_target - accel_ff_pwm, -ACCEL_FF_RAMP_DOWN, ACCEL_FF_RAMP_DOWN);
         if (fabsf(accel_ff_pwm) < 1.0f)
@@ -298,6 +319,7 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         }
         accel_last_target_speed = target_speed;
         return accel_ff_pwm;
+#endif
     }
 
     speed_lag = (uint8)(abs_target > (abs_speed + ACCEL_FF_ERR_MIN));
@@ -307,6 +329,14 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
                             (same_direction_or_start != 0U) &&
                             (speed_lag != 0U) &&
                             ((target_step_up != 0U) || (start_window_active != 0U)));
+
+#if ACCEL_FF_MODE == ACCEL_FF_MODE_KP
+    Accel_Feedforward_UpdateKpBoost(accel_request);
+    accel_ff_target = 0.0f;
+    accel_ff_pwm = 0.0f;
+    accel_last_target_speed = target_speed;
+    return 0.0f;
+#else
 
     if (accel_request != 0U)
     {
@@ -339,6 +369,7 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
 
     accel_last_target_speed = target_speed;
     return accel_ff_pwm;
+#endif
 #else
     (void)target_speed;
     (void)actual_speed;
@@ -371,6 +402,11 @@ void Accel_Feedforward_Reset(void)
 float Accel_Feedforward_GetPwm(void)
 {
     return accel_ff_pwm;
+}
+
+float Accel_Feedforward_GetKpBoost(void)
+{
+    return accel_kp_boost;
 }
 
 // ============================================================================
@@ -1146,10 +1182,11 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
     pid_servo_speed.error = speed_qiwang_now - speed_now;
 
     // 4. 自适应 Kp
-    float k, adaptive_kp;
+    float k, adaptive_kp, kp_boost;
     float e = expf(-fabsf(pid_servo_speed.error / 10.0f)); // 调整分母灵敏度
     k = ((1.0f - e) / (1.0f + e)) * 0.6f + 0.4f; // k 在 [0.4, 1.0] 之间
-    adaptive_kp = pid_servo_speed.kp * k;
+    kp_boost = Accel_Feedforward_GetKpBoost();
+    adaptive_kp = pid_servo_speed.kp * k * kp_boost;
 
     // 5. 位置式 PID 计算
     // 积分项 & 积分限幅
@@ -1173,7 +1210,24 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
                        (pid_servo_speed.kd * (pid_servo_speed.error - pid_servo_speed.last_error));
 
     // 6. 输出限幅与更新
-    pid_servo_speed.output = Float_Constrain(output_raw, -pid_servo_speed.max_output, pid_servo_speed.max_output);
+    {
+        float output_limit = pid_servo_speed.max_output;
+#if ACCEL_FF_ENABLE && (ACCEL_FF_MODE == ACCEL_FF_MODE_KP)
+        if (kp_boost > 1.0f)
+        {
+            output_limit *= kp_boost;
+            if (output_limit > ACCEL_KP_OUTPUT_MAX)
+            {
+                output_limit = ACCEL_KP_OUTPUT_MAX;
+            }
+            if (output_limit < pid_servo_speed.max_output)
+            {
+                output_limit = pid_servo_speed.max_output;
+            }
+        }
+#endif
+        pid_servo_speed.output = Float_Constrain(output_raw, -output_limit, output_limit);
+    }
     
     // 更新历史误差 (prev_error 也更新，保持结构完整性)
     pid_servo_speed.prev_error = pid_servo_speed.last_error;

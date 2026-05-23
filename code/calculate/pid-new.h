@@ -3,6 +3,14 @@
 #include "zf_common_headfile.h"
 #include "../config/sys_options.h"//系统配置开关
 #include "../config/car_select.h"//根据小车选择配置不同的PID参数
+
+#ifndef ACCEL_FF_MODE
+#define ACCEL_FF_MODE 1U
+#endif
+
+#define ACCEL_FF_MODE_DISABLE 0U
+#define ACCEL_FF_MODE_PWM     1U
+#define ACCEL_FF_MODE_KP      2U
 #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
 // *************************** 【学习板小车】pid参数定义开始 ***************************
 
@@ -621,6 +629,10 @@ extern volatile uint8 g_reverse_brake_active;
 #define TURN_ACTIVE_ROLL_FB_KEEP_RATIO     0.10f       /* 普通转向主动侧倾时保留的 Rolling 反馈比例，调小可减少前馈和反馈打架 */
 #define TURN_ACTIVE_ROLL_FB_MAX_PWM        80.0f       /* 普通转向主动侧倾时 Rolling 反馈最大 PWM，防止一侧收腿抖动 */
 
+#define ACCEL_KP_BOOST_MAX       1.60f    /* ACCEL_FF_MODE_KP: max multiplier for servo speed Kp */
+#define ACCEL_KP_BOOST_RAMP_UP   0.18f    /* ACCEL_FF_MODE_KP: multiplier rise per 9ms update */
+#define ACCEL_KP_BOOST_RAMP_DOWN 0.08f    /* ACCEL_FF_MODE_KP: multiplier release per 9ms update */
+#define ACCEL_KP_OUTPUT_MAX      1500.0f  /* ACCEL_FF_MODE_KP: temporary max servo speed output while boosting */
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
 float Float_Constrain(float val, float min, float max);//限幅函数
@@ -659,6 +671,7 @@ float Brake_Feedforward_GetPwm(void);//读取当前刹车前馈 PWM，供 ISR �
 float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag, uint8 replay_running, uint8 inhibit_accel);
 void Accel_Feedforward_Reset(void);//清空加速前馈和起步/出弯补偿窗口
 float Accel_Feedforward_GetPwm(void);//读取当前加速前馈 PWM，供 ISR 与刹车前馈融合
+float Accel_Feedforward_GetKpBoost(void);//读取当前加速Kp增强系数，供速度控制环使用
 
 // 辅助宏：取绝对值
 #define MY_ABS(x) ((x) > 0 ? (x) : -(x))
