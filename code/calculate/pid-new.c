@@ -1,4 +1,5 @@
 #include "zf_common_headfile.h"
+#include "../servo/servo.h"
 
 
 // ============================================================================
@@ -27,9 +28,13 @@ float gyro_loop_out     = 0.0f;// 角速度环的输出 (目标角加速度)
 volatile float turn_angle_loop_out = 0.0f;// 转向角度环输出（期望角速度）
 volatile float turn_gyro_loop_out = 0.0f;// 转向角速度环输出（PWM）
 volatile float final_motor_pwm = 0.0f;
-uint8_t roll_balance_enable = ROLL_BALANCE_ENABLE_INIT; // Rolling balance loop enable switch
+uint8_t roll_balance_enable = ROLL_BALANCE_ENABLE_INIT; // Rolling平衡环统一使能开关
 volatile int16 g_target_pwm_roll_adj = 0; // 目标横滚调整分量
-volatile float active_turn_roll_target = 0.0f; // 转向主动侧倾目标（度）
+volatile int16 g_target_pwm_turn_roll_lf = 0; // 转向主动侧倾左前查表差动
+volatile int16 g_target_pwm_turn_roll_rf = 0; // 转向主动侧倾右前查表差动
+volatile int16 g_target_pwm_turn_roll_rr = 0; // 转向主动侧倾右后查表差动
+volatile int16 g_target_pwm_turn_roll_lr = 0; // 转向主动侧倾左后查表差动
+volatile float g_turn_active_roll_height_delta_cm = 0.0f; // 转向主动侧倾单侧目标高度差，便于实车观测
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
@@ -368,26 +373,17 @@ float Accel_Feedforward_GetPwm(void)
 // ============================================================================
 
 /**
- * @brief 限幅函数
+ * @brief 根据纵向速度和转向角速度计算普通转向主动侧倾目标
+ * @note 这里只返回目标横滚角，不写舵机执行量；斜率限制由调用处用 roll_degree 完成。
  */
-/**
- * @brief Update/clear the active roll target generated from normal steering.
- */
-void Turn_Active_Roll_Target_Reset(void)
-{
-    active_turn_roll_target = 0.0f;
-}
-
 float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
 {
     float desired = 0.0f;
-    float ramp_limit = TURN_ACTIVE_ROLL_RAMP_DOWN;
     float abs_speed_raw = fabsf(current_actual_speed);
     float abs_yaw_rate_dps = fabsf(turn_cmd);
 
     if ((roll_balance_enable == 0U) || (hard_clear != 0U))
     {
-        active_turn_roll_target = 0.0f;
         return 0.0f;
     }
 
@@ -406,25 +402,101 @@ float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
         desired = Float_Constrain(desired, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
     }
 
-    if ((fabsf(desired) > fabsf(active_turn_roll_target)) &&
-        ((desired * active_turn_roll_target) >= 0.0f))
-    {
-        ramp_limit = TURN_ACTIVE_ROLL_RAMP_UP;
-    }
-
-    active_turn_roll_target += Float_Constrain(desired - active_turn_roll_target,
-                                               -ramp_limit,
-                                               ramp_limit);
-
-    if (fabsf(active_turn_roll_target) < 0.01f)
-    {
-        active_turn_roll_target = 0.0f;
-    }
-
-    return active_turn_roll_target;
+    return desired;
 }
+
+static void Turn_Active_Roll_Duty_Clear(void)
+{
+    g_target_pwm_turn_roll_lf = 0;
+    g_target_pwm_turn_roll_rf = 0;
+    g_target_pwm_turn_roll_rr = 0;
+    g_target_pwm_turn_roll_lr = 0;
+    g_turn_active_roll_height_delta_cm = 0.0f;
+}
+
+static int16 Turn_Active_Roll_Duty_Deadband(int16 duty)
+{
+    if ((duty < TURN_ACTIVE_ROLL_DUTY_DEADBAND) &&
+        (duty > -TURN_ACTIVE_ROLL_DUTY_DEADBAND))
+    {
+        return 0;
+    }
+    return duty;
+}
+
+static int16 Turn_Active_Roll_Height_To_Pwm(float height_cm)
+{
+    high_control_table(height_cm);
+    if (pwm_high == 10000)
+    {
+        return 0;
+    }
+    return pwm_high;
+}
+
 /**
- * @brief Clamp helper.
+ * @brief 根据目标横滚角查表生成普通转向主动侧倾的四腿差动量
+ * @note 正横滚目标表示右侧抬高：左侧收腿、右侧伸腿；负横滚目标相反。
+ */
+void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
+{
+    float roll_rad;
+    float height_delta_cm;
+    float left_height_cm;
+    float right_height_cm;
+    int16 base_pwm;
+    int16 left_pwm;
+    int16 right_pwm;
+
+    if ((roll_balance_enable == 0U) || (hard_clear != 0U) ||
+        (servo_height < P_min) || (servo_height > P_max))
+    {
+        Turn_Active_Roll_Duty_Clear();
+        return;
+    }
+
+    target_roll = Float_Constrain(target_roll, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
+    if (fabsf(target_roll) < TURN_ACTIVE_ROLL_TARGET_DEAD_DEG)
+    {
+        Turn_Active_Roll_Duty_Clear();
+        return;
+    }
+
+    base_pwm = Turn_Active_Roll_Height_To_Pwm(servo_height);
+    if (pwm_high == 10000)
+    {
+        Turn_Active_Roll_Duty_Clear();
+        return;
+    }
+
+    roll_rad = target_roll * TURN_ACTIVE_ROLL_DEG_TO_RAD;
+    height_delta_cm = TURN_ACTIVE_ROLL_HALF_TRACK_CM * tanf(roll_rad);
+    height_delta_cm = Float_Constrain(height_delta_cm,
+                                      -TURN_ACTIVE_ROLL_HEIGHT_MAX_CM,
+                                      TURN_ACTIVE_ROLL_HEIGHT_MAX_CM);
+    g_turn_active_roll_height_delta_cm = height_delta_cm;
+
+    left_height_cm = Float_Constrain(servo_height - height_delta_cm, P_min, P_max);
+    right_height_cm = Float_Constrain(servo_height + height_delta_cm, P_min, P_max);
+    left_pwm = Turn_Active_Roll_Height_To_Pwm(left_height_cm);
+    right_pwm = Turn_Active_Roll_Height_To_Pwm(right_height_cm);
+
+    g_target_pwm_turn_roll_lf = Turn_Active_Roll_Duty_Deadband(left_pwm - base_pwm);
+    g_target_pwm_turn_roll_lr = Turn_Active_Roll_Duty_Deadband(left_pwm - base_pwm);
+    g_target_pwm_turn_roll_rf = Turn_Active_Roll_Duty_Deadband(right_pwm - base_pwm);
+    g_target_pwm_turn_roll_rr = Turn_Active_Roll_Duty_Deadband(right_pwm - base_pwm);
+
+    if ((g_target_pwm_turn_roll_lf == 0) && (g_target_pwm_turn_roll_rf == 0) &&
+        (g_target_pwm_turn_roll_rr == 0) && (g_target_pwm_turn_roll_lr == 0))
+    {
+        g_turn_active_roll_height_delta_cm = 0.0f;
+    }
+
+    high_control_table(servo_height);
+}
+
+/**
+ * @brief 限幅函数
  */
 float Float_Constrain(float val, float min, float max) {
     if (val > max) return max;
@@ -543,14 +615,14 @@ void PID_Param_Init(void) {
     pid_roll.error_integral = 0;
     pid_roll.output = 0;
 
-     // 重置横滚环使能位
+    // 重置横滚环使能位
     roll_balance_enable = ROLL_BALANCE_ENABLE_INIT;
     g_target_pwm_roll_adj = 0;
+    Turn_Active_Roll_Duty_Clear();
 
     // 重置目标速度
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
-    Turn_Active_Roll_Target_Reset();
 }
 
 /**
@@ -661,11 +733,12 @@ void PID_Data_Reset(void) {
     pid_roll.prev_error = 0;
     pid_roll.error_integral = 0;
     pid_roll.output = 0;
+    g_target_pwm_roll_adj = 0;
+    Turn_Active_Roll_Duty_Clear();
 
     // 重置目标速度
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
-    Turn_Active_Roll_Target_Reset();
 }
 
 
@@ -1004,8 +1077,8 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
 {
     // 0. 安全检查
     if (roll_balance_enable == 0U) {
-        active_turn_roll_target = 0.0f;
         g_target_pwm_roll_adj = 0; // 这里的含义稍后解释
+        Turn_Active_Roll_Duty_Clear();
         return 0.0f;
     }
 
@@ -1024,6 +1097,17 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
     
     // 限幅
     total_out = Float_Constrain(total_out, -pid_roll.max_output, pid_roll.max_output);
+
+    // 普通转向主动侧倾已经通过查表差动给左右腿前馈高度差。
+    // 此时 Rolling 环只保留小幅反馈修正，避免和前馈动作互相抢腿导致抖动。
+    if ((g_target_pwm_turn_roll_lf != 0) || (g_target_pwm_turn_roll_rf != 0) ||
+        (g_target_pwm_turn_roll_rr != 0) || (g_target_pwm_turn_roll_lr != 0))
+    {
+        total_out *= TURN_ACTIVE_ROLL_FB_KEEP_RATIO;
+        total_out = Float_Constrain(total_out,
+                                    -TURN_ACTIVE_ROLL_FB_MAX_PWM,
+                                    TURN_ACTIVE_ROLL_FB_MAX_PWM);
+    }
     
     // 3. 将总输出转换为 "一边不动，一边缩短" 的逻辑
     // total_out 的物理含义：

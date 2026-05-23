@@ -646,19 +646,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     // 6.rolling平衡环(5ms一次)
     if (loop_counter % 5 == 3){
+        // 单边桥/桥梁任务接管时不改写 roll_degree，保留原有 Rolling 流程。
+        uint8 turn_roll_task_takeover = (uint8)((VisionBridgeTask_IsActive() != 0U) ||
+                                                (Bridge_Test_Triple_SingleSide_Is_Active() != 0U));
+        // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；刹车不屏蔽侧倾。
         uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
                                             (g_motor_enable == 0U) ||
                                             (jump_flag != 0U) ||
                                             ((now_angle - ANG_MECH_ZERO) > 70.0f) ||
                                             ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
                                             (g_is_push_mode != 0U) ||
-                                            (g_brake_active != 0U) ||
-                                            (g_reverse_brake_active != 0U) ||
                                             (Minefield_Is_Active() != 0U) ||
                                             (BumpyRoad_Is_Active() != 0U) ||
                                             (VisionThreeStageControl_IsActive() != 0U) ||
-                                            (VisionBridgeTask_IsActive() != 0U) ||
-                                            (Bridge_Test_Triple_SingleSide_Is_Active() != 0U) ||
+                                            (turn_roll_task_takeover != 0U) ||
                                             (g_pvc_control_enable != 0U) ||
                                             ((fabsf(target_speed_set) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
                                              (fabsf(current_actual_speed) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND))
@@ -666,13 +667,31 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                                             || (g_gps_special_action_trigger != 0U)
                                             #endif
                                            );
-        Turn_Active_Roll_Target_Update(turn_angle_loop_out, turn_roll_hard_clear);
-        float effective_roll_target = roll_degree;
-        if (turn_roll_hard_clear == 0U)
+        if (turn_roll_task_takeover == 0U)
         {
-            effective_roll_target += active_turn_roll_target;
+            if (roll_balance_enable == 0U)
+            {
+                roll_degree = 0.0f;
+                Turn_Active_Roll_Duty_Update(0.0f, 1U);
+            }
+            else
+            {
+                // 根据纵向速度和转向角速度生成 roll_degree 目标，斜率限制避免舵机查表高度突变。
+                float turn_roll_target = Turn_Active_Roll_Target_Update(turn_angle_loop_out, turn_roll_hard_clear);
+                float turn_roll_ramp = (fabsf(turn_roll_target) > fabsf(roll_degree)) ? TURN_ACTIVE_ROLL_RAMP_UP : TURN_ACTIVE_ROLL_RAMP_DOWN;
+                roll_degree += Float_Constrain(turn_roll_target - roll_degree, -turn_roll_ramp, turn_roll_ramp);
+                if (fabsf(roll_degree) < 0.01f)
+                {
+                    roll_degree = 0.0f;
+                }
+                Turn_Active_Roll_Duty_Update(roll_degree, turn_roll_hard_clear);
+            }
         }
-        Roll_Balance_Control(euler_angle.roll, effective_roll_target);
+        else
+        {
+            Turn_Active_Roll_Duty_Update(0.0f, 1U);
+        }
+        Roll_Balance_Control(euler_angle.roll, roll_degree);
     }
 
 
