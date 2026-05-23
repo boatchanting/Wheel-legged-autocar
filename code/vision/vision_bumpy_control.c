@@ -54,7 +54,9 @@ static float vision_bumpy_constrain_f(float value, float min_value, float max_va
  */
 static float vision_bumpy_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
-    const float steer_px = (float)packet->bumpy_steer_error_px_x100 * 0.01f;  // 将像素误差(放大100倍)还原为实际像素值
+    const float steer_px =
+        (float)(packet->bumpy_steer_error_px_x100 + VISION_BUMPY_CENTER_OFFSET_PX_X100) * 0.01f;
+    /* 先做中线偏移补偿，再还原为实际像素值 */
     float err = steer_px * VISION_BUMPY_K_STEER_DEG_PER_PX;                  // 将像素误差转换为角度误差
 
     /* 方向控制仅基于视觉，不叠加惯导角度闭环；按图像误差直接映射。 */
