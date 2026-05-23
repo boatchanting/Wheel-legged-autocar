@@ -676,8 +676,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             }
             else
             {
-                // 根据纵向速度和转向角速度生成 roll_degree 目标，斜率限制避免舵机查表高度突变。
-                float turn_roll_target = Turn_Active_Roll_Target_Update(turn_angle_loop_out, turn_roll_hard_clear);
+                // 根据纵向速度和实际 yaw 角速度生成 roll_degree 目标，斜率限制避免舵机查表高度突变。
+                float turn_roll_target = Turn_Active_Roll_Target_Update(filtered_gyro_z, turn_roll_hard_clear);
                 float turn_roll_ramp = (fabsf(turn_roll_target) > fabsf(roll_degree)) ? TURN_ACTIVE_ROLL_RAMP_UP : TURN_ACTIVE_ROLL_RAMP_DOWN;
                 roll_degree += Float_Constrain(turn_roll_target - roll_degree, -turn_roll_ramp, turn_roll_ramp);
                 if (fabsf(roll_degree) < 0.01f)

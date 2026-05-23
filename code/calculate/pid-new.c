@@ -35,6 +35,10 @@ volatile int16 g_target_pwm_turn_roll_rf = 0; // 转向主动侧倾右前查表�
 volatile int16 g_target_pwm_turn_roll_rr = 0; // 转向主动侧倾右后查表差动
 volatile int16 g_target_pwm_turn_roll_lr = 0; // 转向主动侧倾左后查表差动
 volatile float g_turn_active_roll_height_delta_cm = 0.0f; // 转向主动侧倾单侧目标高度差，便于实车观测
+volatile float g_turn_active_roll_request_degree = 0.0f; // 未斜率限制前的主动侧倾目标角
+volatile float g_turn_active_roll_forward_speed_mps = 0.0f; // 向心加速度计算用纵向速度
+volatile float g_turn_active_roll_yaw_rate_radps = 0.0f; // 向心加速度计算用实际 yaw 角速度
+volatile float g_turn_active_roll_lateral_accel_mps2 = 0.0f; // v*w 计算得到的向心加速度
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
@@ -382,6 +386,11 @@ float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
     float abs_speed_raw = fabsf(current_actual_speed);
     float abs_yaw_rate_dps = fabsf(turn_cmd);
 
+    g_turn_active_roll_request_degree = 0.0f;
+    g_turn_active_roll_forward_speed_mps = 0.0f;
+    g_turn_active_roll_yaw_rate_radps = 0.0f;
+    g_turn_active_roll_lateral_accel_mps2 = 0.0f;
+
     if ((roll_balance_enable == 0U) || (hard_clear != 0U))
     {
         return 0.0f;
@@ -396,12 +405,17 @@ float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
         float yaw_rate_radps = turn_cmd * TURN_ACTIVE_ROLL_DEG_TO_RAD;
         float lateral_accel_mps2 = forward_speed_mps * yaw_rate_radps;
 
+        g_turn_active_roll_forward_speed_mps = forward_speed_mps;
+        g_turn_active_roll_yaw_rate_radps = yaw_rate_radps;
+        g_turn_active_roll_lateral_accel_mps2 = lateral_accel_mps2;
+
         desired = TURN_ACTIVE_ROLL_SIGN *
                   atan2f(lateral_accel_mps2, TURN_ACTIVE_ROLL_GRAVITY_MPS2) *
                   TURN_ACTIVE_ROLL_RAD_TO_DEG;
         desired = Float_Constrain(desired, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
     }
 
+    g_turn_active_roll_request_degree = desired;
     return desired;
 }
 
@@ -412,6 +426,10 @@ static void Turn_Active_Roll_Duty_Clear(void)
     g_target_pwm_turn_roll_rr = 0;
     g_target_pwm_turn_roll_lr = 0;
     g_turn_active_roll_height_delta_cm = 0.0f;
+    g_turn_active_roll_request_degree = 0.0f;
+    g_turn_active_roll_forward_speed_mps = 0.0f;
+    g_turn_active_roll_yaw_rate_radps = 0.0f;
+    g_turn_active_roll_lateral_accel_mps2 = 0.0f;
 }
 
 static int16 Turn_Active_Roll_Duty_Deadband(int16 duty)
@@ -422,6 +440,38 @@ static int16 Turn_Active_Roll_Duty_Deadband(int16 duty)
         return 0;
     }
     return duty;
+}
+
+static uint8 Turn_Active_Roll_Duty_Is_OverLimit(int32 duty, int32 min_duty, int32 max_duty)
+{
+    /* 收腿侧如果会撞到舵机 duty 边界，就取消这一侧收腿，避免低车身时继续压腿。 */
+    if ((duty < min_duty) || (duty > max_duty))
+    {
+        return 1U;
+    }
+    return 0U;
+}
+
+static int32 Turn_Active_Roll_Duty_Abs(int32 value)
+{
+    return (value < 0) ? -value : value;
+}
+
+static int32 Turn_Active_Roll_Duty_Shrink_Room(int32 duty, int32 dir, int32 min_duty, int32 max_duty)
+{
+    int32 room;
+
+    /* DIR>0 时收腿会让 duty 变小；DIR<0 时收腿会让 duty 变大。 */
+    if (dir > 0)
+    {
+        room = duty - min_duty;
+    }
+    else
+    {
+        room = max_duty - duty;
+    }
+
+    return (room > 0) ? room : 0;
 }
 
 static int16 Turn_Active_Roll_Height_To_Pwm(float height_cm)
@@ -442,11 +492,24 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
 {
     float roll_rad;
     float height_delta_cm;
+    float plan_roll;
+    float plan_height_delta_cm;
+    float shrink_capacity_cm;
     float left_height_cm;
     float right_height_cm;
     int16 base_pwm;
     int16 left_pwm;
     int16 right_pwm;
+    int16 left_delta;
+    int16 right_delta;
+    int16 shrink_probe_pwm;
+    int32 shrink_probe_need_duty;
+    int32 pre_turn_duty_lf;
+    int32 pre_turn_duty_rf;
+    int32 pre_turn_duty_rr;
+    int32 pre_turn_duty_lr;
+    uint8 left_shrink_not_enough = 0U;
+    uint8 right_shrink_not_enough = 0U;
 
     if ((roll_balance_enable == 0U) || (hard_clear != 0U) ||
         (servo_height < P_min) || (servo_height > P_max))
@@ -474,17 +537,131 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear)
     height_delta_cm = Float_Constrain(height_delta_cm,
                                       -TURN_ACTIVE_ROLL_HEIGHT_MAX_CM,
                                       TURN_ACTIVE_ROLL_HEIGHT_MAX_CM);
-    g_turn_active_roll_height_delta_cm = height_delta_cm;
+
+    plan_roll = g_turn_active_roll_request_degree;
+    if (fabsf(plan_roll) < fabsf(target_roll))
+    {
+        plan_roll = target_roll;
+    }
+    plan_roll = Float_Constrain(plan_roll, -TURN_ACTIVE_ROLL_MAX, TURN_ACTIVE_ROLL_MAX);
+    plan_height_delta_cm = TURN_ACTIVE_ROLL_HALF_TRACK_CM *
+                           tanf(plan_roll * TURN_ACTIVE_ROLL_DEG_TO_RAD);
+    plan_height_delta_cm = Float_Constrain(plan_height_delta_cm,
+                                           -TURN_ACTIVE_ROLL_HEIGHT_MAX_CM,
+                                           TURN_ACTIVE_ROLL_HEIGHT_MAX_CM);
 
     left_height_cm = Float_Constrain(servo_height - height_delta_cm, P_min, P_max);
     right_height_cm = Float_Constrain(servo_height + height_delta_cm, P_min, P_max);
     left_pwm = Turn_Active_Roll_Height_To_Pwm(left_height_cm);
     right_pwm = Turn_Active_Roll_Height_To_Pwm(right_height_cm);
+    left_delta = left_pwm - base_pwm;
+    right_delta = right_pwm - base_pwm;
 
-    g_target_pwm_turn_roll_lf = Turn_Active_Roll_Duty_Deadband(left_pwm - base_pwm);
-    g_target_pwm_turn_roll_lr = Turn_Active_Roll_Duty_Deadband(left_pwm - base_pwm);
-    g_target_pwm_turn_roll_rf = Turn_Active_Roll_Duty_Deadband(right_pwm - base_pwm);
-    g_target_pwm_turn_roll_rr = Turn_Active_Roll_Duty_Deadband(right_pwm - base_pwm);
+    pre_turn_duty_lf = SERVO_MOTOR_PWM1_90 + SERVO_MOTOR_PWM1_DIR * base_pwm +
+                       SERVO_MOTOR_PWM1_DIR * g_target_pwm_speed_adj -
+                       g_target_pwm_angle_adj;
+    pre_turn_duty_rf = SERVO_MOTOR_PWM2_90 + SERVO_MOTOR_PWM2_DIR * base_pwm +
+                       SERVO_MOTOR_PWM2_DIR * g_target_pwm_speed_adj -
+                       g_target_pwm_angle_adj;
+    pre_turn_duty_rr = SERVO_MOTOR_PWM3_90 + SERVO_MOTOR_PWM3_DIR * base_pwm -
+                       SERVO_MOTOR_PWM3_DIR * g_target_pwm_speed_adj +
+                       g_target_pwm_angle_adj;
+    pre_turn_duty_lr = SERVO_MOTOR_PWM4_90 + SERVO_MOTOR_PWM4_DIR * base_pwm -
+                       SERVO_MOTOR_PWM4_DIR * g_target_pwm_speed_adj +
+                       g_target_pwm_angle_adj;
+
+    shrink_capacity_cm = servo_height - P_min;
+    if (shrink_capacity_cm < 0.0f)
+    {
+        shrink_capacity_cm = 0.0f;
+    }
+    shrink_probe_pwm = Turn_Active_Roll_Height_To_Pwm(
+        Float_Constrain(servo_height - fabsf(plan_height_delta_cm), P_min, P_max));
+    shrink_probe_need_duty = Turn_Active_Roll_Duty_Abs((int32)shrink_probe_pwm - (int32)base_pwm) +
+                             TURN_ACTIVE_ROLL_SHRINK_DUTY_MARGIN;
+
+    if (fabsf(plan_height_delta_cm) >
+        (shrink_capacity_cm - TURN_ACTIVE_ROLL_SHRINK_HEIGHT_MARGIN_CM))
+    {
+        if (plan_height_delta_cm > 0.0f)
+        {
+            left_shrink_not_enough = 1U;
+        }
+        else if (plan_height_delta_cm < 0.0f)
+        {
+            right_shrink_not_enough = 1U;
+        }
+    }
+
+    if ((Turn_Active_Roll_Duty_Shrink_Room(pre_turn_duty_lf,
+                                           SERVO_MOTOR_PWM1_DIR,
+                                           LF_LIMIT_DUTY_MIN,
+                                           LF_LIMIT_DUTY_MAX) < shrink_probe_need_duty) ||
+        (Turn_Active_Roll_Duty_Shrink_Room(pre_turn_duty_lr,
+                                           SERVO_MOTOR_PWM4_DIR,
+                                           LR_LIMIT_DUTY_MIN,
+                                           LR_LIMIT_DUTY_MAX) < shrink_probe_need_duty))
+    {
+        left_shrink_not_enough = 1U;
+    }
+
+    if ((Turn_Active_Roll_Duty_Shrink_Room(pre_turn_duty_rf,
+                                           SERVO_MOTOR_PWM2_DIR,
+                                           RF_LIMIT_DUTY_MIN,
+                                           RF_LIMIT_DUTY_MAX) < shrink_probe_need_duty) ||
+        (Turn_Active_Roll_Duty_Shrink_Room(pre_turn_duty_rr,
+                                           SERVO_MOTOR_PWM3_DIR,
+                                           RR_LIMIT_DUTY_MIN,
+                                           RR_LIMIT_DUTY_MAX) < shrink_probe_need_duty))
+    {
+        right_shrink_not_enough = 1U;
+    }
+
+    if (height_delta_cm > 0.0f)
+    {
+        if ((left_shrink_not_enough != 0U) ||
+            (Turn_Active_Roll_Duty_Is_OverLimit(pre_turn_duty_lf + SERVO_MOTOR_PWM1_DIR * left_delta,
+                                                LF_LIMIT_DUTY_MIN,
+                                                LF_LIMIT_DUTY_MAX) != 0U) ||
+            (Turn_Active_Roll_Duty_Is_OverLimit(pre_turn_duty_lr + SERVO_MOTOR_PWM4_DIR * left_delta,
+                                                LR_LIMIT_DUTY_MIN,
+                                                LR_LIMIT_DUTY_MAX) != 0U))
+        {
+            /* 左侧收腿触底时，左侧不再收腿，右侧加倍伸腿补足目标左右高度差。 */
+            left_height_cm = servo_height;
+            right_height_cm = Float_Constrain(servo_height + 2.0f * height_delta_cm, P_min, P_max);
+            left_pwm = base_pwm;
+            right_pwm = Turn_Active_Roll_Height_To_Pwm(right_height_cm);
+            left_delta = 0;
+            right_delta = right_pwm - base_pwm;
+        }
+    }
+    else if (height_delta_cm < 0.0f)
+    {
+        if ((right_shrink_not_enough != 0U) ||
+            (Turn_Active_Roll_Duty_Is_OverLimit(pre_turn_duty_rf + SERVO_MOTOR_PWM2_DIR * right_delta,
+                                                RF_LIMIT_DUTY_MIN,
+                                                RF_LIMIT_DUTY_MAX) != 0U) ||
+            (Turn_Active_Roll_Duty_Is_OverLimit(pre_turn_duty_rr + SERVO_MOTOR_PWM3_DIR * right_delta,
+                                                RR_LIMIT_DUTY_MIN,
+                                                RR_LIMIT_DUTY_MAX) != 0U))
+        {
+            /* 右侧收腿触底时，右侧不再收腿，左侧加倍伸腿补足目标左右高度差。 */
+            right_height_cm = servo_height;
+            left_height_cm = Float_Constrain(servo_height - 2.0f * height_delta_cm, P_min, P_max);
+            right_pwm = base_pwm;
+            left_pwm = Turn_Active_Roll_Height_To_Pwm(left_height_cm);
+            right_delta = 0;
+            left_delta = left_pwm - base_pwm;
+        }
+    }
+
+    g_turn_active_roll_height_delta_cm = 0.5f * (right_height_cm - left_height_cm);
+
+    g_target_pwm_turn_roll_lf = Turn_Active_Roll_Duty_Deadband(left_delta);
+    g_target_pwm_turn_roll_lr = Turn_Active_Roll_Duty_Deadband(left_delta);
+    g_target_pwm_turn_roll_rf = Turn_Active_Roll_Duty_Deadband(right_delta);
+    g_target_pwm_turn_roll_rr = Turn_Active_Roll_Duty_Deadband(right_delta);
 
     if ((g_target_pwm_turn_roll_lf == 0) && (g_target_pwm_turn_roll_rf == 0) &&
         (g_target_pwm_turn_roll_rr == 0) && (g_target_pwm_turn_roll_lr == 0))

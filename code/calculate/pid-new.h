@@ -537,6 +537,10 @@ extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 extern volatile float target_speed_set;
 extern uint8_t roll_balance_enable; // rolling环使能开关
 extern volatile float g_turn_active_roll_height_delta_cm; // 转向主动侧倾单侧目标高度差，单位 cm
+extern volatile float g_turn_active_roll_request_degree; // 转向主动侧倾未斜率限制前的目标横滚角，单位 deg
+extern volatile float g_turn_active_roll_forward_speed_mps; // 转向主动侧倾计算用纵向速度，单位 m/s
+extern volatile float g_turn_active_roll_yaw_rate_radps; // 转向主动侧倾计算用实际 yaw 角速度，单位 rad/s
+extern volatile float g_turn_active_roll_lateral_accel_mps2; // v*w 得到的向心加速度，单位 m/s^2
 extern volatile uint8 g_brake_active;
 extern volatile uint8 g_reverse_brake_active;
 
@@ -590,7 +594,7 @@ extern volatile uint8 g_reverse_brake_active;
 #define ACCEL_BLEND_KEEP_RATIO   0.35f    /* 轻刹/小窗口共存时保留的加速前馈比例；调大出弯更有力，调小更偏保守 */
 
 // 转向主动 Rolling 目标参数：只计算 roll_degree 目标，执行仍走 Roll_Balance_Control()。
-#define TURN_ACTIVE_ROLL_YAW_RATE_DEAD_DPS 10.0f       /* 转向角速度指令死区，单位 deg/s；低于该值不生成主动侧倾 */
+#define TURN_ACTIVE_ROLL_YAW_RATE_DEAD_DPS 10.0f       /* 实际 yaw 角速度死区，单位 deg/s；低于该值不生成主动侧倾 */
 #define TURN_ACTIVE_ROLL_SPEED_DEADBAND    20.0f       /* 原始纵向速度死区；低速和原地旋转时主动侧倾回零 */
 #if CAR_SELECT == 0
 #define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0034596f  /* current_actual_speed 到 m/s 的换算系数，CAR_SELECT 0 */
@@ -608,7 +612,9 @@ extern volatile uint8 g_reverse_brake_active;
 #define TURN_ACTIVE_ROLL_RAMP_UP           0.20f       /* roll_degree 每 5ms 最大建立步长，单位 deg */
 #define TURN_ACTIVE_ROLL_RAMP_DOWN         0.30f       /* roll_degree 每 5ms 最大回零步长，单位 deg */
 #define TURN_ACTIVE_ROLL_HALF_TRACK_CM     11.2f        /* 左右轮距的一半，目标横滚角换算左右高度差时使用 */
-#define TURN_ACTIVE_ROLL_HEIGHT_MAX_CM     2.5f        /* 主动侧倾单侧最大伸缩高度，避免低车身时动作过猛 */
+#define TURN_ACTIVE_ROLL_HEIGHT_MAX_CM     2.5f        /* 对称动作时单侧最大高度差，单位 cm；收腿触底后伸腿侧会尝试补足左右高度差 */
+#define TURN_ACTIVE_ROLL_SHRINK_HEIGHT_MARGIN_CM 0.20f /* 收腿侧至少保留的高度余量，低车身时提前改用另一侧伸腿 */
+#define TURN_ACTIVE_ROLL_SHRINK_DUTY_MARGIN 40         /* 收腿侧 duty 安全余量，避免贴着舵机限位抖动 */
 #define TURN_ACTIVE_ROLL_TARGET_DEAD_DEG   0.8f        /* 目标横滚角死区，低于该角度不查表动作，避免腿部小幅抖动 */
 #define TURN_ACTIVE_ROLL_DUTY_DEADBAND     25          /* 查表差动 duty 死区，低于该值认为动作不可见并清零 */
 #define TURN_ACTIVE_ROLL_FB_KEEP_RATIO     0.25f       /* 普通转向主动侧倾时保留的 Rolling 反馈比例，避免前馈和反馈打架 */
