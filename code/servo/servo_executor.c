@@ -79,6 +79,12 @@ void servo_executor_update(void)
     target_final_duty_rr += g_target_pwm_angle_adj; // --舵机, 收缩是加
     target_final_duty_lr += g_target_pwm_angle_adj; // ++舵机, 伸展是加
 
+    // 3.1 叠加普通转向主动侧倾查表分量，可同时做到内侧收腿、外侧伸腿。
+    target_final_duty_lf += SERVO_MOTOR_PWM1_DIR * g_target_pwm_turn_roll_lf;
+    target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * g_target_pwm_turn_roll_rf;
+    target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * g_target_pwm_turn_roll_rr;
+    target_final_duty_lr += SERVO_MOTOR_PWM4_DIR * g_target_pwm_turn_roll_lr;
+
     // ==========================================================
     // 3.5 叠加 Rolling 补偿 (一边不动一边缩短)
     // 约定：g_target_pwm_roll_adj
