@@ -1,5 +1,8 @@
 #include "main0/init_main0.h"
 
+#pragma location = 0x28026024
+__root __no_init uint8 mt9v03x_dma_reserved_for_core1[0x5820];
+
 void Main0_Init(void)
 {
     clock_init(SYSTEM_CLOCK_250M); 	// 时钟配置及系统初始化<务必保留>
