@@ -60,6 +60,11 @@ static float vision_pvc_pid_calc(vision_pvc_pid_t *pid, float error)
 {
     const float derivative = error - pid->last_error;
 
+    if ((error * pid->last_error) < 0.0f)
+    {
+        pid->integral = 0.0f;
+    }
+
     pid->error = error;
     pid->integral += error;
     pid->integral = vision_pvc_constrain_f(pid->integral,
@@ -89,9 +94,13 @@ static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *pack
 {
     const float steer_error_px =
         (float)packet->pvc_steer_error_px_x100 * 0.01f + VISION_PVC_CONTROL_STEER_OFFSET_PX;
+    const float steer_gain =
+        (vision_pvc_abs_f(steer_error_px) > VISION_PVC_CONTROL_NEAR_ERR_PX) ?
+        VISION_PVC_CONTROL_K_STEER_DEG_PER_PX_FAR :
+        VISION_PVC_CONTROL_K_STEER_DEG_PER_PX_NEAR;
     /* 横向偏差算出来的打角 */
     const float lateral_deg =
-        steer_error_px * VISION_PVC_CONTROL_K_STEER_DEG_PER_PX;
+        steer_error_px * steer_gain;
     /* 车头偏角算出来的打角（目前 1 核没算这个，传过来的是 0） */
     const float yaw_deg =
         ((float)packet->pvc_yaw_error_deg_x100 * 0.01f) * VISION_PVC_CONTROL_K_YAW_DEG_PER_DEG;
@@ -102,6 +111,13 @@ static float vision_pvc_calc_err_degree(const volatile vision_ipc_packet_t *pack
     return vision_pvc_constrain_f(err,
                                   -VISION_PVC_CONTROL_MAX_ERR_DEG,
                                   VISION_PVC_CONTROL_MAX_ERR_DEG);
+}
+
+static float vision_pvc_calc_abs_steer_error_px(const volatile vision_ipc_packet_t *packet)
+{
+    const float steer_error_px =
+        (float)packet->pvc_steer_error_px_x100 * 0.01f + VISION_PVC_CONTROL_STEER_OFFSET_PX;
+    return vision_pvc_abs_f(steer_error_px);
 }
 
 /**
@@ -318,6 +334,7 @@ void VisionPvcControl_Update_2ms(void)
     if (packet->pvc_stable_detected)
     {
         const int16 forward_mm = packet->pvc_forward_mm;
+        const float abs_steer_error_px = vision_pvc_calc_abs_steer_error_px(packet);
         /* 算算方向盘该打多少 */
         const float turn_err = vision_pvc_pid_calc(&g_pvc_ctrl_shadow.pid,
                                                    vision_pvc_calc_err_degree(packet));
@@ -338,14 +355,23 @@ void VisionPvcControl_Update_2ms(void)
         /* 阶段 B：如果距离小于“接近门槛” */
         else if ((forward_mm >= 0) && (forward_mm <= VISION_PVC_CONTROL_CLOSE_FORWARD_MM))
         {
-            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 还在跑 */
-            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_CLOSE_SPEED_SET; /* 但要减速了 */
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 杩樺湪璺?*/
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_CLOSE_SPEED_SET; /* 浣嗚鍑忛€熶簡 */
         }
-        /* 阶段 C：离得还远 */
+        else if (abs_steer_error_px >= VISION_PVC_CONTROL_FAR_ERR_PX)
+        {
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK;
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_ALIGN_SPEED_SET;
+        }
+        else if (abs_steer_error_px >= VISION_PVC_CONTROL_NEAR_ERR_PX)
+        {
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK;
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_SETTLE_SPEED_SET;
+        }
         else
         {
-            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 正常跑 */
-            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_TRACK_SPEED_SET; /* 冲！ */
+            g_pvc_ctrl_shadow.state = VISION_PVC_CTRL_TRACK; /* 姝ｅ父璺?*/
+            g_pvc_ctrl_shadow.speed_cmd = VISION_PVC_CONTROL_TRACK_SPEED_SET; /* 鍐诧紒 */
         }
 
         target_speed_set = g_pvc_ctrl_shadow.speed_cmd;
