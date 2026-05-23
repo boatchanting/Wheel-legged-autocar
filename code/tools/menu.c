@@ -33,6 +33,13 @@ float current_angles[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 #define MENU_HAS_ONE_CLICK_START    0
 #endif
 
+#define MENU_LOCAL_START_DELAY_MS   2000U
+#define MENU_LOCAL_START_TICK_MS    10U
+#define MENU_LOCAL_START_DELAY_TICKS (MENU_LOCAL_START_DELAY_MS / MENU_LOCAL_START_TICK_MS)
+
+static volatile uint8_t menu_local_start_pending = 0;
+static volatile uint16_t menu_local_start_delay_ticks = 0;
+
 void Menu_TriggerRecordAction(void)
 {
     gpio_toggle_level(P19_0);       // 指示灯切换
@@ -55,6 +62,38 @@ void Menu_TriggerStartAction(void)
 }
 
 // ==================== 辅助函数 ====================
+static void Menu_RequestLocalStartAction(void)
+{
+    if (menu_local_start_pending)
+    {
+        return;
+    }
+
+    menu_local_start_delay_ticks = MENU_LOCAL_START_DELAY_TICKS;
+    menu_local_start_pending = 1;
+}
+
+static void Menu_UpdateLocalStartAction(void)
+{
+    if (!menu_local_start_pending)
+    {
+        return;
+    }
+
+    if (menu_local_start_delay_ticks > 0)
+    {
+        menu_local_start_delay_ticks--;
+    }
+
+    if (menu_local_start_delay_ticks != 0)
+    {
+        return;
+    }
+
+    menu_local_start_pending = 0;
+    Menu_TriggerStartAction();
+}
+
 static void Menu_ClearScreen(void)
 {
     ips200_clear();
@@ -288,7 +327,7 @@ void Menu_ShowStatic(void)
             }
             else if(action==2)
             {
-                Menu_TriggerStartAction();
+                Menu_RequestLocalStartAction();
             }
             Menu_ShowMainScreen(); // 先显示主界面框架
             break;
@@ -355,10 +394,16 @@ void Menu_ShowDynamic(void)
 // ==================== 按键处理（状态机重写版） ====================
 void Menu_HandleKey(void)
 {
+    Menu_UpdateLocalStartAction();
+    if (menu_local_start_pending)
+    {
+        return;
+    }
+
     #if MENU_HAS_ONE_CLICK_START
     if (key_get_state(MENU_KEY_ONE_CLICK_START) == KEY_SHORT_PRESS)
     {
-        Menu_TriggerStartAction();
+        Menu_RequestLocalStartAction();
         key_clear_state(MENU_KEY_ONE_CLICK_START);
         return;
     }
@@ -516,6 +561,8 @@ void Menu_Init(void)
     current_state = MENU_STATE_MAIN;
     menu_index = MENU_STATE_SUBJECT;
     //action_step = 0;
+    menu_local_start_pending = 0;
+    menu_local_start_delay_ticks = 0;
     
     for (uint8_t i = 0; i < MENU_STATE_COUNT; i++)
     {
