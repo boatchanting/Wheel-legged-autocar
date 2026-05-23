@@ -26,8 +26,9 @@ extern "C" {
 /* 控制参数宏定义区 */
 #define VISION_BUMPY_STALE_TIMEOUT_TICKS       (120U)  // 数据包过期超时时间(2ms周期计数, 120=240ms)
 #define VISION_BUMPY_K_STEER_DEG_PER_PX        (-0.30f) // 像素到角度的转换系数(度/像素)
-#define VISION_BUMPY_MAX_ERR_DEG               (18.0f) // 最大转向误差角度限制(度)
-#define VISION_BUMPY_DEADBAND_DEG              (0.20f) // 转向误差死区(度), 小于此值的误差将被忽略
+#define VISION_BUMPY_CENTER_OFFSET_PX_X100     (1600)    // 中线补偿偏移(放大100倍的像素). 增大该值会把轨迹整体往右推一点
+#define VISION_BUMPY_MAX_ERR_DEG               (18.0f)   // 最大转向误差角度限制(度)
+#define VISION_BUMPY_DEADBAND_DEG              (0.20f)  // 转向误差死区(度), 小于此值的误差将被忽略
 #define VISION_BUMPY_PID_KP                    (1.00f)
 #define VISION_BUMPY_PID_KI                    (0.03f)
 #define VISION_BUMPY_PID_KD                    (0.05f)
