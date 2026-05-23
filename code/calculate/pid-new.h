@@ -1,4 +1,4 @@
-#ifndef CODE__PID_NEW_H__
+﻿#ifndef CODE__PID_NEW_H__
 #define CODE__PID_NEW_H__
 #include "zf_common_headfile.h"
 #include "../config/sys_options.h"//系统配置开关
@@ -536,6 +536,11 @@ extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern volatile float target_speed_set;
 extern uint8_t roll_balance_enable; // rolling环使能开关
+extern volatile float g_turn_active_roll_height_delta_cm; // 转向主动侧倾单侧目标高度差，单位 cm
+extern volatile float g_turn_active_roll_request_degree; // 转向主动侧倾未斜率限制前的目标横滚角，单位 deg
+extern volatile float g_turn_active_roll_forward_speed_mps; // 转向主动侧倾计算用纵向速度，单位 m/s
+extern volatile float g_turn_active_roll_yaw_rate_radps; // 转向主动侧倾计算用实际 yaw 角速度，单位 rad/s
+extern volatile float g_turn_active_roll_lateral_accel_mps2; // v*w 得到的向心加速度，单位 m/s^2
 extern volatile uint8 g_brake_active;
 extern volatile uint8 g_reverse_brake_active;
 
@@ -587,6 +592,35 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_ACCEL_INHIBIT_PWM  500.0f   /* 加速前馈计算阶段的刹车屏蔽阈值；刹车前馈小于该值时仍允许加速前馈继续计算 */
 #define BRAKE_BLEND_CUT_PWM      500.0f   /* 最终 PWM 融合阶段的刹车主导阈值；刹车达到该值后加速前馈不再参与输出 */
 #define ACCEL_BLEND_KEEP_RATIO   0.35f    /* 轻刹/小窗口共存时保留的加速前馈比例；调大出弯更有力，调小更偏保守 */
+
+// 转向主动 Rolling 参数：向心加速度先得到可执行 roll_degree，再查表生成四腿差动，Rolling 环只做小幅反馈。
+#define TURN_ACTIVE_ROLL_YAW_RATE_DEAD_DPS 15.0f       /* yaw 角速度死区，单位 deg/s；使用期望/实际较大值，调头前可提前压弯 */
+#define TURN_ACTIVE_ROLL_SPEED_DEADBAND    25.0f       /* 原始纵向速度死区；低速和原地旋转时主动侧倾回零 */
+#define TURN_ACTIVE_ROLL_SPEED_PREVIEW_RATIO 0.50f     /* 纵向速度预加载比例；0只看实际速度，1完全看目标速度 */
+#if CAR_SELECT == 0
+#define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0034596f  /* current_actual_speed 到 m/s 的换算系数，CAR_SELECT 0 */
+#elif CAR_SELECT == 2
+#define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0051830f  /* current_actual_speed 到 m/s 的换算系数，CAR_SELECT 2 */
+#else
+#define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0049360f  /* current_actual_speed 到 m/s 的换算系数，其他车型默认值 */
+#endif
+#define TURN_ACTIVE_ROLL_FORWARD_SPEED_SIGN (-1.0f)    /* 纵向速度符号修正：当前车前进时 current_actual_speed 为负 */
+#define TURN_ACTIVE_ROLL_GRAVITY_MPS2      9.80665f    /* 重力加速度，用于 atan2(a_lat, g) */
+#define TURN_ACTIVE_ROLL_DEG_TO_RAD        0.0174532925f/* 角度转弧度系数 */
+#define TURN_ACTIVE_ROLL_RAD_TO_DEG        57.2957795f /* 弧度转角度系数 */
+#define TURN_ACTIVE_ROLL_SIGN              -1.0f        /* 主动侧倾方向修正，实车方向反了改为 -1.0f */
+#define TURN_ACTIVE_ROLL_MAX               18.0f        /* 向心加速度理论侧倾角限幅，单位 deg；实际 roll_degree 还会受高度差再次限幅 */
+#define TURN_ACTIVE_ROLL_RAMP_UP           0.35f       /* roll_degree 每 5ms 最大建立步长，单位 deg；调大可让调头前腿更快伸开 */
+#define TURN_ACTIVE_ROLL_RAMP_DOWN         0.45f       /* roll_degree 每 5ms 最大回零步长，单位 deg */
+#define TURN_ACTIVE_ROLL_HALF_TRACK_CM     11.2f        /* 左右轮距的一半，目标横滚角换算左右高度差时使用 */
+#define TURN_ACTIVE_ROLL_HEIGHT_MAX_CM     3.5f        /* 对称动作时单侧最大高度差，单位 cm；收腿触底后伸腿侧会尝试补足左右高度差 */
+#define TURN_ACTIVE_ROLL_SHRINK_HEIGHT_MARGIN_CM 0.20f /* 收腿侧至少保留的高度余量，低车身时提前改用另一侧伸腿 */
+#define TURN_ACTIVE_ROLL_SHRINK_DUTY_MARGIN 40         /* 收腿侧 duty 安全余量，避免贴着舵机限位抖动 */
+#define TURN_ACTIVE_ROLL_TARGET_DEAD_DEG   0.8f        /* 目标横滚角死区，低于该角度不查表动作，避免腿部小幅抖动 */
+#define TURN_ACTIVE_ROLL_DUTY_DEADBAND     25          /* 查表差动 duty 死区，低于该值认为动作不可见并清零 */
+#define TURN_ACTIVE_ROLL_FB_KEEP_RATIO     0.10f       /* 普通转向主动侧倾时保留的 Rolling 反馈比例，调小可减少前馈和反馈打架 */
+#define TURN_ACTIVE_ROLL_FB_MAX_PWM        80.0f       /* 普通转向主动侧倾时 Rolling 反馈最大 PWM，防止一侧收腿抖动 */
+
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
 float Float_Constrain(float val, float min, float max);//限幅函数
@@ -598,6 +632,8 @@ float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
+float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear);//转向主动侧倾目标计算
+void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear);//转向主动侧倾查表舵机差动
 
 /**
  * @brief 刹车前馈更新：根据目标/实际速度差输出轻刹、中刹或重刹 PWM

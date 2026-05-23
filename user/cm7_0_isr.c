@@ -43,6 +43,7 @@
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
+#include "servo/servo_executor.h"
 
 // 声明外部函数
 
@@ -68,7 +69,7 @@ volatile struct {
 
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
-static float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴加速度，用于转向角速度环
+volatile float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴角速度，用于转向角速度环和示波器观测
 uint32_t loop_counter = 0;
 static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
@@ -570,17 +571,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     if (g_yaw_initialized)  // 2ms周期，现改为1ms周期
     {
-        #if IMU_CATEGORY == 1 //如果小车不同再对小车加&&加以区分
-        int16_t raw_gyro_z = imu660ra_gyro_z;  //根据实际安装方向调整符号
-        #endif
-        #if IMU_CATEGORY == 3 //如果小车不同再对小车加&&加以区分
-        int16_t raw_gyro_z = imu963ra_gyro_z;  //根据实际安装方向调整符号
-        #endif
-
         // Z轴(yaw)处理：用于转向角速度环
-        float gyro_z_val = (float)raw_gyro_z;
-        if (fabsf(gyro_z_val) < 5.0f) gyro_z_val = 0.0f;
-        float gyro_z_deg = gyro_z_val / 16.384f;  // 转换为°/s
+        float gyro_z_deg = imu_data.gyro_z * 57.2957795f;  // 使用EKF减零偏后的rad/s，转换为°/s
         filtered_gyro_z = 0.8f * filtered_gyro_z + 0.2f * gyro_z_deg;//低通滤波
         // 输入：转向角度环输出(期望角速度) + 实际角速度(filtered_gyro_z)
 
@@ -609,31 +601,21 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // 步骤 5: 平衡角速度环 (1ms 跑一次，最内环)
     // ==========================================================
     
-    // 5.1 获取原始陀螺仪数据
-    //陀螺仪数据获取已经在中断函数最前面的地方获取完成
+    // 5.1 使用 EKF 预处理后的俯仰角速度，保留原来的安装轴向和符号。
     #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
-    int16 raw_gyro_y = -imu660ra_gyro_x; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
+    float now_gyro_deg = -imu_data.gyro_x * 57.2957795f; // 根据实际安装方向调整符号[学习板小车1][学习板小车2使用]
     #endif
     #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
-    int16 raw_gyro_y = -imu660ra_gyro_y; // 根据实际安装方向调整符号[学习板小车3使用]
+    float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
     #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
-    int16 raw_gyro_y = -imu963ra_gyro_y; // 根据实际安装方向调整符号
+    float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号
     #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
-    int16 raw_gyro_y = imu963ra_gyro_x; // 根据实际安装方向调整符号[学习板小车3使用]
+    float now_gyro_deg = imu_data.gyro_x * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
-    // 5.2 传感器底噪过滤 (这是为了防止静止时数值跳动，保留)
-    float gyro_val = (float)raw_gyro_y;
-    if (fabs(gyro_val) < 5.0f) gyro_val = 0;
 
-    // 5.3 单位转换 [重要]
-    // 既然 pid.c 里限幅是 3000 (这显然是度/秒或者LSB，不可能是弧度)，
-    // 建议统一转换为 【度/秒 (deg/s)】。这里可以改
-    // 假设灵敏度是 16.384 LSB/(dps) (即±2000dps量程)
-    float now_gyro_deg = gyro_val / 16.384f; 
-
-    // 5.4 简单的低通滤波 (平滑噪声)
+    // 5.2 简单的低通滤波 (平滑噪声)
     now_gyro = 0.8f * now_gyro + 0.2f * now_gyro_deg;
 
     // --- [调用优化] ---
@@ -646,7 +628,67 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     // 6.rolling平衡环(5ms一次)
     if (loop_counter % 5 == 3){
-        Roll_Balance_Control(euler_angle.roll, roll_degree);
+        // 单边桥/桥梁任务接管时不改写 roll_degree，保留原有 Rolling 流程。
+        uint8 turn_roll_task_takeover = (uint8)((VisionBridgeTask_IsActive() != 0U) ||
+                                                (Bridge_Test_Triple_SingleSide_Is_Active() != 0U));
+        // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；刹车不屏蔽侧倾。
+        uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
+                                            (g_motor_enable == 0U) ||
+                                            (jump_flag != 0U) ||
+                                            ((now_angle - ANG_MECH_ZERO) > 70.0f) ||
+                                            ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
+                                            (g_is_push_mode != 0U) ||
+                                            (Minefield_Is_Active() != 0U) ||
+                                            (BumpyRoad_Is_Active() != 0U) ||
+                                            (VisionThreeStageControl_IsActive() != 0U) ||
+                                            (turn_roll_task_takeover != 0U) ||
+                                            (g_pvc_control_enable != 0U) ||
+                                            ((fabsf(target_speed_set) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
+                                             (fabsf(current_actual_speed) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND))
+                                            #if GNSS_NAV == 1
+                                            || (g_gps_special_action_trigger != 0U)
+                                            #endif
+                                           );
+        if (turn_roll_task_takeover == 0U)
+        {
+            if (roll_balance_enable == 0U)
+            {
+                roll_degree = 0.0f;
+                Turn_Active_Roll_Duty_Update(0.0f, 1U);
+            }
+            else
+            {
+                // 根据期望/实际 yaw 角速度中更强的一项预判压弯，避免复刻调头时车已经开始甩而腿还没伸开。
+                float turn_roll_yaw_rate = filtered_gyro_z;
+                if (fabsf(turn_angle_loop_out) > fabsf(turn_roll_yaw_rate))
+                {
+                    turn_roll_yaw_rate = turn_angle_loop_out;
+                }
+                float turn_roll_target = Turn_Active_Roll_Target_Update(turn_roll_yaw_rate, turn_roll_hard_clear);
+                float turn_roll_ramp = (fabsf(turn_roll_target) > fabsf(roll_degree)) ? TURN_ACTIVE_ROLL_RAMP_UP : TURN_ACTIVE_ROLL_RAMP_DOWN;
+                roll_degree += Float_Constrain(turn_roll_target - roll_degree, -turn_roll_ramp, turn_roll_ramp);
+                if (fabsf(roll_degree) < 0.01f)
+                {
+                    roll_degree = 0.0f;
+                }
+                Turn_Active_Roll_Duty_Update(roll_degree, turn_roll_hard_clear);
+            }
+        }
+        else
+        {
+            Turn_Active_Roll_Duty_Update(0.0f, 1U);
+        }
+        if (turn_roll_task_takeover != 0U)
+        {
+            // 单边桥/桥梁任务保持原有被动 Rolling 流程。
+            Roll_Balance_Control(euler_angle.roll, roll_degree);
+        }
+        else
+        {
+            // 普通转向只保留主动压弯查表差动，关闭被动 Rolling 收腿干扰。
+            Roll_Balance_Control(euler_angle.roll, euler_angle.roll);
+            g_target_pwm_roll_adj = 0;
+        }
     }
 
 
