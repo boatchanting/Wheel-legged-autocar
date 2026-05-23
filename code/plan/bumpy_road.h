@@ -3,58 +3,58 @@
 
 #include "zf_common_headfile.h"
 
-extern volatile float err_degree;           /* �����̴���ٶ� */
-extern volatile float target_speed_set;     /* Ŀ���ٶȣ���������ǰ���� */
+extern volatile float err_degree;           /* 方向盘打多少度 */
+extern volatile float target_speed_set;     /* 目标速度（负数代表前进） */
 /**
- * @brief ����·��״̬��״̬
+ * @brief 颠簸路段状态机状态
  */
-// ״̬ö��
-// ״̬ö��
+// 状态枚举
+// 状态枚举
 typedef enum
 {
-    BUMPY_ROAD_STATE_IDLE = 0,    // ����̬
-    BUMPY_ROAD_STATE_RUNNING,     // ����̬
-    BUMPY_ROAD_STATE_BACKING,     // ����̬
-    BUMPY_ROAD_STATE_APPROACHING, // �ӽ�̬��������
-    BUMPY_ROAD_STATE_FINISH       // ��β̬
+    BUMPY_ROAD_STATE_IDLE = 0,    // 空闲态
+    BUMPY_ROAD_STATE_RUNNING,     // 运行态
+    BUMPY_ROAD_STATE_BACKING,     // 后退态
+    BUMPY_ROAD_STATE_APPROACHING, // 接近态（新增）
+    BUMPY_ROAD_STATE_FINISH       // 收尾态
 } BumpyRoadState_e;
 
 extern volatile uint8_t vision_detected_bumpy_point;
 /**
- * @brief ����·��״̬����ʼ��
+ * @brief 颠簸路段状态机初始化
  *
- * @note ������ϵͳ��ʼ���׶ε���һ��
+ * @note 建议在系统初始化阶段调用一次
  */
 void BumpyRoad_Init(void);
 
 /**
- * @brief �ⲿ��������·�ζ���
+ * @brief 外部触发颠簸路段动作
  *
- * @note ����״̬�����ڿ���̬ʱ������Ч�������󽫼�¼��ǰ�ߵ�������Ϊ���
+ * @note 仅当状态机处于空闲态时触发有效，触发后将记录当前惯导坐标作为起点
  */
 void BumpyRoad_Trigger(void);
 
 /**
- * @brief ����·��״̬�����ڸ��£�1ms���ģ�
+ * @brief 颠簸路段状态机周期更新（1ms节拍）
  *
- * @note ������� `pit0_ch0_isr` ��ÿ 1ms ����һ��
+ * @note 建议放在 `pit0_ch0_isr` 中每 1ms 调用一次
  */
 void BumpyRoad_Update_1ms(void);
 
 /**
- * @brief ��ѯ״̬���Ƿ���������
+ * @brief 查询状态机是否正在运行
  *
- * @return 1: ����ִ�е���·�ζ���, 0: ����
+ * @return 1: 正在执行颠簸路段动作, 0: 空闲
  */
 uint8_t BumpyRoad_Is_Active(void);
 
 /**
- * @brief ��ȡ��ǰ״̬��״̬�������ã�
+ * @brief 获取当前状态机状态（调试用）
  */
 BumpyRoadState_e BumpyRoad_GetState(void);
 
 /**
- * @brief ��ȡ���ۼ���ʻ���루��λ��mm�������ã�
+ * @brief 获取已累计行驶距离（单位：mm，调试用）
  */
 float BumpyRoad_GetDistanceMm(void);
 
