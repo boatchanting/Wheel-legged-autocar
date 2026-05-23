@@ -468,6 +468,7 @@ void VisionBridgeTask_Update_2ms(void)
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
                 err_cmd = vision_bridge_calc_yaw_hold_err(); /* 锁死方向 */
                 err_degree = err_cmd;
+                target_speed_set = -120.0f; /* 抬高腿瞬间保持向前速度，避免原地抬腿时后坐 */
                 vision_bridge_apply_high_posture(); /* 抬高底盘，防侧翻 */
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
                 break;
