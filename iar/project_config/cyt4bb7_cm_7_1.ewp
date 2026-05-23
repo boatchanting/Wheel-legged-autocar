@@ -1116,6 +1116,15 @@
     <group>
         <name>code</name>
         <group>
+            <name>tools</name>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\tools\camera_menu.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\tools\camera_menu.h</name>
+            </file>
+        </group>
+        <group>
             <name>vision</name>
             <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\bumpy_vision.c</name>
