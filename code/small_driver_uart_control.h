@@ -4,42 +4,42 @@
 #include "zf_common_headfile.h"
 
 
-#define SMALL_DRIVER_UART                       (UART_4        )        //Ñ§Ï°°åµç»ú´®¿Ú
-//#define SMALL_DRIVER_UART                       (UART_1        )        // ÎÒÃÇµÄ°å×Ó1µç»ú½Ó¿Ú
+#define SMALL_DRIVER_UART                       (UART_4        )        //å­¦ä¹ æ¿ç”µæœºä¸²å£
+//#define SMALL_DRIVER_UART                       (UART_1        )        // æˆ‘ä»¬çš„æ¿å­1ç”µæœºæ¥å£
 
 #define SMALL_DRIVER_BAUDRATE                   (460800        )
 
-#define SMALL_DRIVER_RX                         (UART4_TX_P14_1)        //Ñ§Ï°°åµç»ú´®¿Ú
-//#define SMALL_DRIVER_RX                         (UART1_TX_P04_1)      // ÎÒÃÇµÄ°å×Ó1µç»ú½Ó¿Ú
+#define SMALL_DRIVER_RX                         (UART4_TX_P14_1)        //å­¦ä¹ æ¿ç”µæœºä¸²å£
+//#define SMALL_DRIVER_RX                         (UART1_TX_P04_1)      // æˆ‘ä»¬çš„æ¿å­1ç”µæœºæ¥å£
 
-#define SMALL_DRIVER_TX                         (UART4_RX_P14_0)        //Ñ§Ï°°åµç»ú´®¿Ú
-//#define SMALL_DRIVER_TX                         (UART1_RX_P04_0)          //ÎÒÃÇµÄ°å×Ó1µç»ú½Ó¿Ú
+#define SMALL_DRIVER_TX                         (UART4_RX_P14_0)        //å­¦ä¹ æ¿ç”µæœºä¸²å£
+//#define SMALL_DRIVER_TX                         (UART1_RX_P04_0)          //æˆ‘ä»¬çš„æ¿å­1ç”µæœºæ¥å£
 
 typedef struct
 {
-    uint8 send_data_buffer[7];                  // ·¢ËÍ»º³åÊı×é
+    uint8 send_data_buffer[7];                  // å‘é€ç¼“å†²æ•°ç»„
 
-    uint8 receive_data_buffer[7];               // ½ÓÊÕ»º³åÊı×é
+    uint8 receive_data_buffer[7];               // æ¥æ”¶ç¼“å†²æ•°ç»„
 
-    uint8 receive_data_count;                   // ½ÓÊÕ¼ÆÊı
+    uint8 receive_data_count;                   // æ¥æ”¶è®¡æ•°
 
-    uint8 sum_check_data;                       // Ğ£ÑéÎ»
+    uint8 sum_check_data;                       // æ ¡éªŒä½
 
-    int16 receive_left_speed_data;              // ½ÓÊÕµ½µÄ×ó²àµç»úËÙ¶ÈÊı¾İ
+    int16 receive_left_speed_data;              // æ¥æ”¶åˆ°çš„å·¦ä¾§ç”µæœºé€Ÿåº¦æ•°æ®
 
-    int16 receive_right_speed_data;             // ½ÓÊÕµ½µÄÓÒ²àµç»úËÙ¶ÈÊı¾İ
+    int16 receive_right_speed_data;             // æ¥æ”¶åˆ°çš„å³ä¾§ç”µæœºé€Ÿåº¦æ•°æ®
 }small_device_value_struct;
 
 extern small_device_value_struct motor_value;
 
 
 
-void uart_control_callback(void);                                   // ÎŞË¢Çı¶¯ ´®¿Ú½ÓÊÕ»Øµ÷º¯Êı
+void uart_control_callback(void);                                   // æ— åˆ·é©±åŠ¨ ä¸²å£æ¥æ”¶å›è°ƒå‡½æ•°
 
-void small_driver_set_duty(int16 left_duty, int16 right_duty);      // ÎŞË¢Çı¶¯ ÉèÖÃµç»úÕ¼¿Õ±È
+void small_driver_set_duty(int16 left_duty, int16 right_duty);      // æ— åˆ·é©±åŠ¨ è®¾ç½®ç”µæœºå ç©ºæ¯”
 
-void small_driver_get_speed(void);                                  // ÎŞË¢Çı¶¯ »ñÈ¡ËÙ¶ÈĞÅÏ¢
+void small_driver_get_speed(void);                                  // æ— åˆ·é©±åŠ¨ è·å–é€Ÿåº¦ä¿¡æ¯
 
-void small_driver_uart_init(void);                                  // ÎŞË¢Çı¶¯ ´®¿ÚÍ¨Ñ¶³õÊ¼»¯
+void small_driver_uart_init(void);                                  // æ— åˆ·é©±åŠ¨ ä¸²å£é€šè®¯åˆå§‹åŒ–
 
 #endif
