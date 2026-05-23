@@ -307,16 +307,27 @@ int main(void)
             vision_detected_bumpy_point = 0; // 清除标志位，防止连续触发
         }
 
-        // 模拟视觉触发单边桥测试
+        // 模拟视觉触发单边桥正式任务
         if (vision_detected_bridge_point == 1) 
         {
-            // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
-            if (!Bridge_Test_Triple_SingleSide_Is_Active()) 
+            // 判断当前是否处于空闲状态，防止任务中途重复触发打断动作
+            if (!VisionBridgeTask_IsActive()) 
             {
-                Bridge_Test_Triple_SingleSide_Start(); // 启动单边桥测试状态机
+                VisionBridgeTask_Start(); // 启动正式单边桥视觉任务：先 PVC 进门，再巡线找桥
             }
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
         }
+
+        // 纯惯导触发单边桥正式任务
+        // if (vision_detected_bridge_point == 1) 
+        // {
+        //     // 判断当前是否处于空闲状态，防止测试中途重复触发打断动作
+        //     if (!Bridge_Test_Triple_SingleSide_Is_Active()) 
+        //     {
+        //         Bridge_Test_Triple_SingleSide_Start(); // 启动单边桥测试状态机
+        //     }
+        //     vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
+        // }
 
 
 
