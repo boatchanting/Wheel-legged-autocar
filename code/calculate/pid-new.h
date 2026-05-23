@@ -4,13 +4,23 @@
 #include "../config/sys_options.h"//系统配置开关
 #include "../config/car_select.h"//根据小车选择配置不同的PID参数
 
-#ifndef ACCEL_FF_MODE
-#define ACCEL_FF_MODE 1U
+#ifndef ACCEL_FF_ENABLE
+#define ACCEL_FF_ENABLE 1U      /* 加速前馈总开关兜底值；正常应由 config/sys_options.h 配置 */
 #endif
 
-#define ACCEL_FF_MODE_DISABLE 0U
-#define ACCEL_FF_MODE_PWM     1U
-#define ACCEL_FF_MODE_KP      2U
+#ifndef ACCEL_FF_MODE
+#define ACCEL_FF_MODE 1U        /* 加速前馈模式兜底值；正常应由 config/sys_options.h 配置 */
+#endif
+
+#define ACCEL_FF_MODE_DISABLE 0U /* 关闭加速前馈 */
+#define ACCEL_FF_MODE_PWM     1U /* 直接叠加 PWM 前馈 */
+#define ACCEL_FF_MODE_KP      2U /* 加速时临时增强舵机速度环 Kp */
+
+#if (ACCEL_FF_MODE != ACCEL_FF_MODE_DISABLE) && \
+    (ACCEL_FF_MODE != ACCEL_FF_MODE_PWM) && \
+    (ACCEL_FF_MODE != ACCEL_FF_MODE_KP)
+#error "ACCEL_FF_MODE 只能为 0(关闭)、1(PWM 前馈) 或 2(Kp 增强)。"
+#endif
 #if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
 // *************************** 【学习板小车】pid参数定义开始 ***************************
 
@@ -629,10 +639,10 @@ extern volatile uint8 g_reverse_brake_active;
 #define TURN_ACTIVE_ROLL_FB_KEEP_RATIO     0.10f       /* 普通转向主动侧倾时保留的 Rolling 反馈比例，调小可减少前馈和反馈打架 */
 #define TURN_ACTIVE_ROLL_FB_MAX_PWM        80.0f       /* 普通转向主动侧倾时 Rolling 反馈最大 PWM，防止一侧收腿抖动 */
 
-#define ACCEL_KP_BOOST_MAX       1.60f    /* ACCEL_FF_MODE_KP: max multiplier for servo speed Kp */
-#define ACCEL_KP_BOOST_RAMP_UP   0.18f    /* ACCEL_FF_MODE_KP: multiplier rise per 9ms update */
-#define ACCEL_KP_BOOST_RAMP_DOWN 0.08f    /* ACCEL_FF_MODE_KP: multiplier release per 9ms update */
-#define ACCEL_KP_OUTPUT_MAX      1500.0f  /* ACCEL_FF_MODE_KP: temporary max servo speed output while boosting */
+#define ACCEL_KP_BOOST_MAX       1.60f    /* Kp 增强模式下舵机速度环 Kp 的最大倍率 */
+#define ACCEL_KP_BOOST_RAMP_UP   0.18f    /* Kp 增强模式下每个 9ms 更新周期允许增加的最大倍率 */
+#define ACCEL_KP_BOOST_RAMP_DOWN 0.08f    /* Kp 增强模式下每个 9ms 更新周期允许释放的最大倍率 */
+#define ACCEL_KP_OUTPUT_MAX      1500.0f  /* Kp 增强模式下临时放宽后的舵机速度环输出上限 */
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid参数全清空，暂时未使用
 float Float_Constrain(float val, float min, float max);//限幅函数

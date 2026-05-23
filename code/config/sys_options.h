@@ -8,8 +8,8 @@
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 #define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
-#define ACCEL_FF_ENABLE 1U // 【全局开关】1:启用复刻起步/急加速PWM前馈  0:关闭
-#define ACCEL_FF_MODE 2U // 0:disable 1:direct PWM feedforward 2:boost speed-control Kp
+#define ACCEL_FF_ENABLE 1U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
+#define ACCEL_FF_MODE 2U // 【加速前馈模式】0:关闭  1:直接叠加 PWM 前馈  2:加速时临时增强舵机速度环 Kp
 #define ACCEL_FF_BUZZER_ENABLE 0U // 【全局开关】1:大幅加速前馈触发时蜂鸣提示  0:关闭
 #define ROLL_BALANCE_ENABLE_INIT 1U //【全局开关】主动侧倾平衡环初始使能状态，1为上电默认使能，0为上电默认关闭
 #define IMU_CATEGORY 3//【全局开关】1:imu660ra  2:imu660rb 3:imu963ra 注：imu660ra被赛事禁用

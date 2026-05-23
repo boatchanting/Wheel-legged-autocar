@@ -48,7 +48,7 @@ static uint8 brake_zero_hold = 0;   // 刹停零速迟滞锁，避免停车附�
 static uint8 brake_overspeed_ticks = 0U;  // 持续超速计数，达到 BRAKE_OVERSPEED_HOLD_TICKS 后才允许纠偏刹车
 static float accel_ff_pwm = 0.0f;              // 当前实际输出的加速前馈 PWM，经过斜率限制后用于最终融合
 static float accel_ff_target = 0.0f;           // 本周期期望加速前馈 PWM，先限幅再由 accel_ff_pwm 追踪
-static float accel_kp_boost = 1.0f;            // ACCEL_FF_MODE_KP: speed-control Kp multiplier
+static float accel_kp_boost = 1.0f;            // Kp 增强模式下的舵机速度环 Kp 倍率，未触发前馈时保持 1.0
 static float accel_last_target_speed = 0.0f;   // 上一次 9ms 更新时的目标速度，用于判断目标速度是否明显抬升
 static uint16 accel_start_window_ticks = 0U;   // 复刻启动/目标跃升后的加速窗口剩余 tick 数，每 tick 约 9ms
 static uint8 accel_last_replay_running = 0U;   // 上一次更新时复刻是否运行，用于检测 REPLAY_RUNNING 上升沿
@@ -65,6 +65,7 @@ static uint16 Accel_Feedforward_MsToTicks(uint16 time_ms)
 
 static void Accel_Feedforward_UpdateKpBoost(uint8 accel_request)
 {
+    // 加速请求有效时平滑拉高 Kp 倍率；请求消失后按较慢斜率回落，避免速度环突变。
     float target_boost = (accel_request != 0U) ? ACCEL_KP_BOOST_MAX : 1.0f;
     float ramp_limit = (target_boost > accel_kp_boost) ? ACCEL_KP_BOOST_RAMP_UP : ACCEL_KP_BOOST_RAMP_DOWN;
 
@@ -1183,10 +1184,10 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
 
     // 4. 自适应 Kp
     float k, adaptive_kp, kp_boost;
-    float e = expf(-fabsf(pid_servo_speed.error / 10.0f)); // 调整分母灵敏度
-    k = ((1.0f - e) / (1.0f + e)) * 0.6f + 0.4f; // k 在 [0.4, 1.0] 之间
-    kp_boost = Accel_Feedforward_GetKpBoost();
-    adaptive_kp = pid_servo_speed.kp * k * kp_boost;
+    float e = expf(-fabsf(pid_servo_speed.error / 10.0f)); // 分母越小，速度误差变化对 Kp 权重越敏感
+    k = ((1.0f - e) / (1.0f + e)) * 0.6f + 0.4f; // 基础自适应倍率限制在 [0.4, 1.0]
+    kp_boost = Accel_Feedforward_GetKpBoost(); // 仅 Kp 增强模式触发加速请求时会大于 1.0
+    adaptive_kp = pid_servo_speed.kp * k * kp_boost; // 最终 Kp = 基础 Kp * 自适应倍率 * 加速前馈增强倍率
 
     // 5. 位置式 PID 计算
     // 积分项 & 积分限幅
