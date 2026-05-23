@@ -159,9 +159,11 @@ int main(void)
                 #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
                 wifi_diff_stream_send_gray_frame((const uint8 *)compressed_image_copy[0]);
                 #endif
-#if DEBUG_DISPLAY_CORE1
+
+            #if DEBUG_DISPLAY_CORE1
                 CameraMenu_Update();
-#endif
+            #endif
+            
             //}
             //frame_skip_counter++;
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
