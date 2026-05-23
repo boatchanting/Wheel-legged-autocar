@@ -428,7 +428,9 @@ void VisionBridgeTask_Update_2ms(void)
             speed_cmd = g_vision_pvc_control_status.speed_cmd;
 
             /* 如果 PVC 模块说“我已经走到头了（ARRIVED）” */
-            if (g_vision_pvc_control_status.state == VISION_PVC_CTRL_ARRIVED)
+            if ((g_vision_pvc_control_status.state == VISION_PVC_CTRL_ARRIVED) &&
+                (vision_bridge_abs_f((float)g_vision_pvc_control_status.steer_error_px_x100 * 0.01f) <=
+                 VISION_BRIDGE_TASK_ENTER_CENTER_ERR_PX))
             {
                 s_bridge_task.align_ok_ticks++;
             }
@@ -437,8 +439,8 @@ void VisionBridgeTask_Update_2ms(void)
                 s_bridge_task.align_ok_ticks = 0U;
             }
 
-            /* 如果连续确认到了头，或者时间太长超时了，赶紧进入下一步：对齐！ */
-            if ((s_bridge_task.align_ok_ticks >= 50U) ||
+            /* � 如果已经对齐了，或者超时了，就退出 PVC 模式 */
+            if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ENTER_CENTER_HOLD_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ENTER_TIMEOUT_TICKS))
             {
                 VisionPvcControl_SetEnable(0U); /* 不看 PVC 了 */

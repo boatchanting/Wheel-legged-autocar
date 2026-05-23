@@ -36,6 +36,8 @@ extern "C" {
 /* --- 3. 角度与偏差阈值 --- */
 #define VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG         (4.0f)      /* 对齐时，车头偏角误差允许的范围（小于 4 度算对齐） */
 #define VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG         (1.5f)      /* 对齐时，综合误差（方向盘该打多少）允许的范围 */
+#define VISION_BRIDGE_TASK_ENTER_CENTER_ERR_PX       (3.0f)
+#define VISION_BRIDGE_TASK_ENTER_CENTER_HOLD_TICKS   (300U)
 #define VISION_BRIDGE_TASK_EXIT_WHITE_RATIO_U16      (180U)      /* 下桥时，画面里白色至少占 18% 才认为前面是白赛道 */
 
 /* --- 4. 控制增益参数（PID 参数） --- */
