@@ -11,6 +11,7 @@
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "plan/bridge.h"
+#include "tools/sbus.h"
 
 #if VISION_BRIDGE_TASK_ENABLE
 
@@ -402,11 +403,21 @@ void VisionBridgeTask_Update_2ms(void)
     }
 
     /* 如果车子被紧急停止了，或者惯导还没准备好，赶紧退出任务 */
+    #if REMOTE_CONTROL == 1
+    if ((g_motor_enable == 0) || (g_yaw_initialized == 0U || robot_ctrl.brake_active == 1U))
+    {
+        vision_bridge_cleanup(1U);
+        return;
+    }
+    #endif
+    #if REMOTE_CONTROL == 0
     if ((g_motor_enable == 0) || (g_yaw_initialized == 0U))
     {
         vision_bridge_cleanup(1U);
         return;
     }
+    #endif
+
 
     /* 如果刚刚被叫醒，准备开始任务 */
     if (s_bridge_task.state == VISION_BRIDGE_TASK_IDLE)
