@@ -244,7 +244,7 @@ int main(void)
             if(display_count >= 10) // 10* 10 ms = 100ms 刷新一次屏幕
             {
                 display_count = 0;    
-                #if DEBUG_DISPLAY
+                #if DEBUG_DISPLAY_CORE0
                     Menu_ShowStatic();    // 静态显示
                     Menu_ShowDynamic();   // 动态显示
                 #endif    
