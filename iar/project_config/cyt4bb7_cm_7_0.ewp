@@ -1341,6 +1341,12 @@
                 <name>$PROJ_DIR$\..\..\code\vision\vision_bridge_control.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_slope_control.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\vision\vision_slope_control.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\vision\vision_bumpy_control.c</name>
             </file>
             <file>

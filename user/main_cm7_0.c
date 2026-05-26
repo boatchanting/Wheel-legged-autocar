@@ -334,6 +334,16 @@ int main(void)
         // ---------------------------------------------------------
         // ---------------- 【nav.1】初始化惯性导航模块和打点模块 ----------------
         // ---------------------------------------------------------
+
+        if (vision_detected_slope_point == 1)
+        {
+            if (!VisionSlopeTask_IsActive())
+            {
+                VisionSlopeTask_Start();
+            }
+            vision_detected_slope_point = 0;
+        }
+
         if (g_nav_start_recording)
         {            
             InertialNav_Init();

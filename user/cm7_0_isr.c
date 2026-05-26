@@ -42,6 +42,7 @@
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
+#include "vision/vision_slope_control.h"
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
 
@@ -295,6 +296,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         VisionPvcControl_Update_2ms();
         VisionBumpyControl_Update_2ms();
         VisionBridgeTask_Update_2ms();
+        VisionSlopeTask_Update_2ms();
         VisionThreeStageControl_Update_2ms();
     }
 
