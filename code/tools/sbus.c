@@ -317,12 +317,12 @@ void Remote_Control_Process(void)
     //     g_bridge_vision_task_enable = 0;
     // }
 
-    if (curr_ch3_state ==1){
-        g_pvc_control_enable = 1;//进入pcv控制调试使用
-    }
-    else{
-        g_pvc_control_enable = 0;
-    }
+    // if (curr_ch3_state ==1){
+    //     g_pvc_control_enable = 1;//进入pcv控制调试使用
+    // }
+    // else{
+    //     g_pvc_control_enable = 0;
+    // }
     
 
     // 检测状态跳变进行打点 (当前状态 != 上一次状态)
@@ -336,8 +336,8 @@ void Remote_Control_Process(void)
         //vision_detected_three_jump_point =1;//视觉控制的三级跳状态机，测试用
         //vision_detected_jump_point = 1;//跳跃点调用,测试用
         //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
-        //vision_detected_bridge_point = 1; // 单边桥调用,测试用
-        robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
+        vision_detected_bridge_point = 1; // 单边桥调用,测试用
+        //robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点
     // NAV_POINT_SLOPE = 2,    // 上坡点

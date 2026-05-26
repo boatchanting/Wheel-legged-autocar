@@ -59,7 +59,7 @@ static float s_locked_heading_deg = 0.0f;
 bool vision_detected_bridge_point = false;
 
 #define BRIDGE_TEST_PREPARE_LEN_MM      300.0f
-#define BRIDGE_TEST_TOTAL_LEN_MM       3000.0f
+#define BRIDGE_TEST_TOTAL_LEN_MM       1000.0f
 #define BRIDGE_TEST_EXIT_BUFFER_MM      200.0f
 
 #define BRIDGE_TEST_EDGE_MARGIN_MM     1000.0f

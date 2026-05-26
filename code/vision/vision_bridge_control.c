@@ -11,6 +11,7 @@
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "plan/bridge.h"
+#include "tools/sbus.h"
 
 #if VISION_BRIDGE_TASK_ENABLE
 
@@ -402,11 +403,21 @@ void VisionBridgeTask_Update_2ms(void)
     }
 
     /* 如果车子被紧急停止了，或者惯导还没准备好，赶紧退出任务 */
+    #if REMOTE_CONTROL == 1
+    if ((g_motor_enable == 0) || (g_yaw_initialized == 0U || robot_ctrl.brake_active == 1U))
+    {
+        vision_bridge_cleanup(1U);
+        return;
+    }
+    #endif
+    #if REMOTE_CONTROL == 0
     if ((g_motor_enable == 0) || (g_yaw_initialized == 0U))
     {
         vision_bridge_cleanup(1U);
         return;
     }
+    #endif
+
 
     /* 如果刚刚被叫醒，准备开始任务 */
     if (s_bridge_task.state == VISION_BRIDGE_TASK_IDLE)
@@ -428,7 +439,9 @@ void VisionBridgeTask_Update_2ms(void)
             speed_cmd = g_vision_pvc_control_status.speed_cmd;
 
             /* 如果 PVC 模块说“我已经走到头了（ARRIVED）” */
-            if (g_vision_pvc_control_status.state == VISION_PVC_CTRL_ARRIVED)
+            if ((g_vision_pvc_control_status.state == VISION_PVC_CTRL_ARRIVED) &&
+                (vision_bridge_abs_f((float)g_vision_pvc_control_status.steer_error_px_x100 * 0.01f) <=
+                 VISION_BRIDGE_TASK_ENTER_CENTER_ERR_PX))
             {
                 s_bridge_task.align_ok_ticks++;
             }
@@ -437,8 +450,8 @@ void VisionBridgeTask_Update_2ms(void)
                 s_bridge_task.align_ok_ticks = 0U;
             }
 
-            /* 如果连续确认到了头，或者时间太长超时了，赶紧进入下一步：对齐！ */
-            if ((s_bridge_task.align_ok_ticks >= 50U) ||
+            /*  如果已经对齐了，或者超时了，就退出 PVC 模式 */
+            if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ENTER_CENTER_HOLD_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ENTER_TIMEOUT_TICKS))
             {
                 VisionPvcControl_SetEnable(0U); /* 不看 PVC 了 */
@@ -468,6 +481,7 @@ void VisionBridgeTask_Update_2ms(void)
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
                 err_cmd = vision_bridge_calc_yaw_hold_err(); /* 锁死方向 */
                 err_degree = err_cmd;
+                target_speed_set = -120.0f; /* 抬高腿瞬间保持向前速度，避免原地抬腿时后坐 */
                 vision_bridge_apply_high_posture(); /* 抬高底盘，防侧翻 */
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
                 break;
@@ -476,7 +490,8 @@ void VisionBridgeTask_Update_2ms(void)
             /* 如果看到的是直线，就根据直线来修方向盘 */
             if (packet->line_stable_detected)
             {
-                err_cmd = vision_bridge_calc_line_err_degree(packet);
+                //err_cmd = vision_bridge_calc_line_err_degree(packet);//【优化点】这里巡线修的不好，暂时注释了
+                vision_bridge_calc_yaw_hold_err();//锁死方向
                 err_degree = err_cmd;
                 /* 如果误差很小，说明对准了 */
                 if ((vision_bridge_abs_f(err_cmd) <= VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG) &&
@@ -536,7 +551,8 @@ void VisionBridgeTask_Update_2ms(void)
                 /* 如果能看到地上的线，就跟着线跑 */
                 if (packet->line_stable_detected)
                 {
-                    err_cmd = vision_bridge_calc_line_err_degree(packet);
+                    //err_cmd = vision_bridge_calc_line_err_degree(packet);//【优化点】这里巡线修的不好，暂时注释了
+                    vision_bridge_calc_yaw_hold_err();//锁死方向
                     speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
                 }
                 else
