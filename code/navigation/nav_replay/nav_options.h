@@ -18,12 +18,14 @@
 // ========================================================
 // [ 科目二 (Plan 2) 算法方案定义 ]
 // ========================================================
-#define PLAN2_METHOD_PURE_PURSUIT 1 // 方案A：带雷区状态机支持的纯追踪方案
+#define PLAN2_PURE_PURSUIT_SPEED_PLANNING 1
+#define PLAN2_PURE_PURSUIT                2
+#define PLAN2_METHOD_PURE_PURSUIT         PLAN2_PURE_PURSUIT
 // #define PLAN2_xxx       n // 预留：未来可能的其他策略
 
 // 科目二方案
 #ifndef NAV_PLAN2_METHOD
-#define NAV_PLAN2_METHOD PLAN2_METHOD_PURE_PURSUIT
+#define NAV_PLAN2_METHOD PLAN2_PURE_PURSUIT
 #endif
 
 // ========================================================

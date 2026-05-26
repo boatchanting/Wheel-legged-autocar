@@ -49,7 +49,9 @@ typedef enum
 
 #elif CURRENT_NAV_PLAN == 2
     // ---------------- [ 科目二路由 ] ----------------
-    #if NAV_PLAN2_METHOD == PLAN2_METHOD_PURE_PURSUIT
+    #if NAV_PLAN2_METHOD == PLAN2_PURE_PURSUIT_SPEED_PLANNING
+        #include "plan2/plan2_pure_pursuit_speed_planning.h"
+    #elif NAV_PLAN2_METHOD == PLAN2_PURE_PURSUIT
         #include "plan2/plan2_pure_pursuit.h"
     #else
         // 【越界检查】
