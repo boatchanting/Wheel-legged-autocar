@@ -324,7 +324,7 @@ def generate_header(
             for p in points:
                 f.write(
                     f"    {{{p.x:.3f}f, {p.y:.3f}f, {p.target_yaw_deg:.3f}f, "
-                    f"{p.heading_deg:.3f}f, {p.target_speed:.3f}f, (uint8){p.point_type}}},\n"
+                    f"{p.heading_deg:.3f}f, (uint8){p.point_type}, {p.target_speed:.3f}f}},\n"
                 )
         else:
             f.write("    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH},\n")

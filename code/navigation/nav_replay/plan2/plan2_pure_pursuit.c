@@ -324,6 +324,7 @@ void NavReplay_Process(void)
 #endif
 
     // 如果状态机正在干预，记录状态并退出
+    if (g_special_action_trigger == 1) {
         s_prev_trigger = 1;
         return; 
     }
@@ -366,7 +367,7 @@ void NavReplay_Process(void)
     float dist_to_special = 99999.0f;
     // 扫描范围 100个点(2000mm)
     for (int i = base_idx; i < nav_ram_data.point_count && i < base_idx + 100; i++) {
-        if (nav_ram_data.points[i].point_type == NAV_POINT_CIRCLE) {
+        if (nav_ram_data.points[i].point_type != NAV_POINT_PATH || i == nav_ram_data.point_count - 1) {
             special_idx = i;
             dist_to_special = CalcDistance(inertial_nav.x, inertial_nav.y, 
                                            nav_ram_data.points[i].x, nav_ram_data.points[i].y);
@@ -520,7 +521,7 @@ void NavReplay_Process(void)
         for (int i = base_idx; i < ld_scan_limit; i++) {
             float d_sq = CalcDistanceSq(inertial_nav.x, inertial_nav.y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
             tx = nav_ram_data.points[i].x; ty = nav_ram_data.points[i].y;
-            if (d_sq >= lookahead_dist_sq || nav_ram_data.points[i].point_type == NAV_POINT_CIRCLE) {
+            if (d_sq >= lookahead_dist_sq || nav_ram_data.points[i].point_type != NAV_POINT_PATH) {
                 break;
             }
         }
