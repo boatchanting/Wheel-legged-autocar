@@ -20,6 +20,7 @@
 // ========================================================
 #define PLAN2_PURE_PURSUIT_SPEED_PLANNING 1
 #define PLAN2_PURE_PURSUIT                2
+#define PLAN2_METHOD_PRECISE              3
 #define PLAN2_METHOD_PURE_PURSUIT         PLAN2_PURE_PURSUIT
 // #define PLAN2_xxx       n // 预留：未来可能的其他策略
 
