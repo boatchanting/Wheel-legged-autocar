@@ -450,7 +450,7 @@ void VisionBridgeTask_Update_2ms(void)
                 s_bridge_task.align_ok_ticks = 0U;
             }
 
-            /* � 如果已经对齐了，或者超时了，就退出 PVC 模式 */
+            /*  如果已经对齐了，或者超时了，就退出 PVC 模式 */
             if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ENTER_CENTER_HOLD_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ENTER_TIMEOUT_TICKS))
             {
@@ -490,7 +490,8 @@ void VisionBridgeTask_Update_2ms(void)
             /* 如果看到的是直线，就根据直线来修方向盘 */
             if (packet->line_stable_detected)
             {
-                err_cmd = vision_bridge_calc_line_err_degree(packet);
+                //err_cmd = vision_bridge_calc_line_err_degree(packet);//【优化点】这里巡线修的不好，暂时注释了
+                vision_bridge_calc_yaw_hold_err();//锁死方向
                 err_degree = err_cmd;
                 /* 如果误差很小，说明对准了 */
                 if ((vision_bridge_abs_f(err_cmd) <= VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG) &&
@@ -550,7 +551,8 @@ void VisionBridgeTask_Update_2ms(void)
                 /* 如果能看到地上的线，就跟着线跑 */
                 if (packet->line_stable_detected)
                 {
-                    err_cmd = vision_bridge_calc_line_err_degree(packet);
+                    //err_cmd = vision_bridge_calc_line_err_degree(packet);//【优化点】这里巡线修的不好，暂时注释了
+                    vision_bridge_calc_yaw_hold_err();//锁死方向
                     speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
                 }
                 else
