@@ -317,12 +317,12 @@ void Remote_Control_Process(void)
     //     g_bridge_vision_task_enable = 0;
     // }
 
-    if (curr_ch3_state ==1){
-        g_pvc_control_enable = 1;//进入pcv控制调试使用
-    }
-    else{
-        g_pvc_control_enable = 0;
-    }
+    // if (curr_ch3_state ==1){
+    //     g_pvc_control_enable = 1;//进入pcv控制调试使用
+    // }
+    // else{
+    //     g_pvc_control_enable = 0;
+    // }
     
 
     // 检测状态跳变进行打点 (当前状态 != 上一次状态)
