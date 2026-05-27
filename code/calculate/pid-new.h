@@ -12,6 +12,10 @@
 #define ACCEL_FF_MODE 1U        /* 加速前馈模式兜底值；正常应由 config/sys_options.h 配置 */
 #endif
 
+#ifndef MINEFIELD_THUNDER_BRAKE_ENABLE
+#define MINEFIELD_THUNDER_BRAKE_ENABLE 0U /* 雷霆重刹兜底值；正常应由 config/sys_options.h 配置 */
+#endif
+
 #define ACCEL_FF_MODE_DISABLE 0U /* 关闭加速前馈 */
 #define ACCEL_FF_MODE_PWM     1U /* 直接叠加 PWM 前馈 */
 #define ACCEL_FF_MODE_KP      2U /* 加速时临时增强舵机速度环 Kp */
@@ -591,6 +595,15 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
 #define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
+#define MINEFIELD_THUNDER_BRAKE_ARM_DIST_MM   360.0f  /* 科目二雷区点逼近距离低于该值时允许雷霆重刹介入 */
+#define MINEFIELD_THUNDER_BRAKE_FULL_DIST_MM  120.0f  /* 低于该距离时雷霆重刹按最强档计算 */
+#define MINEFIELD_THUNDER_BRAKE_MIN_SPEED     25.0f   /* 当前速度绝对值低于该值时释放雷霆重刹，避免低速反向抽动 */
+#define MINEFIELD_THUNDER_BRAKE_GAIN          34.0f   /* 雷霆重刹速度增益，强于普通重刹 */
+#define MINEFIELD_THUNDER_BRAKE_BOOST_PWM     1800.0f /* 越靠近雷区点额外叠加的反向 PWM */
+#define MINEFIELD_THUNDER_BRAKE_MIN_PWM       1400.0f /* 雷霆重刹最低建压力，防止高速贴近时刹车太软 */
+#define MINEFIELD_THUNDER_BRAKE_MAX_PWM       5200.0f /* 雷霆重刹最大反向 PWM */
+#define MINEFIELD_THUNDER_BRAKE_RAMP_UP       1600.0f /* 雷霆重刹每次更新的最大建压步长 */
+#define MINEFIELD_THUNDER_BRAKE_LIFE_TICKS    24U     /* 导航请求丢失后保留的刹车 tick，约 216ms */
 
 // 全局加速前馈参数
 #define ACCEL_FF_ERR_MIN         30.0f    /* 目标速度绝对值比当前速度绝对值至少大这么多，才认为速度没跟上 */
@@ -668,6 +681,8 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear);//转向�
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
 void Brake_Feedforward_Reset(void);//清空刹车前馈并短暂上锁，避免复位后立即被旧条件重新触发
 float Brake_Feedforward_GetPwm(void);//读取当前刹车前馈 PWM，供 ISR 前馈仲裁使用
+void Brake_MinefieldThunderBrake_Update(uint8 approaching_minefield, float dist_to_minefield_mm);//科目二雷区点逼近雷霆重刹请求
+void Brake_MinefieldThunderBrake_Reset(void);//清空雷区雷霆重刹请求
 /**
  * @brief 加速前馈更新：在复刻起步和目标速度明显抬升时补额外驱动力
  * @param target_speed 当前目标速度

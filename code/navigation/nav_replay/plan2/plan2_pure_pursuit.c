@@ -1,6 +1,7 @@
 #include "../nav_replay.h"
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
+#include "../../../calculate/pid-new.h"
 #if (CURRENT_NAV_PLAN == 2) && (NAV_PLAN2_METHOD == PLAN2_PURE_PURSUIT)
 
 // #include "vision/vision_bridge_control.h"
@@ -93,6 +94,7 @@ void NavReplay_Start(void)
     g_target_idx = 0; // 从第1个点开始（起始点没有储存，默认为(0,0)）
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
+    Brake_MinefieldThunderBrake_Reset();
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
     s_start_heading_stable_count = 0;
@@ -117,6 +119,7 @@ void NavReplay_Stop(void)
     err_degree = 0.0f;
     g_special_action_trigger = 0;
     g_start_heading_aligned = 1;
+    Brake_MinefieldThunderBrake_Reset();
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
 #endif
@@ -242,6 +245,7 @@ static void NavReplay_ResetProcessState(void)
     is_arrived = 0;
     s_is_aligning = 0;
     s_prev_trigger = 0;
+    Brake_MinefieldThunderBrake_Reset();
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
 #endif
@@ -326,6 +330,7 @@ void NavReplay_Process(void)
     // 如果状态机正在干预，记录状态并退出
     if (g_special_action_trigger == 1) {
         s_prev_trigger = 1;
+        Brake_MinefieldThunderBrake_Reset();
         return; 
     }
 
@@ -359,6 +364,7 @@ void NavReplay_Process(void)
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = 0; err_degree = 0; 
         s_is_aligning = 0;
+        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -373,6 +379,15 @@ void NavReplay_Process(void)
                                            nav_ram_data.points[i].x, nav_ram_data.points[i].y);
             break;
         }
+    }
+
+    if ((special_idx != -1) && (nav_ram_data.points[special_idx].point_type == NAV_POINT_CIRCLE))
+    {
+        Brake_MinefieldThunderBrake_Update(1U, dist_to_special);
+    }
+    else
+    {
+        Brake_MinefieldThunderBrake_Reset();
     }
 
     // ====================================================================
@@ -466,6 +481,7 @@ void NavReplay_Process(void)
                 
                 // 防死锁：动作触发后，强行跨过这个特殊点
                 g_target_idx = special_idx + 1;
+                Brake_MinefieldThunderBrake_Reset();
             // }
         }
         else

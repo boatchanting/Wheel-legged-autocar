@@ -2,6 +2,7 @@
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
 #include "../../../plan/minefield.h"
+#include "../../../calculate/pid-new.h"
 
 #if (CURRENT_NAV_PLAN == 2) && (NAV_PLAN2_METHOD == PLAN2_METHOD_PRECISE)
 
@@ -49,6 +50,18 @@ static void ResetSpecialApproachState(void)
 {
     g_special_eval_idx = 0xFFFFU;
     g_special_min_center_dist = 1000000.0f;
+}
+
+static void UpdateMinefieldThunderBrakeRequest(uint8 point_type, float dist_to_center)
+{
+    if (point_type == NAV_POINT_CIRCLE)
+    {
+        Brake_MinefieldThunderBrake_Update(1U, dist_to_center);
+    }
+    else
+    {
+        Brake_MinefieldThunderBrake_Reset();
+    }
 }
 
 static uint8 IsSpinPointType(uint8 point_type)
@@ -290,6 +303,7 @@ void NavReplay_Start(void)
     err_degree = 0.0f;
     Minefield_Init();
     ResetSpecialApproachState();
+    Brake_MinefieldThunderBrake_Reset();
 
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
@@ -313,6 +327,7 @@ void NavReplay_Stop(void)
     g_start_heading_aligned = 1;
     Minefield_Init();
     ResetSpecialApproachState();
+    Brake_MinefieldThunderBrake_Reset();
 
 #if DEBUG_LOG_ENABLE
     printf("[Nav] Replay STOPPED.\r\n");
@@ -336,6 +351,7 @@ void NavReplay_Process(void)
 
     if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1)
     {
+        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -366,6 +382,7 @@ void NavReplay_Process(void)
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_SPEED_STOP;
         err_degree = 0.0f;
+        Brake_MinefieldThunderBrake_Reset();
 #if DEBUG_LOG_ENABLE
         printf("[Nav] Replay Finished.\r\n");
 #endif
@@ -381,6 +398,7 @@ void NavReplay_Process(void)
     dist_to_center = CalcDistance(inertial_nav.x, inertial_nav.y, tx, ty);
     nav_dist = dist_to_center;
     approach_speed = 0.0f;
+    UpdateMinefieldThunderBrakeRequest(point_type, dist_to_center);
 
     if (is_special_point)
     {
@@ -403,7 +421,9 @@ void NavReplay_Process(void)
 
     if (is_special_point && ShouldTriggerSpecialPoint(dist_to_center, approach_speed))
     {
+#if DEBUG_LOG_ENABLE
         float min_center_dist_snapshot = g_special_min_center_dist;
+#endif
 
         target_speed_set = NAV_SPEED_STOP;
         err_degree = 0.0f;
@@ -422,6 +442,7 @@ void NavReplay_Process(void)
                (g_target_idx - 1U), point_type, dist_to_center, min_center_dist_snapshot, approach_speed);
 #endif
         ResetSpecialApproachState();
+        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -431,6 +452,7 @@ void NavReplay_Process(void)
         err_degree = 0.0f;
         g_target_idx++;
         ResetSpecialApproachState();
+        Brake_MinefieldThunderBrake_Reset();
 
 #if DEBUG_LOG_ENABLE
         printf("[Nav] Arrived Path Point[%d]\r\n", (g_target_idx - 1U));

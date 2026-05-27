@@ -43,6 +43,9 @@ static uint8 turn_active_roll_extend_only_side = 0U; // 主动侧倾伸腿锁存
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
+static uint8 brake_minefield_thunder_active = 0U;
+static uint8 brake_minefield_thunder_life_ticks = 0U;
+static float brake_minefield_thunder_dist_mm = MINEFIELD_THUNDER_BRAKE_ARM_DIST_MM;
 static uint8 brake_lockout = 0;     // 重置屏蔽锁
 static uint8 brake_zero_hold = 0;   // 刹停零速迟滞锁，避免停车附近反复建压/释放
 static uint8 brake_overspeed_ticks = 0U;  // 持续超速计数，达到 BRAKE_OVERSPEED_HOLD_TICKS 后才允许纠偏刹车
@@ -88,6 +91,37 @@ static void Accel_Feedforward_ClearOutput(void)
     accel_start_window_ticks = 0U;
 }
 
+void Brake_MinefieldThunderBrake_Reset(void)
+{
+    brake_minefield_thunder_active = 0U;
+    brake_minefield_thunder_life_ticks = 0U;
+    brake_minefield_thunder_dist_mm = MINEFIELD_THUNDER_BRAKE_ARM_DIST_MM;
+}
+
+void Brake_MinefieldThunderBrake_Update(uint8 approaching_minefield, float dist_to_minefield_mm)
+{
+#if MINEFIELD_THUNDER_BRAKE_ENABLE
+    if ((approaching_minefield == 0U) || (dist_to_minefield_mm > MINEFIELD_THUNDER_BRAKE_ARM_DIST_MM))
+    {
+        Brake_MinefieldThunderBrake_Reset();
+        return;
+    }
+
+    if (dist_to_minefield_mm < 0.0f)
+    {
+        dist_to_minefield_mm = 0.0f;
+    }
+
+    brake_minefield_thunder_active = 1U;
+    brake_minefield_thunder_life_ticks = MINEFIELD_THUNDER_BRAKE_LIFE_TICKS;
+    brake_minefield_thunder_dist_mm = dist_to_minefield_mm;
+#else
+    (void)approaching_minefield;
+    (void)dist_to_minefield_mm;
+    Brake_MinefieldThunderBrake_Reset();
+#endif
+}
+
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
 {
     float abs_speed = fabsf(actual_speed);
@@ -102,6 +136,35 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     uint8 target_decel_cmd = 0U;
     uint8 overspeed_request = 0U;
     uint8 decel_request = 0U;
+    uint8 thunder_brake_request = 0U;
+    float thunder_ratio = 0.0f;
+
+#if MINEFIELD_THUNDER_BRAKE_ENABLE
+    if ((motor_enable == 0U) || (jump_flag != 0U) || (abs_speed <= MINEFIELD_THUNDER_BRAKE_MIN_SPEED))
+    {
+        Brake_MinefieldThunderBrake_Reset();
+    }
+    else if ((brake_minefield_thunder_active != 0U) && (brake_minefield_thunder_life_ticks > 0U))
+    {
+        float thunder_span = MINEFIELD_THUNDER_BRAKE_ARM_DIST_MM - MINEFIELD_THUNDER_BRAKE_FULL_DIST_MM;
+        thunder_brake_request = 1U;
+        brake_minefield_thunder_life_ticks--;
+
+        if (brake_minefield_thunder_dist_mm <= MINEFIELD_THUNDER_BRAKE_FULL_DIST_MM)
+        {
+            thunder_ratio = 1.0f;
+        }
+        else if (thunder_span > 1.0f)
+        {
+            thunder_ratio = (MINEFIELD_THUNDER_BRAKE_ARM_DIST_MM - brake_minefield_thunder_dist_mm) / thunder_span;
+            thunder_ratio = Float_Constrain(thunder_ratio, 0.0f, 1.0f);
+        }
+    }
+    else if (brake_minefield_thunder_active != 0U)
+    {
+        Brake_MinefieldThunderBrake_Reset();
+    }
+#endif
 
     if (brake_zero_hold)
     {
@@ -144,13 +207,18 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         // 1) 目标速度跨零/反向：必须刹；
         // 2) 目标速度主动大幅下降：计划性收速，只允许轻/中刹逐级建立；
         // 3) 持续超速：真实超速纠偏，满足更高门槛后才允许重刹。
-        decel_request = (uint8)((actual_speed * target_speed <= 0.0f) ||
+        decel_request = (uint8)((thunder_brake_request != 0U) ||
+                                (actual_speed * target_speed <= 0.0f) ||
                                 ((target_decel_cmd != 0U) && (abs_err >= BRAKE_ERR_MIN)) ||
                                 ((brake_overspeed_ticks >= BRAKE_OVERSPEED_HOLD_TICKS) &&
                                  (abs_err >= BRAKE_OVERSPEED_ERR_MIN)));
         if (decel_request)
         {
-            if (g_brake_active || g_reverse_brake_active)
+            if (thunder_brake_request != 0U)
+            {
+                brake_level = 3U;
+            }
+            else if (g_brake_active || g_reverse_brake_active)
             {
                 if (abs_speed < BRAKE_CH5_LIGHT_SPEED) brake_level = 1U;
                 else if (abs_speed < BRAKE_CH5_MED_SPEED) brake_level = 2U;
@@ -179,7 +247,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
                 }
             }
 
-            if ((g_brake_active == 0U) && (g_reverse_brake_active == 0U) && (abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1U)) brake_level = 1U;
+            if ((thunder_brake_request == 0U) && (g_brake_active == 0U) && (g_reverse_brake_active == 0U) && (abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1U)) brake_level = 1U;
         }
     }
 
@@ -192,7 +260,8 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         return 0.0f;
     }
 
-    if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
+    if (thunder_brake_request != 0U) { brake_gain = MINEFIELD_THUNDER_BRAKE_GAIN; brake_max = MINEFIELD_THUNDER_BRAKE_MAX_PWM; brake_ramp_up = MINEFIELD_THUNDER_BRAKE_RAMP_UP; }
+    else if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
     else if (brake_level == 2U) { brake_gain = BRAKE_GAIN_MED; brake_max = BRAKE_MAX_MED; brake_ramp_up = BRAKE_RAMP_UP_MED; }
     else if (brake_level == 1U) { brake_gain = BRAKE_GAIN_LIGHT; brake_max = BRAKE_MAX_LIGHT; brake_ramp_up = BRAKE_RAMP_UP_LIGHT; }
 
@@ -211,7 +280,22 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     }
 
     // 3. 正常的输出计算
-    brake_ff_target = (brake_gain > 0.0f) ? Float_Constrain(-brake_gain * actual_speed, -brake_max, brake_max) : 0.0f;
+    if (thunder_brake_request != 0U)
+    {
+        float thunder_target_abs = brake_gain * abs_speed + MINEFIELD_THUNDER_BRAKE_BOOST_PWM * thunder_ratio;
+        float thunder_min_abs = MINEFIELD_THUNDER_BRAKE_MIN_PWM * (0.6f + 0.4f * thunder_ratio);
+
+        if (thunder_target_abs < thunder_min_abs)
+        {
+            thunder_target_abs = thunder_min_abs;
+        }
+        thunder_target_abs = Float_Constrain(thunder_target_abs, 0.0f, brake_max);
+        brake_ff_target = (actual_speed >= 0.0f) ? -thunder_target_abs : thunder_target_abs;
+    }
+    else
+    {
+        brake_ff_target = (brake_gain > 0.0f) ? Float_Constrain(-brake_gain * actual_speed, -brake_max, brake_max) : 0.0f;
+    }
     brake_ff_pwm += Float_Constrain(brake_ff_target - brake_ff_pwm, -BRAKE_RAMP_DOWN, brake_ramp_up);
     brake_last_target_speed = target_speed;
     return brake_ff_pwm;
@@ -225,6 +309,7 @@ void Brake_Feedforward_Reset(void)
     brake_last_target_speed = 0.0f;
     brake_zero_hold = 0U;
     brake_overspeed_ticks = 0U;
+    Brake_MinefieldThunderBrake_Reset();
     brake_lockout = 1; // 【核心】上锁！无视接下来外部的强制刹车条件，直到外部条件自然释放为止
 }
 
