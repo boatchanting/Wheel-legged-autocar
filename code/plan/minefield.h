@@ -10,6 +10,7 @@ extern uint8 vision_detected_marker;//雷区调用,测试用
  * @brief 初始化/复位旋转控制的相关变量
  */
 void Minefield_Init(void);
+void Minefield_SetSpinPlan(float total_spin_deg, float exit_yaw_deg, float spin_speed_sign);
 
 /**
  * @brief 判断当前是否处于旋转动作执行中

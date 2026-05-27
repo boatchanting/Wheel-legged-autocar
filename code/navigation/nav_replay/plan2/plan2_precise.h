@@ -6,7 +6,14 @@
 #define NAV_DIST_FAR                        300.0f
 #define NAV_DIST_NEAR                       150.0f
 #define NAV_DIST_ARRIVE                     20.0f
+#define NAV_SPECIAL_TRIGGER_RADIUS          300.0f
+#define NAV_SPECIAL_APPROACH_DIST           800.0f
+#define NAV_SPECIAL_RELAX_APPROACH_WINDOW   420.0f
+#define NAV_SPECIAL_STOP_PREDICT_TIME       0.35f
+#define NAV_SPECIAL_PASS_AWAY_MARGIN        35.0f
 #define NAV_YAW_TOLERANCE                   1.0f
+#define NAV_REVERSE_SELECT_BIAS_DEG         8.0f
+#define NAV_SPIN_MIN_TOTAL_ANGLE            370.0f
 #define NAV_START_HEADING_TOLERANCE         0.3f
 
 #define NAV_SPEED_FAST                      (-300.0f)
