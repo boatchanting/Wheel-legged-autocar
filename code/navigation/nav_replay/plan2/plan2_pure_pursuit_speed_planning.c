@@ -131,7 +131,6 @@ void NavReplay_Start(void)
     g_current_point_type = NAV_POINT_PATH;
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
-    Brake_MinefieldThunderBrake_Reset();
 
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
@@ -166,7 +165,6 @@ void NavReplay_Stop(void)
     g_special_action_trigger = 0;
     g_current_point_type = NAV_POINT_PATH;
     g_start_heading_aligned = 1;
-    Brake_MinefieldThunderBrake_Reset();
 
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
@@ -223,7 +221,6 @@ static void NavReplay_ResetProcessState(void)
     s_prev_speed_set = 0.0f;
     s_prev_trigger = 0;
     NavReplay_ClearStopLock();
-    Brake_MinefieldThunderBrake_Reset();
 }
 
 /**
@@ -534,7 +531,6 @@ void NavReplay_Process(void)
     {
         s_prev_trigger = 1;
         NavReplay_ClearStopLock();
-        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -546,7 +542,6 @@ void NavReplay_Process(void)
         s_prev_err_degree = 0.0f;
         s_prev_speed_set = 0.0f;
         NavReplay_ClearStopLock();
-        Brake_MinefieldThunderBrake_Reset();
     }
 
     /* 阶段3：最近点恢复（恢复期放宽搜索窗口） */
@@ -559,7 +554,6 @@ void NavReplay_Process(void)
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_SPEED_STOP;
         err_degree = 0.0f;
-        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -568,15 +562,6 @@ void NavReplay_Process(void)
     stop_idx = NavReplay_FindStopBarrierIndex((uint16)base_idx, (uint16)(nav_ram_data.point_count - 1U - (uint16)base_idx));
     dist_to_stop = CalcDistance(inertial_nav.x, inertial_nav.y,
                                 nav_ram_data.points[stop_idx].x, nav_ram_data.points[stop_idx].y);
-
-    if (nav_ram_data.points[stop_idx].point_type == NAV_POINT_CIRCLE)
-    {
-        Brake_MinefieldThunderBrake_Update(1U, dist_to_stop);
-    }
-    else
-    {
-        Brake_MinefieldThunderBrake_Reset();
-    }
 
     if (stop_idx == last_idx && dist_to_stop <= NAV_DIST_ARRIVE)
     {
@@ -587,7 +572,6 @@ void NavReplay_Process(void)
         s_prev_speed_set = 0.0f;
         s_prev_err_degree = 0.0f;
         NavReplay_ClearStopLock();
-        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -612,7 +596,6 @@ void NavReplay_Process(void)
         {
             g_target_idx = stop_idx;
         }
-        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 #endif

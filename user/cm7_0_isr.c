@@ -579,7 +579,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         //==================== [雷区旋转调用开始] =================
         // lq.1. 获取旋转控制器的输出
         //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s，现为0.001s), 当前Yaw角, 全局Yaw目标指针
-        float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.001f, euler_angle.yaw, &g_initial_yaw);
+        // 旋转规划与执行统一使用 inertial_nav.relative_yaw 这一套惯导相对航向，
+        // 避免规划阶段和执行阶段混用不同角度基准，导致“转满后还要慢慢补角”。
+        float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.001f, inertial_nav.relative_yaw, &g_initial_yaw);
 
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;

@@ -13,8 +13,8 @@ NavReplayState_e g_replay_state = REPLAY_IDLE;
 uint8 g_current_point_type = NAV_POINT_PATH;
 uint8 g_special_action_trigger = 0;
 
-static uint16 g_target_idx = 0;
-static uint8 g_start_heading_aligned = 1;
+static uint16 g_target_idx = 0U;
+static uint8 g_start_heading_aligned = 1U;
 static uint8 s_stop_stable_ticks = 0U;
 static uint8 s_stop_yaw_locked = 0U;
 static float s_stop_yaw_deg = 0.0f;
@@ -47,6 +47,13 @@ static float CalcBearingDeg(float x1, float y1, float x2, float y2)
     return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
 }
 
+static void ResetStopState(void)
+{
+    s_stop_stable_ticks = 0U;
+    s_stop_yaw_locked = 0U;
+    s_stop_yaw_deg = 0.0f;
+}
+
 static uint8 IsSpinPointType(uint8 point_type)
 {
     return (uint8)((point_type == NAV_POINT_CIRCLE) || (point_type == NAV_POINT_JUMP));
@@ -57,14 +64,7 @@ static uint8 IsSpecialPointType(uint8 point_type)
     return (uint8)(point_type != NAV_POINT_PATH);
 }
 
-static void ResetStopState(void)
-{
-    s_stop_stable_ticks = 0U;
-    s_stop_yaw_locked = 0U;
-    s_stop_yaw_deg = 0.0f;
-}
-
-// 对目标速度做单周期限斜率，避免在线规划输出突跳导致底盘顿挫。
+// 单周期速度斜率限制；普通巡航仍然平滑，但雷区停车阶段会直接绕过它给 0。
 static float SpeedSlew(float raw_speed)
 {
     float diff = raw_speed - s_prev_speed_cmd;
@@ -83,47 +83,67 @@ static float SpeedSlew(float raw_speed)
     return s_prev_speed_cmd;
 }
 
-static uint16 FindNextSpecialPointIndex(uint16 start_idx)
+// 估算当前沿目标点方向的逼近速度；用于宽松模式下提前进入雷区刹车捕获。
+static float ComputeApproachSpeedToPoint(float target_x, float target_y)
 {
-    uint16 idx;
+    float dist = CalcDistance(inertial_nav.x, inertial_nav.y, target_x, target_y);
+    float yaw_rad;
+    float cos_theta;
+    float sin_theta;
+    float vx_world;
+    float vy_world;
+    float ux;
+    float uy;
 
-    for (idx = start_idx; idx < nav_ram_data.point_count; idx++)
+    if (dist <= 1.0f)
     {
-        if (IsSpecialPointType(nav_ram_data.points[idx].point_type))
+        return 0.0f;
+    }
+
+    yaw_rad = inertial_nav.relative_yaw * 0.0174532925f;
+    cos_theta = cosf(yaw_rad);
+    sin_theta = sinf(yaw_rad);
+    vx_world = inertial_nav.vx_body * cos_theta - inertial_nav.vy_body * sin_theta;
+    vy_world = inertial_nav.vx_body * sin_theta + inertial_nav.vy_body * cos_theta;
+    ux = (target_x - inertial_nav.x) / dist;
+    uy = (target_y - inertial_nav.y) / dist;
+
+    return vx_world * ux + vy_world * uy;
+}
+
+static uint8 ShouldStartSpecialBrakeCapture(float dist_to_point, float approach_speed)
+{
+    if (dist_to_point <= NAV_POINT_SPECIAL_BRAKE_PREP_DIST)
+    {
+        return 1U;
+    }
+
+#if NAV_PLAN2_SPECIAL_APPROACH_MODE == PLAN2_SPECIAL_APPROACH_CENTER_RELAXED
+    if (dist_to_point <= NAV_PLAN2_SPECIAL_RELAX_APPROACH_WINDOW_MM)
+    {
+        float predicted_dist = dist_to_point;
+
+        if (approach_speed > 0.0f)
         {
-            return idx;
+            predicted_dist -= approach_speed * NAV_PLAN2_SPECIAL_STOP_PREDICT_TIME_S;
+        }
+
+        if (predicted_dist <= NAV_POINT_SPECIAL_BRAKE_PREP_DIST)
+        {
+            return 1U;
         }
     }
+#else
+    (void)approach_speed;
+#endif
 
-    return nav_ram_data.point_count;
+    return 0U;
 }
 
-static float ComputeDirectionalSpinDelta(float from_yaw_deg, float to_yaw_deg, float spin_dir_sign)
-{
-    float delta;
-
-    if (spin_dir_sign >= 0.0f)
-    {
-        delta = NormalizeAngle(to_yaw_deg - from_yaw_deg);
-    }
-    else
-    {
-        delta = NormalizeAngle(from_yaw_deg - to_yaw_deg);
-    }
-
-    if (delta < 0.0f)
-    {
-        delta += 360.0f;
-    }
-
-    return delta;
-}
-
-// 为当前特殊点规划“旋转总角度 + 退出朝向 + 旋转方向”。
-// 这里会同时比较顺时针/逆时针、正向出框/反向出框四种组合，选总角度最小的一种。
+// 提前算出“至少 730 度并直接对准下一个目标点”的总旋转角度。
 static void ConfigureSpinPlanForPoint(uint16 point_idx)
 {
-    uint16 next_special_idx;
+    uint16 next_idx = (uint16)(point_idx + 1U);
     float current_yaw = inertial_nav.relative_yaw;
     float exit_forward_yaw;
     float exit_reverse_yaw;
@@ -133,13 +153,12 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
     uint8 exit_candidate_idx;
     uint8 dir_candidate_idx;
 
-    next_special_idx = FindNextSpecialPointIndex((uint16)(point_idx + 1U));
-    if (next_special_idx < nav_ram_data.point_count)
+    if (next_idx < nav_ram_data.point_count)
     {
         exit_forward_yaw = CalcBearingDeg(nav_ram_data.points[point_idx].x,
                                           nav_ram_data.points[point_idx].y,
-                                          nav_ram_data.points[next_special_idx].x,
-                                          nav_ram_data.points[next_special_idx].y);
+                                          nav_ram_data.points[next_idx].x,
+                                          nav_ram_data.points[next_idx].y);
     }
     else
     {
@@ -155,7 +174,21 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
         for (dir_candidate_idx = 0U; dir_candidate_idx < 2U; dir_candidate_idx++)
         {
             float spin_sign = (dir_candidate_idx == 0U) ? 1.0f : -1.0f;
-            float total_angle = ComputeDirectionalSpinDelta(current_yaw, exit_yaw, spin_sign);
+            float total_angle;
+
+            if (spin_sign >= 0.0f)
+            {
+                total_angle = NormalizeAngle(exit_yaw - current_yaw);
+            }
+            else
+            {
+                total_angle = NormalizeAngle(current_yaw - exit_yaw);
+            }
+
+            if (total_angle < 0.0f)
+            {
+                total_angle += 360.0f;
+            }
 
             while (total_angle < NAV_POINT_SPIN_MIN_TOTAL_ANGLE)
             {
@@ -174,8 +207,7 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
     Minefield_SetSpinPlan(best_total_angle, best_exit_yaw, best_spin_sign);
 }
 
-// 在“正向朝向目标点”和“反向朝向目标点”之间自动选择误差更小的一侧，
-// 这样车可以前进或倒退接近中心点，减少原地大幅转向的时间。
+// 在“正向朝向目标点”和“反向朝向目标点”之间自动选择转向误差更小的一侧。
 static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, float *speed_sign)
 {
     float err_forward = NormalizeAngle(point_yaw_deg - inertial_nav.relative_yaw);
@@ -194,8 +226,7 @@ static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, flo
     }
 }
 
-// 按“距离停车边界还剩多少”实时规划允许速度上限。
-// 这个函数是方案4在线规划的核心：不查离线路表，只看当前剩余距离和姿态误差。
+// 按“离停车边界还剩多少距离”实时规划允许速度上限。
 static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float yaw_err_deg)
 {
     float remain = dist_mm - stop_radius_mm;
@@ -206,7 +237,6 @@ static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float y
         return 0.0f;
     }
 
-    // v^2 = 2ad：这里的 v 是底盘目标速度指令绝对值，a 是“指令域减速度”。
     speed_abs = sqrtf(2.0f * NAV_POINT_SPEED_DECEL_CMD2_PER_MM * remain);
     speed_abs = Float_Constrain(speed_abs, 0.0f, fabsf(NAV_POINT_SPEED_FAST));
 
@@ -215,7 +245,6 @@ static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float y
         speed_abs = fabsf(NAV_POINT_SPEED_SLOW);
     }
 
-    // 角度偏差较大时先停车转向；中等偏差时降速逼近，防止车轮带着横向误差冲进白框。
     if (fabsf(yaw_err_deg) > NAV_POINT_YAW_SLOW_TOLERANCE)
     {
         speed_abs = 0.0f;
@@ -228,13 +257,90 @@ static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float y
     return speed_abs;
 }
 
-// 统一处理雷区点/终点的“停稳判定 -> 触发动作”流程。
-// 返回 1 表示本周期已经完成触发，上层应停止继续做跟踪控制。
-static uint8 HandleStopAndTrigger(uint16 point_idx, uint8 point_type, float dist_to_point)
+// 统一处理雷区点“提前刹停 -> 中心停车 -> 触发旋转/特殊动作”流程。
+// 返回 0 表示未接管；返回 1 表示本周期已接管导航输出；返回 2 表示本周期已触发特殊动作。
+static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
+                                              uint8 point_type,
+                                              float tx,
+                                              float ty,
+                                              float dist_to_point,
+                                              float selected_err_deg,
+                                              float speed_sign)
 {
-    float stop_radius = IsSpecialPointType(point_type) ? NAV_POINT_SPECIAL_STOP_RADIUS : NAV_POINT_FINAL_STOP_RADIUS;
+    float approach_speed = ComputeApproachSpeedToPoint(tx, ty);
+    float abs_vehicle_speed = fabsf(current_actual_speed);
 
-    if (dist_to_point > stop_radius)
+    if (ShouldStartSpecialBrakeCapture(dist_to_point, approach_speed) == 0U)
+    {
+        ResetStopState();
+        return 0U;
+    }
+
+    if (fabsf(selected_err_deg) > NAV_POINT_YAW_SLOW_TOLERANCE)
+    {
+        target_speed_set = NAV_POINT_SPEED_STOP;
+        s_prev_speed_cmd = 0.0f;
+        ResetStopState();
+        return 1U;
+    }
+
+    if (dist_to_point > NAV_POINT_SPECIAL_STOP_RADIUS)
+    {
+        ResetStopState();
+        if (abs_vehicle_speed > NAV_POINT_SPECIAL_CRAWL_ENTRY_SPEED_MM_S)
+        {
+            target_speed_set = NAV_POINT_SPEED_STOP;
+            s_prev_speed_cmd = 0.0f;
+        }
+        else
+        {
+            target_speed_set = speed_sign * fabsf(NAV_POINT_SPECIAL_CRAWL_SPEED);
+        }
+        return 1U;
+    }
+
+    if (s_stop_yaw_locked == 0U)
+    {
+        s_stop_yaw_locked = 1U;
+        s_stop_yaw_deg = inertial_nav.relative_yaw;
+    }
+
+    target_speed_set = NAV_POINT_SPEED_STOP;
+    s_prev_speed_cmd = 0.0f;
+    err_degree = NormalizeAngle(s_stop_yaw_deg - inertial_nav.relative_yaw);
+
+    if (abs_vehicle_speed <= NAV_POINT_STOP_SPEED_MM_S)
+    {
+        if (s_stop_stable_ticks < 255U)
+        {
+            s_stop_stable_ticks++;
+        }
+    }
+    else
+    {
+        s_stop_stable_ticks = 0U;
+    }
+
+    if (s_stop_stable_ticks < NAV_POINT_STOP_STABLE_TICKS)
+    {
+        return 1U;
+    }
+
+    if (IsSpinPointType(point_type))
+    {
+        ConfigureSpinPlanForPoint(point_idx);
+        minefield_flag = 1U;
+    }
+
+    g_special_action_trigger = 1U;
+    ResetStopState();
+    return 2U;
+}
+
+// 统一处理终点停车稳定判定。
+static uint8 HandleFinalStopAndFinish(float dist_to_point)
+{
+    if (dist_to_point > NAV_POINT_FINAL_STOP_RADIUS)
     {
         ResetStopState();
         return 0U;
@@ -250,7 +356,7 @@ static uint8 HandleStopAndTrigger(uint16 point_idx, uint8 point_type, float dist
     s_prev_speed_cmd = 0.0f;
     err_degree = NormalizeAngle(s_stop_yaw_deg - inertial_nav.relative_yaw);
 
-    if (fabsf(inertial_nav.vx_body) <= NAV_POINT_STOP_SPEED_MM_S)
+    if (fabsf(current_actual_speed) <= NAV_POINT_STOP_SPEED_MM_S)
     {
         if (s_stop_stable_ticks < 255U)
         {
@@ -264,18 +370,13 @@ static uint8 HandleStopAndTrigger(uint16 point_idx, uint8 point_type, float dist
 
     if (s_stop_stable_ticks < NAV_POINT_STOP_STABLE_TICKS)
     {
-        return 0U;
+        return 1U;
     }
 
-    if (IsSpinPointType(point_type))
-    {
-        ConfigureSpinPlanForPoint(point_idx);
-        minefield_flag = 1;
-    }
-
-    g_special_action_trigger = IsSpecialPointType(point_type) ? 1U : 0U;
+    g_replay_state = REPLAY_FINISHED;
+    target_speed_set = NAV_POINT_SPEED_STOP;
+    err_degree = 0.0f;
     ResetStopState();
-    Brake_MinefieldThunderBrake_Reset();
     return 1U;
 }
 
@@ -328,7 +429,6 @@ void NavReplay_Start(void)
     s_prev_speed_cmd = 0.0f;
     ResetStopState();
     Minefield_Init();
-    Brake_MinefieldThunderBrake_Reset();
 
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0U : 1U;
@@ -348,7 +448,6 @@ void NavReplay_Stop(void)
     s_prev_speed_cmd = 0.0f;
     ResetStopState();
     Minefield_Init();
-    Brake_MinefieldThunderBrake_Reset();
 }
 
 void NavReplay_Process(void)
@@ -367,7 +466,6 @@ void NavReplay_Process(void)
 
     if ((g_replay_state != REPLAY_RUNNING) || (g_special_action_trigger != 0U))
     {
-        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -391,7 +489,6 @@ void NavReplay_Process(void)
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_POINT_SPEED_STOP;
         err_degree = 0.0f;
-        Brake_MinefieldThunderBrake_Reset();
         return;
     }
 
@@ -404,42 +501,54 @@ void NavReplay_Process(void)
 
     dist_to_point = CalcDistance(inertial_nav.x, inertial_nav.y, tx, ty);
 
-    if (point_type == NAV_POINT_CIRCLE)
-    {
-        Brake_MinefieldThunderBrake_Update(1U, dist_to_point);
-    }
-    else
-    {
-        Brake_MinefieldThunderBrake_Reset();
-    }
-
     if ((point_type == NAV_POINT_PATH) && (is_last_point == 0U) &&
         (dist_to_point <= NAV_POINT_PATH_ARRIVE_RADIUS))
     {
-        // 普通过渡点只推进索引，不做停车动作；停车只留给雷区点和终点。
         g_target_idx++;
         ResetStopState();
         return;
     }
 
-    if ((IsSpecialPointType(point_type) || is_last_point) &&
-        HandleStopAndTrigger(g_target_idx, point_type, dist_to_point))
-    {
-        if (g_target_idx < (uint16)(nav_ram_data.point_count - 1U))
-        {
-            g_target_idx++;
-        }
-        else
-        {
-            g_replay_state = REPLAY_FINISHED;
-        }
-        return;
-    }
-
-    // 点对点终端制导：每周期重算“当前位置 -> 目标点”的朝向，并自动选择前进/倒车误差较小的一侧。
     point_yaw_deg = CalcBearingDeg(inertial_nav.x, inertial_nav.y, tx, ty);
     SelectDriveHeading(point_yaw_deg, &selected_err_deg, &speed_sign);
     err_degree = selected_err_deg;
+
+    if (IsSpecialPointType(point_type))
+    {
+        uint8 special_result = HandleSpecialPointStopAndTrigger(g_target_idx,
+                                                                point_type,
+                                                                tx,
+                                                                ty,
+                                                                dist_to_point,
+                                                                selected_err_deg,
+                                                                speed_sign);
+        if (special_result != 0U)
+        {
+            if (special_result == 2U)
+            {
+                if (g_target_idx < (uint16)(nav_ram_data.point_count - 1U))
+                {
+                    g_target_idx++;
+                }
+                else
+                {
+                    g_replay_state = REPLAY_FINISHED;
+                }
+            }
+            return;
+        }
+    }
+    else if (is_last_point != 0U)
+    {
+        if (HandleFinalStopAndFinish(dist_to_point) != 0U)
+        {
+            return;
+        }
+    }
+    else
+    {
+        ResetStopState();
+    }
 
     stop_radius = IsSpecialPointType(point_type) ? NAV_POINT_SPECIAL_STOP_RADIUS : NAV_POINT_PATH_ARRIVE_RADIUS;
     if (is_last_point != 0U)
@@ -448,17 +557,6 @@ void NavReplay_Process(void)
     }
 
     speed_abs = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
-
-#if NAV_PLAN2_SPECIAL_APPROACH_MODE == PLAN2_SPECIAL_APPROACH_CENTER_RELAXED
-    // 宽松模式下，特殊点进入共享宽松窗口后提前压到慢速，
-    // 让方案4更容易在中心停车区内停稳，减少高速逼近时错过中心点的概率。
-    if (IsSpecialPointType(point_type) &&
-        (dist_to_point <= NAV_PLAN2_SPECIAL_RELAX_APPROACH_WINDOW_MM) &&
-        (speed_abs > fabsf(NAV_POINT_SPEED_SLOW)))
-    {
-        speed_abs = fabsf(NAV_POINT_SPEED_SLOW);
-    }
-#endif
 
     target_speed_set = SpeedSlew(speed_sign * speed_abs);
 }
