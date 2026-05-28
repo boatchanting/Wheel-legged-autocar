@@ -175,6 +175,7 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
     float best_total_angle = 1000000.0f;
     float best_exit_yaw = current_yaw;
     float best_spin_sign = 1.0f;
+    uint8 exit_candidate_count = (NAV_PLAN2_ALLOW_REVERSE_TO_NEXT_POINT != 0) ? 2U : 1U;
     uint8 exit_candidate_idx;
     uint8 dir_candidate_idx;
 
@@ -192,7 +193,7 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
 
     exit_reverse_yaw = NormalizeAngle(exit_forward_yaw + 180.0f);
 
-    for (exit_candidate_idx = 0U; exit_candidate_idx < 2U; exit_candidate_idx++)
+    for (exit_candidate_idx = 0U; exit_candidate_idx < exit_candidate_count; exit_candidate_idx++)
     {
         float exit_yaw = (exit_candidate_idx == 0U) ? exit_forward_yaw : exit_reverse_yaw;
 
@@ -239,12 +240,15 @@ static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, flo
     float reverse_yaw = NormalizeAngle(point_yaw_deg + 180.0f);
     float err_reverse = NormalizeAngle(reverse_yaw - inertial_nav.relative_yaw);
 
+#if NAV_PLAN2_ALLOW_REVERSE_TO_NEXT_POINT
+    // 允许倒车时，自动比较车头/车尾朝向目标点所需的转角，选更快的一侧。
     if ((fabsf(err_reverse) + NAV_POINT_REVERSE_SELECT_BIAS_DEG) < fabsf(err_forward))
     {
         *selected_err_deg = err_reverse;
         *speed_sign = 1.0f;
     }
     else
+#endif
     {
         *selected_err_deg = err_forward;
         *speed_sign = -1.0f;
@@ -324,18 +328,17 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     if (dist_to_point > NAV_POINT_SPECIAL_STOP_RADIUS)
     {
         ResetStopState();
-        // 准备圆只负责提前接管刹车；接管后先压到低速，再用爬行速度补进中心执行圆。
-        if (abs_vehicle_speed > NAV_POINT_SPECIAL_CRAWL_ENTRY_SPEED_MM_S)
+        // 执行圆外优先刹停，不提前很远切爬行；只有很靠近中心且速度很低时，才小速度补进执行圆。
+        if ((dist_to_point > NAV_POINT_SPECIAL_CRAWL_NEAR_RADIUS) ||
+            (abs_vehicle_speed > NAV_POINT_SPECIAL_CRAWL_ENTRY_SPEED_MM_S))
         {
             UpdateSpecialHardBrakeBySpeed(abs_vehicle_speed);
             target_speed_set = NAV_POINT_SPEED_STOP;
             s_prev_speed_cmd = 0.0f;
+            return 1U;
         }
-        else
-        {
-            Brake_NavHardStop_Reset();
-            target_speed_set = speed_sign * fabsf(NAV_POINT_SPECIAL_CRAWL_SPEED);
-        }
+        Brake_NavHardStop_Reset();
+        target_speed_set = speed_sign * fabsf(NAV_POINT_SPECIAL_CRAWL_SPEED);
         return 1U;
     }
 
@@ -350,7 +353,12 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     err_degree = NormalizeAngle(s_stop_yaw_deg - inertial_nav.relative_yaw);
     UpdateSpecialHardBrakeBySpeed(abs_vehicle_speed);
 
-    if (abs_vehicle_speed <= NAV_POINT_STOP_SPEED_MM_S)
+    // 进入执行圆后只要求速度足够低，不再等待连续停稳 tick，避免进圈后还要慢走几步才触发。
+    if (abs_vehicle_speed <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S)
+    {
+        s_stop_stable_ticks = NAV_POINT_STOP_STABLE_TICKS;
+    }
+    else if (abs_vehicle_speed <= NAV_POINT_STOP_SPEED_MM_S)
     {
         if (s_stop_stable_ticks < 255U)
         {

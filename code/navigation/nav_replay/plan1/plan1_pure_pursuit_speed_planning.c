@@ -237,6 +237,13 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     float diff = raw_speed - s_prev_speed_set;
     float step_limit;
 
+    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
+    if (((raw_speed * s_prev_speed_set) >= 0.0f) &&
+        (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS)))
+    {
+        return raw_speed;
+    }
+
     if ((raw_speed * s_prev_speed_set) < 0.0f)
     {
         step_limit = NAV_SPEED_SLEW_DOWN_CROSS_ZERO;

@@ -466,6 +466,23 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
             // 2.3 计算目标速度调整分量
             float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed,euler_angle.pitch);
+            {
+                float brake_pwm_now = Brake_Feedforward_GetPwm();
+                float brake_back_sit_component = duty_adjustment * BRAKE_SERVO_BACK_SIT_SIGN;
+                float brake_anti_back_sit_component = duty_adjustment * (-BRAKE_SERVO_BACK_SIT_SIGN);
+
+                // 强刹时优先保护车身姿态：不削弱电机反向刹车 duty，而是给一点反后坐支撑。
+                // 如果只是把后坐方向压到 0，强刹时仍可能因制动力矩后坐；这里改为至少保留一个反后坐方向的舵机支撑量。
+                if (fabsf(brake_pwm_now) >= BRAKE_SERVO_PROTECT_PWM_TH)
+                {
+                    if ((brake_back_sit_component > BRAKE_SERVO_BACK_SIT_LIMIT) ||
+                        (brake_anti_back_sit_component < BRAKE_SERVO_ANTI_BACK_SIT_DUTY))
+                    {
+                        duty_adjustment = -BRAKE_SERVO_BACK_SIT_SIGN * BRAKE_SERVO_ANTI_BACK_SIT_DUTY;
+                        pid_servo_speed.error_integral = 0.0f;
+                    }
+                }
+            }
             g_target_pwm_speed_adj = (int16)duty_adjustment;
         }
     }
@@ -633,7 +650,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // 单边桥/桥梁任务接管时不改写 roll_degree，保留原有 Rolling 流程。
         uint8 turn_roll_task_takeover = (uint8)((VisionBridgeTask_IsActive() != 0U) ||
                                                 (Bridge_Test_Triple_SingleSide_Is_Active() != 0U));
-        // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；刹车不屏蔽侧倾。
+        float brake_pwm_roll = Brake_Feedforward_GetPwm();
+        // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；强刹时清侧倾，避免刹车叠加压低单侧车身。
         uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
                                             (g_motor_enable == 0U) ||
                                             (jump_flag != 0U) ||
@@ -645,6 +663,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                                             (VisionThreeStageControl_IsActive() != 0U) ||
                                             (turn_roll_task_takeover != 0U) ||
                                             (g_pvc_control_enable != 0U) ||
+                                            (fabsf(brake_pwm_roll) >= BRAKE_TURN_ROLL_CLEAR_PWM_TH) ||
                                             ((fabsf(target_speed_set) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
                                              (fabsf(current_actual_speed) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND))
                                             #if GNSS_NAV == 1

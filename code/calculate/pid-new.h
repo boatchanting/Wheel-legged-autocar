@@ -594,13 +594,12 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
 #define NAV_HARD_BRAKE_RAMP_UP   2200.0f  /* 导航强停刹建压步长，保证进入雷区准备圆后能快速建立制动力 */
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
-#define NAV_HARD_BRAKE_RELEASE_SPEED 35.0f/* 当前速度低于该值时释放导航强停刹，避免中心附近低速反抽和原地抽搐 */
+#define NAV_HARD_BRAKE_RELEASE_SPEED 35.0f /* 当前速度低于该值时释放导航强停刹，避免中心附近低速反抽和原地抽搐 */
 #define NAV_HARD_BRAKE_LIFE_TICKS 4U      /* 导航强停请求保持 tick，桥接导航周期和 9ms 刹车前馈周期 */
-#define BRAKE_SERVO_PROTECT_PWM_TH 2500.0f/* 刹车前馈超过该值时启用舵机刹车姿态保护，限制速度环把车身继续压成后坐 */
-#define BRAKE_SERVO_BACK_SIT_SIGN 1.0f    /* 后坐方向标定：1 表示 speed_adj 为正会后坐；若实车方向相反，改成 -1.0f */
+#define BRAKE_SERVO_PROTECT_PWM_TH 2500.0f /* 刹车前馈超过该值时启用舵机刹车姿态保护，限制速度环把车身继续压成后坐 */
+#define BRAKE_SERVO_BACK_SIT_SIGN -1.0f    /* 后坐方向标定：1 表示 speed_adj 为正会后坐；若实车方向相反，改成 -1.0f */
 #define BRAKE_SERVO_BACK_SIT_LIMIT 0.0f   /* 强刹时允许保留的后坐方向 speed_adj，上调会更贴近原速度环，下调更防后坐蹭地 */
-#define BRAKE_TURN_LIMIT_PWM_TH   3500.0f /* 普通导航强刹转向限幅阈值，避免一边强刹一边大角速度转向导致蹭地 */
-#define BRAKE_TURN_CMD_LIMIT_DPS  35.0f   /* 强刹时普通转向角速度指令限幅，单位 deg/s；雷区原地旋转不受这个限幅 */
+#define BRAKE_SERVO_ANTI_BACK_SIT_DUTY 180.0f /* 强刹时主动给一点反后坐支撑；太小仍会后坐，太大可能前栽，建议 120~260 之间试 */
 #define BRAKE_TURN_ROLL_CLEAR_PWM_TH 2500.0f /* 刹车前馈超过该值时清主动侧倾，防止强刹叠加侧倾压低单侧车身 */
 // 全局加速前馈参数
 #define ACCEL_FF_ERR_MIN         30.0f    /* 目标速度绝对值比当前速度绝对值至少大这么多，才认为速度没跟上 */

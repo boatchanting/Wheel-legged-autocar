@@ -135,6 +135,7 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
     float best_total_angle = 1000000.0f;
     float best_exit_yaw = current_yaw;
     float best_spin_sign = 1.0f;
+    uint8 exit_candidate_count = (NAV_PLAN2_ALLOW_REVERSE_TO_NEXT_POINT != 0) ? 2U : 1U;
     uint8 exit_candidate_idx;
     uint8 dir_candidate_idx;
 
@@ -152,7 +153,7 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
 
     exit_reverse_yaw = NormalizeAngle(exit_forward_yaw + 180.0f);
 
-    for (exit_candidate_idx = 0U; exit_candidate_idx < 2U; exit_candidate_idx++)
+    for (exit_candidate_idx = 0U; exit_candidate_idx < exit_candidate_count; exit_candidate_idx++)
     {
         float exit_yaw = (exit_candidate_idx == 0U) ? exit_forward_yaw : exit_reverse_yaw;
 
@@ -208,6 +209,8 @@ static void SelectDriveHeading(float point_yaw_deg,
     float reverse_yaw = NormalizeAngle(point_yaw_deg + 180.0f);
     float err_reverse = NormalizeAngle(reverse_yaw - inertial_nav.relative_yaw);
 
+#if NAV_PLAN2_ALLOW_REVERSE_TO_NEXT_POINT
+    // 允许倒车时，自动比较车头/车尾朝向目标点所需的转角，选更快的一侧。
     if ((fabsf(err_reverse) + NAV_REVERSE_SELECT_BIAS_DEG) < fabsf(err_forward))
     {
         *selected_yaw_deg = reverse_yaw;
@@ -215,6 +218,7 @@ static void SelectDriveHeading(float point_yaw_deg,
         *speed_sign = 1.0f;
     }
     else
+#endif
     {
         *selected_yaw_deg = point_yaw_deg;
         *selected_err_deg = err_forward;
