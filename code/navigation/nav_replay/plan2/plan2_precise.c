@@ -26,6 +26,7 @@ static uint16 g_target_idx = 0;
 static uint8 g_start_heading_aligned = 1;
 static uint16 g_special_eval_idx = 0xFFFFU;
 static float g_special_min_center_dist = 1000000.0f;
+static float s_prev_speed_cmd = 0.0f;
 
 static float NormalizeAngle(float angle)
 {
@@ -46,12 +47,14 @@ static float CalcBearingDeg(float x1, float y1, float x2, float y2)
     return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
 }
 
+// 清空当前特殊点的逼近统计状态；切换目标点或退出特殊点判断时调用。
 static void ResetSpecialApproachState(void)
 {
     g_special_eval_idx = 0xFFFFU;
     g_special_min_center_dist = 1000000.0f;
 }
 
+// 将雷区逼近信息同步给底层雷霆重刹逻辑；只有圆环点会触发该请求。
 static void UpdateMinefieldThunderBrakeRequest(uint8 point_type, float dist_to_center)
 {
     if (point_type == NAV_POINT_CIRCLE)
@@ -74,6 +77,8 @@ static uint8 IsSpecialPointType(uint8 point_type)
     return (uint8)(point_type != NAV_POINT_PATH);
 }
 
+// 估算车辆沿“指向目标点方向”的逼近速度。
+// 宽松触发模式下会用这个量预测下一小段时间是否会进入中心触发区。
 static float ComputeApproachSpeedToPoint(float target_x, float target_y)
 {
     float dist = CalcDistance(inertial_nav.x, inertial_nav.y, target_x, target_y);
@@ -101,6 +106,8 @@ static float ComputeApproachSpeedToPoint(float target_x, float target_y)
     return vx_world * ux + vy_world * uy;
 }
 
+// 判断当前特殊点是否应该触发。
+// 严格模式只看中心半径；宽松模式会额外参考逼近速度和最近距离历史。
 static uint8 ShouldTriggerSpecialPoint(float dist_to_center, float approach_speed)
 {
     if (dist_to_center <= NAV_SPECIAL_TRIGGER_RADIUS)
@@ -194,6 +201,61 @@ static void SelectDriveHeading(float point_yaw_deg, float *selected_yaw_deg, flo
     }
 }
 
+// 对离线路表目标速度做斜率限制。
+// 这样即使 chazhi.py 规划出的相邻点速度变化较快，实车执行也更平顺。
+static float OfflineSpeedSlew(float raw_speed)
+{
+    float abs_raw = fabsf(raw_speed);
+    float abs_prev = fabsf(s_prev_speed_cmd);
+    float diff = raw_speed - s_prev_speed_cmd;
+    float step_limit;
+
+    if ((raw_speed * s_prev_speed_cmd) < 0.0f)
+    {
+        step_limit = NAV_OFFLINE_SPEED_SLEW_CROSS_ZERO;
+    }
+    else if (abs_raw > (abs_prev + NAV_OFFLINE_SPEED_SLEW_EPS))
+    {
+        step_limit = (abs_prev < NAV_OFFLINE_SPEED_SLEW_LOW_TH) ? NAV_OFFLINE_SPEED_SLEW_UP_LOW : NAV_OFFLINE_SPEED_SLEW_UP_NORMAL;
+    }
+    else if ((abs_raw + NAV_OFFLINE_SPEED_SLEW_EPS) < abs_prev)
+    {
+        step_limit = (abs_prev > NAV_OFFLINE_SPEED_SLEW_FAST_TH) ? NAV_OFFLINE_SPEED_SLEW_DOWN_FAST : NAV_OFFLINE_SPEED_SLEW_DOWN_NORMAL;
+    }
+    else
+    {
+        step_limit = NAV_OFFLINE_SPEED_SLEW_UP_NORMAL;
+    }
+
+    s_prev_speed_cmd += Float_Constrain(diff, -step_limit, step_limit);
+    return s_prev_speed_cmd;
+}
+
+// 从路表读取离线规划速度，并在少数边界场景下做安全兜底：
+// 1. 路表速度为 0 但车尚未真正到点时，给一个很小的爬行速度；
+// 2. 特殊点附近即使离线速度偏快，也压到慢速保证进框姿态。
+static float GetOfflineSpeedAbs(const NavRamPoint_t *point, uint8 is_special_point, float nav_dist)
+{
+    float speed_abs = fabsf(point->target_speed);
+
+    // 离线速度规划的唯一速度来源是路表 target_speed；若旧路表/停车点速度为 0，
+    // 仅在尚未到点时给一个低速爬行兜底，避免卡在终点或雷区中心前一个采样点。
+    if ((speed_abs <= NAV_OFFLINE_SPEED_EPS) && (nav_dist > NAV_DIST_ARRIVE))
+    {
+        speed_abs = fabsf(NAV_SPEED_SLOW);
+    }
+
+    // 雷区附近即使离线曲线给得偏快，也压到慢速，优先保证进框停车姿态。
+    if (is_special_point && (nav_dist <= NAV_SPECIAL_APPROACH_DIST) && (speed_abs > fabsf(NAV_SPEED_SLOW)))
+    {
+        speed_abs = fabsf(NAV_SPEED_SLOW);
+    }
+
+    return speed_abs;
+}
+
+// 为当前特殊点规划旋转总角度、退出航向和旋转方向。
+// 方案3虽然速度来自离线路表，但转圈后的出框朝向仍然按当前路径关系在线决定。
 static void ConfigureSpinPlanForPoint(uint16 point_idx)
 {
     uint16 next_special_idx;
@@ -301,6 +363,7 @@ void NavReplay_Start(void)
     g_special_action_trigger = 0;
     target_speed_set = NAV_SPEED_STOP;
     err_degree = 0.0f;
+    s_prev_speed_cmd = 0.0f;
     Minefield_Init();
     ResetSpecialApproachState();
     Brake_MinefieldThunderBrake_Reset();
@@ -325,6 +388,7 @@ void NavReplay_Stop(void)
     g_current_point_type = NAV_POINT_PATH;
     g_special_action_trigger = 0;
     g_start_heading_aligned = 1;
+    s_prev_speed_cmd = 0.0f;
     Minefield_Init();
     ResetSpecialApproachState();
     Brake_MinefieldThunderBrake_Reset();
@@ -381,6 +445,7 @@ void NavReplay_Process(void)
     {
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_SPEED_STOP;
+        s_prev_speed_cmd = 0.0f;
         err_degree = 0.0f;
         Brake_MinefieldThunderBrake_Reset();
 #if DEBUG_LOG_ENABLE
@@ -426,6 +491,7 @@ void NavReplay_Process(void)
 #endif
 
         target_speed_set = NAV_SPEED_STOP;
+        s_prev_speed_cmd = 0.0f;
         err_degree = 0.0f;
 
         if (IsSpinPointType(point_type))
@@ -448,8 +514,7 @@ void NavReplay_Process(void)
 
     if ((!is_special_point) && (dist_to_center <= NAV_DIST_ARRIVE))
     {
-        target_speed_set = NAV_SPEED_STOP;
-        err_degree = 0.0f;
+        // 普通路径点只推进索引，速度继续沿离线路表曲线走，不再每个点停顿。
         g_target_idx++;
         ResetSpecialApproachState();
         Brake_MinefieldThunderBrake_Reset();
@@ -467,29 +532,12 @@ void NavReplay_Process(void)
     if (fabsf(selected_err_deg) > NAV_YAW_TOLERANCE)
     {
         target_speed_set = NAV_SPEED_STOP;
+        s_prev_speed_cmd = 0.0f;
         return;
     }
 
-    if (nav_dist > NAV_DIST_FAR)
-    {
-        speed_abs = fabsf(NAV_SPEED_FAST);
-    }
-    else if (nav_dist > NAV_DIST_NEAR)
-    {
-        float ratio = (nav_dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
-        speed_abs = fabsf(NAV_SPEED_SLOW) + (fabsf(NAV_SPEED_FAST) - fabsf(NAV_SPEED_SLOW)) * ratio;
-    }
-    else
-    {
-        speed_abs = fabsf(NAV_SPEED_SLOW);
-    }
-
-    if (is_special_point && (nav_dist <= NAV_SPECIAL_APPROACH_DIST) && (speed_abs > fabsf(NAV_SPEED_SLOW)))
-    {
-        speed_abs = fabsf(NAV_SPEED_SLOW);
-    }
-
-    target_speed_set = speed_sign * speed_abs;
+    speed_abs = GetOfflineSpeedAbs(&nav_ram_data.points[g_target_idx], is_special_point, nav_dist);
+    target_speed_set = OfflineSpeedSlew(speed_sign * speed_abs);
     (void)selected_yaw_deg;
 }
 

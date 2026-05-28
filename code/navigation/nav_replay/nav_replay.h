@@ -55,6 +55,10 @@ typedef enum
         #include "plan2/plan2_pure_pursuit.h"
     #elif NAV_PLAN2_METHOD == PLAN2_METHOD_PRECISE
         #include "plan2/plan2_precise.h"
+    #elif NAV_PLAN2_METHOD == PLAN2_POINT_SPEED_PLANNING
+        #include "plan2/plan2_point_speed_planning.h"
+    #elif NAV_PLAN2_METHOD == PLAN2_HYBRID_TERMINAL
+        #include "plan2/plan2_hybrid_terminal.h"
     #else
         // 【越界检查】
         #error "[Nav Config Error] Plan 2 (CURRENT_NAV_PLAN == 2) has no valid NAV_PLAN2_METHOD selected!"
