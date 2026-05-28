@@ -448,6 +448,18 @@ void NavReplay_Process(void)
     }
 
     speed_abs = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
+
+#if NAV_PLAN2_SPECIAL_APPROACH_MODE == PLAN2_SPECIAL_APPROACH_CENTER_RELAXED
+    // 宽松模式下，特殊点进入共享宽松窗口后提前压到慢速，
+    // 让方案4更容易在中心停车区内停稳，减少高速逼近时错过中心点的概率。
+    if (IsSpecialPointType(point_type) &&
+        (dist_to_point <= NAV_PLAN2_SPECIAL_RELAX_APPROACH_WINDOW_MM) &&
+        (speed_abs > fabsf(NAV_POINT_SPEED_SLOW)))
+    {
+        speed_abs = fabsf(NAV_POINT_SPEED_SLOW);
+    }
+#endif
+
     target_speed_set = SpeedSlew(speed_sign * speed_abs);
 }
 

@@ -20,10 +20,10 @@
 #define NAV_SPECIAL_TRIGGER_RADIUS          300.0f
 // 特殊点慢速保护距离（mm）；进入该范围后即使离线曲线给得更快，也压到慢速。
 #define NAV_SPECIAL_APPROACH_DIST           800.0f
-// 宽松触发模式的观测窗口（mm）；在此范围内允许用预测/越过最近点方式触发。
-#define NAV_SPECIAL_RELAX_APPROACH_WINDOW   420.0f
-// 宽松触发模式的预测停车时间（s）；用当前逼近速度估计是否会进入中心触发区。
-#define NAV_SPECIAL_STOP_PREDICT_TIME       0.35f
+// 宽松触发模式的观测窗口（mm）；这里直接复用 nav_options.h 中的科目二全局配置。
+#define NAV_SPECIAL_RELAX_APPROACH_WINDOW   NAV_PLAN2_SPECIAL_RELAX_APPROACH_WINDOW_MM
+// 宽松触发模式的预测停车时间（s）；这里直接复用 nav_options.h 中的科目二全局配置。
+#define NAV_SPECIAL_STOP_PREDICT_TIME       NAV_PLAN2_SPECIAL_STOP_PREDICT_TIME_S
 // 宽松触发模式的“越过最近点”回退边界（mm）。
 #define NAV_SPECIAL_PASS_AWAY_MARGIN        35.0f
 // 点对点行驶时允许的最大朝向误差（deg）；超出后先停车修方向。
