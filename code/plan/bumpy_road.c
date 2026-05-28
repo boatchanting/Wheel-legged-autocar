@@ -4,8 +4,8 @@
 #include "tools/sbus.h"
 
 /* ========================= 参数区（可按实车调参） ========================= */
-#define BUMPY_ROAD_LOCK_SPEED_SET        (-200.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
-#define BUMPY_ROAD_TARGET_DISTANCE_MM    (3000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
+#define BUMPY_ROAD_LOCK_SPEED_SET        (-400.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
+#define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
 #define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms(10个1ms周期)更新一次距离
 
 #define BUMPY_ROAD_STALL_SPEED_ABS_TH    (50.0f)        // 卡顿检测速度阈值(mm/s)，低于此值认为可能卡住
@@ -63,14 +63,14 @@ static float BumpyRoad_CalcDistanceMm(void)
 static void BumpyRoad_ApplyVisionSteer(void)
 {
     /* 方向由视觉模块统一给出；若视觉暂时无效则输出0，避免随机摆动。 */
-    if (VisionBumpyControl_IsEnabled())
-    {
-        err_degree = VisionBumpyControl_GetErrDegreeCmd();
-    }
-    else
-    {
+    // if (VisionBumpyControl_IsEnabled())
+    // {
+    //     err_degree = VisionBumpyControl_GetErrDegreeCmd();
+    // }
+    // else
+    // {
         err_degree = 0.0f;
-    }
+    // }
 }
 
 static void BumpyRoad_Cleanup(uint8_t stop_car)
