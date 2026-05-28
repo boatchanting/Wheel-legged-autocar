@@ -1,6 +1,7 @@
 #include "../nav_replay.h"
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
+#include "../../../calculate/pid-new.h"
 #if (CURRENT_NAV_PLAN == 2) && (NAV_PLAN2_METHOD == PLAN2_PURE_PURSUIT)
 
 // #include "vision/vision_bridge_control.h"
