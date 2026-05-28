@@ -64,11 +64,34 @@ static uint8 IsSpecialPointType(uint8 point_type)
     return (uint8)(point_type != NAV_POINT_PATH);
 }
 
+static float CalcSpecialBrakePrepareRadius(void);
+
+// 仅在速度还比较高时使用导航强停刹；低速阶段交给普通零速/爬行控制，避免原地抽搐。
+static void UpdateSpecialHardBrakeBySpeed(float abs_vehicle_speed)
+{
+    if (abs_vehicle_speed > NAV_POINT_SPECIAL_HARD_BRAKE_RELEASE_SPEED_MM_S)
+    {
+        Brake_NavHardStop_Update(1U);
+    }
+    else
+    {
+        Brake_NavHardStop_Reset();
+    }
+}
+
 // 单周期速度斜率限制；普通巡航仍然平滑，但雷区停车阶段会直接绕过它给 0。
 static float SpeedSlew(float raw_speed)
 {
     float diff = raw_speed - s_prev_speed_cmd;
     float step_limit = NAV_POINT_SPEED_ACCEL_STEP;
+
+    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
+    if (((raw_speed * s_prev_speed_cmd) >= 0.0f) &&
+        (fabsf(raw_speed) > fabsf(s_prev_speed_cmd)))
+    {
+        s_prev_speed_cmd = raw_speed;
+        return s_prev_speed_cmd;
+    }
 
     if ((raw_speed * s_prev_speed_cmd) < 0.0f)
     {
@@ -113,7 +136,9 @@ static float ComputeApproachSpeedToPoint(float target_x, float target_y)
 
 static uint8 ShouldStartSpecialBrakeCapture(float dist_to_point, float approach_speed)
 {
-    if (dist_to_point <= NAV_POINT_SPECIAL_BRAKE_PREP_DIST)
+    float brake_prepare_radius = CalcSpecialBrakePrepareRadius();
+
+    if (dist_to_point <= brake_prepare_radius)
     {
         return 1U;
     }
@@ -128,7 +153,7 @@ static uint8 ShouldStartSpecialBrakeCapture(float dist_to_point, float approach_
             predicted_dist -= approach_speed * NAV_PLAN2_SPECIAL_STOP_PREDICT_TIME_S;
         }
 
-        if (predicted_dist <= NAV_POINT_SPECIAL_BRAKE_PREP_DIST)
+        if (predicted_dist <= brake_prepare_radius)
         {
             return 1U;
         }
@@ -140,7 +165,7 @@ static uint8 ShouldStartSpecialBrakeCapture(float dist_to_point, float approach_
     return 0U;
 }
 
-// 提前算出“至少 730 度并直接对准下一个目标点”的总旋转角度。
+// 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组。
 static void ConfigureSpinPlanForPoint(uint16 point_idx)
 {
     uint16 next_idx = (uint16)(point_idx + 1U);
@@ -257,6 +282,25 @@ static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float y
     return speed_abs;
 }
 
+// 根据当前速度和已经建立的刹车前馈，动态计算雷区刹车准备圆半径。
+// 速度越快，准备圆越大；刹车前馈尚未明显建压时，再额外放大准备圆。
+static float CalcSpecialBrakePrepareRadius(void)
+{
+    float speed_abs = fabsf(current_actual_speed);
+    float brake_pwm_abs = fabsf(Brake_Feedforward_GetPwm());
+    float prepare_radius = NAV_POINT_SPECIAL_BRAKE_PREP_MIN_RADIUS +
+                           speed_abs * speed_abs * NAV_POINT_SPECIAL_BRAKE_SPEED2_RADIUS_GAIN;
+
+    if (brake_pwm_abs < NAV_POINT_SPECIAL_BRAKE_READY_PWM)
+    {
+        prepare_radius += NAV_POINT_SPECIAL_BRAKE_WEAK_FF_MARGIN;
+    }
+
+    return Float_Constrain(prepare_radius,
+                           NAV_POINT_SPECIAL_BRAKE_PREP_MIN_RADIUS,
+                           NAV_POINT_SPECIAL_BRAKE_PREP_MAX_RADIUS);
+}
+
 // 统一处理雷区点“提前刹停 -> 中心停车 -> 触发旋转/特殊动作”流程。
 // 返回 0 表示未接管；返回 1 表示本周期已接管导航输出；返回 2 表示本周期已触发特殊动作。
 static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
@@ -272,28 +316,24 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
 
     if (ShouldStartSpecialBrakeCapture(dist_to_point, approach_speed) == 0U)
     {
+        Brake_NavHardStop_Reset();
         ResetStopState();
         return 0U;
-    }
-
-    if (fabsf(selected_err_deg) > NAV_POINT_YAW_SLOW_TOLERANCE)
-    {
-        target_speed_set = NAV_POINT_SPEED_STOP;
-        s_prev_speed_cmd = 0.0f;
-        ResetStopState();
-        return 1U;
     }
 
     if (dist_to_point > NAV_POINT_SPECIAL_STOP_RADIUS)
     {
         ResetStopState();
+        // 准备圆只负责提前接管刹车；接管后先压到低速，再用爬行速度补进中心执行圆。
         if (abs_vehicle_speed > NAV_POINT_SPECIAL_CRAWL_ENTRY_SPEED_MM_S)
         {
+            UpdateSpecialHardBrakeBySpeed(abs_vehicle_speed);
             target_speed_set = NAV_POINT_SPEED_STOP;
             s_prev_speed_cmd = 0.0f;
         }
         else
         {
+            Brake_NavHardStop_Reset();
             target_speed_set = speed_sign * fabsf(NAV_POINT_SPECIAL_CRAWL_SPEED);
         }
         return 1U;
@@ -308,6 +348,7 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     target_speed_set = NAV_POINT_SPEED_STOP;
     s_prev_speed_cmd = 0.0f;
     err_degree = NormalizeAngle(s_stop_yaw_deg - inertial_nav.relative_yaw);
+    UpdateSpecialHardBrakeBySpeed(abs_vehicle_speed);
 
     if (abs_vehicle_speed <= NAV_POINT_STOP_SPEED_MM_S)
     {
@@ -333,6 +374,7 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     }
 
     g_special_action_trigger = 1U;
+    Brake_NavHardStop_Reset();
     ResetStopState();
     return 2U;
 }
@@ -342,6 +384,7 @@ static uint8 HandleFinalStopAndFinish(float dist_to_point)
 {
     if (dist_to_point > NAV_POINT_FINAL_STOP_RADIUS)
     {
+        Brake_NavHardStop_Reset();
         ResetStopState();
         return 0U;
     }
@@ -376,6 +419,7 @@ static uint8 HandleFinalStopAndFinish(float dist_to_point)
     g_replay_state = REPLAY_FINISHED;
     target_speed_set = NAV_POINT_SPEED_STOP;
     err_degree = 0.0f;
+    Brake_NavHardStop_Reset();
     ResetStopState();
     return 1U;
 }
@@ -429,6 +473,7 @@ void NavReplay_Start(void)
     s_prev_speed_cmd = 0.0f;
     ResetStopState();
     Minefield_Init();
+    Brake_NavHardStop_Reset();
 
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0U : 1U;
@@ -448,6 +493,7 @@ void NavReplay_Stop(void)
     s_prev_speed_cmd = 0.0f;
     ResetStopState();
     Minefield_Init();
+    Brake_NavHardStop_Reset();
 }
 
 void NavReplay_Process(void)
@@ -466,6 +512,7 @@ void NavReplay_Process(void)
 
     if ((g_replay_state != REPLAY_RUNNING) || (g_special_action_trigger != 0U))
     {
+        Brake_NavHardStop_Reset();
         return;
     }
 
@@ -489,6 +536,7 @@ void NavReplay_Process(void)
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_POINT_SPEED_STOP;
         err_degree = 0.0f;
+        Brake_NavHardStop_Reset();
         return;
     }
 
@@ -506,6 +554,7 @@ void NavReplay_Process(void)
     {
         g_target_idx++;
         ResetStopState();
+        Brake_NavHardStop_Reset();
         return;
     }
 
@@ -548,6 +597,7 @@ void NavReplay_Process(void)
     else
     {
         ResetStopState();
+        Brake_NavHardStop_Reset();
     }
 
     stop_radius = IsSpecialPointType(point_type) ? NAV_POINT_SPECIAL_STOP_RADIUS : NAV_POINT_PATH_ARRIVE_RADIUS;
@@ -559,6 +609,7 @@ void NavReplay_Process(void)
     speed_abs = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
 
     target_speed_set = SpeedSlew(speed_sign * speed_abs);
+    Brake_NavHardStop_Reset();
 }
 
 #endif

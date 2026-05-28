@@ -584,13 +584,24 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
+#define NAV_HARD_BRAKE_GAIN      80.0f    /* 导航强停刹增益，仅由科目二雷区刹车准备圆请求，明显强于普通重刹 */
 #define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
 #define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
 #define BRAKE_MAX_HEAVY          3500.0f  /* 重刹前馈 PWM 最大幅值，限制急停时的最大反向力矩 */
+#define NAV_HARD_BRAKE_MAX_PWM   8200.0f  /* 导航强停刹最大反向 PWM；只提高高速刹车上限，不继续放大中低速刹车比例 */
 #define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
 #define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
 #define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
+#define NAV_HARD_BRAKE_RAMP_UP   2200.0f  /* 导航强停刹建压步长，保证进入雷区准备圆后能快速建立制动力 */
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
+#define NAV_HARD_BRAKE_RELEASE_SPEED 35.0f/* 当前速度低于该值时释放导航强停刹，避免中心附近低速反抽和原地抽搐 */
+#define NAV_HARD_BRAKE_LIFE_TICKS 4U      /* 导航强停请求保持 tick，桥接导航周期和 9ms 刹车前馈周期 */
+#define BRAKE_SERVO_PROTECT_PWM_TH 2500.0f/* 刹车前馈超过该值时启用舵机刹车姿态保护，限制速度环把车身继续压成后坐 */
+#define BRAKE_SERVO_BACK_SIT_SIGN 1.0f    /* 后坐方向标定：1 表示 speed_adj 为正会后坐；若实车方向相反，改成 -1.0f */
+#define BRAKE_SERVO_BACK_SIT_LIMIT 0.0f   /* 强刹时允许保留的后坐方向 speed_adj，上调会更贴近原速度环，下调更防后坐蹭地 */
+#define BRAKE_TURN_LIMIT_PWM_TH   3500.0f /* 普通导航强刹转向限幅阈值，避免一边强刹一边大角速度转向导致蹭地 */
+#define BRAKE_TURN_CMD_LIMIT_DPS  35.0f   /* 强刹时普通转向角速度指令限幅，单位 deg/s；雷区原地旋转不受这个限幅 */
+#define BRAKE_TURN_ROLL_CLEAR_PWM_TH 2500.0f /* 刹车前馈超过该值时清主动侧倾，防止强刹叠加侧倾压低单侧车身 */
 // 全局加速前馈参数
 #define ACCEL_FF_ERR_MIN         30.0f    /* 目标速度绝对值比当前速度绝对值至少大这么多，才认为速度没跟上 */
 #define ACCEL_FF_TARGET_STEP_MIN 30.0f    /* 目标速度绝对值相对上一周期至少增加这么多，才认为是急加速请求 */
@@ -667,6 +678,8 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear);//转向�
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
 void Brake_Feedforward_Reset(void);//清空刹车前馈并短暂上锁，避免复位后立即被旧条件重新触发
 float Brake_Feedforward_GetPwm(void);//读取当前刹车前馈 PWM，供 ISR 前馈仲裁使用
+void Brake_NavHardStop_Update(uint8 active);//导航强停刹请求，主要用于科目二雷区刹车准备圆
+void Brake_NavHardStop_Reset(void);//清空导航强停刹请求，退出雷区刹车准备区或复位时调用
 /**
  * @brief 加速前馈更新：在复刻起步和目标速度明显抬升时补额外驱动力
  * @param target_speed 当前目标速度

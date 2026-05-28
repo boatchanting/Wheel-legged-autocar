@@ -7,7 +7,7 @@
 // 2. 纵向速度来自路表 target_speed；普通路径点不停车，只推进索引。
 // 3. 雷区点进入刹车准备区后直接给 0 速度，让底层普通刹车前馈尽快建压；
 //    速度降下来后再用超低速补进中心，停稳后触发旋转。
-// 4. 旋转总角度在触发前一次性算好：既满足至少 730 度，又保证结束时已经对准下一个目标点。
+// 4. 雷区旋转从触发瞬间的车头角开始规划，在车头/车尾朝向下一个目标点之间选更快的一组，总角度至少 721 度。
 
 // 1 表示直接装载编译期静态路表运行。
 #define NAV_REPLAY_USE_STATIC_ROUTE_TABLE   1
@@ -34,8 +34,8 @@
 #define NAV_YAW_TOLERANCE                   1.0f
 // 允许切到反向朝向的偏置量（deg）；只有反向误差明显更小时才切换到倒车逼近。
 #define NAV_REVERSE_SELECT_BIAS_DEG         8.0f
-// 雷区旋转最小总角度（deg）；统一按至少 730 度处理。
-#define NAV_SPIN_MIN_TOTAL_ANGLE            730.0f
+// 雷区旋转最小总角度（deg）；统一按至少 721 度处理。
+#define NAV_SPIN_MIN_TOTAL_ANGLE            721.0f
 // 起跑前航向对齐容差（deg）。
 #define NAV_START_HEADING_TOLERANCE         0.3f
 

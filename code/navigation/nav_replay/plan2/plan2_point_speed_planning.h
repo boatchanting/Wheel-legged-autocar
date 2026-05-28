@@ -6,21 +6,31 @@
 // 1. 普通路径点按点对点导航，速度由剩余距离在线规划。
 // 2. 雷区点不再等进中心后才慢慢收速，而是进入准备区就直接给 0 速度，
 //    让底层普通刹车前馈尽快介入；速度压下来后再用超低速补进中心。
-// 3. 旋转动作提前算好总角度和出口朝向，保证转满至少 730 度后可直接出发。
+// 3. 雷区旋转从触发瞬间的车头角开始规划，在车头/车尾朝向下一个目标点之间选更快的一组，总角度至少 721 度。
 
 // 1 表示直接使用编译期静态路表，不再依赖 Flash 读表。
 #define NAV_REPLAY_USE_STATIC_ROUTE_TABLE       1
 
 // 普通路径点的通过半径（mm）；进入后直接推进索引，不停车。
 #define NAV_POINT_PATH_ARRIVE_RADIUS            70.0f
-// 雷区点/跳跃点等特殊点的中心停车半径（mm）；进入后执行停稳再触发流程。
-#define NAV_POINT_SPECIAL_STOP_RADIUS           110.0f
-// 雷区刹车准备距离（mm）；进入该范围后先直接给 0 速度，让普通刹车前馈建压。
-#define NAV_POINT_SPECIAL_BRAKE_PREP_DIST       650.0f
+// 雷区点/跳跃点等特殊点的中心停车执行圆半径（mm）；直径 94mm，因此半径为 47mm。
+#define NAV_POINT_SPECIAL_STOP_RADIUS           47.0f
+// 雷区动态刹车准备圆最小半径（mm）；实测需要近 1m 刹停，因此默认从 950mm 起步。
+#define NAV_POINT_SPECIAL_BRAKE_PREP_MIN_RADIUS 950.0f
+// 雷区动态刹车准备圆最大半径（mm）；限制极端速度下过早停车。
+#define NAV_POINT_SPECIAL_BRAKE_PREP_MAX_RADIUS 1450.0f
+// 速度平方到准备圆半径的换算系数；当前速度越快，准备圆越大。
+#define NAV_POINT_SPECIAL_BRAKE_SPEED2_RADIUS_GAIN 0.0040f
+// 判断刹车前馈已经明显建压的 PWM 阈值；低于该值时准备圆会额外放大。
+#define NAV_POINT_SPECIAL_BRAKE_READY_PWM       1200.0f
+// 刹车前馈尚未建压时的额外准备距离（mm）。
+#define NAV_POINT_SPECIAL_BRAKE_WEAK_FF_MARGIN  180.0f
 // 雷区补进中心时使用的超低速速度指令。
 #define NAV_POINT_SPECIAL_CRAWL_SPEED           (-60.0f)
 // 当前速度低于该阈值（mm/s）后，才从“直接刹停”切到“超低速爬行补中心”。
 #define NAV_POINT_SPECIAL_CRAWL_ENTRY_SPEED_MM_S 90.0f
+// 雷区强停刹释放速度（mm/s）；低于该速度后关闭重重刹，避免中心附近反复反抽。
+#define NAV_POINT_SPECIAL_HARD_BRAKE_RELEASE_SPEED_MM_S 110.0f
 // 最终终点的停车半径（mm）。
 #define NAV_POINT_FINAL_STOP_RADIUS             80.0f
 // 中等角度偏差阈值（deg）；超过后只允许低速逼近。
@@ -51,8 +61,8 @@
 // 跨零或瞬时停车时的最大速度变化量。
 #define NAV_POINT_SPEED_CROSS_ZERO_STEP         90.0f
 
-// 雷区旋转最小总角度（deg）；统一按至少 730 度处理。
-#define NAV_POINT_SPIN_MIN_TOTAL_ANGLE          730.0f
+// 雷区旋转最小总角度（deg）；统一按至少 721 度处理。
+#define NAV_POINT_SPIN_MIN_TOTAL_ANGLE          721.0f
 
 // 输出到底盘控制层的目标速度指令。
 extern volatile float target_speed_set;

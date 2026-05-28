@@ -125,7 +125,7 @@ static uint8 ShouldStartSpecialBrakeCapture(float dist_to_center, float approach
     return 0U;
 }
 
-// 在正向出框和反向出框之间选总旋转角度更小的一组，确保最后停在可直接出发的朝向。
+// 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组。
 static void ConfigureSpinPlanForPoint(uint16 point_idx)
 {
     uint16 next_idx = (uint16)(point_idx + 1U);
@@ -230,6 +230,13 @@ static float OfflineSpeedSlew(float raw_speed)
     float diff = raw_speed - s_prev_speed_cmd;
     float step_limit;
 
+    // 加速段直接给路表目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
+    if (((raw_speed * s_prev_speed_cmd) >= 0.0f) && (abs_raw > abs_prev))
+    {
+        s_prev_speed_cmd = raw_speed;
+        return s_prev_speed_cmd;
+    }
+
     if ((raw_speed * s_prev_speed_cmd) < 0.0f)
     {
         step_limit = NAV_OFFLINE_SPEED_SLEW_CROSS_ZERO;
@@ -281,15 +288,6 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     {
         ResetSpecialStopState();
         return 0U;
-    }
-
-    // 雷区刹车阶段直接把目标速度给 0，让底层普通刹车前馈尽快建压。
-    if (fabsf(selected_err_deg) > NAV_YAW_TOLERANCE)
-    {
-        target_speed_set = NAV_SPEED_STOP;
-        s_prev_speed_cmd = 0.0f;
-        ResetSpecialStopState();
-        return 1U;
     }
 
     // 还未进入中心触发半径时，先刹停；速度已经很低后，切换到超低速爬行补进中心。

@@ -2,10 +2,10 @@
 
 extern uint8 g_special_action_trigger;
 
-// 默认旋转总角度（deg）；当前统一要求至少 730 度。
-#define SPIN_TARGET_ANGLE_DEFAULT 730.0f
+// 默认旋转总角度（deg）；当前统一要求至少 721 度。
+#define SPIN_TARGET_ANGLE_DEFAULT 721.0f
 // 旋转总角度下限（deg）；外部即使给得更小，也会被钳到这个值。
-#define SPIN_TARGET_ANGLE_MIN     730.0f
+#define SPIN_TARGET_ANGLE_MIN     721.0f
 // 旋转阶段的最大角速度指令（deg/s）。
 #define SPIN_MAX_SPEED            360.0f
 // 角速度爬升斜率；避免转圈动作起转过猛。
@@ -106,7 +106,7 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
     }
 
     // 采用“匀速 + 末段线性减速”的简单梯形速度思想。
-    // 出框角已经提前并入 s_planned_total_angle，这里不再二次慢速补角。
+    // 出口角已经提前并入 s_planned_total_angle，这里只按陀螺累计角度判断是否转满。
     if (remaining < SPIN_DECEL_ANGLE)
     {
         target_speed = SPIN_MAX_SPEED * (remaining / SPIN_DECEL_ANGLE);

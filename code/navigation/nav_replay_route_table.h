@@ -5,7 +5,7 @@
 
 // 由 tools/webview_nav_marker速度规划_科目二/csv_to_nav_table.py 自动生成
 // 源 CSV：D:/New_luntui/project3/project/tools/webview_nav_marker速度规划_科目二/nav_mark_points_20260528_121010.csv
-// 生成时间：2026-05-28 12:41:16
+// 生成时间：2026-05-28 14:08:11
 
 #define NAV_REPLAY_START_HEADING_VALID 0
 #define NAV_REPLAY_START_HEADING_DEG 31.520f
