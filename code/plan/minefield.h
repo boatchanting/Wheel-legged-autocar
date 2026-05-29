@@ -10,6 +10,7 @@ extern uint8 vision_detected_marker;//雷区调用,测试用
  * @brief 初始化/复位旋转控制的相关变量
  */
 void Minefield_Init(void);
+void Minefield_SetSpinPlan(float total_spin_deg, float exit_yaw_deg, float spin_speed_sign);
 
 /**
  * @brief 判断当前是否处于旋转动作执行中
@@ -22,12 +23,12 @@ uint8_t Minefield_Is_Active(void);
  * 
  * @param gyro_z_deg      当前Z轴角速度 (单位: °/s)
  * @param dt_s            调用周期时间 (单位: 秒，通常为 0.002f，当前Core0转向角速度环为0.001f)
- * @param current_yaw_deg 当前的总偏航角 (用于结束时重置目标)
- * @param target_yaw_ptr  指向全局目标偏航角变量的指针 (用于修改 g_initial_yaw)
+ * @param current_yaw_deg 当前偏航角；保留参数用于兼容旧调用，新逻辑不再用它慢速补角
+ * @param target_yaw_ptr  目标偏航角指针；保留参数用于兼容旧调用，新逻辑不再修改 g_initial_yaw
  * 
  * @return float          计算出的目标旋转角速度 (单位: °/s)，若未激活则返回 0.0f
  * 
- * @note 此函数内部实现了梯形速度规划（加速-匀速-减速），并自动处理标志位复位。
+ * @note 此函数内部实现了梯形速度规划（加速-匀速-减速），旋转出口角由导航触发前并入总角度。
  */
 float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_deg,volatile float* target_yaw_ptr);
 
