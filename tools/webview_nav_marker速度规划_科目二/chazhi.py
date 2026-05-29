@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""轨迹平滑与离线速度规划脚本：读取路表、插值、规划速度并输出 6 字段头文件。"""
+"""科目二轨迹平滑与离线速度规划脚本：读取路表、插值、规划速度并输出 6 字段头文件。"""
 
 from __future__ import annotations
 
@@ -38,7 +38,7 @@ INTERPOLATE_DIST = 50.0
 # 经验例子：
 # 1. 设为 1800 时，理论上速度规划不会给出高于 1800mm/s 的目标速度。
 # 2. 如果实车在直道末端总是来不及刹住，除了看减速度参数，也应先确认这个上限是否定得过高。
-PATH_SPEED_MAX_MM_S = 5000.0
+PATH_SPEED_MAX_MM_S = 1800.0
 
 
 # 最大可用加速度（mm/s^2）。
@@ -49,7 +49,7 @@ PATH_SPEED_MAX_MM_S = 5000.0
 # 经验例子：
 # 1. 如果规划结果里长直道前半段升速太慢，明明车还能继续冲，可适当增大它。
 # 2. 如果实车总在出弯后突然猛窜、驱动轮容易空转，可适当减小它。
-MAX_ACCEL_MM_S2 = 2500.0
+MAX_ACCEL_MM_S2 = 1800.0
 
 
 # 最大可用减速度（mm/s^2）。
@@ -60,7 +60,7 @@ MAX_ACCEL_MM_S2 = 2500.0
 # 经验例子：
 # 1. 如果圆环点前经常刹不住、停止点有明显前冲，优先检查这个值是不是过大。
 # 2. 如果车明明刹得住，却在很早之前就开始“怂”下来，可以适当增大它。
-MAX_DECEL_MM_S2 = 1500.0
+MAX_DECEL_MM_S2 = 1300.0
 
 
 # 最大横向加速度（mm/s^2）。
@@ -71,7 +71,7 @@ MAX_DECEL_MM_S2 = 1500.0
 # 经验例子：
 # 1. 如果 U 型弯里总推头、外扩或甩尾，通常应先减小它。
 # 2. 如果车在弯中明显还很稳，但规划速度低得离谱，可能是这个值设得太保守。
-MAX_LATERAL_ACCEL_MM_S2 = 800.0
+MAX_LATERAL_ACCEL_MM_S2 = 1100.0
 
 
 # 速度指令换算系数（rpm -> mm/s）。
@@ -203,6 +203,7 @@ def infer_missing_angles(points: List[RoutePoint]) -> None:
 def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
     """
     读取路表头文件，兼容 3/5/6 字段点格式。
+    6 字段优先按当前 NavRamPoint_t 顺序解析：x, y, target_yaw, heading, point_type, target_speed。
 
     @return (轨迹点列表, 起跑航向有效标志, 起跑航向角)
     @note 调用位置：main() 主流程入口
@@ -235,6 +236,9 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
     points: List[RoutePoint] = []
 
     pattern_v6 = re.compile(
+        rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*,\s*({FLOAT_RE})f\s*\}}"
+    )
+    pattern_v6_legacy = re.compile(
         rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*\}}"
     )
     pattern_v5 = re.compile(
@@ -251,10 +255,23 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
                 y=float(match.group(2)),
                 target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
                 heading_deg=normalize_heading_deg(float(match.group(4))),
-                target_speed=float(match.group(5)),
-                point_type=parse_point_type(match.group(6)),
+                point_type=parse_point_type(match.group(5)),
+                target_speed=float(match.group(6)),
             )
         )
+
+    if not points:
+        for match in pattern_v6_legacy.finditer(body):
+            points.append(
+                RoutePoint(
+                    x=float(match.group(1)),
+                    y=float(match.group(2)),
+                    target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
+                    heading_deg=normalize_heading_deg(float(match.group(4))),
+                    target_speed=float(match.group(5)),
+                    point_type=parse_point_type(match.group(6)),
+                )
+            )
 
     if not points:
         for match in pattern_v5.finditer(body):
@@ -305,7 +322,7 @@ def generate_header(
         f.write("#ifndef _NAV_REPLAY_ROUTE_TABLE_H_\n")
         f.write("#define _NAV_REPLAY_ROUTE_TABLE_H_\n\n")
         f.write('#include "nav_ram.h"\n\n')
-        f.write("// 由 tools/webview_nav_marker/chazhi.py 自动生成\n")
+        f.write("// 由 tools/webview_nav_marker速度规划_科目二/chazhi.py 自动生成\n")
         f.write(f"// 生成时间：{timestamp}\n")
         f.write(f"// 插值方法：{method_name}\n")
         f.write(f"// 插值间距：约 {INTERPOLATE_DIST}mm\n")
@@ -327,7 +344,7 @@ def generate_header(
                     f"{p.heading_deg:.3f}f, (uint8){p.point_type}, {p.target_speed:.3f}f}},\n"
                 )
         else:
-            f.write("    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH},\n")
+            f.write("    {0.0f, 0.0f, 0.0f, 0.0f, (uint8)NAV_POINT_PATH, 0.0f},\n")
         f.write("};\n\n")
         f.write("#endif // _NAV_REPLAY_ROUTE_TABLE_H_\n")
 

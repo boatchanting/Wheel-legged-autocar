@@ -1,20 +1,32 @@
-#include "zf_common_headfile.h"
+#include "minefield.h"
 
-// ================= 参数配置宏 =================
-#define SPIN_TARGET_ANGLE     720.0f  // 目标旋转总角度 (2圈)由于地打滑的缘故，实际转动角度会变大，视实际情况调整
-#define SPIN_MAX_SPEED        360.0f  // 最大旋转速度 (°/s)
-#define SPIN_ACCEL_STEP       0.6f    // 加速度步长 (每次调用增加的速度) 建议 0.4~1.0
-#define SPIN_DECEL_ANGLE      180.0f  // 距离结束剩多少度时开始减速
-#define SPIN_MIN_SPEED        45.0f   // 最小收尾速度 (防止由于摩擦力停下)
+extern uint8 g_special_action_trigger;
 
-// ================= 全局/静态变量 =================
-volatile uint8_t minefield_flag = 0;   // 触发标志位
-static uint8_t  s_is_spinning = 0;     // 内部运行状态
-static float    s_accumulated_angle = 0.0f; // 已旋转角度积分
-static float    s_current_speed_cmd = 0.0f; // 当前平滑后的速度指令
-uint8_t vision_detected_marker = 0; // 雷区调用，测试用
-// 内部辅助函数：斜坡限制器
-static float _ramp_float(float current, float target, float step)
+// 默认旋转总角度（deg）；当前统一要求至少 721 度。
+#define SPIN_TARGET_ANGLE_DEFAULT 721.0f
+// 旋转总角度下限（deg）；外部即使给得更小，也会被钳到这个值。
+#define SPIN_TARGET_ANGLE_MIN     721.0f
+// 旋转阶段的最大角速度指令（deg/s）。
+#define SPIN_MAX_SPEED            360.0f
+// 角速度爬升斜率；避免转圈动作起转过猛。
+#define SPIN_ACCEL_STEP           0.6f
+// 减速区角度（deg）；进入最后这段角度后开始线性收速。
+#define SPIN_DECEL_ANGLE          180.0f
+// 旋转末段的最小角速度指令（deg/s）；避免末段因速度过低卡住。
+#define SPIN_MIN_SPEED            45.0f
+// 旋转输出符号；用于统一适配底层角速度方向定义。
+#define SPIN_OUTPUT_SIGN          1.0f
+
+volatile uint8_t minefield_flag = 0;
+static uint8_t  s_is_spinning = 0;
+static float    s_accumulated_angle = 0.0f;
+static float    s_current_speed_cmd = 0.0f;
+static float    s_planned_total_angle = SPIN_TARGET_ANGLE_DEFAULT;
+static float    s_spin_speed_sign = 1.0f;
+uint8_t vision_detected_marker = 0;
+
+// 浮点爬坡函数：将当前速度逐步逼近目标速度，而不是一步跳变。
+static float Minefield_RampFloat(float current, float target, float step)
 {
     if (current < target)
     {
@@ -35,6 +47,23 @@ void Minefield_Init(void)
     s_is_spinning = 0;
     s_accumulated_angle = 0.0f;
     s_current_speed_cmd = 0.0f;
+    s_planned_total_angle = SPIN_TARGET_ANGLE_DEFAULT;
+    s_spin_speed_sign = 1.0f;
+}
+
+// 设置本次旋转动作的目标：总角度、退出航向、顺/逆时针方向。
+// 注意：退出航向已经由导航层折算进 total_spin_deg，这里只保存总角度和旋转方向。
+void Minefield_SetSpinPlan(float total_spin_deg, float exit_yaw_deg, float spin_speed_sign)
+{
+    (void)exit_yaw_deg;
+
+    s_planned_total_angle = total_spin_deg;
+    if (s_planned_total_angle < SPIN_TARGET_ANGLE_MIN)
+    {
+        s_planned_total_angle = SPIN_TARGET_ANGLE_MIN;
+    }
+
+    s_spin_speed_sign = (spin_speed_sign >= 0.0f) ? 1.0f : -1.0f;
 }
 
 uint8_t Minefield_Is_Active(void)
@@ -42,67 +71,55 @@ uint8_t Minefield_Is_Active(void)
     return s_is_spinning;
 }
 
-float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_deg,volatile float* target_yaw_ptr)
+float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_deg, volatile float* target_yaw_ptr)
 {
-    // 1. 检测触发信号 (上升沿)
+    float remaining;
+    float target_speed = 0.0f;
+
+    (void)current_yaw_deg;
+    (void)target_yaw_ptr;
+
+    // 外部将 minefield_flag 置 1 后，这里正式进入旋转状态机。
     if (minefield_flag == 1)
     {
-        minefield_flag = 0;         // 清除触发标志
-        s_is_spinning = 1;          // 激活内部状态
-        s_accumulated_angle = 0.0f; // 重置积分
-        s_current_speed_cmd = 0.0f; // 重置速度
+        minefield_flag = 0;
+        s_is_spinning = 1;
+        s_accumulated_angle = 0.0f;
+        s_current_speed_cmd = 0.0f;
     }
 
-    // 2. 如果未激活，直接返回 0
     if (s_is_spinning == 0)
     {
         return 0.0f;
     }
 
-    // ================= 核心控制逻辑 =================
+    s_accumulated_angle += fabsf(gyro_z_deg * dt_s);
+    remaining = s_planned_total_angle - s_accumulated_angle;
 
-    // 3. 积分计算已转过的角度
-    // 无论左转还是右转，我们关注转过的幅度，所以用角速度的绝对值累加
-    // 如果你知道一定是向左转，可以直接 s_accumulated_angle += gyro_z_deg * dt_s;
-    s_accumulated_angle += fabsf(gyro_z_deg * dt_s); 
-
-    float remaining = SPIN_TARGET_ANGLE - s_accumulated_angle;
-    float target_speed = 0.0f;
-
-    // 4. 判断是否完成
-    if (s_accumulated_angle >= SPIN_TARGET_ANGLE)
+    if (s_accumulated_angle >= s_planned_total_angle)
     {
-        // --- 动作结束 ---
         s_is_spinning = 0;
         s_current_speed_cmd = 0.0f;
-        g_special_action_trigger = 0;//来自惯性导航系统的特殊状态位，处理完之后变为0
-        
-        // [关键] 重置系统的航向目标为当前朝向，防止PID回弹
-        if (target_yaw_ptr != 0) 
-        {
-            *target_yaw_ptr = current_yaw_deg;
-        }
-        
+        g_special_action_trigger = 0;
+
         return 0.0f;
     }
 
-    // 5. 梯形速度规划
+    // 采用“匀速 + 末段线性减速”的简单梯形速度思想。
+    // 出口角已经提前并入 s_planned_total_angle，这里只按陀螺累计角度判断是否转满。
     if (remaining < SPIN_DECEL_ANGLE)
     {
-        // [减速区] 线性减速
         target_speed = SPIN_MAX_SPEED * (remaining / SPIN_DECEL_ANGLE);
-        if (target_speed < SPIN_MIN_SPEED) target_speed = SPIN_MIN_SPEED;
+        if (target_speed < SPIN_MIN_SPEED)
+        {
+            target_speed = SPIN_MIN_SPEED;
+        }
     }
     else
     {
-        // [巡航区] 全速
         target_speed = SPIN_MAX_SPEED;
     }
 
-    // 6. 斜坡平滑处理 (防止速度突变导致倒车)
-    s_current_speed_cmd = _ramp_float(s_current_speed_cmd, target_speed, SPIN_ACCEL_STEP);
-
-    // 7. 返回最终速度指令
-    // 注意：如果是向右旋转(顺时针)，这里需要返回负值: return -s_current_speed_cmd;
-    return s_current_speed_cmd; 
+    s_current_speed_cmd = Minefield_RampFloat(s_current_speed_cmd, target_speed, SPIN_ACCEL_STEP);
+    return s_current_speed_cmd * s_spin_speed_sign * SPIN_OUTPUT_SIGN;
 }

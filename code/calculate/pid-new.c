@@ -43,6 +43,8 @@ static uint8 turn_active_roll_extend_only_side = 0U; // 主动侧倾伸腿锁存
 static float brake_ff_pwm = 0.0f;
 static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
+static uint8 brake_nav_hard_stop_active = 0U;      // 导航强停刹锁存，主要由科目二雷区准备圆请求
+static uint8 brake_nav_hard_stop_life_ticks = 0U;  // 强停刹保持计数，用于桥接导航周期和刹车前馈周期
 static uint8 brake_lockout = 0;     // 重置屏蔽锁
 static uint8 brake_zero_hold = 0;   // 刹停零速迟滞锁，避免停车附近反复建压/释放
 static uint8 brake_overspeed_ticks = 0U;  // 持续超速计数，达到 BRAKE_OVERSPEED_HOLD_TICKS 后才允许纠偏刹车
@@ -88,6 +90,27 @@ static void Accel_Feedforward_ClearOutput(void)
     accel_start_window_ticks = 0U;
 }
 
+// 清空导航强停刹请求；退出雷区准备圆、停车完成或刹车前馈复位时调用。
+void Brake_NavHardStop_Reset(void)
+{
+    brake_nav_hard_stop_active = 0U;
+    brake_nav_hard_stop_life_ticks = 0U;
+}
+
+// 更新导航强停刹请求；active 为 1 时刷新保持计数，让底层使用更强的刹车前馈档位。
+void Brake_NavHardStop_Update(uint8 active)
+{
+    if (active != 0U)
+    {
+        brake_nav_hard_stop_active = 1U;
+        brake_nav_hard_stop_life_ticks = NAV_HARD_BRAKE_LIFE_TICKS;
+    }
+    else
+    {
+        Brake_NavHardStop_Reset();
+    }
+}
+
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
 {
     float abs_speed = fabsf(actual_speed);
@@ -102,6 +125,22 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     uint8 target_decel_cmd = 0U;
     uint8 overspeed_request = 0U;
     uint8 decel_request = 0U;
+    uint8 nav_hard_stop_request = 0U;
+    uint8 zero_stop_request = 0U;
+
+    if ((motor_enable == 0U) || (jump_flag != 0U) || (abs_speed <= NAV_HARD_BRAKE_RELEASE_SPEED))
+    {
+        Brake_NavHardStop_Reset();
+    }
+    else if ((brake_nav_hard_stop_active != 0U) && (brake_nav_hard_stop_life_ticks > 0U))
+    {
+        nav_hard_stop_request = 1U;
+        brake_nav_hard_stop_life_ticks--;
+    }
+    else if (brake_nav_hard_stop_active != 0U)
+    {
+        Brake_NavHardStop_Reset();
+    }
 
     if (brake_zero_hold)
     {
@@ -121,6 +160,9 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     {
         target_decel_cmd = 1U;
     }
+
+    // 目标速度持续为 0 时也要保持刹车请求，避免只在目标速度刚下降的一瞬间刹一下，后续靠惯性滑过目标点。
+    zero_stop_request = (uint8)(abs_target <= BRAKE_ZERO_TARGET_MAX);
 
     // 持续超速计数：只有真实速度连续高于目标速度一段时间，才允许走“纠偏刹车”路径。
     // 这样可以避免目标速度轻微下调或编码器瞬时噪声，直接触发急刹。
@@ -144,13 +186,26 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         // 1) 目标速度跨零/反向：必须刹；
         // 2) 目标速度主动大幅下降：计划性收速，只允许轻/中刹逐级建立；
         // 3) 持续超速：真实超速纠偏，满足更高门槛后才允许重刹。
-        decel_request = (uint8)((actual_speed * target_speed <= 0.0f) ||
+        decel_request = (uint8)((nav_hard_stop_request != 0U) ||
+                                (zero_stop_request != 0U) ||
+                                (actual_speed * target_speed <= 0.0f) ||
                                 ((target_decel_cmd != 0U) && (abs_err >= BRAKE_ERR_MIN)) ||
                                 ((brake_overspeed_ticks >= BRAKE_OVERSPEED_HOLD_TICKS) &&
                                  (abs_err >= BRAKE_OVERSPEED_ERR_MIN)));
         if (decel_request)
         {
-            if (g_brake_active || g_reverse_brake_active)
+            if (nav_hard_stop_request != 0U)
+            {
+                brake_level = 4U;
+            }
+            else if (zero_stop_request != 0U)
+            {
+                // 停车指令持续期间按当前速度保持刹车档位，正车/倒车同等处理。
+                if (abs_speed < BRAKE_CH5_LIGHT_SPEED) brake_level = 1U;
+                else if (abs_speed < BRAKE_CH5_MED_SPEED) brake_level = 2U;
+                else brake_level = 3U;
+            }
+            else if (g_brake_active || g_reverse_brake_active)
             {
                 if (abs_speed < BRAKE_CH5_LIGHT_SPEED) brake_level = 1U;
                 else if (abs_speed < BRAKE_CH5_MED_SPEED) brake_level = 2U;
@@ -179,7 +234,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
                 }
             }
 
-            if ((g_brake_active == 0U) && (g_reverse_brake_active == 0U) && (abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1U)) brake_level = 1U;
+            if ((nav_hard_stop_request == 0U) && (g_brake_active == 0U) && (g_reverse_brake_active == 0U) && (abs_speed < BRAKE_LOW_SPEED_TH) && (brake_level > 1U)) brake_level = 1U;
         }
     }
 
@@ -192,9 +247,15 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         return 0.0f;
     }
 
-    if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
+    if (brake_level == 4U) { brake_gain = NAV_HARD_BRAKE_GAIN; brake_max = NAV_HARD_BRAKE_MAX_PWM; brake_ramp_up = NAV_HARD_BRAKE_RAMP_UP; }
+    else if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
     else if (brake_level == 2U) { brake_gain = BRAKE_GAIN_MED; brake_max = BRAKE_MAX_MED; brake_ramp_up = BRAKE_RAMP_UP_MED; }
     else if (brake_level == 1U) { brake_gain = BRAKE_GAIN_LIGHT; brake_max = BRAKE_MAX_LIGHT; brake_ramp_up = BRAKE_RAMP_UP_LIGHT; }
+
+    if (nav_hard_stop_request != 0U)
+    {
+        brake_lockout = 0U;
+    }
 
     // 2. 【核心新增】处理屏蔽锁
     if (brake_lockout)
@@ -225,6 +286,7 @@ void Brake_Feedforward_Reset(void)
     brake_last_target_speed = 0.0f;
     brake_zero_hold = 0U;
     brake_overspeed_ticks = 0U;
+    Brake_NavHardStop_Reset();
     brake_lockout = 1; // 【核心】上锁！无视接下来外部的强制刹车条件，直到外部条件自然释放为止
 }
 
