@@ -16,7 +16,7 @@
 #define ACCEL_FF_ENABLE 1U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
 #define ACCEL_FF_MODE 1U // 【加速前馈模式】0:关闭  1:直接叠加 PWM 前馈  2:加速时临时增强舵机速度环 Kp
 #define ACCEL_FF_BUZZER_ENABLE 1U // 【全局开关】1:大幅加速前馈触发时蜂鸣提示  0:关闭
-#define ROLL_BALANCE_ENABLE_INIT 1U //【全局开关】主动侧倾平衡环初始使能状态，1为上电默认使能，0为上电默认关闭
+#define ROLL_BALANCE_ENABLE_INIT 0U //【全局开关】主动侧倾平衡环初始使能状态，1为上电默认使能，0为上电默认关闭
 #define IMU_CATEGORY 3//【全局开关】1:imu660ra  2:imu660rb 3:imu963ra 注：imu660ra被赛事禁用
 #define IMU_REFRESH_TEST_ENABLE 0 // 1: 上电后测试IMU刷新频率，运行10秒后串口打印一次结果
 #define SUBS_CATEGORY 1  //【遥控器选择】1.旧遥控器2.新遥控器。选反会导致前进后退相反
