@@ -4,7 +4,7 @@
 #include "tools/sbus.h"
 
 /* ========================= 参数区（可按实车调参） ========================= */
-#define BUMPY_ROAD_LOCK_SPEED_SET        (-400.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
+#define BUMPY_ROAD_LOCK_SPEED_SET        (-300.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
 #define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
 #define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms(10个1ms周期)更新一次距离
 

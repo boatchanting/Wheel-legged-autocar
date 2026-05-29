@@ -256,14 +256,14 @@ void Bridge_Init(void) {
     bridge_params.cooldown_distance  = 1000.0f; 
 
     // 速度参数 
-    bridge_params.speed_brake   = -30.0f; 
-    bridge_params.speed_ready   = -45.0f; 
-    bridge_params.speed_climb   = -120.0f; 
-    bridge_params.speed_normal  = -180.0f; 
+    bridge_params.speed_brake   = -280.0f; 
+    bridge_params.speed_ready   = -280.0f; 
+    bridge_params.speed_climb   = -280.0f; 
+    bridge_params.speed_normal  = -280.0f; 
 
     // 姿态参数
     bridge_params.height_normal = 3.0f;   // 平地正常高度
-    bridge_params.height_bridge = 6.0f;  // 桥上高度 (留一点余量给一边缩短)
+    bridge_params.height_bridge = 3.0f;  // 桥上高度 (留一点余量给一边缩短)
     
     // 高度步长：假设 20ms 调用一次此函数
     // 升高13cm需要：13 / 0.5 = 26次 = 0.52秒，时间足够
@@ -311,7 +311,7 @@ void Bridge_Update(void) {
 
         case BRIDGE_STATE_READY:
             // 开始平滑抬升车身，并动态更新 PID 防止发抖
-            Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
+            //Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
 
             // 当距离逼近桥头，进入上桥爬坡状态
             if (remaining_dist < bridge_params.trigger_ready_dist) {
@@ -322,7 +322,7 @@ void Bridge_Update(void) {
 
         case BRIDGE_STATE_CLIMB:
             // 维持抬升状态直到完全抬起
-            Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
+            //Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
             target_speed_set = bridge_params.speed_climb;
             
             // 越过桥头一段距离，说明车身已完全上了单边桥
@@ -357,7 +357,7 @@ void Bridge_Update(void) {
 
         case BRIDGE_STATE_LEAVING:
             // 下桥后，平滑降低车身，并在下降过程中继续动态插值 PID
-            Smooth_Height_Control(bridge_params.height_normal, bridge_params.height_step_drop);
+            //Smooth_Height_Control(bridge_params.height_normal, bridge_params.height_step_drop);
 
             // 当高度完全恢复正常
             if (MY_ABS_F(servo_height - bridge_params.height_normal) < 0.1f) {
@@ -443,7 +443,7 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
         case BRIDGE_TEST_STATE_PREPARE:
             err_degree = Bridge_Normalize_Angle(s_locked_heading_deg - inertial_nav.relative_yaw);
             target_speed_set = bridge_params.speed_ready;
-            Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
+            //Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
             acc_limit = bridge_params.servo_acc_bridge;
             dec_limit = bridge_params.servo_dec_bridge;
             roll_balance_enable = 0;
@@ -457,7 +457,7 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
         case BRIDGE_TEST_STATE_ON_BRIDGE:
             err_degree = Bridge_Normalize_Angle(s_locked_heading_deg - inertial_nav.relative_yaw);
             target_speed_set = bridge_params.speed_climb;
-            Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
+            //Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
 
             traveled_mm = Get_Traveled_Distance();
             target_roll_bias = Bridge_Test_Get_Roll_Bias(traveled_mm);
@@ -473,7 +473,7 @@ void Bridge_Test_Triple_SingleSide_Inertial(void) {
         case BRIDGE_TEST_STATE_EXIT:
             err_degree = Bridge_Normalize_Angle(s_locked_heading_deg - inertial_nav.relative_yaw);
             target_speed_set = bridge_params.speed_normal;
-            Smooth_Height_Control(bridge_params.height_normal, bridge_params.height_step_drop);
+            //Smooth_Height_Control(bridge_params.height_normal, bridge_params.height_step_drop);
 
             s_test_roll_target = Ramp_Float(s_test_roll_target, 0.0f, BRIDGE_TEST_ROLL_RAMP_STEP_DEG);
             roll_degree = s_test_roll_target;
