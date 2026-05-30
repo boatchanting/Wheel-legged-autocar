@@ -66,6 +66,8 @@ typedef enum
     // ---------------- [ 科目三路由 ] ----------------
     #if NAV_PLAN3_METHOD == PLAN3_METHOD_PRECISE
         #include "plan3/plan3_precise.h"
+    #elif NAV_PLAN3_METHOD == PLAN3_POINT_SPEED_PLANNING
+        #include "plan3/plan3_point_speed_planning.h"
     #else
         // 【越界检查】
         #error "[Nav Config Error] Plan 3 (CURRENT_NAV_PLAN == 3) has no valid NAV_PLAN3_METHOD selected!"

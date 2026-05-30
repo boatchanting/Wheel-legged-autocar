@@ -1,6 +1,9 @@
 #include "../nav_replay.h"
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
+#include "../../../plan/bumpy_road.h"
+#include "../../../servo/servo_jump.h"
+#include "../../../vision/vision_bridge_control.h"
 #if (CURRENT_NAV_PLAN == 3) && (NAV_PLAN3_METHOD == PLAN3_METHOD_PRECISE)
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;
