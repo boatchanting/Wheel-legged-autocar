@@ -12,7 +12,7 @@
 #define NAV_REPLAY_USE_STATIC_ROUTE_TABLE       1
 
 // 普通路径点的通过半径（mm）；进入后直接推进索引，不停车。
-#define NAV_POINT_PATH_ARRIVE_RADIUS            70.0f
+#define NAV_POINT_PATH_ARRIVE_RADIUS            40.0f
 // 雷区点/跳跃点等特殊点的中心停车执行圆半径（mm）；直径 70cm，因此半径为 350mm。
 #define NAV_POINT_SPECIAL_STOP_RADIUS           350.0f
 // 雷区执行圆外的近距离补进半径（mm）；只在执行圆外沿附近且速度很低时爬进执行圆，避免提前很远就慢慢爬。
