@@ -218,13 +218,13 @@ def format_header(points: List[RoutePoint], src_path: Path, start_heading: Optio
     lines.append(f"static const NavRamPoint_t nav_replay_static_route_points[{arr_size}] = {{")
 
     if count == 0:
-        lines.append("    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH},")
+        lines.append("    {0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH, 0.0f},")
     else:
         for point in points:
             lines.append(
                 "    "
                 f"{{{point.x:.3f}f, {point.y:.3f}f, {point.target_yaw_deg:.3f}f, "
-                f"{point.heading_deg:.3f}f, {point.target_speed:.3f}f, (uint8){point.point_type}}},"
+                f"{point.heading_deg:.3f}f, (uint8){point.point_type}, {point.target_speed:.3f}f}},"
             )
 
     lines.extend(

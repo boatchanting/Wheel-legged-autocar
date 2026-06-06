@@ -1,7 +1,11 @@
 #include "../nav_replay.h"
 #include "../../../common.h"
+#ifdef PLAN1_SPEED_PLANNING_FLASH_BACKEND
+#include "../../ram2flash.h"
+#else
 #include "../../nav_replay_route_table.h"
-#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING)
+#endif
+#if (CURRENT_NAV_PLAN == 1) && ((NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING) || defined(PLAN1_SPEED_PLANNING_FLASH_BACKEND))
 extern volatile float target_speed_set;
 extern volatile float err_degree;
 
@@ -75,6 +79,582 @@ static float CalcDistanceSq(float x1, float y1, float x2, float y2)
     return dx * dx + dy * dy;
 }
 
+#ifdef PLAN1_SPEED_PLANNING_FLASH_BACKEND
+
+#ifndef NAV_FLASH_POINT_WORDS
+#define NAV_FLASH_POINT_WORDS 3U
+#endif
+
+#ifndef NAV_FLASH_RAW_MAX_POINTS
+#define NAV_FLASH_RAW_MAX_POINTS ((FLASH_PAGE_LENGTH - OFF_POINTS_START) / NAV_FLASH_POINT_WORDS)
+#endif
+
+#define NAV_FLASH_INPUT_MAX_POINTS  (NAV_FLASH_RAW_MAX_POINTS + 1U)
+#define NAV_FLASH_FILLET_MAX_POINTS ((NAV_FLASH_INPUT_MAX_POINTS * NAV_FLASH_BEZIER_SAMPLES) + 2U)
+
+typedef struct
+{
+    float x;
+    float y;
+} NavReplayPoint2f_t;
+
+static NavRamPoint_t s_flash_raw_points[NAV_FLASH_INPUT_MAX_POINTS];
+static NavReplayPoint2f_t s_flash_fillet_points[NAV_FLASH_FILLET_MAX_POINTS];
+static float s_flash_arc_len[NAV_RAM_MAX_POINTS];
+static float s_flash_speed_plan[NAV_RAM_MAX_POINTS];
+
+static float NavReplay_Min3(float a, float b, float c)
+{
+    float ret = (a < b) ? a : b;
+    return (ret < c) ? ret : c;
+}
+
+static uint8 NavReplay_ClampPointType(uint8 point_type)
+{
+    return (point_type > NAV_POINT_BUMP) ? NAV_POINT_BUMP : point_type;
+}
+
+static float NavReplay_NormalizeHeading360(float angle)
+{
+    while (angle >= 360.0f) angle -= 360.0f;
+    while (angle < 0.0f) angle += 360.0f;
+    return angle;
+}
+
+static float NavReplay_CalcPathYawDeg(float x0, float y0, float x1, float y1)
+{
+    return NormalizeAngle(-atan2f(y1 - y0, -(x1 - x0)) * 57.29578f);
+}
+
+static void NavReplay_InferRawAngles(NavRamPoint_t *points, uint16 count)
+{
+    uint16 i;
+
+    for (i = 0; i < count; i++)
+    {
+        float yaw = 0.0f;
+
+        if ((i + 1U) < count)
+        {
+            yaw = NavReplay_CalcPathYawDeg(points[i].x, points[i].y,
+                                           points[i + 1U].x, points[i + 1U].y);
+        }
+        else if (i > 0U)
+        {
+            yaw = NavReplay_CalcPathYawDeg(points[i - 1U].x, points[i - 1U].y,
+                                           points[i].x, points[i].y);
+        }
+
+        points[i].target_yaw_deg = yaw;
+        points[i].heading_deg = NavReplay_NormalizeHeading360(points[i].heading_deg);
+        points[i].point_type = NavReplay_ClampPointType(points[i].point_type);
+        points[i].target_speed = 0.0f;
+    }
+}
+
+static uint16 NavReplay_PrepareFlashInput(uint16 raw_count, uint16 *drop_first_count)
+{
+    uint16 i;
+
+    *drop_first_count = 0U;
+    if (raw_count == 0U)
+    {
+        return 0U;
+    }
+
+    if ((fabsf(nav_ram_data.points[0].x) <= 1.0e-6f) &&
+        (fabsf(nav_ram_data.points[0].y) <= 1.0e-6f))
+    {
+        for (i = 0; i < raw_count; i++)
+        {
+            s_flash_raw_points[i] = nav_ram_data.points[i];
+        }
+        NavReplay_InferRawAngles(s_flash_raw_points, raw_count);
+        return raw_count;
+    }
+
+    s_flash_raw_points[0].x = 0.0f;
+    s_flash_raw_points[0].y = 0.0f;
+    s_flash_raw_points[0].target_yaw_deg = 0.0f;
+    s_flash_raw_points[0].heading_deg = 0.0f;
+    s_flash_raw_points[0].point_type = NAV_POINT_PATH;
+    s_flash_raw_points[0].target_speed = 0.0f;
+
+    for (i = 0; i < raw_count; i++)
+    {
+        s_flash_raw_points[i + 1U] = nav_ram_data.points[i];
+    }
+
+    *drop_first_count = 1U;
+    raw_count++;
+    NavReplay_InferRawAngles(s_flash_raw_points, raw_count);
+    return raw_count;
+}
+
+static float NavReplay_CalcAverageSpacing(const NavRamPoint_t *points, uint16 count)
+{
+    uint16 i;
+    float total = 0.0f;
+
+    if (count < 2U)
+    {
+        return NAV_FLASH_INTERPOLATE_DIST_MM;
+    }
+
+    for (i = 1U; i < count; i++)
+    {
+        total += CalcDistance(points[i - 1U].x, points[i - 1U].y, points[i].x, points[i].y);
+    }
+
+    return total / (float)(count - 1U);
+}
+
+static uint16 NavReplay_PushFilletPoint(uint16 count, float x, float y)
+{
+    if (count >= NAV_FLASH_FILLET_MAX_POINTS)
+    {
+        return count;
+    }
+
+    s_flash_fillet_points[count].x = x;
+    s_flash_fillet_points[count].y = y;
+    return (uint16)(count + 1U);
+}
+
+static uint16 NavReplay_BuildCornerFillet(const NavRamPoint_t *points, uint16 count)
+{
+    uint16 i;
+    uint16 out_count = 0U;
+    float fillet_radius = NavReplay_CalcAverageSpacing(points, count) * NAV_FLASH_FILLET_RADIUS_SCALE;
+
+    if (count == 0U)
+    {
+        return 0U;
+    }
+
+    out_count = NavReplay_PushFilletPoint(out_count, points[0].x, points[0].y);
+
+    for (i = 1U; (i + 1U) < count; i++)
+    {
+        float p0x = points[i - 1U].x;
+        float p0y = points[i - 1U].y;
+        float p1x = points[i].x;
+        float p1y = points[i].y;
+        float p2x = points[i + 1U].x;
+        float p2y = points[i + 1U].y;
+        float v1x = p0x - p1x;
+        float v1y = p0y - p1y;
+        float v2x = p2x - p1x;
+        float v2y = p2y - p1y;
+        float l1 = sqrtf(v1x * v1x + v1y * v1y);
+        float l2 = sqrtf(v2x * v2x + v2y * v2y);
+        uint16 sample;
+
+        if ((l1 < 1.0e-3f) || (l2 < 1.0e-3f))
+        {
+            out_count = NavReplay_PushFilletPoint(out_count, p1x, p1y);
+            continue;
+        }
+
+        {
+            float cut_len = NavReplay_Min3(fillet_radius, l1 * 0.45f, l2 * 0.45f);
+            float start_x = p1x + (v1x / l1) * cut_len;
+            float start_y = p1y + (v1y / l1) * cut_len;
+            float end_x = p1x + (v2x / l2) * cut_len;
+            float end_y = p1y + (v2y / l2) * cut_len;
+
+            for (sample = 0U; sample < NAV_FLASH_BEZIER_SAMPLES; sample++)
+            {
+                float t = (NAV_FLASH_BEZIER_SAMPLES <= 1U) ? 0.0f :
+                          ((float)sample / (float)(NAV_FLASH_BEZIER_SAMPLES - 1U));
+                float one_minus_t = 1.0f - t;
+                float bx = one_minus_t * one_minus_t * start_x +
+                           2.0f * one_minus_t * t * p1x +
+                           t * t * end_x;
+                float by = one_minus_t * one_minus_t * start_y +
+                           2.0f * one_minus_t * t * p1y +
+                           t * t * end_y;
+                out_count = NavReplay_PushFilletPoint(out_count, bx, by);
+            }
+        }
+    }
+
+    out_count = NavReplay_PushFilletPoint(out_count, points[count - 1U].x, points[count - 1U].y);
+    return out_count;
+}
+
+static uint16 NavReplay_ResampleFilletToRam(uint16 fillet_count)
+{
+    uint16 i;
+    uint16 out_count;
+    uint16 seg_idx = 1U;
+    float total_len = 0.0f;
+    float seg_start_dist = 0.0f;
+
+    if (fillet_count == 0U)
+    {
+        nav_ram_data.point_count = 0U;
+        return 0U;
+    }
+
+    for (i = 1U; i < fillet_count; i++)
+    {
+        total_len += CalcDistance(s_flash_fillet_points[i - 1U].x,
+                                  s_flash_fillet_points[i - 1U].y,
+                                  s_flash_fillet_points[i].x,
+                                  s_flash_fillet_points[i].y);
+    }
+
+    if (total_len <= 1.0e-3f)
+    {
+        nav_ram_data.points[0].x = s_flash_fillet_points[0].x;
+        nav_ram_data.points[0].y = s_flash_fillet_points[0].y;
+        nav_ram_data.points[0].target_yaw_deg = 0.0f;
+        nav_ram_data.points[0].heading_deg = 0.0f;
+        nav_ram_data.points[0].point_type = NAV_POINT_PATH;
+        nav_ram_data.points[0].target_speed = 0.0f;
+        nav_ram_data.point_count = 1U;
+        return 1U;
+    }
+
+    out_count = (uint16)(total_len / NAV_FLASH_INTERPOLATE_DIST_MM);
+    if (out_count < 2U)
+    {
+        out_count = 2U;
+    }
+    if (out_count > NAV_RAM_MAX_POINTS)
+    {
+        out_count = NAV_RAM_MAX_POINTS;
+    }
+
+    for (i = 0U; i < out_count; i++)
+    {
+        float target_dist = (out_count <= 1U) ? 0.0f :
+                            (total_len * (float)i / (float)(out_count - 1U));
+
+        while ((seg_idx + 1U) < fillet_count)
+        {
+            float seg_len = CalcDistance(s_flash_fillet_points[seg_idx - 1U].x,
+                                         s_flash_fillet_points[seg_idx - 1U].y,
+                                         s_flash_fillet_points[seg_idx].x,
+                                         s_flash_fillet_points[seg_idx].y);
+            if ((seg_start_dist + seg_len) >= target_dist)
+            {
+                break;
+            }
+            seg_start_dist += seg_len;
+            seg_idx++;
+        }
+
+        {
+            float x0 = s_flash_fillet_points[seg_idx - 1U].x;
+            float y0 = s_flash_fillet_points[seg_idx - 1U].y;
+            float x1 = s_flash_fillet_points[seg_idx].x;
+            float y1 = s_flash_fillet_points[seg_idx].y;
+            float seg_len = CalcDistance(x0, y0, x1, y1);
+            float ratio = (seg_len <= 1.0e-6f) ? 0.0f : ((target_dist - seg_start_dist) / seg_len);
+
+            if (ratio < 0.0f) ratio = 0.0f;
+            if (ratio > 1.0f) ratio = 1.0f;
+
+            nav_ram_data.points[i].x = x0 + (x1 - x0) * ratio;
+            nav_ram_data.points[i].y = y0 + (y1 - y0) * ratio;
+            nav_ram_data.points[i].target_yaw_deg = 0.0f;
+            nav_ram_data.points[i].heading_deg = 0.0f;
+            nav_ram_data.points[i].point_type = NAV_POINT_PATH;
+            nav_ram_data.points[i].target_speed = 0.0f;
+        }
+    }
+
+    nav_ram_data.point_count = out_count;
+    return out_count;
+}
+
+static uint16 NavReplay_FindClosestFinalPoint(float x, float y, uint16 final_count)
+{
+    uint16 i;
+    uint16 closest_idx = 0U;
+    float best_dist_sq = 3.4e38f;
+
+    for (i = 0U; i < final_count; i++)
+    {
+        float dist_sq = CalcDistanceSq(x, y, nav_ram_data.points[i].x, nav_ram_data.points[i].y);
+        if (dist_sq < best_dist_sq)
+        {
+            best_dist_sq = dist_sq;
+            closest_idx = i;
+        }
+    }
+
+    return closest_idx;
+}
+
+static void NavReplay_SnapSpecialAndLast(const NavRamPoint_t *raw_points, uint16 raw_count, uint16 final_count)
+{
+    uint16 i;
+
+    if ((raw_count == 0U) || (final_count == 0U))
+    {
+        return;
+    }
+
+    for (i = 0U; i < raw_count; i++)
+    {
+        if ((raw_points[i].point_type != NAV_POINT_PATH) || (i == (raw_count - 1U)))
+        {
+            uint16 closest_idx = NavReplay_FindClosestFinalPoint(raw_points[i].x, raw_points[i].y, final_count);
+            nav_ram_data.points[closest_idx].x = raw_points[i].x;
+            nav_ram_data.points[closest_idx].y = raw_points[i].y;
+            nav_ram_data.points[closest_idx].point_type = raw_points[i].point_type;
+            nav_ram_data.points[closest_idx].heading_deg = raw_points[i].heading_deg;
+        }
+    }
+}
+
+static void NavReplay_FillTangentYaws(uint16 final_count)
+{
+    uint16 i;
+
+    for (i = 0U; i < final_count; i++)
+    {
+        if ((i + 1U) < final_count)
+        {
+            nav_ram_data.points[i].target_yaw_deg =
+                NavReplay_CalcPathYawDeg(nav_ram_data.points[i].x,
+                                          nav_ram_data.points[i].y,
+                                          nav_ram_data.points[i + 1U].x,
+                                          nav_ram_data.points[i + 1U].y);
+        }
+        else if (i > 0U)
+        {
+            nav_ram_data.points[i].target_yaw_deg =
+                NavReplay_CalcPathYawDeg(nav_ram_data.points[i - 1U].x,
+                                          nav_ram_data.points[i - 1U].y,
+                                          nav_ram_data.points[i].x,
+                                          nav_ram_data.points[i].y);
+        }
+        else
+        {
+            nav_ram_data.points[i].target_yaw_deg = 0.0f;
+        }
+    }
+}
+
+static void NavReplay_RestoreSpecialAngles(const NavRamPoint_t *raw_points, uint16 raw_count, uint16 final_count)
+{
+    uint16 i;
+
+    if ((raw_count == 0U) || (final_count == 0U))
+    {
+        return;
+    }
+
+    for (i = 0U; i < raw_count; i++)
+    {
+        if ((raw_points[i].point_type != NAV_POINT_PATH) || (i == (raw_count - 1U)))
+        {
+            uint16 closest_idx = NavReplay_FindClosestFinalPoint(raw_points[i].x, raw_points[i].y, final_count);
+            nav_ram_data.points[closest_idx].target_yaw_deg = raw_points[i].target_yaw_deg;
+            nav_ram_data.points[closest_idx].heading_deg = raw_points[i].heading_deg;
+        }
+    }
+}
+
+static uint16 NavReplay_DropSyntheticOrigin(uint16 final_count, uint16 drop_first_count)
+{
+    uint16 i;
+
+    if ((drop_first_count == 0U) || (final_count <= drop_first_count))
+    {
+        return final_count;
+    }
+
+    for (i = 0U; (i + drop_first_count) < final_count; i++)
+    {
+        nav_ram_data.points[i] = nav_ram_data.points[i + drop_first_count];
+    }
+
+    return (uint16)(final_count - drop_first_count);
+}
+
+static void NavReplay_BuildArcLength(uint16 count)
+{
+    uint16 i;
+
+    if (count == 0U)
+    {
+        return;
+    }
+
+    s_flash_arc_len[0] = 0.0f;
+    for (i = 1U; i < count; i++)
+    {
+        s_flash_arc_len[i] = s_flash_arc_len[i - 1U] +
+            CalcDistance(nav_ram_data.points[i - 1U].x, nav_ram_data.points[i - 1U].y,
+                         nav_ram_data.points[i].x, nav_ram_data.points[i].y);
+    }
+}
+
+static float NavReplay_SignedCurvatureAt(uint16 idx, uint16 count)
+{
+    float ax;
+    float ay;
+    float bx;
+    float by;
+    float a;
+    float b;
+    float c;
+    float denom;
+    float cross;
+
+    if (count < 3U)
+    {
+        return 0.0f;
+    }
+
+    if (idx == 0U)
+    {
+        idx = 1U;
+    }
+    else if (idx >= (count - 1U))
+    {
+        idx = (uint16)(count - 2U);
+    }
+
+    ax = nav_ram_data.points[idx].x - nav_ram_data.points[idx - 1U].x;
+    ay = nav_ram_data.points[idx].y - nav_ram_data.points[idx - 1U].y;
+    bx = nav_ram_data.points[idx + 1U].x - nav_ram_data.points[idx].x;
+    by = nav_ram_data.points[idx + 1U].y - nav_ram_data.points[idx].y;
+    a = sqrtf(ax * ax + ay * ay);
+    b = sqrtf(bx * bx + by * by);
+    c = CalcDistance(nav_ram_data.points[idx + 1U].x, nav_ram_data.points[idx + 1U].y,
+                     nav_ram_data.points[idx - 1U].x, nav_ram_data.points[idx - 1U].y);
+    denom = a * b * c;
+    if (denom <= NAV_FLASH_CURVATURE_EPS)
+    {
+        return 0.0f;
+    }
+
+    cross = ax * by - ay * bx;
+    return 2.0f * cross / denom;
+}
+
+static void NavReplay_ApplyOfflineSpeedPlan(uint16 count)
+{
+    uint16 i;
+
+    if (count == 0U)
+    {
+        return;
+    }
+
+    NavReplay_BuildArcLength(count);
+
+    for (i = 0U; i < count; i++)
+    {
+        float kappa = NavReplay_SignedCurvatureAt(i, count);
+        float curve_limit = NAV_FLASH_PATH_SPEED_MAX_MM_S;
+
+        if (fabsf(kappa) > NAV_FLASH_CURVATURE_EPS)
+        {
+            float denom = fabsf(kappa);
+            if (denom < NAV_FLASH_CURVATURE_EPS)
+            {
+                denom = NAV_FLASH_CURVATURE_EPS;
+            }
+            curve_limit = sqrtf(NAV_FLASH_MAX_LATERAL_ACCEL_MM_S2 / denom);
+        }
+
+        s_flash_speed_plan[i] = (curve_limit < NAV_FLASH_PATH_SPEED_MAX_MM_S) ?
+                                curve_limit : NAV_FLASH_PATH_SPEED_MAX_MM_S;
+    }
+
+    s_flash_speed_plan[count - 1U] = 0.0f;
+
+    for (i = 0U; i < count; i++)
+    {
+        if (nav_ram_data.points[i].point_type == NAV_POINT_CIRCLE)
+        {
+            s_flash_speed_plan[i] = 0.0f;
+        }
+    }
+
+    for (i = (uint16)(count - 1U); i > 0U; i--)
+    {
+        float ds = s_flash_arc_len[i] - s_flash_arc_len[i - 1U];
+        float candidate = s_flash_speed_plan[i] * s_flash_speed_plan[i] +
+                          2.0f * NAV_FLASH_MAX_DECEL_MM_S2 * ds;
+        float max_entry = sqrtf((candidate > 0.0f) ? candidate : 0.0f);
+        if (s_flash_speed_plan[i - 1U] > max_entry)
+        {
+            s_flash_speed_plan[i - 1U] = max_entry;
+        }
+    }
+
+    for (i = 1U; i < count; i++)
+    {
+        float ds = s_flash_arc_len[i] - s_flash_arc_len[i - 1U];
+        float candidate = s_flash_speed_plan[i - 1U] * s_flash_speed_plan[i - 1U] +
+                          2.0f * NAV_FLASH_MAX_ACCEL_MM_S2 * ds;
+        float max_exit = sqrtf((candidate > 0.0f) ? candidate : 0.0f);
+        if (s_flash_speed_plan[i] > max_exit)
+        {
+            s_flash_speed_plan[i] = max_exit;
+        }
+    }
+
+    for (i = 0U; i < count; i++)
+    {
+        nav_ram_data.points[i].target_speed = -s_flash_speed_plan[i] / NAV_FLASH_SPEED_TO_MM_S;
+    }
+}
+
+uint16 NavReplay_BuildMethod4RouteFromRam(void)
+{
+    uint16 raw_count = nav_ram_data.point_count;
+    uint16 input_count;
+    uint16 drop_first_count = 0U;
+    uint16 fillet_count;
+    uint16 final_count;
+
+    if (raw_count > NAV_FLASH_RAW_MAX_POINTS)
+    {
+        raw_count = NAV_FLASH_RAW_MAX_POINTS;
+    }
+
+    if (raw_count < NAV_FLASH_MIN_RAW_POINTS)
+    {
+        nav_ram_data.point_count = 0U;
+        return 0U;
+    }
+
+    input_count = NavReplay_PrepareFlashInput(raw_count, &drop_first_count);
+    if (input_count < NAV_FLASH_MIN_RAW_POINTS)
+    {
+        nav_ram_data.point_count = 0U;
+        return 0U;
+    }
+
+    fillet_count = NavReplay_BuildCornerFillet(s_flash_raw_points, input_count);
+    final_count = NavReplay_ResampleFilletToRam(fillet_count);
+    NavReplay_SnapSpecialAndLast(s_flash_raw_points, input_count, final_count);
+    NavReplay_FillTangentYaws(final_count);
+    NavReplay_RestoreSpecialAngles(s_flash_raw_points, input_count, final_count);
+    final_count = NavReplay_DropSyntheticOrigin(final_count, drop_first_count);
+    nav_ram_data.point_count = final_count;
+    nav_ram_data.plan_type = (uint8)CURRENT_NAV_PLAN;
+    NavReplay_ApplyOfflineSpeedPlan(final_count);
+
+#if DEBUG_LOG_ENABLE
+    printf("[NavFlash] raw=%d input=%d fillet=%d final=%d\r\n",
+           raw_count, input_count, fillet_count, final_count);
+#endif
+
+    return final_count;
+}
+
+#endif
+
 /**
  * @brief 装载编译期路表到 RAM 数据结构
  * @return 实际装载的轨迹点数量
@@ -82,6 +662,15 @@ static float CalcDistanceSq(float x1, float y1, float x2, float y2)
  */
 uint16 NavReplay_LoadStaticRouteToRam(void)
 {
+#ifdef PLAN1_SPEED_PLANNING_FLASH_BACKEND
+    if (NavFlash_ReadFlashToRam() != 0U)
+    {
+        nav_ram_data.point_count = 0U;
+        return 0U;
+    }
+
+    return NavReplay_BuildMethod4RouteFromRam();
+#else
 #if NAV_REPLAY_USE_STATIC_ROUTE_TABLE
     uint16 i;
     uint16 load_count = NAV_REPLAY_STATIC_ROUTE_COUNT;
@@ -103,6 +692,7 @@ uint16 NavReplay_LoadStaticRouteToRam(void)
 #else
     return nav_ram_data.point_count;
 #endif
+#endif
 }
 
 /**
@@ -114,7 +704,7 @@ void NavReplay_Start(void)
     #if GNSS_NAV == 1
         GpsNavReplay_Stop();//惯导的时候关闭gnss复现
     #endif
-#if NAV_REPLAY_USE_STATIC_ROUTE_TABLE
+#if defined(PLAN1_SPEED_PLANNING_FLASH_BACKEND) || NAV_REPLAY_USE_STATIC_ROUTE_TABLE
     NavReplay_LoadStaticRouteToRam();
 #endif
 

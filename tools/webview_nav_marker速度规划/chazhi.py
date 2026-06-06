@@ -235,6 +235,9 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
     points: List[RoutePoint] = []
 
     pattern_v6 = re.compile(
+        rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*,\s*({FLOAT_RE})f\s*\}}"
+    )
+    pattern_v6_legacy = re.compile(
         rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*\}}"
     )
     pattern_v5 = re.compile(
@@ -251,10 +254,23 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
                 y=float(match.group(2)),
                 target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
                 heading_deg=normalize_heading_deg(float(match.group(4))),
-                target_speed=float(match.group(5)),
-                point_type=parse_point_type(match.group(6)),
+                point_type=parse_point_type(match.group(5)),
+                target_speed=float(match.group(6)),
             )
         )
+
+    if not points:
+        for match in pattern_v6_legacy.finditer(body):
+            points.append(
+                RoutePoint(
+                    x=float(match.group(1)),
+                    y=float(match.group(2)),
+                    target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
+                    heading_deg=normalize_heading_deg(float(match.group(4))),
+                    target_speed=float(match.group(5)),
+                    point_type=parse_point_type(match.group(6)),
+                )
+            )
 
     if not points:
         for match in pattern_v5.finditer(body):
@@ -327,7 +343,7 @@ def generate_header(
                     f"{p.heading_deg:.3f}f, (uint8){p.point_type}, {p.target_speed:.3f}f}},\n"
                 )
         else:
-            f.write("    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH},\n")
+            f.write("    {0.0f, 0.0f, 0.0f, 0.0f, (uint8)NAV_POINT_PATH, 0.0f},\n")
         f.write("};\n\n")
         f.write("#endif // _NAV_REPLAY_ROUTE_TABLE_H_\n")
 

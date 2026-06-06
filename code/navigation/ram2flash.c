@@ -53,6 +53,8 @@ uint8 NavFlash_SaveRamToFlash(void)
 {
     uint16 i;
     uint16 buf_idx = OFF_POINTS_START;
+    uint16 safe_count = (nav_ram_data.point_count > NAV_FLASH_MAX_RAW_POINTS) ?
+                        NAV_FLASH_MAX_RAW_POINTS : nav_ram_data.point_count;
 
     // 1. 擦除
     if(flash_check(NAV_FLASH_SECTION, NAV_FLASH_PAGE))
@@ -64,12 +66,10 @@ uint8 NavFlash_SaveRamToFlash(void)
 
     // 2. 填充头部
     flash_union_buffer[OFF_MAGIC].uint32_type = NAV_FLASH_MAGIC;
-    flash_union_buffer[OFF_COUNT].uint32_type = (uint32)nav_ram_data.point_count;
+    flash_union_buffer[OFF_COUNT].uint32_type = (uint32)safe_count;
     flash_union_buffer[OFF_PLAN].uint32_type  = (uint32)nav_ram_data.plan_type;
 
     // 3. 填充坐标数据 (限制最大 166 个点以符合页大小)
-    uint16 safe_count = (nav_ram_data.point_count > 166) ? 166 : nav_ram_data.point_count;
-    
     for (i = 0; i < safe_count; i++)
     {
         flash_union_buffer[buf_idx++].float_type  = nav_ram_data.points[i].x;
@@ -81,7 +81,7 @@ uint8 NavFlash_SaveRamToFlash(void)
     }
 
     // 4. 写入
-    uint32 write_len = OFF_POINTS_START + (safe_count * 3);
+    uint32 write_len = OFF_POINTS_START + (safe_count * NAV_FLASH_POINT_WORDS);
     return flash_write_page_from_buffer(NAV_FLASH_SECTION, NAV_FLASH_PAGE, write_len);
 }
 
@@ -114,7 +114,7 @@ uint8 NavFlash_ReadFlashToRam(void)
     #endif
 
     // 4. 限制解析范围，防止越界
-    if (nav_ram_data.point_count > 166) nav_ram_data.point_count = 166;
+    if (nav_ram_data.point_count > NAV_FLASH_MAX_RAW_POINTS) nav_ram_data.point_count = NAV_FLASH_MAX_RAW_POINTS;
 
     // 5. 循环解析
     for (i = 0; i < nav_ram_data.point_count; i++)
@@ -122,6 +122,13 @@ uint8 NavFlash_ReadFlashToRam(void)
         nav_ram_data.points[i].x          = flash_union_buffer[buf_idx++].float_type;
         nav_ram_data.points[i].y          = flash_union_buffer[buf_idx++].float_type;
         nav_ram_data.points[i].point_type = (uint8)flash_union_buffer[buf_idx++].uint32_type;
+        if (nav_ram_data.points[i].point_type > NAV_POINT_BUMP)
+        {
+            nav_ram_data.points[i].point_type = NAV_POINT_BUMP;
+        }
+        nav_ram_data.points[i].target_yaw_deg = 0.0f;
+        nav_ram_data.points[i].heading_deg = 0.0f;
+        nav_ram_data.points[i].target_speed = 0.0f;
         #if DEBUG_LOG_ENABLE
         printf("NavFlash_ReadFlashToRam: %d, %f, %f, %d\r\n", 
                i, nav_ram_data.points[i].x, nav_ram_data.points[i].y, nav_ram_data.points[i].point_type);

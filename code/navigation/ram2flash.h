@@ -45,4 +45,12 @@ uint8 NavFlash_SaveRamToFlash(void);
  */
 uint8 NavFlash_ReadFlashToRam(void);
 
+#ifndef NAV_FLASH_POINT_WORDS
+#define NAV_FLASH_POINT_WORDS      3U
+#endif
+
+#ifndef NAV_FLASH_MAX_RAW_POINTS
+#define NAV_FLASH_MAX_RAW_POINTS   ((FLASH_PAGE_LENGTH - OFF_POINTS_START) / NAV_FLASH_POINT_WORDS)
+#endif
+
 #endif

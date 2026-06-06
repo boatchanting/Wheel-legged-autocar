@@ -413,5 +413,7 @@ void wifi_protocol_send_data(void)
 
     wifi_spi_send_buffer(tx_buf, tx_idx);
 
+#if !((CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING_FLASH))
     robot_ctrl.mark_trigger = 0;
+#endif
 }

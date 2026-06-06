@@ -35,6 +35,12 @@ typedef enum
         #endif
         #include "plan1/plan1_pure_pursuit_speed_planning.h"
 
+    #elif NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING_FLASH
+        #if GNSS_NAV == 1
+            #warning "[Nav Warning] Global GNSS_NAV=1, but Plan 1 flash method uses INS pure pursuit. Check config."
+        #endif
+        #include "plan1/plan1_pure_pursuit_speed_planning_flash.h"
+
     #elif NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT
         // 【资源浪费提醒】：如果选中惯导，但系统总开关依然开了 GNSS，弹出黄色警告提醒。
         #if GNSS_NAV == 1

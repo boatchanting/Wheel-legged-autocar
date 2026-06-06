@@ -11,6 +11,8 @@
 #define PLAN1_METHOD_GNSS         3 // 方案3：GNSS纯追踪算法方案
 
 // 科目一方案
+#define PLAN1_PURE_PURSUIT_SPEED_PLANNING_FLASH 4 // Flash local marker + method-4 interpolation + speed planning
+
 #ifndef NAV_PLAN1_METHOD
 #define NAV_PLAN1_METHOD  PLAN1_PURE_PURSUIT_SPEED_PLANNING
 #endif

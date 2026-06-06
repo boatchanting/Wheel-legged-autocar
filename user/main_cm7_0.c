@@ -338,6 +338,7 @@ int main(void)
         {            
             InertialNav_Init();
             NavRam_Init();
+            NavRam_SetPlan((uint8)CURRENT_NAV_PLAN);
             #if DEBUG_LOG_ENABLE
                 printf("[NAV] Init OK: x=%.2f y=%.2f yaw=%.2f\r\n",
                        inertial_nav.x,
@@ -387,6 +388,38 @@ int main(void)
     // ---------------------------------------------------------
     //  【nav.3】静态点表模式：忽略 Flash 保存请求
     // ---------------------------------------------------------
+    #if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING_FLASH)
+    if (robot_ctrl.mark_trigger)
+    {
+        if (g_nav_recording)
+        {
+            uint8_t ret = NavRam_RecordPoint(robot_ctrl.point_type);
+            if (ret == 0)
+            {
+                Buzzer_Beep_By_PointType(robot_ctrl.point_type);
+                #if DEBUG_LOG_ENABLE
+                printf("[NAV] Flash record OK: idx=%d type=%d x=%.2f y=%.2f\r\n",
+                       NavRam_GetPointCount() - 1,
+                       robot_ctrl.point_type,
+                       inertial_nav.x,
+                       inertial_nav.y);
+                #endif
+            }
+            else
+            {
+                #if DEBUG_LOG_ENABLE
+                printf("[NAV] Flash record FAILED: RAM FULL\r\n");
+                #endif
+            }
+        }
+        robot_ctrl.mark_trigger = 0;
+    }
+
+    if (g_save_flash_request == 1)
+    {
+        NavFlash_ProcessRequests();
+    }
+    #else
     if(g_save_flash_request == 1)
     {
         #if DEBUG_LOG_ENABLE
@@ -394,6 +427,7 @@ int main(void)
         #endif
         g_save_flash_request = 0;
     }
+    #endif
 
     // ---------------------------------------------------------
     //  【nav.4】静态点表模式：加载 C 点表并开始复现

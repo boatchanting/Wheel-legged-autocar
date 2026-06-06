@@ -1,4 +1,13 @@
+#include "nav_replay/nav_options.h"
+
+#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING)
 #include "nav_replay/plan1/plan1_pure_pursuit_speed_planning.c"
+#endif
+
+#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING_FLASH)
+#include "nav_replay/plan1/plan1_pure_pursuit_speed_planning_flash.c"
+#endif
+
 #include "nav_replay/plan1/plan1_pure_pursuit.c"
 #include "nav_replay/plan1/plan1_gnss.c"
 #include "nav_replay/plan2/plan2_pure_pursuit_speed_planning.c"
