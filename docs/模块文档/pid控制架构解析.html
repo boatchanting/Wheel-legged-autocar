@@ -528,6 +528,7 @@
       <a href="#balance-loop">平衡环</a>
       <a href="#turn-roll">转向与侧倾</a>
       <a href="#tuning">调参方法</a>
+      <a href="#speed-up">跑得更快</a>
       <a href="#solvers">交互求解器</a>
       <a href="#sources">代码依据</a>
     </div>
@@ -891,6 +892,167 @@
       </div>
     </section>
 
+    <section id="speed-up">
+      <div class="section-head">
+        <h2>想在赛道上跑得更快，底层该怎么优化</h2>
+      </div>
+      <div class="note">
+        <strong>短答案：</strong>不是简单把加速度和减速度都调大，而是做“动态加减速”。直道允许更大加速度，弯前按刹车距离提前降速，弯中保留平衡和转向 PWM 余量，出弯再用可控加速度拉起来。更快的本质是平均速度更高，而不是每一瞬间都更猛。
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>当前代码里的提速瓶颈</h3>
+          <ul>
+            <li><code>target_speed_set</code> 经常被上层任务直接写成固定值，底层 9ms 速度环会看到台阶输入，缺少统一的速度斜率与 jerk 管理。</li>
+            <li><code>Accel_Feedforward_Update()</code> 目前主要服务复刻运行窗口；PVC、桥梁、三阶段、特殊动作等场景会屏蔽或清空加速前馈。</li>
+            <li><code>OUR_PWM_MAX_LIMIT = 8000</code>，但平衡、转向、加速前馈、刹车前馈都在抢同一个最终 PWM 余量。</li>
+            <li><code>GYR_MAX_O = 9000</code> 大于最终电机限幅 8000，平衡内环自己就可能把最终输出顶满，导致转向和驱动前馈没有余量。</li>
+            <li><code>ROLL_BALANCE_ENABLE_INIT = 0</code>，主动侧倾默认关闭；高速弯道时如果没有侧倾支撑，能跑的弯中速度会受限。</li>
+            <li>传统 <code>Speed_Loop_Control()</code> 在当前 Core0 ISR 中没有参与，<code>speed_loop_out</code> 基本不会给平衡角度环提供速度外环倾角补偿。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>更快不等于更暴力</h3>
+          <p>速度提升要同时满足三个约束：</p>
+          <span class="formula">纵向约束：|a_x| ≤ a_x_max，防止后坐、前栽、打滑、舵机跟不上</span>
+          <span class="formula">横向约束：|a_y| = |v·ω| ≤ a_y_max，防止弯中侧翻或横向漂移</span>
+          <span class="formula">PWM 约束：|balance + drive + turn| ≤ 8000，并保留平衡优先余量</span>
+          <p>所以应该用动态速度规划：</p>
+          <span class="formula">v_plan[k] = ramp_with_jerk(v_plan[k-1], v_limit_by_track, a_up, a_down, j_limit)</span>
+          <p class="muted">如果没有规划器，目标速度一跳变，底层只能靠 PID、前馈、限幅硬接，波形看起来会“猛”，但平均速度未必更高。</p>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>建议 1：加统一速度规划器</h3>
+          <p>在所有上层任务写 <code>target_speed_set</code> 之前或之后增加一层：</p>
+          <span class="formula">target_speed_raw：遥控/导航/视觉想要的速度</span>
+          <span class="formula">target_speed_plan：经过加速度、减速度、jerk、弯道限速后的速度</span>
+          <span class="formula">底层 PID 只看 target_speed_plan</span>
+          <p>推荐按场景分参数：</p>
+          <ul>
+            <li>直道：较大的 <code>a_up</code>，较小 jerk，允许快速提速但不突然给满。</li>
+            <li>弯前：较大的 <code>a_down</code>，按刹车距离提前降速。</li>
+            <li>弯中：速度上限由 yaw 角速度、视觉曲率或转向误差决定。</li>
+            <li>出弯：短时间提高 <code>a_up</code> 或加速前馈，但要看 PWM 余量。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>建议 2：用刹车距离，而不是到弯口才刹</h3>
+          <p>如果当前速度是 <code>v_now</code>，弯中安全速度是 <code>v_turn</code>，允许最大减速度是 <code>a_down</code>，应提前这么远开始减速：</p>
+          <span class="formula">d_brake = (v_now² - v_turn²) / (2·a_down) + margin</span>
+          <p>例子：从 <code>1000mm/s</code> 降到 <code>400mm/s</code>，允许减速度 <code>2.0m/s²</code>：</p>
+          <span class="formula">d = (1.0² - 0.4²) / (2×2.0) = 0.21m</span>
+          <p class="muted">这会比“看见弯再把目标速度切低”稳定很多，因为刹车前馈、舵机姿态保护、平衡环都有时间进入状态。</p>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>建议 3：做 PWM 余量仲裁</h3>
+          <p>现在最终融合是直接相加再统一限幅：</p>
+          <span class="formula">left = gyro + brake/accel + turn</span>
+          <span class="formula">right = -gyro - brake/accel + turn</span>
+          <p>更稳的做法是明确优先级：</p>
+          <span class="formula">优先级：平衡 gyro > 刹车 brake > 转向 turn > 加速 accel</span>
+          <span class="formula">如果 |总和| 超过 8000，先缩小低优先级项，而不是让最终限幅悄悄截断</span>
+          <p>建议增加饱和计数：</p>
+          <ul>
+            <li><code>gyro_saturation_count</code>：平衡环是否经常顶满。</li>
+            <li><code>drive_ff_cut_count</code>：加速前馈是否经常被刹车/特殊任务清掉。</li>
+            <li><code>motor_final_saturation_count</code>：最终左右轮是否经常被 8000 截断。</li>
+            <li><code>servo_speed_saturation_count</code>：舵机速度环是否经常到 ±1000。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>建议 4：不要急着恢复传统速度外环</h3>
+          <p>代码里 <code>Speed_Loop_Control()</code> 存在，但当前没有参与。理论上速度外环可以输出目标倾角，让车通过“倾斜追重心”加速；但你现在已经用舵机速度环改变腿部姿态。</p>
+          <p>如果两个速度外环同时工作，容易出现：</p>
+          <ul>
+            <li>舵机速度环想通过腿部姿态提速。</li>
+            <li>传统速度环又想通过车身倾角提速。</li>
+            <li>平衡角度环同时要救直立，最后互相抢控制权。</li>
+          </ul>
+          <p class="muted">建议先选择一个主速度执行器。当前架构下优先把“舵机速度环 + 电机前馈 + 平衡保护”调清楚，再考虑小幅、低频地把速度外环接回 <code>speed_loop_out</code>。</p>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>建议 5：加速前馈改成规划器驱动</h3>
+          <p>当前加速前馈触发条件强调复刻起步/目标速度阶跃：</p>
+          <span class="formula">speed_lag = |target| > |actual| + 30</span>
+          <span class="formula">target_step_up = |target| - |last_target| ≥ 30</span>
+          <span class="formula">accel_ff_target = clamp(10 × speed_deficit × direction, ±3000)</span>
+          <p>如果要比赛提速，建议让规划器输出 <code>a_request</code>，前馈按加速度请求给，而不是只看速度缺口：</p>
+          <span class="formula">accel_ff_target = Kff_a · a_request + Kff_v · (v_plan - v_actual)</span>
+          <p class="muted">这样直道、出弯、低速起步可以共用一套逻辑，也更容易用波形验证。</p>
+        </div>
+        <div class="card">
+          <h3>建议 6：主动侧倾可以成为高速弯道工具</h3>
+          <p>代码已经有主动侧倾公式：</p>
+          <span class="formula">a_lat = v_m_s × yaw_rate_rad_s</span>
+          <span class="formula">roll = atan2(a_lat, g)</span>
+          <p>但默认 <code>roll_balance_enable = 0</code>。如果赛道弯道速度上不去，可以做分阶段测试：</p>
+          <ul>
+            <li>先只在中高速、非刹车、非跳跃、非特殊任务时启用。</li>
+            <li>从较小 <code>TURN_ACTIVE_ROLL_MAX</code> 和较小 ramp 开始。</li>
+            <li>观察四舵机是否触边界、弯中 pitch 是否恶化、最终电机 PWM 是否更少饱和。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>建议优先级</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>优先级</th>
+                <th>优化项</th>
+                <th>为什么先做</th>
+                <th>验证波形</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>加饱和计数和速度/加速度记录</td>
+                <td>先知道是电机 PWM、舵机 duty、还是目标速度规划卡住了。</td>
+                <td><code>v</code>、<code>a</code>、<code>gyro_loop_out</code>、<code>turn_gyro_loop_out</code>、<code>drive_ff</code>、最终 PWM。</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>统一速度规划器</td>
+                <td>消除上层速度台阶，动态控制加减速和 jerk。</td>
+                <td><code>target_speed_raw</code> vs <code>target_speed_plan</code> vs <code>current_actual_speed</code>。</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>PWM 余量仲裁</td>
+                <td>保证平衡优先，避免直接相加后被最终限幅悄悄截断。</td>
+                <td>最终饱和次数下降，弯中不突然失控。</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>按规划器重构加速/刹车前馈</td>
+                <td>让前馈服务全赛道，而不是只服务复刻起步窗口。</td>
+                <td>出弯速度响应变快，但 pitch 不明显后坐/前栽。</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>高速弯道启用主动侧倾</td>
+                <td>提高弯中横向稳定性，但必须先确认舵机余量。</td>
+                <td><code>roll_degree</code>、四舵机 duty、横滚角、弯中速度。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section id="solvers">
       <div class="section-head">
         <h2>交互求解器</h2>
@@ -944,6 +1106,71 @@
             <div class="metric"><span class="label">理想等效倾角</span><span id="accTilt" class="value">--</span><span class="hint">atan(a/g)，只做物理估算</span></div>
           </div>
           <canvas id="accChart" width="760" height="260" aria-label="速度规划曲线"></canvas>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card prominent">
+          <h3>赛道动态加减速求解器</h3>
+          <div class="controls">
+            <label>当前速度 rpm
+              <input id="raceNowRpm" type="number" value="200" step="1" />
+            </label>
+            <label>直道目标 rpm
+              <input id="raceStraightRpm" type="number" value="300" step="1" />
+            </label>
+            <label>弯中目标 rpm
+              <input id="raceTurnRpm" type="number" value="120" step="1" />
+            </label>
+            <label>允许加速度 m/s²
+              <input id="raceAccel" type="number" value="1.6" step="0.1" />
+            </label>
+            <label>允许减速度 m/s²
+              <input id="raceDecel" type="number" value="2.4" step="0.1" />
+            </label>
+            <label>安全横向加速度 m/s²
+              <input id="raceLatMax" type="number" value="2.2" step="0.1" />
+            </label>
+            <label>当前 yaw 角速度 °/s
+              <input id="raceYawRate" type="number" value="120" step="1" />
+            </label>
+            <label>刹车余量 mm
+              <input id="raceBrakeMargin" type="number" value="120" step="10" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">当前线速度</span><span id="raceNowSpeed" class="value">--</span><span class="hint">rpm × 4.936</span></div>
+            <div class="metric"><span class="label">加到直道目标时间</span><span id="raceAccelTime" class="value">--</span><span class="hint">按允许加速度估算</span></div>
+            <div class="metric"><span class="label">弯前刹车距离</span><span id="raceBrakeDist" class="value">--</span><span class="hint">含安全余量</span></div>
+            <div class="metric"><span class="label">当前横向加速度</span><span id="raceLatA" class="value">--</span><span class="hint">a_lat = v × yaw_rate</span></div>
+            <div class="metric"><span class="label">按 yaw 限速</span><span id="raceYawLimit" class="value">--</span><span class="hint">a_y 不超过设定值</span></div>
+            <div class="metric"><span class="label">建议弯中速度</span><span id="raceSuggestedTurn" class="value">--</span><span id="raceRisk" class="hint">--</span></div>
+          </div>
+        </div>
+
+        <div class="card prominent">
+          <h3>PWM 余量预算器</h3>
+          <div class="controls">
+            <label>平衡 PWM gyro
+              <input id="budgetGyro" type="number" value="3200" step="100" />
+            </label>
+            <label>转向 PWM turn
+              <input id="budgetTurn" type="number" value="1400" step="100" />
+            </label>
+            <label>驱动前馈 PWM drive
+              <input id="budgetDrive" type="number" value="1800" step="100" />
+            </label>
+            <label>最终电机限幅
+              <input id="budgetLimit" type="number" value="8000" step="100" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">左轮原始 PWM</span><span id="budgetLeft" class="value">--</span><span class="hint">gyro + drive + turn</span></div>
+            <div class="metric"><span class="label">右轮原始 PWM</span><span id="budgetRight" class="value">--</span><span class="hint">-gyro - drive + turn</span></div>
+            <div class="metric"><span class="label">剩余余量</span><span id="budgetMargin" class="value">--</span><span class="hint">离 8000 还差多少</span></div>
+            <div class="metric"><span class="label">建议动作</span><span id="budgetAdvice" class="value">--</span><span class="hint">优先保平衡</span></div>
+          </div>
+          <p class="muted" style="margin-top:12px">如果这里经常显示余量不足，单纯加大速度环或前馈只会让最终 PWM 更早被截断，应该先降低弯中目标速度、降低转向命令峰值，或按优先级缩放 drive/turn。</p>
         </div>
       </div>
 
@@ -1206,6 +1433,59 @@ pwm_right = -gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out;</code></pre>
       renderAccelChart(v0, v1, Math.ceil(t / period));
     }
 
+    function racePlannerCalc() {
+      const factor = num("speedFactor") || CONST.speedFactor;
+      const nowRpm = num("raceNowRpm");
+      const straightRpm = num("raceStraightRpm");
+      const turnRpm = num("raceTurnRpm");
+      const accel = Math.max(num("raceAccel"), 0.001);
+      const decel = Math.max(num("raceDecel"), 0.001);
+      const latMax = Math.max(num("raceLatMax"), 0.001);
+      const yawRate = Math.abs(num("raceYawRate")) * Math.PI / 180;
+      const marginMm = Math.max(num("raceBrakeMargin"), 0);
+
+      const vNowMm = Math.abs(nowRpm * factor);
+      const vStraightMm = Math.abs(straightRpm * factor);
+      const vTurnMm = Math.abs(turnRpm * factor);
+      const vNow = vNowMm / 1000;
+      const vStraight = vStraightMm / 1000;
+      const vTurn = vTurnMm / 1000;
+      const accelTime = Math.max(vStraight - vNow, 0) / accel;
+      const brakeDistM = Math.max((vNow * vNow - vTurn * vTurn) / (2 * decel), 0);
+      const latA = vNow * yawRate;
+      const yawLimitMps = yawRate > 0.0001 ? latMax / yawRate : Infinity;
+      const yawLimitRpm = Number.isFinite(yawLimitMps) ? (yawLimitMps * 1000 / factor) : Infinity;
+      const suggestedRpm = Math.min(Math.abs(turnRpm), Math.abs(yawLimitRpm));
+      const risky = latA > latMax;
+
+      set("raceNowSpeed", fmt(vNowMm, 1) + " mm/s");
+      set("raceAccelTime", fmt(accelTime * 1000, 0) + " ms");
+      set("raceBrakeDist", fmt(brakeDistM * 1000 + marginMm, 0) + " mm");
+      set("raceLatA", fmt(latA, 3) + " m/s²");
+      set("raceYawLimit", Number.isFinite(yawLimitRpm) ? fmt(yawLimitRpm, 1) + " rpm" : "不限");
+      set("raceSuggestedTurn", fmt(suggestedRpm, 1) + " rpm");
+      setStatus("raceRisk", risky ? "横向加速度偏高，建议降速或开侧倾" : "横向余量可接受", risky ? "danger" : "");
+    }
+
+    function pwmBudgetCalc() {
+      const gyro = num("budgetGyro");
+      const turn = num("budgetTurn");
+      const drive = num("budgetDrive");
+      const limit = Math.max(num("budgetLimit"), 1);
+      const left = gyro + drive + turn;
+      const right = -gyro - drive + turn;
+      const peak = Math.max(Math.abs(left), Math.abs(right));
+      const margin = limit - peak;
+      let advice = "余量足够";
+      if (margin < 0) advice = "已超限，先缩 drive/turn";
+      else if (margin < limit * 0.15) advice = "余量很小，弯中应降速";
+      else if (Math.abs(gyro) > limit * 0.65) advice = "平衡占用高，别再加前馈";
+      set("budgetLeft", fmt(left, 0));
+      set("budgetRight", fmt(right, 0));
+      set("budgetMargin", fmt(margin, 0) + " PWM");
+      set("budgetAdvice", advice);
+    }
+
     function servoOutputFromError(error, lastError, kpBoost, omax) {
       const k = servoAdaptiveK(error);
       const kpEff = CONST.servoKp * k * kpBoost;
@@ -1448,6 +1728,8 @@ pwm_right = -gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out;</code></pre>
     function updateAll() {
       speedCalc();
       accelCalc();
+      racePlannerCalc();
+      pwmBudgetCalc();
       servoCalc();
       balanceCalc();
       turnCalc();
