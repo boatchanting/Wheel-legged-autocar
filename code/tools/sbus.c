@@ -14,6 +14,7 @@
 
 // --- 开关阈值 ---
 #define RC_SW_THRESHOLD 1000    // 二态开关判定阈值
+#define RC_CH3_DEBOUNCE_COUNT 5U // CH3 switch samples required before accepting a state change
 
 // CH4 三态开关判定区间 (低=192, 中=992, 高=1792)
 #define RC_SW_MID_LOW   600     // <600 判为 LOW
@@ -307,8 +308,11 @@ void Remote_Control_Process(void)
     // --------------------------------------------------------
     // Step 6: 处理打点 (CH3 状态跳变检测)利用CH4和CH5的状态判断属于与哪一个type的打点，ch4为三态开关，ch5为两态开关
     // --------------------------------------------------------
-    static uint8 last_ch3_state = 0; 
-    uint8 curr_ch3_state = (ch3_mark > RC_SW_THRESHOLD) ? 1 : 0;
+    static uint8 last_ch3_state = 0;
+    static uint8 ch3_candidate_state = 0;
+    static uint8 ch3_debounce_count = 0;
+    uint8 ch3_raw_state = (ch3_mark > RC_SW_THRESHOLD) ? 1U : 0U;
+    uint8 curr_ch3_state = last_ch3_state;
 
     // if (curr_ch3_state ==1){
     //     g_bridge_vision_task_enable = 1;//进入pcv控制调试使用
@@ -327,17 +331,47 @@ void Remote_Control_Process(void)
 
     // 检测状态跳变进行打点 (当前状态 != 上一次状态)
     // 这意味着无论是从0变1(上升沿)还是从1变0(下降沿)，都会触发
-    if(ch3_mark ==0)
+    if (ch3_mark != 0)
     {
-        curr_ch3_state =last_ch3_state ;
+        if (ch3_raw_state != last_ch3_state)
+        {
+            if (ch3_raw_state == ch3_candidate_state)
+            {
+                if (ch3_debounce_count < RC_CH3_DEBOUNCE_COUNT)
+                {
+                    ch3_debounce_count++;
+                }
+            }
+            else
+            {
+                ch3_candidate_state = ch3_raw_state;
+                ch3_debounce_count = 1U;
+            }
+
+            if (ch3_debounce_count >= RC_CH3_DEBOUNCE_COUNT)
+            {
+                curr_ch3_state = ch3_raw_state;
+                ch3_debounce_count = 0;
+            }
+        }
+        else
+        {
+            ch3_candidate_state = ch3_raw_state;
+            ch3_debounce_count = 0;
+        }
+    }
+    else
+    {
+        ch3_candidate_state = last_ch3_state;
+        ch3_debounce_count = 0;
     }
     if (curr_ch3_state != last_ch3_state )
     {
         //vision_detected_three_jump_point =1;//视觉控制的三级跳状态机，测试用
-        //vision_detected_jump_point = 1;//跳跃点调用,测试用
+        vision_detected_jump_point = 1;//跳跃点调用,测试用
         //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
         //vision_detected_bridge_point = 1; // 单边桥调用,测试用
-        robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
+        //robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点
     // NAV_POINT_SLOPE = 2,    // 上坡点
