@@ -22,6 +22,14 @@
 #define FILTER_ALPHA_SPEED              0.9f
 /** @brief 单周期最大角度变化限幅（deg），抑制突变打角 */
 #define SLEW_RATE_ANGLE                35.0f
+/** @brief 前视曲率缩减增益（1/mm），|kappa| 越大前视越短，弯道更贴线 */
+#define PP_LD_KAPPA_SHRINK_GAIN       500.0f
+/** @brief 前视曲率缩减下限（无量纲），防止急弯时前视距离过小 */
+#define PP_LD_KAPPA_SHRINK_MIN         0.3f
+/** @brief 弯道旁路滤波曲率阈值（1/mm），|kappa| 超过此值时旁路角度滤波与限幅 */
+#define KAPPA_CURVE_BYPASS_THRESH      0.0005f
+/** @brief 曲率前馈增益（无量纲），将 kappa*speed 换算为叠加转向角（deg）。调大入弯更主动，过大会振荡 */
+#define K_FF_CURVATURE               100.0f
 /** @brief 近停点锁死触发距离（mm），小于该值才允许锁航向 */
 // 速度目标限斜率参数：NavReplay_Process() 每 10ms 左右调用一次，数值表示每次允许 target_speed_set 改变的最大量
 #define NAV_SPEED_SLEW_EPS             1.0f    // 速度变化死区，小于该值认为没有明显加/减速，避免浮点噪声反复切换斜率档位

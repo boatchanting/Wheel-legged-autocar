@@ -436,15 +436,17 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
  * @param lookahead_dist 前瞻距离（mm）
  * @param tx 输出目标点 x（mm）
  * @param ty 输出目标点 y（mm）
+ * @param out_idx 输出目标点索引
  * @note 由 plan1/plan2 主循环调用，前瞻不会跨越停止屏障
  */
-static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, float lookahead_dist, float *tx, float *ty)
+static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, float lookahead_dist, float *tx, float *ty, uint16 *out_idx)
 {
     uint16 i;
     float lookahead_dist_sq = lookahead_dist * lookahead_dist;
 
     *tx = nav_ram_data.points[stop_idx].x;
     *ty = nav_ram_data.points[stop_idx].y;
+    *out_idx = stop_idx;
 
     for (i = base_idx; i <= stop_idx; i++)
     {
@@ -452,6 +454,7 @@ static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, floa
                                     nav_ram_data.points[i].x, nav_ram_data.points[i].y);
         *tx = nav_ram_data.points[i].x;
         *ty = nav_ram_data.points[i].y;
+        *out_idx = i;
         if (d_sq >= lookahead_dist_sq)
         {
             break;
@@ -503,6 +506,7 @@ void NavReplay_Process(void)
     float raw_err_degree;
     float diff;
     float raw_speed;
+    uint16 lookahead_idx;
 
     if (g_replay_state != REPLAY_RUNNING)
     {
@@ -621,7 +625,7 @@ void NavReplay_Process(void)
 
     /* 阶段6：纯追踪选点（前瞻距离与速度相关，且不跨越停止屏障） */
     lookahead_dist = lookahead_min + fabsf(s_prev_speed_set) * PP_LD_SPEED_GAIN;
-    NavReplay_FindLookaheadTarget((uint16)base_idx, stop_idx, lookahead_dist, &tx, &ty);
+    NavReplay_FindLookaheadTarget((uint16)base_idx, stop_idx, lookahead_dist, &tx, &ty, &lookahead_idx);
 
     if (s_stop_lock_active)
     {

@@ -100,10 +100,10 @@ def format_header(points: List[Tuple[int, float, float, int]], src_path: Path) -
     arr_size = count if count > 0 else 1
     lines.append(f"static const NavRamPoint_t gps_nav_replay_static_route_points[{arr_size}] = {{")
     if count == 0:
-        lines.append("    {0.0f, 0.0f, 0.0f, 0.0f, (uint8)0},")
+        lines.append("    {0.0f, 0.0f, 0.0f, 0.0f, (uint8)0, 0.0f, 0.0f},")
     else:
         for _, x, y, point_type in points:
-            lines.append(f"    {{{x:.3f}f, {y:.3f}f, 0.0f, 0.0f, (uint8){point_type}}},")
+            lines.append(f"    {{{x:.3f}f, {y:.3f}f, 0.0f, 0.0f, (uint8){point_type}, 0.0f, 0.0f}},")
     lines.append("};")
     lines.append("")
     lines.append("#endif // _GPS_NAV_REPLAY_ROUTE_TABLE_H_")

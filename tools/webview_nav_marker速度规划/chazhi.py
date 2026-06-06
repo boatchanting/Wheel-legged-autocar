@@ -71,7 +71,7 @@ MAX_DECEL_MM_S2 = 1500.0
 # 经验例子：
 # 1. 如果 U 型弯里总推头、外扩或甩尾，通常应先减小它。
 # 2. 如果车在弯中明显还很稳，但规划速度低得离谱，可能是这个值设得太保守。
-MAX_LATERAL_ACCEL_MM_S2 = 800.0
+MAX_LATERAL_ACCEL_MM_S2 = 2500.0
 
 
 # 速度指令换算系数（rpm -> mm/s）。
@@ -125,6 +125,7 @@ class RoutePoint:
     heading_deg: Optional[float]
     target_speed: float
     point_type: int
+    curvature: float = 0.0
 
 
 def parse_args() -> argparse.Namespace:
@@ -234,6 +235,9 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
     body = body_match.group(1)
     points: List[RoutePoint] = []
 
+    pattern_v7 = re.compile(
+        rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*,\s*({FLOAT_RE})f\s*\}}"
+    )
     pattern_v6 = re.compile(
         rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*\}}"
     )
@@ -244,7 +248,7 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
         rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*\}}"
     )
 
-    for match in pattern_v6.finditer(body):
+    for match in pattern_v7.finditer(body):
         points.append(
             RoutePoint(
                 x=float(match.group(1)),
@@ -253,8 +257,22 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
                 heading_deg=normalize_heading_deg(float(match.group(4))),
                 target_speed=float(match.group(5)),
                 point_type=parse_point_type(match.group(6)),
+                curvature=float(match.group(7)),
             )
         )
+
+    if not points:
+        for match in pattern_v6.finditer(body):
+            points.append(
+                RoutePoint(
+                    x=float(match.group(1)),
+                    y=float(match.group(2)),
+                    target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
+                    heading_deg=normalize_heading_deg(float(match.group(4))),
+                    target_speed=float(match.group(5)),
+                    point_type=parse_point_type(match.group(6)),
+                )
+            )
 
     if not points:
         for match in pattern_v5.finditer(body):
@@ -324,7 +342,7 @@ def generate_header(
             for p in points:
                 f.write(
                     f"    {{{p.x:.3f}f, {p.y:.3f}f, {p.target_yaw_deg:.3f}f, "
-                    f"{p.heading_deg:.3f}f, (uint8){p.point_type}, {p.target_speed:.3f}f}},\n"
+                    f"{p.heading_deg:.3f}f, (uint8){p.point_type}, {p.target_speed:.3f}f, {p.curvature:.6f}f}},\n"
                 )
         else:
             f.write("    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH},\n")
@@ -586,6 +604,7 @@ def apply_speed_plan(points: List[RoutePoint]) -> None:
         if abs(kappa) > CURVATURE_EPS:
             curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / max(abs(kappa), CURVATURE_EPS))
         speed_limit[i] = min(PATH_SPEED_MAX_MM_S, curve_limit)
+        points[i].curvature = float(kappa)
 
     speed_limit[-1] = 0.0
 

@@ -442,15 +442,17 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
  * @param lookahead_dist 前瞻距离（mm）
  * @param tx 输出目标点 x（mm）
  * @param ty 输出目标点 y（mm）
+ * @param out_idx 输出目标点索引，用于获取该点曲率
  * @note 由 plan1/plan2 主循环调用，前瞻不会跨越停止屏障
  */
-static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, float lookahead_dist, float *tx, float *ty)
+static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, float lookahead_dist, float *tx, float *ty, uint16 *out_idx)
 {
     uint16 i;
     float lookahead_dist_sq = lookahead_dist * lookahead_dist;
 
     *tx = nav_ram_data.points[stop_idx].x;
     *ty = nav_ram_data.points[stop_idx].y;
+    *out_idx = stop_idx;
 
     for (i = base_idx; i <= stop_idx; i++)
     {
@@ -458,6 +460,7 @@ static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, floa
                                     nav_ram_data.points[i].x, nav_ram_data.points[i].y);
         *tx = nav_ram_data.points[i].x;
         *ty = nav_ram_data.points[i].y;
+        *out_idx = i;
         if (d_sq >= lookahead_dist_sq)
         {
             break;
@@ -509,6 +512,9 @@ void NavReplay_Process(void)
     float raw_err_degree;
     float diff;
     float raw_speed;
+    float ahead_kappa;
+    float target_kappa;
+    uint16 lookahead_idx;
 
     if (g_replay_state != REPLAY_RUNNING)
     {
@@ -625,9 +631,18 @@ void NavReplay_Process(void)
         lookahead_min = base_spacing * PP_LD_MIN_STRAIGHT;
     }
 
-    /* 阶段6：纯追踪选点（前瞻距离与速度相关，且不跨越停止屏障） */
-    lookahead_dist = lookahead_min + fabsf(s_prev_speed_set) * PP_LD_SPEED_GAIN;
-    NavReplay_FindLookaheadTarget((uint16)base_idx, stop_idx, lookahead_dist, &tx, &ty);
+    /* 阶段6：纯追踪选点（前瞻距离与速度/曲率相关，且不跨越停止屏障） */
+    {
+        /* 用前方约 750mm 处的曲率决定是否缩减前视距离，提前预判弯道 */
+        int ahead_idx = base_idx + 15;
+        if (ahead_idx >= nav_ram_data.point_count) ahead_idx = nav_ram_data.point_count - 1;
+        ahead_kappa = nav_ram_data.points[ahead_idx].curvature;
+        float shrink_factor = 1.0f - fabsf(ahead_kappa) * PP_LD_KAPPA_SHRINK_GAIN;
+        if (shrink_factor < PP_LD_KAPPA_SHRINK_MIN) shrink_factor = PP_LD_KAPPA_SHRINK_MIN;
+        lookahead_dist = (lookahead_min + fabsf(s_prev_speed_set) * PP_LD_SPEED_GAIN) * shrink_factor;
+    }
+    NavReplay_FindLookaheadTarget((uint16)base_idx, stop_idx, lookahead_dist, &tx, &ty, &lookahead_idx);
+    target_kappa = nav_ram_data.points[lookahead_idx].curvature;
 
     if (s_stop_lock_active)
     {
@@ -638,11 +653,28 @@ void NavReplay_Process(void)
     {
         float target_yaw = -atan2f(ty - inertial_nav.y, -(tx - inertial_nav.x)) * 57.29578f;
         raw_err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
-        diff = raw_err_degree - s_prev_err_degree;
-        if (diff > SLEW_RATE_ANGLE) raw_err_degree = s_prev_err_degree + SLEW_RATE_ANGLE;
-        else if (diff < -SLEW_RATE_ANGLE) raw_err_degree = s_prev_err_degree - SLEW_RATE_ANGLE;
-        err_degree = FILTER_ALPHA_ANGLE * raw_err_degree + (1.0f - FILTER_ALPHA_ANGLE) * s_prev_err_degree;
-        s_prev_err_degree = err_degree;
+
+        if (fabsf(target_kappa) > KAPPA_CURVE_BYPASS_THRESH)
+        {
+            /* 弯道工况：旁路滤波与限幅，直接输出原始误差，释放差速底盘敏捷性 */
+            err_degree = raw_err_degree;
+            s_prev_err_degree = err_degree;
+        }
+        else
+        {
+            /* 直道工况：保留原有 Slew Rate 限幅与一阶低通滤波 */
+            diff = raw_err_degree - s_prev_err_degree;
+            if (diff > SLEW_RATE_ANGLE) raw_err_degree = s_prev_err_degree + SLEW_RATE_ANGLE;
+            else if (diff < -SLEW_RATE_ANGLE) raw_err_degree = s_prev_err_degree - SLEW_RATE_ANGLE;
+            err_degree = FILTER_ALPHA_ANGLE * raw_err_degree + (1.0f - FILTER_ALPHA_ANGLE) * s_prev_err_degree;
+            s_prev_err_degree = err_degree;
+        }
+    }
+
+    /* 阶段6.5：曲率前馈 — 入弯前主动转向，减少反馈滞后 */
+    {
+        float feedforward_angle = target_kappa * fabsf(s_prev_speed_set) * K_FF_CURVATURE;
+        err_degree = err_degree + feedforward_angle;
     }
 
     /* 阶段7：查表取速 + 单一低通；离线规划是速度唯一真源 */

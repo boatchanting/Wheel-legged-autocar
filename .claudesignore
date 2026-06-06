@@ -1,0 +1,74 @@
+# vscode config
+.vscode/
+# Visual Studio local cache
+.vs/
+# data
+data/
+*.csv
+# python venv
+.venv/
+
+# IAR: keep project files, ignore build outputs and caches
+iar/删除临时文件IAR.bat
+iar/Debug*/
+iar/Release*/
+iar/**/Obj/
+iar/**/List/
+iar/**/BrowseInfo/
+iar/**/*.pbd
+iar/**/*.pbw
+iar/**/*.dep
+iar/**/*.log
+iar/**/.ninja_deps
+iar/**/.ninja_log
+iar/**/settings/
+iar/project_config/Debug_m7_0/
+iar/project_config/Debug_m7_1/
+# iar\icf\linker_directives_tviibh.icf ：IAR Embedded Workbench 的链接器配置文件
+#iar/project_config/cyt4bb7_cm_7_0.ewp
+#iar/project_config/cyt4bb7_cm_7_0.ewt
+iar/cyt4bb7.eww
+# iar/icf/linker_directives_tviibh.icf
+iar/project_config/cm7_0_cm7_1_debug.xml
+iar/project_config/cyt4bb7_cm_7_0.ewd
+iar/project_config/cyt4bb7_cm_7_0.eww
+iar/project_config/cyt4bb7_cm_7_0.ewx
+iar/project_config/cyt4bb7_cm_7_0.sim
+iar/project_config/cyt4bb7_cm_7_1.ewd
+iar/project_config/cyt4bb7_cm_7_1.eww
+# Python 缓存文件
+__pycache__/
+*.pyc
+tools/05_通用数据处理工具/视频网页上位机/output_realtime
+
+# CYT2BL3FOC 无刷双驱电机驱动器忽略文件
+CYT2BL3FOC/project/iar/settings/
+CYT2BL3FOC/project/iar/project_config/settings/
+CYT2BL3FOC/project/iar/Debug_m4/
+
+
+# Learning files
+/学习文件/
+
+# --- 以下是专门为了防止 Claude Code 读取而额外添加的 ---
+
+# 1. 编译生成的二进制/烧录文件 (绝对不能让 AI 读，全是乱码且瞬间耗尽几十万 Token)
+*.hex
+*.bin
+*.elf
+*.out
+*.a
+*.lib
+
+# 2. 编译映射文件 (Map 文件通常极大，包含海量内存地址，对 AI 分析逻辑毫无帮助)
+*.map
+
+# 3. 硬件工程和波形分析生成的巨大文件
+*.jscope
+*.svd
+
+# 4. 其他潜在的超大纯数据/日志文件
+*.sqlite
+*.db
+*.dat
+*.mdmp
