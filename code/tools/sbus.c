@@ -311,8 +311,17 @@ void Remote_Control_Process(void)
     static uint8 last_ch3_state = 0;
     static uint8 ch3_candidate_state = 0;
     static uint8 ch3_debounce_count = 0;
+    static uint8 ch3_first_run = 1;  // 首次运行标志，用于同步遥控器初始状态
     uint8 ch3_raw_state = (ch3_mark > RC_SW_THRESHOLD) ? 1U : 0U;
     uint8 curr_ch3_state = last_ch3_state;
+
+    // 首次运行时同步状态，避免误触发跳变检测
+    if (ch3_first_run)
+    {
+        last_ch3_state = ch3_raw_state;
+        curr_ch3_state = ch3_raw_state;
+        ch3_first_run = 0;
+    }
 
     // if (curr_ch3_state ==1){
     //     g_bridge_vision_task_enable = 1;//进入pcv控制调试使用
