@@ -179,6 +179,7 @@ Gnss_Transform_Init();//GNSS经纬度投影为相对平面坐标，供纯GPS打�
 #endif
 
 Bridge_Init();//【优化点】单边桥控制初始化，可以集成
+SpinHeightAction_Init();//组合动作初始化（自转+伸腿）
 roll_balance_enable = ROLL_BALANCE_ENABLE_INIT;
 BumpyRoad_Init();//颠簸路段状态机初始化
 VisionIpc_Core0_Init();

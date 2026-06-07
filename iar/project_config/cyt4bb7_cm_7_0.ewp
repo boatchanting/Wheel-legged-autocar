@@ -1268,6 +1268,12 @@
             <file>
                 <name>$PROJ_DIR$\..\..\code\plan\minefield.h</name>
             </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\plan\spin_height_action.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\plan\spin_height_action.h</name>
+            </file>
         </group>
         <group>
             <name>servo</name>

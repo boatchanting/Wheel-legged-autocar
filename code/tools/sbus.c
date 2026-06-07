@@ -2,6 +2,7 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "../common.h"
 #include "../vision/vision_bridge_control.h"
+#include "../plan/spin_height_action.h"
 
 // ==========================================
 // 1. 宏定义 (参数配置区)
@@ -376,64 +377,38 @@ void Remote_Control_Process(void)
     }
     if (curr_ch3_state != last_ch3_state )
     {
-        //vision_detected_three_jump_point =1;//视觉控制的三级跳状态机，测试用
-        vision_detected_jump_point = 1;//跳跃点调用,测试用
-        //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
-        //vision_detected_bridge_point = 1; // 单边桥调用,测试用
-        //robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
-    // NAV_POINT_PATH = 0,     // 普通路径点
-    // NAV_POINT_CIRCLE = 1,   // 转圈点
-    // NAV_POINT_SLOPE = 2,    // 上坡点
-    // NAV_POINT_JUMP = 3,     // 跳跃点
-    // NAV_POINT_BRIDGE = 4,   // 单边桥点
-    // NAV_POINT_BUMP = 5      // 颠簸路段点
-        if (ch5_brake < RC_SW_THRESHOLD)
+    // 根据 CH4 三态开关决定 CH3 按下时的动作
+    // CH4=LOW  : 触发跳跃
+    // CH4=MID  : 无动作
+    // CH4=HIGH : 触发组合动作（自转两圈 + 伸腿收腿伸腿收腿）
+
+        if (ch4_mode < RC_SW_MID_LOW)
         {
-            if (ch4_mode < RC_SW_MID_LOW)
-            {
-                robot_ctrl.point_type =0;//ch5 0 ch4 0
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_PATH\n");
-            #endif
-            }
-            else if (ch4_mode > RC_SW_MID_HIGH)
-            {
-                robot_ctrl.point_type =2;//ch5 0 ch4 2
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_SLOPE\n");
-            #endif
-            }
-            else
-            {
-                robot_ctrl.point_type =1;//ch5 0 ch4 1
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_CIRCLE\n");
-            #endif
-            }
+            // ---- CH4 = LOW：触发跳跃 ----
+            vision_detected_jump_point = 1;
+            robot_ctrl.point_type = 3; // NAV_POINT_JUMP
+        #if DEBUG_LOG_ENABLE
+            printf("CH3 Trigger: JUMP (CH4=LOW)\n");
+        #endif
         }
-        else if(ch5_brake > RC_SW_THRESHOLD){
-            if (ch4_mode < RC_SW_MID_LOW)
-            {
-                robot_ctrl.point_type = 3;//ch5 1 ch4 0
-            #if DEBUG_LOG_ENABLE
-                printf("Point Type: NAV_POINT_JUMP\n");
-            #endif
-            }
-            else if (ch4_mode > RC_SW_MID_HIGH)
-            {
-                robot_ctrl.point_type = 5;//ch5 1 ch4 2
-                #if DEBUG_LOG_ENABLE
-                    printf("Point Type: NAV_POINT_BUMP\n");
-                #endif
-            }
-            else
-            {
-                robot_ctrl.point_type = 4;//ch5 1 ch4 1
-                #if DEBUG_LOG_ENABLE
-                    printf("Point Type: NAV_POINT_BRIDGE\n");
-                #endif
-            }
+        else if (ch4_mode > RC_SW_MID_HIGH)
+        {
+            // ---- CH4 = HIGH：触发自转+伸腿组合动作 ----
+            SpinHeightAction_Trigger();
+            robot_ctrl.point_type = 1; // NAV_POINT_CIRCLE（标记为转圈类型）
+        #if DEBUG_LOG_ENABLE
+            printf("CH3 Trigger: SPIN+HEIGHT (CH4=HIGH)\n");
+        #endif
         }
+        else
+        {
+            // ---- CH4 = MID：无动作 ----
+        #if DEBUG_LOG_ENABLE
+            printf("CH3 Trigger: NOP (CH4=MID)\n");
+        #endif
+        }
+
+        // CH5 仍用于独立的刹车功能（见 Step 5），此处不再参与 point_type 分发
     }
     last_ch3_state = curr_ch3_state; 
 }

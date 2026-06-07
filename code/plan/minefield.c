@@ -71,6 +71,11 @@ uint8_t Minefield_Is_Active(void)
     return s_is_spinning;
 }
 
+float Minefield_GetAccumulatedAngle(void)
+{
+    return s_accumulated_angle;
+}
+
 float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_deg, volatile float* target_yaw_ptr)
 {
     float remaining;

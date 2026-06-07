@@ -9,6 +9,7 @@
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
+#include "plan/spin_height_action.h"
 #include "vision/vision_three_stage_control.h"
 
 // **************************** uart配置区域 **************************** 

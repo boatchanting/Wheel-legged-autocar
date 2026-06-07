@@ -38,6 +38,7 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
 #include "plan/bumpy_road.h"
+#include "plan/spin_height_action.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
@@ -397,7 +398,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
-        if(g_motor_enable && (VisionBridgeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
+        if(g_motor_enable && (VisionBridgeTask_IsActive() == 0U)){
+            Bridge_Test_Triple_SingleSide_Inertial();
+            SpinHeightAction_Update();
         } //复现控制
     };//【测试】抬高双腿
 

@@ -19,6 +19,12 @@ void Minefield_SetSpinPlan(float total_spin_deg, float exit_yaw_deg, float spin_
 uint8_t Minefield_Is_Active(void);
 
 /**
+ * @brief 查询当前已累计旋转角度
+ * @return float 已旋转的角度 (单位: 度)，未激活时返回 0
+ */
+float Minefield_GetAccumulatedAngle(void);
+
+/**
  * @brief 旋转动作核心控制函数 (需在2ms Gyro环中调用，当前Core0调度1ms)
  * 
  * @param gyro_z_deg      当前Z轴角速度 (单位: °/s)
