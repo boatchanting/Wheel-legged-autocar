@@ -37,10 +37,10 @@ U_TURN_DETECT_MODE = 0
 # 全局物理参数（与 chazhi.py 保持一致）
 # ============================================================
 INTERPOLATE_DIST = 50.0
-PATH_SPEED_MAX_MM_S = 5000.0
-MAX_ACCEL_MM_S2 = 2500.0
+PATH_SPEED_MAX_MM_S = 3000.0
+MAX_ACCEL_MM_S2 = 2000.0
 MAX_DECEL_MM_S2 = 1500.0
-MAX_LATERAL_ACCEL_MM_S2 = 2500.0
+MAX_LATERAL_ACCEL_MM_S2 = 2000.0
 SPEED_TO_MM_S = 4.936
 CURVATURE_EPS = 1e-6
 FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -50,9 +50,15 @@ FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 # ============================================================
 CAR_HALF_WIDTH_MM = 135.0      # 车身半宽
 CONE_RADIUS_MM = 140.0         # 桩桶物理半径
-SAFE_MARGIN_MM = 100.0          # 绕桩防撞安全余量（考虑平衡车侧倾和打滑冗余）
+SAFE_MARGIN_MM = 200.0          # 绕桩防撞安全余量（考虑平衡车侧倾和打滑冗余）
 CONE_OFFSET_MM = CAR_HALF_WIDTH_MM + CONE_RADIUS_MM + SAFE_MARGIN_MM  # 桩桶横向偏置距离
-U_TURN_RADIUS_MM = 1200.0      # 掉头弯的期望回转半径
+U_TURN_RADIUS_MM = 1500.0      # 掉头弯的期望回转半径（U_TURN_RADIUS_MODE=0 时生效）
+
+# 掉头弯半径模式开关
+#   0 = 固定半径（使用 U_TURN_RADIUS_MM）
+#   1 = 自动解算（半径 = 掉头点到首个桩桶的欧氏距离 / 2）
+U_TURN_RADIUS_MODE = 1
+
 B_SPLINE_SMOOTH_FACTOR = 0.0  # B 样条平滑因子（0 = 精确通过控制点，>0 = 更平滑但偏离控制点） 这里给非0值有严重bug不知道为什么
 
 # ============================================================
@@ -384,13 +390,14 @@ def compute_base_direction(u_turn: RoutePoint, cones: List[RoutePoint]) -> Tuple
     return dx / length, dy / length
 
 
-def generate_start_straight(start: RoutePoint, u_turn: RoutePoint, n_points: int = 10) -> List[Tuple[float, float]]:
+def generate_start_straight(start: RoutePoint, u_turn: RoutePoint, radius: float, n_points: int = 5) -> List[Tuple[float, float]]:
     """
     生成起步直道控制点：从起点到掉头点前一段距离。
 
+    @param radius 掉头弯半径（用于预留弯道空间）
     @return 控制点坐标列表 [(x, y), ...]
     """
-    # 直道从起点延伸到掉头点附近（保留 U_TURN_RADIUS_MM 的距离给弯道）
+    # 直道从起点延伸到掉头点附近（保留 radius 的距离给弯道）
     dx = u_turn.x - start.x
     dy = u_turn.y - start.y
     dist = math.sqrt(dx * dx + dy * dy)
@@ -398,8 +405,8 @@ def generate_start_straight(start: RoutePoint, u_turn: RoutePoint, n_points: int
     if dist < 1e-6:
         return [(start.x, start.y)]
 
-    # 直道终点距离掉头点 U_TURN_RADIUS_MM 处
-    straight_ratio = max(0.1, 1.0 - U_TURN_RADIUS_MM / dist) if dist > U_TURN_RADIUS_MM else 0.3
+    # 直道终点距离掉头点 radius 处
+    straight_ratio = max(0.1, 1.0 - radius / dist) if dist > radius else 0.3
     end_x = start.x + dx * straight_ratio
     end_y = start.y + dy * straight_ratio
 
@@ -419,6 +426,7 @@ def _generate_u_turn_teardrop(
     first_apex: Tuple[float, float],
     lat_x: float,
     lat_y: float,
+    radius: float,
 ) -> List[Tuple[float, float]]:
     """
     [U_TURN_MODE=0] 水滴形掉头控制点（3 个牵引点）。
@@ -441,8 +449,8 @@ def _generate_u_turn_teardrop(
     p1_y = u_turn.y + in_dy * 300.0
 
     # P2: 侧偏顶点
-    p2_x = p1_x + lat_x * U_TURN_RADIUS_MM
-    p2_y = p1_y + lat_y * U_TURN_RADIUS_MM
+    p2_x = p1_x + lat_x * radius
+    p2_y = p1_y + lat_y * radius
 
     # P3: 过渡点（侧偏顶点与首个 Apex 的中点）
     p3_x = (p2_x + first_apex[0]) * 0.5
@@ -457,6 +465,7 @@ def _generate_u_turn_circular(
     first_apex: Tuple[float, float],
     lat_x: float,
     lat_y: float,
+    radius: float,
 ) -> List[Tuple[float, float]]:
     """
     [U_TURN_MODE=1] 标准圆弧/相切劣弧控制点。
@@ -468,8 +477,8 @@ def _generate_u_turn_circular(
     ex, ey = entry_point
 
     # 1. 圆心位置（在掉头点法线方向距离 R 处）
-    cx = u_turn.x + lat_x * U_TURN_RADIUS_MM
-    cy = u_turn.y + lat_y * U_TURN_RADIUS_MM
+    cx = u_turn.x + lat_x * radius
+    cy = u_turn.y + lat_y * radius
 
     # 2. 圆弧起始角（从圆心指向掉头点）
     start_angle = math.atan2(u_turn.y - cy, u_turn.x - cx)
@@ -488,11 +497,11 @@ def _generate_u_turn_circular(
         px, py = first_apex
         dist_cp = math.hypot(px - cx, py - cy)
 
-        if dist_cp > U_TURN_RADIUS_MM:
+        if dist_cp > radius:
             # 从圆心到首个 Apex 的绝对角度
             angle_to_apex = math.atan2(py - cy, px - cx)
             # 切点偏移角
-            tangent_offset = math.acos(U_TURN_RADIUS_MM / dist_cp)
+            tangent_offset = math.acos(radius / dist_cp)
 
             # 圆上有两个切点，对应两条切线
             t_angle_1 = angle_to_apex + tangent_offset
@@ -517,8 +526,8 @@ def _generate_u_turn_circular(
     for i in range(n_points):
         t = i / max(n_points - 1, 1)
         current_angle = start_angle + sweep_dir * sweep_rad * t
-        px = cx + U_TURN_RADIUS_MM * math.cos(current_angle)
-        py = cy + U_TURN_RADIUS_MM * math.sin(current_angle)
+        px = cx + radius * math.cos(current_angle)
+        py = cy + radius * math.sin(current_angle)
         points.append((px, py))
 
     return points
@@ -530,6 +539,7 @@ def generate_u_turn_arc(
     first_apex: Tuple[float, float],
     lat_x: float,
     lat_y: float,
+    radius: float,
 ) -> List[Tuple[float, float]]:
     """
     掉头弯控制点生成（由 U_TURN_MODE 开关选择实现）。
@@ -538,12 +548,13 @@ def generate_u_turn_arc(
     @param u_turn 掉头点坐标
     @param first_apex 第一个桩桶的 Apex 点坐标
     @param lat_x, lat_y 横向拉伸方向（由 swing_sign × 法向量决定）
+    @param radius 掉头弯半径
     @return 控制点坐标列表
     """
     if U_TURN_MODE == 1:
-        return _generate_u_turn_circular(entry_point, u_turn, first_apex, lat_x, lat_y)
+        return _generate_u_turn_circular(entry_point, u_turn, first_apex, lat_x, lat_y, radius)
     else:
-        return _generate_u_turn_teardrop(entry_point, u_turn, first_apex, lat_x, lat_y)
+        return _generate_u_turn_teardrop(entry_point, u_turn, first_apex, lat_x, lat_y, radius)
 
 
 def generate_slalom_apex_points(
@@ -611,10 +622,17 @@ def generate_control_points(
         lat_x = normal_x * swing_sign
         lat_y = normal_y * swing_sign
 
-    # 3. 绕桩 Apex 控制点（传入 swing_sign，确保第一个桩与掉头弯同侧）
+    # 3. 计算掉头弯实际半径
+    if U_TURN_RADIUS_MODE == 1 and cones:
+        # 自动模式：半径 = 掉头点到首个桩桶的欧氏距离 / 2
+        u_turn_radius = math.hypot(cones[0].x - u_turn.x, cones[0].y - u_turn.y) / 2.0
+    else:
+        u_turn_radius = U_TURN_RADIUS_MM
+
+    # 4. 绕桩 Apex 控制点（传入 swing_sign，确保第一个桩与掉头弯同侧）
     apex_pts = generate_slalom_apex_points(cones, base_dx, base_dy, swing_sign)
 
-    # 4. 追加出弯直道约束，防止尾部收缩撞桩
+    # 5. 追加出弯直道约束，防止尾部收缩撞桩
     #    顺着最后两个 Apex 点的趋势方向，往前延伸 1500mm
     if len(apex_pts) >= 2:
         last_pt = apex_pts[-1]
@@ -627,13 +645,13 @@ def generate_control_points(
             ext_y = last_pt[1] + (out_vec_y / out_len) * 1500.0
             apex_pts.append((ext_x, ext_y))
 
-    # 5. 起步直道控制点
-    straight_pts = generate_start_straight(start, u_turn, n_points=5)
+    # 6. 起步直道控制点
+    straight_pts = generate_start_straight(start, u_turn, radius=u_turn_radius, n_points=5)
 
-    # 6. 掉头弯控制点（将其出口引导点对准第一个 Apex）
+    # 7. 掉头弯控制点（将其出口引导点对准第一个 Apex）
     entry_point = straight_pts[-1] if straight_pts else (start.x, start.y)
     first_apex = apex_pts[0] if apex_pts else (u_turn.x - base_dx * 1000, u_turn.y - base_dy * 1000)
-    u_turn_pts = generate_u_turn_arc(entry_point, u_turn, first_apex, lat_x, lat_y)
+    u_turn_pts = generate_u_turn_arc(entry_point, u_turn, first_apex, lat_x, lat_y, radius=u_turn_radius)
 
     # 7. 圆弧模式下，在弧出口和首个 Apex 之间插入过渡点
     #    用二次贝塞尔曲线平滑连接，消除曲率尖峰
@@ -720,21 +738,47 @@ def resample_path(x_fine: np.ndarray, y_fine: np.ndarray, target_dist: float) ->
     return x_new, y_new
 
 
-def generate_calculated_path(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]:
+def prepare_input_points(raw_points: List[RoutePoint]) -> Tuple[List[RoutePoint], int]:
+    """
+    准备输入点：若第一个点不是原点 (0,0)，则自动补一个原点作为起点。
+
+    与 chazhi.py 的 prepare_spline_input_points 逻辑一致：
+    小车清零后的位置就是 (0,0)，第一个打的点是路径途经点，不是起点。
+
+    @return (处理后的点列表, 需要丢弃的前缀点数)
+    """
+    if raw_points and math.isclose(raw_points[0].x, 0.0, abs_tol=1e-6) \
+                  and math.isclose(raw_points[0].y, 0.0, abs_tol=1e-6):
+        return list(raw_points), 0
+    origin = RoutePoint(0.0, 0.0, 0.0, 0.0, 0.0, 0)
+    return [origin] + list(raw_points), 1
+
+
+def generate_calculated_path(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray, int]:
     """
     核心解算函数：从稀疏关键点生成平滑轨迹。
 
     @param raw_points 稀疏关键点列表（起点、掉头点、桩桶点）
-    @return (控制点列表, 重采样后 x 数组, 重采样后 y 数组)
+    @return (控制点列表, 重采样后 x 数组, 重采样后 y 数组, 需丢弃的前缀点数)
     """
+    # 0. 补原点（与 chazhi.py 行为一致）
+    input_points, drop_first_count = prepare_input_points(raw_points)
+
     # 1. 拓扑识别与点位分类
-    start, u_turn, cones = classify_points(raw_points)
+    start, u_turn, cones = classify_points(input_points)
 
     print(f"[分类] 起点: ({start.x:.1f}, {start.y:.1f})")
     print(f"[分类] 掉头点: ({u_turn.x:.1f}, {u_turn.y:.1f})")
     print(f"[分类] 桩桶数量: {len(cones)}")
     for i, c in enumerate(cones):
         print(f"  桩桶 {i + 1}: ({c.x:.1f}, {c.y:.1f})")
+
+    # 显示实际使用的掉头半径
+    if U_TURN_RADIUS_MODE == 1 and cones:
+        eff_radius = math.hypot(cones[0].x - u_turn.x, cones[0].y - u_turn.y) / 2.0
+    else:
+        eff_radius = U_TURN_RADIUS_MM
+    print(f"[参数] 实际掉头半径: {eff_radius:.0f}mm")
 
     # 2. 控制点生成
     control_points, apex_pts = generate_control_points(start, u_turn, cones)
@@ -747,7 +791,7 @@ def generate_calculated_path(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[f
     x_resampled, y_resampled = resample_path(x_fine, y_fine, INTERPOLATE_DIST)
     print(f"[轨迹] 重采样后点数: {len(x_resampled)}")
 
-    return control_points, x_resampled, y_resampled
+    return control_points, x_resampled, y_resampled, drop_first_count
 
 
 # ============================================================
@@ -841,10 +885,12 @@ def build_final_points(
     raw_points: List[RoutePoint],
     sel_x: np.ndarray,
     sel_y: np.ndarray,
+    drop_first_count: int = 0,
 ) -> List[RoutePoint]:
     """
     构建最终轨迹点序列，并回填特殊点类型与姿态信息。
 
+    @param drop_first_count 丢弃前缀点数（补原点时为 1，否则为 0）
     @note 对于桩桶点附近的最近轨迹点，继承原稀疏点的 point_type
     """
     final_x = np.array(sel_x, dtype=float)
@@ -880,7 +926,7 @@ def build_final_points(
             target_speed=0.0,
             point_type=int(final_type[i]),
         )
-        for i in range(len(final_x))
+        for i in range(drop_first_count, len(final_x))
     ]
 
 
@@ -1155,15 +1201,16 @@ def main() -> int:
     print(f"[参数] 桩桶半径: {CONE_RADIUS_MM}mm")
     print(f"[参数] 安全余量: {SAFE_MARGIN_MM}mm")
     print(f"[参数] 桩桶偏置: {CONE_OFFSET_MM}mm")
-    print(f"[参数] 掉头半径: {U_TURN_RADIUS_MM}mm")
+    radius_mode = "固定" if U_TURN_RADIUS_MODE == 0 else "自动(距离/2)"
+    print(f"[参数] 掉头半径: {U_TURN_RADIUS_MM}mm (模式: {radius_mode})")
     print(f"[参数] 掉头模式: {U_TURN_DETECT_MODE}")
     print()
 
     # 核心解算
-    control_points, x_resampled, y_resampled = generate_calculated_path(raw_points)
+    control_points, x_resampled, y_resampled, drop_first_count = generate_calculated_path(raw_points)
 
     # 构建最终点序列
-    final_points = build_final_points(raw_points, x_resampled, y_resampled)
+    final_points = build_final_points(raw_points, x_resampled, y_resampled, drop_first_count)
 
     # 离线速度规划
     apply_speed_plan(final_points)
