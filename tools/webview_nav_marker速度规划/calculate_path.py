@@ -50,7 +50,7 @@ FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 # ============================================================
 CAR_HALF_WIDTH_MM = 135.0      # 车身半宽
 CONE_RADIUS_MM = 140.0         # 桩桶物理半径
-SAFE_MARGIN_MM = 200.0          # 绕桩防撞安全余量（考虑平衡车侧倾和打滑冗余）
+SAFE_MARGIN_MM = 50.0           # 绕桩防撞安全余量（压榨余量，降低S弯曲率以提升离线规划速度上限）
 CONE_OFFSET_MM = CAR_HALF_WIDTH_MM + CONE_RADIUS_MM + SAFE_MARGIN_MM  # 桩桶横向偏置距离
 U_TURN_RADIUS_MM = 1500.0      # 掉头弯的期望回转半径（U_TURN_RADIUS_MODE=0 时生效）
 

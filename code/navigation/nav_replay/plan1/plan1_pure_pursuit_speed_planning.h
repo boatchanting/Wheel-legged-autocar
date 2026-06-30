@@ -30,6 +30,8 @@
 #define KAPPA_CURVE_BYPASS_THRESH      0.0005f
 /** @brief 曲率前馈增益（无量纲），将 kappa*speed 换算为叠加转向角（deg）。调大入弯更主动，过大会振荡 */
 #define K_FF_CURVATURE               100.0f
+/** @brief 横向误差纠偏增益 (Stanley补偿增益)，值越大车身偏离轨迹时拉回力度越猛 */
+#define PP_STANLEY_K                  45.0f
 /** @brief 近停点锁死触发距离（mm），小于该值才允许锁航向 */
 // 速度目标限斜率参数：NavReplay_Process() 每 10ms 左右调用一次，数值表示每次允许 target_speed_set 改变的最大量
 #define NAV_SPEED_SLEW_EPS             1.0f    // 速度变化死区，小于该值认为没有明显加/减速，避免浮点噪声反复切换斜率档位

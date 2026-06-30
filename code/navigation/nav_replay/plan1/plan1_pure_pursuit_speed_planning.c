@@ -633,11 +633,22 @@ void NavReplay_Process(void)
 
     /* 阶段6：纯追踪选点（前瞻距离与速度/曲率相关，且不跨越停止屏障） */
     {
-        /* 用前方约 750mm 处的曲率决定是否缩减前视距离，提前预判弯道 */
-        int ahead_idx = base_idx + 15;
-        if (ahead_idx >= nav_ram_data.point_count) ahead_idx = nav_ram_data.point_count - 1;
-        ahead_kappa = nav_ram_data.points[ahead_idx].curvature;
-        float shrink_factor = 1.0f - fabsf(ahead_kappa) * PP_LD_KAPPA_SHRINK_GAIN;
+        /* 修复 S 弯曲率盲区：滑动窗口扫描前方最大曲率，确保前瞻距离在S弯中持续收紧 */
+        float max_ahead_kappa = 0.0f;
+        int search_end = base_idx + 30;  // 往前看约 1.5 米（按点间距50mm估算）
+        if (search_end > (int)stop_idx) {
+            search_end = (int)stop_idx;  // 不得越过停车屏障
+        }
+
+        for (int i = base_idx + 5; i <= search_end; i++) {
+            float k = fabsf(nav_ram_data.points[i].curvature);
+            if (k > max_ahead_kappa) {
+                max_ahead_kappa = k;
+            }
+        }
+
+        ahead_kappa = max_ahead_kappa;
+        float shrink_factor = 1.0f - ahead_kappa * PP_LD_KAPPA_SHRINK_GAIN;
         if (shrink_factor < PP_LD_KAPPA_SHRINK_MIN) shrink_factor = PP_LD_KAPPA_SHRINK_MIN;
         lookahead_dist = (lookahead_min + fabsf(s_prev_speed_set) * PP_LD_SPEED_GAIN) * shrink_factor;
     }
@@ -653,6 +664,37 @@ void NavReplay_Process(void)
     {
         float target_yaw = -atan2f(ty - inertial_nav.y, -(tx - inertial_nav.x)) * 57.29578f;
         raw_err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
+
+        /* CTE 横向误差补偿 (Stanley思想)：减小连续S弯中的切弯倾向 */
+        {
+            NavRamPoint_t closest_pt = nav_ram_data.points[base_idx];
+
+            /* 1. 获取最近点的轨迹切向方向 (世界坐标) */
+            float path_rad = closest_pt.target_yaw_deg * 0.0174533f;
+            float path_dir_x = cosf(path_rad);
+            float path_dir_y = sinf(path_rad);
+
+            /* 2. 计算车身中心指向最近点的位置误差向量 */
+            float err_vec_x = closest_pt.x - inertial_nav.x;
+            float err_vec_y = closest_pt.y - inertial_nav.y;
+
+            /* 3. 向量叉乘计算带符号的横向误差 CTE */
+            float cross_product = path_dir_x * err_vec_y - path_dir_y * err_vec_x;
+            float cte = sqrtf(err_vec_x * err_vec_x + err_vec_y * err_vec_y);
+            if (cross_product < 0.0f) {
+                cte = -cte;
+            }
+
+            /* 4. 计算当前绝对车速 (最低限速防止除零) */
+            float current_speed = fabsf(inertial_nav.vx_body);
+            if (current_speed < 100.0f) {
+                current_speed = 100.0f;
+            }
+
+            /* 5. 计算Stanley补偿角度并叠加 */
+            float stanley_comp_deg = atan2f(PP_STANLEY_K * cte, current_speed) * 57.29578f;
+            raw_err_degree = NormalizeAngle(raw_err_degree + stanley_comp_deg);
+        }
 
         if (fabsf(target_kappa) > KAPPA_CURVE_BYPASS_THRESH)
         {
