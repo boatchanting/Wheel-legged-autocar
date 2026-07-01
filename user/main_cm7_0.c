@@ -335,8 +335,9 @@ int main(void)
         // ---------------- 【nav.1】初始化惯性导航模块和打点模块 ----------------
         // ---------------------------------------------------------
         if (g_nav_start_recording)
-        {            
+        {
             InertialNav_Init();
+            Fusion_Init();
             NavRam_Init();
             #if DEBUG_LOG_ENABLE
                 printf("[NAV] Init OK: x=%.2f y=%.2f yaw=%.2f\r\n",
@@ -403,6 +404,7 @@ int main(void)
         g_load_flash_request = 0;
 
         InertialNav_Init();
+        Fusion_Init();
 
         NavReplay_Start();//start replay
         #if DEBUG_LOG_ENABLE
@@ -420,7 +422,8 @@ int main(void)
     if (g_motor_enable == 1 && g_replay_start_request == 1)
     {
         g_replay_start_request = 0;
-        Gnss_Transform_Reset_Origin();
+        // 注意：原点已由 Fusion_Manual_Lock_Origin() 在"清空轨迹"时锁定
+        // 此处不再重置原点和融合状态
         GpsNavReplay_Start();
         #if DEBUG_LOG_ENABLE
         printf("Main: Starting pure GPS replay...\r\n");

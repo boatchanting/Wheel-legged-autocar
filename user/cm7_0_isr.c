@@ -44,6 +44,7 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
+#include "navigation/gnss_ins_fusion.h"
 
 // 声明外部函数
 
@@ -368,18 +369,24 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // float current_pos_x = inertial_nav.x;
         // float current_pos_y = inertial_nav.y;
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
+
+        // GPS+惯导融合：100Hz 惯导推算 (10ms 周期，与 InertialNav_Update 同步)
+        #if GNSS_NAV == 1
+        Fusion_Ins_Update();
+        #endif
     }
 
-    #if GNSS_NAV == 1
-    //【gnss.1】GNSS定位更新
+    //【gnss.1】GNSS定位更新 (始终解析，供融合模块使用)
     if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
-            gnss_flag = 0;//将标志位清零
-            gnss_data_parse();           //开始解析数据
-            Gnss_Transform_Update();//gnss转换为高斯克吕格投影
-        } // GNSS更新
+            gnss_flag = 0;
+            gnss_data_parse();
+            Gnss_Transform_Update();
+            #if GNSS_NAV == 1
+            Fusion_Gps_Correct(); // GPS+惯导融合纠偏
+            #endif
+        }
     }
-    #endif
 
 
    // ------------------------------------------------------

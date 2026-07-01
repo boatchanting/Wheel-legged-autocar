@@ -2,6 +2,7 @@
 #include "../../../common.h"
 #include "../../gps_nav_replay_route_table.h"
 #include "../../gnss_transform.h"
+#include "../../gnss_ins_fusion.h"
 #if (CURRENT_NAV_PLAN == 1) && (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
 extern volatile float target_speed_set; extern volatile float err_degree;
 
@@ -21,14 +22,8 @@ uint8 g_gps_special_action_trigger = 0;
 
 static uint16 g_gps_target_idx = 0;
 
-static uint8 g_gyro_yaw_initialized = 0;
-static float g_yaw_offset_deg = 0.0f;
-
 /**
  * @brief 将角度归一化到 [-180, 180] 区间
- * @param angle 输入角度（deg）
- * @return 归一化后的角度（deg）
- * @note 由各 plan 的误差计算流程调用
  */
 static float NormalizeAngle(float angle)
 {
@@ -38,13 +33,7 @@ static float NormalizeAngle(float angle)
 }
 
 /**
- * @brief 计算两点欧氏距离
- * @param x1 点1 x 坐标（mm）
- * @param y1 点1 y 坐标（mm）
- * @param x2 点2 x 坐标（mm）
- * @param y2 点2 y 坐标（mm）
- * @return 两点距离（mm）
- * @note 由回放主循环中的到点判定/前瞻估计调用
+ * @brief 计算两点欧氏距离 (mm)
  */
 static float CalcDistance(float x1, float y1, float x2, float y2)
 {
@@ -53,12 +42,6 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
 
 /**
  * @brief 计算两点距离平方（避免频繁开方）
- * @param x1 点1 x 坐标（mm）
- * @param y1 点1 y 坐标（mm）
- * @param x2 点2 x 坐标（mm）
- * @param y2 点2 y 坐标（mm）
- * @return 距离平方（mm^2）
- * @note 由最近点搜索与前瞻搜索调用
  */
 static float CalcDistanceSq(float x1, float y1, float x2, float y2)
 {
@@ -74,49 +57,35 @@ static float GpsNormalizeCourse360(float angle)
     return angle;
 }
 
-// Bearing measured counter-clockwise from X-axis (Standard Math)
+/**
+ * @brief 计算从 (from) 到 (to) 的方位角 (度, 0~360, 标准数学坐标系逆时针)
+ */
 static float GpsCalcBearingDegFromNorth(float from_x, float from_y, float to_x, float to_y)
 {
     float dx = to_x - from_x;
     float dy = to_y - from_y;
-    // 使用标准 atan2f(dy, dx) 匹配打点坐标系
     return GpsNormalizeCourse360(atan2f(dy, dx) * 57.2957795f);
 }
 
+// ==================== 融合坐标读取接口 ====================
+// 直接从 Fusion 模块读取，单位已为 mm
+
 static float GpsNavCurrentXmm(void)
 {
-    return gnss_trans.x * 1000.0f;
+    return g_fuse_state.fuse_x;
 }
 
 static float GpsNavCurrentYmm(void)
 {
-    return gnss_trans.y * 1000.0f;
+    return g_fuse_state.fuse_y;
 }
 
 static float GpsNav_GetCurrentHeadingDeg(void)
 {
-    float current_absolute_heading = 0.0f;
-
-    if (g_gyro_yaw_initialized == 0U)
-    {
-        float initial_heading = 0.0f;
-#if IMU_CATEGORY == 3
-        initial_heading = 226.0f;//heading
-#else
-        initial_heading = gnss.direction;
-#endif
-        g_yaw_offset_deg = initial_heading - euler_angle.yaw;
-        g_gyro_yaw_initialized = 1U;
-        
-        current_absolute_heading = initial_heading;
-    }
-    else
-    {
-        current_absolute_heading = euler_angle.yaw + g_yaw_offset_deg;
-    }
-
-    return GpsNormalizeCourse360(current_absolute_heading + GPS_NAV_HEADING_OFFSET_DEG);
+    return g_fuse_state.fuse_yaw;
 }
+
+// ==================== 路线加载与启停 ====================
 
 uint16 GpsNavReplay_LoadStaticRouteToRam(void)
 {
@@ -161,8 +130,6 @@ void GpsNavReplay_Start(void)
     g_gps_replay_state = REPLAY_RUNNING;
     target_speed_set = GPS_NAV_SPEED_STOP;
     err_degree = 0.0f;
-    
-    g_gyro_yaw_initialized = 0U;
 
 #if DEBUG_LOG_ENABLE
     printf("[GPS-NAV] Replay START. Points: %d\r\n", nav_ram_data.point_count);
@@ -186,6 +153,8 @@ void GpsNavReplay_Stop(void)
 #endif
 }
 
+// ==================== Pure Pursuit 主循环 ====================
+
 void GpsNavReplay_Process(void)
 {
     float cx = 0.0f, cy = 0.0f;
@@ -194,16 +163,18 @@ void GpsNavReplay_Process(void)
     float current_heading = 0.0f;
     float raw_err_degree = 0.0f;
 
-    // 1. 状态与 GPS 有效性校验
+    // 1. 状态校验
     if (g_gps_replay_state != REPLAY_RUNNING) return;
 
-    if (!gnss_trans.is_valid || !gnss_trans.is_origin_set || gnss.state != 1U || gnss.satellite_used < GPS_NAV_MIN_SAT_USED)
+    // GPS 数据有效性（原点必须已建立）
+    if (!gnss_trans.is_origin_set)
     {
         target_speed_set = GPS_NAV_SPEED_STOP;
         err_degree = 0.0f;
         return;
     }
 
+    // 读取融合坐标 (mm) 和融合航向 (度)
     cx = GpsNavCurrentXmm();
     cy = GpsNavCurrentYmm();
     current_heading = GpsNav_GetCurrentHeadingDeg();
@@ -214,7 +185,7 @@ void GpsNavReplay_Process(void)
         target_x = nav_ram_data.points[nav_ram_data.point_count - 1].x;
         target_y = nav_ram_data.points[nav_ram_data.point_count - 1].y;
         float dist_to_end = CalcDistance(cx, cy, target_x, target_y);
-        
+
         uint8 is_crossed_finish = 0;
         if (nav_ram_data.point_count >= 2)
         {
@@ -226,7 +197,6 @@ void GpsNavReplay_Process(void)
             float v2_y = cy - py;
             float dot = v1_x * v2_x + v1_y * v2_y;
             float len_sq = v1_x * v1_x + v1_y * v1_y;
-            // 投影法：如果车子越过了倒数第二个点到终点的连线，说明冲线了
             if (len_sq > 0.001f && dot >= len_sq) is_crossed_finish = 1;
         }
 
@@ -240,7 +210,7 @@ void GpsNavReplay_Process(void)
     }
     else
     {
-        // === 3. 极简 Pure Pursuit：只寻目标，绝不回头 ===
+        // === 3. Pure Pursuit：只寻目标，绝不回头 ===
         uint8 skips = 0;
         while (g_gps_target_idx < nav_ram_data.point_count - 1)
         {
@@ -259,24 +229,21 @@ void GpsNavReplay_Process(void)
                 float v2_y = cy - py;
                 float dot = v1_x * v2_x + v1_y * v2_y;
                 float len_sq = v1_x * v1_x + v1_y * v1_y;
-                // 投影法：判定是否在物理上跑过了这个点
                 if (len_sq > 0.001f && dot >= len_sq) is_passed = 1;
             }
 
-            // 核心逻辑：如果点在 2.5米 圈内，或者已经被甩在身后，立刻抛弃它！吃下一个！
             if (dist_current < GPS_NAV_LOOKAHEAD_DIST || is_passed)
             {
                 g_gps_target_idx++;
                 skips++;
-                if (skips >= 3) break; // 防跨界锁：每周期最多吃 3 个点
+                if (skips >= 3) break;
             }
             else
             {
-                // 找到前方的点了！直接锁定目标，不做任何画蛇添足的插值运算
                 break;
             }
         }
-        
+
         target_x = nav_ram_data.points[g_gps_target_idx].x;
         target_y = nav_ram_data.points[g_gps_target_idx].y;
     }
@@ -284,46 +251,32 @@ void GpsNavReplay_Process(void)
     // === 4. 计算航向误差 ===
     target_bearing = GpsCalcBearingDegFromNorth(cx, cy, target_x, target_y);
     raw_err_degree = NormalizeAngle(target_bearing - current_heading);
-    
-    // 核心抗噪 A：低通滤波
-    static float s_filtered_err = 0.0f;
-    float alpha = 0.25f; 
-    if (g_gps_target_idx == 0 && target_speed_set == GPS_NAV_SPEED_STOP) {
-        s_filtered_err = raw_err_degree; 
-    } else {
-        s_filtered_err = (1.0f - alpha) * s_filtered_err + alpha * raw_err_degree;
-    }
 
-    float final_err = s_filtered_err;
+    // 融合坐标已极度平滑，移除低通滤波，仅保留安全限幅
+    float final_err = raw_err_degree;
 
-    // 核心抗噪 B：死区
-    if (fabsf(final_err) < 2.0f) final_err = 0.0f;
-
-    // 核心抗噪 C：暴力限幅
+    // 安全限幅：防止极端偏差
     if (final_err > 35.0f) final_err = 35.0f;
     if (final_err < -35.0f) final_err = -35.0f;
 
-    err_degree = final_err; 
+    err_degree = final_err;
     float abs_err = fabsf(err_degree);
 
-    // === 5. 动态速度控制（提高保底动力防卡死） ===
+    // === 5. 动态速度控制 ===
     float dist_to_target = CalcDistance(cx, cy, target_x, target_y);
     float base_speed;
-    
+
     if (dist_to_target > GPS_NAV_DIST_NEAR && abs_err < 10.0f) {
-        base_speed = GPS_NAV_SPEED_FAST; 
+        base_speed = GPS_NAV_SPEED_FAST;
     } else {
-        base_speed = GPS_NAV_SPEED_SLOW; 
+        base_speed = GPS_NAV_SPEED_SLOW;
     }
 
     // 弯道动态降速
-    float speed_factor = 1.0f - (abs_err / 40.0f); 
-    
-    // 【重要修改】：将保底推力从 0.2 提高到了 0.4！
-    // 防止大转弯时底盘输出的 PWM 太低，导致小车电机无力、原地震颤
-    if (speed_factor < 0.40f) speed_factor = 0.40f; 
+    float speed_factor = 1.0f - (abs_err / 40.0f);
+    if (speed_factor < 0.40f) speed_factor = 0.40f;
 
-    target_speed_set = base_speed * speed_factor; 
+    target_speed_set = base_speed * speed_factor;
 }
 
 //【优化点】惯导上层控制占位用

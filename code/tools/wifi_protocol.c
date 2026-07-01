@@ -1,6 +1,7 @@
 #include "wifi_protocol.h"
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
+#include "../navigation/gnss_ins_fusion.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -123,6 +124,10 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
         Menu_TriggerRecordAction();
         if (accepted)
         {
+            // GPS+惯导融合：手动锁定原点与发车角
+            #if GNSS_NAV == 1
+            Fusion_Manual_Lock_Origin();
+            #endif
             ack_status = WIFI_HOST_ACK_ACCEPTED;
 #if DEBUG_LOG_ENABLE
             printf("[WIFI] Host cmd CLEAR_TRAJECTORY accepted.\r\n");
@@ -399,6 +404,17 @@ void wifi_protocol_send_data(void)
     write_float_value(gnss_trans.y * 1000.0f);
     write_u8(gnss_trans.is_valid);
     write_u8(gnss_trans.is_origin_set);
+
+    // F. GPS+INS fusion state (unit: mm / deg)
+    write_float_value(g_fuse_state.fuse_x);
+    write_float_value(g_fuse_state.fuse_y);
+    write_float_value(g_fuse_state.fuse_yaw);
+    write_float_value(g_fuse_state.offset_x);
+    write_float_value(g_fuse_state.offset_y);
+
+    // G. ground truth after arm compensation + delay feedforward (unit: mm)
+    write_float_value(gnss_trans.ground_x * 1000.0f);
+    write_float_value(gnss_trans.ground_y * 1000.0f);
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;

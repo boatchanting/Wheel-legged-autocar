@@ -10,6 +10,7 @@
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
+#include "navigation/gnss_ins_fusion.h"
 
 // **************************** uart配置区域 **************************** 
 #define UART_INDEX              (DEBUG_UART_INDEX    )                           // 默认 UART_0

@@ -2,15 +2,15 @@
 #define _PLAN1_GNSS_H_
 #if GNSS_NAV == 1
 //---------------------------------------------
-//--------------纯gnss逻辑------------------
+//--------------GPS+惯导融合寻迹逻辑-------------
 //--------------------------------------------
 #define GPS_NAV_REPLAY_USE_STATIC_ROUTE_TABLE 1
 
 #define GPS_NAV_MIN_SAT_USED              4U
 
-// === Pure Pursuit 极简丝滑版配置 ===
+// === Pure Pursuit 配置 ===
 // 前瞻距离（决定过弯丝滑度，数值越大越喜欢切内道，2500.0f 表示看向前方 2.5 米）
-#define GPS_NAV_LOOKAHEAD_DIST            2500.0f 
+#define GPS_NAV_LOOKAHEAD_DIST            2500.0f
 #define GPS_NAV_DIST_ARRIVE               500.0f   // 仅用于终点停车的判定距离 (0.5米)
 #define GPS_NAV_DIST_NEAR                 2200.0f  // 速度控制的远近临界值
 
@@ -31,7 +31,7 @@ void GpsNavReplay_Start(void);
 void GpsNavReplay_Stop(void);
 void GpsNavReplay_Process(void);
 
-void NavReplay_Start(void);//【优化点】临时编译通过添加的占位
+void NavReplay_Start(void);
 void NavReplay_Stop(void);
 void NavReplay_Process(void);
 #endif
