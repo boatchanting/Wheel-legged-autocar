@@ -412,7 +412,12 @@ void wifi_protocol_send_data(void)
     write_float_value(g_fuse_state.offset_x);
     write_float_value(g_fuse_state.offset_y);
 
-    // G. ground truth after arm compensation + delay feedforward (unit: mm)
+    // G. three trajectories for offline verification (unit: mm)
+    //    1. pure INS: ins_x, ins_y
+    //    2. GPS ground truth: ground_x, ground_y
+    //    3. fusion output: fuse_x, fuse_y (already sent in section F)
+    write_float_value(g_fuse_state.ins_x);
+    write_float_value(g_fuse_state.ins_y);
     write_float_value(gnss_trans.ground_x * 1000.0f);
     write_float_value(gnss_trans.ground_y * 1000.0f);
 

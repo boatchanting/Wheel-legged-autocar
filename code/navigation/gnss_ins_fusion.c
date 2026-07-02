@@ -1,8 +1,12 @@
 #include "gnss_ins_fusion.h"
 #include "gnss_transform.h"
 #include "inertial_nav.h"
+#include "nav_ram.h"                // nav_ram_data, NavPointType_e
 #include "../calculate/ekf.h"       // imu_data.gyro_z, euler_angle.pitch, heading
-#include "../config/sys_options.h"  // IMU_CATEGORY
+#include "../config/sys_options.h"  // IMU_CATEGORY, CURRENT_NAV_PLAN
+
+// 获取当前寻迹目标索引 (定义在 plan1_gnss.c 或 plan2_*.c 中)
+extern uint16 g_target_idx;
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -183,10 +187,41 @@ void Fusion_Gps_Correct(void)
     s_last_ground_x = ground_x_mm;
     s_last_ground_y = ground_y_mm;
 
-    // --- 融合权重 ---
+    // ====================================================
+    // 战术级 K_pos 调度器
+    // ====================================================
+
+    // 默认融合权重 (每次拉扯 2% 的误差，极度平滑)
     float K_pos = 0.02f;
 
-    // 【补丁 2：零速挂起 ZUPT】
+    // --- 战术规则 1：基于卫星数量的分级调度 ---
+    if (gnss.satellite_used < 10)
+    {
+        K_pos = 0.0f;   // 卫星严重不足，GPS 可能严重漂移，直接弃用
+    }
+    else if (gnss.satellite_used < 15)
+    {
+        K_pos = 0.01f;  // 卫星数一般，拉扯力度减半
+    }
+    // 卫星 >=15，维持默认 K_pos = 0.02f
+
+    // --- 战术规则 2：基于赛道特殊元素的调度 (最高优先级) ---
+    // 在雷区、单边桥、颠簸路段等对姿态要求极高的区域：彻底挂起 GPS
+    // 此规则覆盖卫星数规则，确保特殊元素内 100% 信任惯导
+    if (nav_ram_data.point_count > 0 && g_target_idx < nav_ram_data.point_count)
+    {
+        uint8 current_element = nav_ram_data.points[g_target_idx].point_type;
+        if (current_element == NAV_POINT_CIRCLE ||
+            current_element == NAV_POINT_BRIDGE ||
+            current_element == NAV_POINT_BUMP)
+        {
+            K_pos = 0.0f;
+        }
+    }
+
+    // --- 战术规则 3：底层物理异常兜底 ---
+
+    // 零速挂起 ZUPT：停车时 GPS 散布导致原地乱动
     float wheel_speed = 0.5f * (fabsf(motor_value.receive_left_speed_data) +
                                  fabsf(motor_value.receive_right_speed_data));
     float gyro_z_deg_s = imu_data.gyro_z * RAD_TO_DEG;
@@ -195,13 +230,15 @@ void Fusion_Gps_Correct(void)
         K_pos = 0.0f;
     }
 
-    // 【补丁 3：打滑信任权重转移】
+    // 打滑信任权重转移：打滑时惯导失真，被迫放大 GPS 权重
     if (inertial_nav.slip_flag == 1)
     {
         K_pos = 0.10f;
     }
 
-    // --- 缓慢更新位置 Offset ---
+    // ====================================================
+    // 执行融合更新 (Offset 弹性更新，禁止硬覆盖)
+    // ====================================================
     float err_x = ground_x_mm - g_fuse_state.fuse_x;
     float err_y = ground_y_mm - g_fuse_state.fuse_y;
     g_fuse_state.offset_x += K_pos * err_x;
