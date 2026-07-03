@@ -1166,6 +1166,12 @@
                 <name>$PROJ_DIR$\..\..\code\navigation\gnss_transform.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\gnss_ins_fusion.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\gnss_ins_fusion.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\gnssram2flash.h</name>
             </file>
             <file>
