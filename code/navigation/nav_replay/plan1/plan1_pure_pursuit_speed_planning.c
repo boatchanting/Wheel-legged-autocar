@@ -680,10 +680,7 @@ void NavReplay_Process(void)
 
             /* 3. 向量叉乘计算带符号的横向误差 CTE */
             float cross_product = path_dir_x * err_vec_y - path_dir_y * err_vec_x;
-            float cte = sqrtf(err_vec_x * err_vec_x + err_vec_y * err_vec_y);
-            if (cross_product < 0.0f) {
-                cte = -cte;
-            }
+            float cte = cross_product;
 
             /* 4. 计算当前绝对车速 (最低限速防止除零) */
             float current_speed = fabsf(inertial_nav.vx_body);
