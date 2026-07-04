@@ -80,7 +80,7 @@ int main(void)
     wifi_camera_init();
     #endif
     #if WIFI_CORE1_CUSTOM_IMAGE
-    wifi_diff_stream_init(PVC_IMAGE_W, PVC_IMAGE_H, 30U, 2U);
+    wifi_diff_stream_init(WIFI_CAMERA_SEND_W, WIFI_CAMERA_SEND_H, 30U, 2U);
     #endif
 #endif
 #if !(WIFI_CORE1_USE && WIFI_CORE1_ASSISTANT)
@@ -115,6 +115,7 @@ int main(void)
             // 在发送前将图像备份再进行发送，这样可以避免图像出现撕裂的问题
             memcpy(image_copy[0], mt9v03x_image[0], MT9V03X_IMAGE_SIZE);
 
+#if (WIFI_CAMERA_SEND_MODE == WIFI_CAMERA_SEND_MODE_COMPRESSED) // 配置选择在 code1\wifi.h中，不要和图像在屏幕显示同时开，没测试过，仅测试逐飞助手图像传输正常
             compress_image_to_target();// 将原图压缩至 compressed_image_copy (94*60)
 
             if(VisionIpc_Core1_TakePvcResetRequest())
@@ -148,6 +149,7 @@ int main(void)
                 bumpy_vision_process_camera_frame(compressed_image_copy[0]);
                 render_bumpy_vision_to_image();
             }
+#endif
 
             // 跳帧控制：视觉算法满帧运行(100fps)，只限制 WiFi 发送速率(~60fps)
             //if((frame_skip_counter % FRAME_SKIP_RATIO) == 0U)
@@ -157,7 +159,7 @@ int main(void)
                 seekfree_assistant_camera_send();
                 #endif
                 #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
-                wifi_diff_stream_send_gray_frame((const uint8 *)compressed_image_copy[0]);
+                wifi_diff_stream_send_gray_frame((const uint8 *)WIFI_CAMERA_SEND_IMAGE_PTR);
                 #endif
 
             #if DEBUG_DISPLAY_CORE1
