@@ -724,15 +724,15 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         //   (4) 第一次站起来之后，loop_counter > 2000(中断开启两秒后)
         if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
         {
-             // 如果角度过大（例如超过 40 度），判定为倒地
+             // 如果角度过大（例如超过 70 度），判定为倒地
             if (now_angle-ANG_MECH_ZERO > 70.0f || now_angle-ANG_MECH_ZERO < -70.0f)
             {
                 gyro_loop_out = 0;          // 清零平衡PWM
                 turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
                 PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
                 Accel_Feedforward_Reset();//【accel_ff】倒地保护时清空加速前馈
-                // 彻底关闭电机使能，可以取消下面这行的注释
-                //g_motor_enable = 0; 
+                // 彻底关闭电机使能
+                g_motor_enable = 0; 
                 NavReplay_Stop();//【nav】复现停止
                 #if GNSS_NAV == 1
                 GpsNavReplay_Stop();//【gnss】复现停止
