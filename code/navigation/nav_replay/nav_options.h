@@ -9,10 +9,11 @@
 #define PLAN1_PURE_PURSUIT_SPEED_PLANNING 1 // 方案1：惯导纯追踪带速度规划算法方案
 #define PLAN1_PURE_PURSUIT      2 // 方案2:惯导纯追踪算法方案
 #define PLAN1_METHOD_GNSS         3 // 方案3：GNSS纯追踪算法方案
+#define PLAN1_STANLEY_TRACKING    4 // 方案4：Stanley循迹 + 离线速度规划
 
 // 科目一方案
 #ifndef NAV_PLAN1_METHOD
-#define NAV_PLAN1_METHOD  PLAN1_PURE_PURSUIT_SPEED_PLANNING
+#define NAV_PLAN1_METHOD  PLAN1_STANLEY_TRACKING
 #endif
 
 // ========================================================

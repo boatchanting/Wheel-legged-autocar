@@ -42,6 +42,13 @@ typedef enum
         #endif
         #include "plan1/plan1_pure_pursuit.h"
         
+    #elif NAV_PLAN1_METHOD == PLAN1_STANLEY_TRACKING
+        // 【资源浪费提醒】：如果选中惯导，但系统总开关依然开了 GNSS，弹出黄色警告提醒。
+        #if GNSS_NAV == 1
+            #warning "[Nav Warning] Global GNSS_NAV=1, but Plan 1 uses INS Stanley tracking method! GNSS data is invalid for tracking, check for wasted CPU."
+        #endif
+        #include "plan1/plan1_stanley_tracking.h"
+        
     #else
         // 【越界检查】：填了一个不存在的方案编号
         #error "[Nav Config Error] Plan 1 (CURRENT_NAV_PLAN == 1) has no valid NAV_PLAN1_METHOD selected!"
