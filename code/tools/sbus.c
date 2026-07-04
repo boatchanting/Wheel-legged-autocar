@@ -194,6 +194,17 @@ void Remote_Control_Process(void)
         robot_ctrl.motor_enable = 1;
     }
 
+    // CH4 三态开关用于主动控制起立/倒下：
+    // LOW: 主动倒下；MID: 保持当前状态；HIGH: 主动起立。
+    if (ch4_mode < RC_SW_MID_LOW)
+    {
+        g_fallen = true;
+    }
+    else if (ch4_mode > RC_SW_MID_HIGH)
+    {
+        g_fallen = false;
+    }
+
     // --------------------------------------------------------
     // Step 4: 处理转向 (CH1)
     // --------------------------------------------------------
