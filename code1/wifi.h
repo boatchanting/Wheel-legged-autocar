@@ -95,6 +95,15 @@
 //4：没有图像信息，仅包含三条边线信息，边线信息只包含横轴坐标，纵轴坐标由图像高度得到，意味着每个边界在一行中只会有一个点，这样的方式可以极大的降低传输的数据量
 #define INCLUDE_BOUNDARY_TYPE   0
 
+// WIFI 图像发送源选择:
+// 0: 保持原流程，压缩为 compressed_image_copy (94x60)，跑视觉算法/渲染后发送。
+// 1: 直接发送 image_copy 原图 (188x120)，主循环跳过图像压缩和视觉算法。
+#define WIFI_CAMERA_SEND_MODE_COMPRESSED   0
+#define WIFI_CAMERA_SEND_MODE_RAW          1
+#ifndef WIFI_CAMERA_SEND_MODE
+#define WIFI_CAMERA_SEND_MODE              WIFI_CAMERA_SEND_MODE_COMPRESSED
+#endif
+
 
 #define WIFI_SSID_TEST          "11111111"
 #define WIFI_PASSWORD_TEST      "00000000"                  // 如果需要连接的WIFI 没有密码则需要将 这里 替换为 NULL
@@ -111,6 +120,16 @@
 extern uint8 image_copy[MT9V03X_H][MT9V03X_W];
 // 【新增】压缩后的图像备份数组(94x60)，供 PVC 算法、渲染画框及 WIFI 发送使用
 extern uint8 compressed_image_copy[PVC_IMAGE_H][PVC_IMAGE_W];
+
+#if (WIFI_CAMERA_SEND_MODE == WIFI_CAMERA_SEND_MODE_RAW)
+#define WIFI_CAMERA_SEND_IMAGE_PTR     (image_copy[0])
+#define WIFI_CAMERA_SEND_W             (MT9V03X_W)
+#define WIFI_CAMERA_SEND_H             (MT9V03X_H)
+#else
+#define WIFI_CAMERA_SEND_IMAGE_PTR     (compressed_image_copy[0])
+#define WIFI_CAMERA_SEND_W             (PVC_IMAGE_W)
+#define WIFI_CAMERA_SEND_H             (PVC_IMAGE_H)
+#endif
 
 extern int g_motor_enable;
 

@@ -1,6 +1,9 @@
 #ifndef _COMMON_H_
 #define _COMMON_H_
 
+#include "stdint.h"
+#include "stdbool.h"
+
 //==========================================
 // 宏定义
 //==========================================
@@ -12,6 +15,9 @@
 //==========================================
 // 全局变量声明
 //=========================================
+
+extern int g_motor_enable;       // 1: 电机安全使能, 0: 车端保护/急停关闭
+extern volatile bool g_fallen;   // true: 主动倒下/保持倒下, false: 主动起立
 
 // 【nav】导航记录控制标志位
 extern volatile uint8_t g_nav_start_recording; // 1: 开始录制, 0: 清除开始录制标记

@@ -1,0 +1,1743 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PID 控制架构解析 - 并联腿四舵机两轮平衡车</title>
+  <style>
+    :root {
+      --bg: #f7f7f4;
+      --panel: #ffffff;
+      --panel-2: #fbfbf8;
+      --text: #111111;
+      --muted: #62666d;
+      --soft: #e8e8e3;
+      --line: #deded8;
+      --accent: #10a37f;
+      --accent-dark: #0b7c63;
+      --accent-soft: #e7f6f1;
+      --warning: #b86b00;
+      --warning-soft: #fff4df;
+      --danger: #b42318;
+      --danger-soft: #fff0ee;
+      --code: #202123;
+      --shadow: 0 18px 45px rgba(0, 0, 0, 0.07);
+      color-scheme: light;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      margin: 0;
+      background:
+        linear-gradient(180deg, rgba(16, 163, 127, 0.08), transparent 360px),
+        var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+
+    a { color: var(--accent-dark); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    .shell {
+      width: min(1180px, calc(100vw - 32px));
+      margin: 0 auto;
+    }
+
+    header {
+      padding: 56px 0 24px;
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      gap: 8px;
+      align-items: center;
+      padding: 6px 10px;
+      border: 1px solid rgba(16, 163, 127, 0.24);
+      border-radius: 999px;
+      color: var(--accent-dark);
+      background: var(--accent-soft);
+      font-size: 13px;
+      font-weight: 650;
+    }
+
+    h1 {
+      margin: 18px 0 14px;
+      font-size: clamp(34px, 5vw, 64px);
+      line-height: 1.05;
+      letter-spacing: 0;
+      max-width: 980px;
+    }
+
+    .lead {
+      max-width: 900px;
+      margin: 0;
+      font-size: 18px;
+      color: #3e4248;
+    }
+
+    .meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 24px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 32px;
+      padding: 6px 11px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      color: #33373d;
+      font-size: 13px;
+      font-weight: 620;
+    }
+
+    nav {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-top: 1px solid rgba(222, 222, 216, 0.72);
+      border-bottom: 1px solid rgba(222, 222, 216, 0.86);
+      backdrop-filter: blur(18px);
+      background: rgba(247, 247, 244, 0.86);
+    }
+
+    .nav-inner {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 10px 0;
+      scrollbar-width: thin;
+    }
+
+    .nav-inner a {
+      flex: 0 0 auto;
+      padding: 7px 10px;
+      border-radius: 8px;
+      color: #34383f;
+      font-size: 14px;
+      font-weight: 620;
+    }
+
+    .nav-inner a:hover {
+      text-decoration: none;
+      background: #ecece7;
+    }
+
+    main { padding: 28px 0 80px; }
+
+    section {
+      margin: 28px 0;
+      scroll-margin-top: 72px;
+    }
+
+    .section-head {
+      display: flex;
+      gap: 18px;
+      align-items: flex-end;
+      justify-content: space-between;
+      margin: 0 0 14px;
+    }
+
+    h2 {
+      margin: 0;
+      font-size: clamp(24px, 3vw, 34px);
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+
+    h3 {
+      margin: 0 0 10px;
+      font-size: 19px;
+      line-height: 1.35;
+      letter-spacing: 0;
+    }
+
+    p { margin: 0 0 12px; }
+
+    .muted { color: var(--muted); }
+
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+      box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+      padding: 18px;
+    }
+
+    .card.prominent {
+      box-shadow: var(--shadow);
+      border-color: rgba(16, 163, 127, 0.2);
+    }
+
+    .note {
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-left: 4px solid var(--accent);
+      border-radius: 8px;
+      background: var(--panel-2);
+    }
+
+    .note.warning {
+      border-left-color: var(--warning);
+      background: var(--warning-soft);
+    }
+
+    .note.danger {
+      border-left-color: var(--danger);
+      background: var(--danger-soft);
+    }
+
+    .code, code {
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      color: var(--code);
+      background: #eeeeea;
+      border-radius: 5px;
+    }
+
+    code {
+      padding: 2px 5px;
+      font-size: 0.92em;
+    }
+
+    pre {
+      margin: 12px 0 0;
+      padding: 14px;
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: #202123;
+      color: #f7f7f2;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    pre code {
+      background: transparent;
+      color: inherit;
+      padding: 0;
+      border-radius: 0;
+    }
+
+    .formula {
+      display: block;
+      padding: 13px 14px;
+      margin: 10px 0;
+      border-radius: 8px;
+      border: 1px solid #d9e9e3;
+      background: var(--accent-soft);
+      font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+      color: #163b31;
+      overflow-x: auto;
+      white-space: nowrap;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--panel);
+    }
+
+    table {
+      width: 100%;
+      min-width: 680px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th, td {
+      padding: 11px 12px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f1f1ec;
+      color: #3a3d42;
+      font-weight: 720;
+    }
+
+    tr:last-child td { border-bottom: 0; }
+
+    .architecture {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    .flow {
+      display: grid;
+      gap: 10px;
+    }
+
+    .node {
+      padding: 12px 13px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .node strong {
+      display: block;
+      margin-bottom: 3px;
+    }
+
+    .arrow {
+      width: 1px;
+      height: 16px;
+      margin-left: 22px;
+      background: var(--accent);
+      position: relative;
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      left: -4px;
+      bottom: -1px;
+      width: 9px;
+      height: 9px;
+      border-right: 1px solid var(--accent);
+      border-bottom: 1px solid var(--accent);
+      transform: rotate(45deg);
+    }
+
+    .kpi {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfbf8;
+      padding: 12px;
+      min-height: 82px;
+    }
+
+    .metric .label {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 680;
+    }
+
+    .metric .value {
+      display: block;
+      font-size: 22px;
+      line-height: 1.2;
+      font-weight: 760;
+      word-break: break-word;
+    }
+
+    .metric .hint {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: #2e3238;
+      font-size: 13px;
+      font-weight: 680;
+    }
+
+    input, select {
+      width: 100%;
+      min-height: 40px;
+      padding: 8px 10px;
+      border: 1px solid #cfcfca;
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+
+    input:focus, select:focus {
+      outline: 2px solid rgba(16, 163, 127, 0.22);
+      border-color: var(--accent);
+    }
+
+    .btn-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    button {
+      min-height: 38px;
+      padding: 8px 12px;
+      border: 1px solid #cfcfca;
+      border-radius: 8px;
+      background: #ffffff;
+      color: #24272c;
+      font: inherit;
+      font-weight: 680;
+      cursor: pointer;
+    }
+
+    button.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    button:hover { filter: brightness(0.98); }
+
+    canvas {
+      width: 100%;
+      height: 220px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent-dark);
+      font-size: 12px;
+      font-weight: 760;
+    }
+
+    .status.warn {
+      background: var(--warning-soft);
+      color: var(--warning);
+    }
+
+    .status.danger {
+      background: var(--danger-soft);
+      color: var(--danger);
+    }
+
+    .timeline {
+      display: grid;
+      gap: 10px;
+    }
+
+    .tick {
+      display: grid;
+      grid-template-columns: 90px 1fr;
+      gap: 10px;
+      align-items: start;
+    }
+
+    .tick-time {
+      padding: 7px 9px;
+      border-radius: 8px;
+      background: #202123;
+      color: #fff;
+      font-weight: 750;
+      text-align: center;
+    }
+
+    .source-list {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 12px 14px;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 760;
+    }
+
+    footer {
+      padding: 36px 0 54px;
+      color: var(--muted);
+      border-top: 1px solid var(--line);
+    }
+
+    @media (max-width: 900px) {
+      .grid.two, .grid.three, .grid.four, .architecture { grid-template-columns: 1fr; }
+      .controls, .kpi { grid-template-columns: 1fr; }
+      header { padding-top: 34px; }
+      .section-head { display: block; }
+      .tick { grid-template-columns: 1fr; }
+      table { min-width: 760px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="shell">
+    <span class="eyebrow">CAR_SELECT = 3 · 四舵机并联 V 腿 · 两轮平衡车</span>
+    <h1>PID 控制架构解析：从 rpm 到车速，从误差到 PWM</h1>
+    <p class="lead">
+      这份文档把你当前底层控制拆成小白能跟上的数学链路：速度怎么量、PID 怎么算、限幅为什么会饱和、舵机单次增量怎样影响加速度，以及哪些参数值得按公式重新测试。
+    </p>
+    <div class="meta-row">
+      <span class="pill">速度换算：rpm × 4.936 = mm/s</span>
+      <span class="pill">舵机速度环：9ms</span>
+      <span class="pill">角度环：3ms</span>
+      <span class="pill">角速度环：1ms</span>
+      <span class="pill">Rolling：5ms</span>
+    </div>
+  </header>
+
+  <nav>
+    <div class="shell nav-inner">
+      <a href="#summary">总览</a>
+      <a href="#speed">速度换算</a>
+      <a href="#architecture">控制链路</a>
+      <a href="#params">参数表</a>
+      <a href="#pid">PID 公式</a>
+      <a href="#servo-loop">舵机速度环</a>
+      <a href="#balance-loop">平衡环</a>
+      <a href="#turn-roll">转向与侧倾</a>
+      <a href="#tuning">调参方法</a>
+      <a href="#speed-up">跑得更快</a>
+      <a href="#solvers">交互求解器</a>
+      <a href="#sources">代码依据</a>
+    </div>
+  </nav>
+
+  <main class="shell">
+    <section id="summary">
+      <div class="section-head">
+        <h2>先给结论</h2>
+      </div>
+      <div class="grid three">
+        <div class="card prominent">
+          <h3>1. PID 不是直接算出“真实速度”</h3>
+          <p class="muted">PID 算出的是控制指令：舵机 duty 调整量、目标角速度、电机 PWM。真实速度由车轮编码器测出来，再用 <code>rpm × 4.936</code> 换成 <code>mm/s</code> 反馈回来。</p>
+        </div>
+        <div class="card prominent">
+          <h3>2. 现在速度主调节在舵机速度环</h3>
+          <p class="muted">1ms 中断里每 9ms 调用 <code>Servo_Speed_Control()</code>，输出 <code>g_target_pwm_speed_adj</code> 给舵机执行器；传统 <code>Speed_Loop_Control()</code> 在当前 Core0 ISR 中没有实际参与。</p>
+        </div>
+        <div class="card prominent">
+          <h3>3. 要测的不是一个参数，而是一组约束</h3>
+          <p class="muted">老师说的“限幅、单次舵机增量、角度环 Kp/Kd”要一起测：总输出限幅决定目标能有多大，单次增量决定目标多久到位，Kp/Kd 决定车身恢复力和阻尼。</p>
+        </div>
+      </div>
+      <div class="note warning" style="margin-top:14px">
+        <strong>重要：</strong>本文没有读取 <code>servo_executor.c</code>，因为你明确说不要读取；所以“单次舵机增量”在求解器里作为可调输入。这个值应当来自执行器里的斜率限制配置或你实测的每 1ms duty 变化量。
+      </div>
+      <div class="note" style="margin-top:14px">
+        <strong>按你给出的开关理解：</strong><code>ACCEL_FF_ENABLE=1</code> 且 <code>ACCEL_FF_MODE=1</code>，所以加速前馈是“直接叠加 PWM”模式，不是“临时增强舵机速度环 Kp”模式；求解器里的 <code>Kp boost</code> 默认按 1，只用于对比假设。<code>IMU_CATEGORY=3</code>，所以本文按 IMU963RA 与 <code>CAR_SELECT=3</code> 的轴向取法解释。
+      </div>
+    </section>
+
+    <section id="speed">
+      <div class="section-head">
+        <h2>速度从哪里来</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>编码器 rpm 到车速</h3>
+          <p>当前 1ms 中断每 9ms 读取左右轮编码器速度，并计算中间变量：</p>
+          <span class="formula">current_actual_speed = 0.5 × (right_rpm - left_rpm)</span>
+          <p>然后把它当作“实际速度 rpm 单位量”送入舵机速度环。你给出的实车换算是：</p>
+          <span class="formula">v_mm_s = rpm × 4.936</span>
+          <p>如果要从期望线速度反推 PID 目标速度：</p>
+          <span class="formula">target_rpm = v_mm_s / 4.936</span>
+        </div>
+        <div class="card">
+          <h3>这个系数代表什么</h3>
+          <p>轮子每分钟转 <code>rpm</code> 圈，线速度等于轮周长乘转速再除以 60 秒：</p>
+          <span class="formula">v_mm_s = rpm × C_mm / 60</span>
+          <p>已知 <code>v_mm_s = rpm × 4.936</code>，所以：</p>
+          <span class="formula">C_mm = 4.936 × 60 = 296.16 mm</span>
+          <span class="formula">D_mm = C_mm / π ≈ 94.27 mm</span>
+          <p class="muted">这说明你的速度系数大约对应直径 94mm 的轮子，和小车轮径是一个合理量级。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="section-head">
+        <h2>控制链路</h2>
+      </div>
+      <div class="architecture">
+        <div class="card">
+          <h3>纵向速度与平衡</h3>
+          <div class="flow">
+            <div class="node"><strong>目标速度</strong><code>target_speed_set</code>，单位与编码器速度一致，换算到线速度用 <code>×4.936</code>。</div>
+            <div class="arrow"></div>
+            <div class="node"><strong>实际速度</strong><code>current_actual_speed = 0.5 × (right - left)</code>。</div>
+            <div class="arrow"></div>
+            <div class="node"><strong>舵机速度环，9ms</strong><code>Servo_Speed_Control()</code> 输出 <code>g_target_pwm_speed_adj</code>。</div>
+            <div class="arrow"></div>
+            <div class="node"><strong>舵机执行器，1ms</strong><code>servo_executor_update()</code> 平滑追目标，受单次增量限制。</div>
+            <div class="arrow"></div>
+            <div class="node"><strong>车身姿态改变</strong>腿部高度/前后姿态改变重心，让平衡车用“追重心”的方式加速或减速。</div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>电机平衡与转向</h3>
+          <div class="flow">
+            <div class="node"><strong>Pitch 角度环，3ms</strong><code>Angle_Loop_Control(speed_loop_out, pitch)</code> 计算期望俯仰角速度。</div>
+            <div class="arrow"></div>
+            <div class="node"><strong>Pitch 角速度环，1ms</strong><code>Gyro_Loop_Control(angle_loop_out, gyro)</code> 输出 <code>gyro_loop_out</code>。</div>
+            <div class="arrow"></div>
+            <div class="node"><strong>Yaw 转向环</strong>3ms 转向角度环输出目标 yaw 角速度，1ms 转向角速度环输出 <code>turn_gyro_loop_out</code>。</div>
+            <div class="arrow"></div>
+            <div class="node"><strong>左右轮融合</strong><code>left = gyro + drive_ff + turn</code>，<code>right = -gyro - drive_ff + turn</code>。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>1ms ISR 调度节拍</h3>
+        <div class="timeline">
+          <div class="tick"><div class="tick-time">每 1ms</div><div>EKF 更新、平衡角速度环、转向角速度环、电机 PWM 融合、舵机执行器更新。</div></div>
+          <div class="tick"><div class="tick-time">每 3ms</div><div>转向角度环；平衡角度环读取 pitch 并更新 <code>angle_loop_out</code>。</div></div>
+          <div class="tick"><div class="tick-time">每 5ms</div><div>Rolling 横滚平衡与主动侧倾目标更新。</div></div>
+          <div class="tick"><div class="tick-time">每 9ms</div><div>舵机速度环、刹车前馈、加速前馈、倒地/关机保护。</div></div>
+          <div class="tick"><div class="tick-time">每 10ms</div><div>惯导、导航复刻任务等上层目标更新。</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="params">
+      <div class="section-head">
+        <h2>CAR_SELECT = 3 参数表</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>环路</th>
+              <th>周期</th>
+              <th>Kp</th>
+              <th>Ki</th>
+              <th>Kd</th>
+              <th>输出限幅</th>
+              <th>积分限幅</th>
+              <th>补偿/零点</th>
+              <th>实际作用</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>舵机速度环</td>
+              <td>9ms</td>
+              <td>-4.5</td>
+              <td>0</td>
+              <td>-0.17</td>
+              <td>±1000 duty</td>
+              <td>±100000</td>
+              <td>0</td>
+              <td>由速度误差生成腿部姿态/高度调整量 <code>g_target_pwm_speed_adj</code>。</td>
+            </tr>
+            <tr>
+              <td>传统速度环</td>
+              <td>未在当前 ISR 调用</td>
+              <td>0</td>
+              <td>0</td>
+              <td>0</td>
+              <td>±1500</td>
+              <td>±2000</td>
+              <td>0</td>
+              <td>函数存在，但当前 Core0 控制链路没有用它去改目标倾角。</td>
+            </tr>
+            <tr>
+              <td>平衡角度环</td>
+              <td>3ms</td>
+              <td>-12</td>
+              <td>0</td>
+              <td>-13.3333</td>
+              <td>±8000</td>
+              <td>0</td>
+              <td>机械零点 -3°</td>
+              <td>由 pitch 误差生成目标俯仰角速度。</td>
+            </tr>
+            <tr>
+              <td>平衡角速度环</td>
+              <td>1ms</td>
+              <td>-16</td>
+              <td>0</td>
+              <td>0</td>
+              <td>±9000 PWM</td>
+              <td>0</td>
+              <td>死区 0，陀螺零偏 0</td>
+              <td>把目标角速度变成左右轮差动 PWM。</td>
+            </tr>
+            <tr>
+              <td>转向角度环</td>
+              <td>3ms</td>
+              <td>-8</td>
+              <td>0</td>
+              <td>0</td>
+              <td>±8000</td>
+              <td>0</td>
+              <td>死区 0</td>
+              <td>由 yaw 误差生成目标 yaw 角速度。</td>
+            </tr>
+            <tr>
+              <td>转向角速度环</td>
+              <td>1ms</td>
+              <td>20</td>
+              <td>0</td>
+              <td>16</td>
+              <td>±8000 PWM</td>
+              <td>0</td>
+              <td>死区 0</td>
+              <td>生成同向叠加到左右轮的转向 PWM。</td>
+            </tr>
+            <tr>
+              <td>Rolling 横滚环</td>
+              <td>5ms</td>
+              <td>44</td>
+              <td>0</td>
+              <td>7</td>
+              <td>±1000 duty</td>
+              <td>0</td>
+              <td>零点 0°</td>
+              <td>单边桥/主动侧倾时调整左右腿高度差。</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="pid">
+      <div class="section-head">
+        <h2>PID 基础公式</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>离散 PID 公式</h3>
+          <p>控制器每隔固定周期运行一次，第 <code>k</code> 次运行时：</p>
+          <span class="formula">e[k] = target[k] - actual[k]</span>
+          <span class="formula">I[k] = clamp(I[k-1] + e[k], -Imax, Imax)</span>
+          <span class="formula">D[k] = e[k] - e[k-1]</span>
+          <span class="formula">u_raw[k] = Kp·e[k] + Ki·I[k] + Kd·D[k]</span>
+          <span class="formula">u[k] = clamp(u_raw[k], -Omax, Omax)</span>
+          <p class="muted">你的代码里 D 项没有除以采样周期，所以周期改变时，Kd 要按比例换算。代码注释中的做法是 <code>Kd_new = Kd_old × T_old / T_new</code>。</p>
+        </div>
+        <div class="card">
+          <h3>限幅的物理含义</h3>
+          <p>限幅不是“随便挡一下”，它定义了系统最多能发出多大控制意图。</p>
+          <span class="formula">输出限幅 Omax：本环最多允许输出多少 duty / PWM / 角速度指令</span>
+          <span class="formula">积分限幅 Imax：防止长期误差把积分累到无法恢复</span>
+          <span class="formula">单次增量 S：执行器每 1ms 最多追多少 duty</span>
+          <p class="muted">速度环总输出限幅和单次舵机增量要配套测。前者决定“想动多大”，后者决定“多久动到”。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="servo-loop">
+      <div class="section-head">
+        <h2>舵机速度环：速度误差变成腿部 duty</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>代码里的完整数学链</h3>
+          <span class="formula">speed_now = 0.6·actual + 0.3·last + 0.1·prelast</span>
+          <span class="formula">e = target_speed - speed_now</span>
+          <span class="formula">k = 0.4 + 0.6 × (1 - exp(-|e|/10)) / (1 + exp(-|e|/10))</span>
+          <span class="formula">Kp_eff = -4.5 × k × Kp_boost</span>
+          <span class="formula">u_raw = Kp_eff·e + 0·I + (-0.17)·(e - e_last)</span>
+          <span class="formula">g_target_pwm_speed_adj = clamp(u_raw, -1000, 1000)</span>
+          <p>这里 <code>k</code> 是自适应比例系数：速度误差很小时约为 0.4，误差很大时接近 1.0。也就是说，小误差时温柔，大误差时更硬。</p>
+          <p class="muted">你当前配置是 <code>ACCEL_FF_MODE=1</code>，Kp 增强模式未启用，所以正常运行时 <code>Kp_boost = 1</code>。</p>
+        </div>
+        <div class="card">
+          <h3>从 duty 到舵机角度的粗换算</h3>
+          <p>舵机 PWM 频率为 <code>300Hz</code>，代码给出：</p>
+          <span class="formula">DUTY_RANGE_180 = 2.0ms × 300Hz × 10000 / 1000 = 6000</span>
+          <span class="formula">DEGREE_PER_DUTY = 180 / 6000 = 0.03°/duty</span>
+          <p>所以速度环输出限幅 <code>±1000 duty</code> 理论上对应约：</p>
+          <span class="formula">1000 × 0.03 = 30°</span>
+          <p class="muted">注意：V 腿最终高度/角度还要经过五连杆查表和执行器斜率限制。这个 30° 是“原始舵机 duty 到角度”的粗换算，不等于车身一定转 30°。</p>
+        </div>
+      </div>
+      <div class="note" style="margin-top:14px">
+        <strong>小白理解：</strong>速度环像一个“腿部姿态指挥官”。目标速度和实际速度差很多，它就给较大的腿部 duty 调整；但它自己不会直接让轮子转，轮子仍由平衡角速度环和前馈融合输出 PWM。
+      </div>
+    </section>
+
+    <section id="balance-loop">
+      <div class="section-head">
+        <h2>平衡角度环与角速度环</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>角度环，3ms</h3>
+          <p>代码里目标角度由机械零点和 <code>speed_loop_out</code> 合成：</p>
+          <span class="formula">target_angle = ANG_MECH_ZERO - speed_loop_out</span>
+          <span class="formula">e_angle = target_angle - pitch</span>
+          <span class="formula">u_angle_raw = -12·e_angle + (-13.3333)·(e_angle - e_last)</span>
+          <span class="formula">angle_loop_out = -clamp(u_angle_raw, -8000, 8000)</span>
+          <p class="muted">当前 ISR 中 <code>speed_loop_out</code> 没有被传统速度环更新，所以多数情况下目标角度就是机械零点 <code>-3°</code>。</p>
+        </div>
+        <div class="card">
+          <h3>角速度环，1ms</h3>
+          <p>IMU963RA 且 <code>CAR_SELECT=3</code> 时，pitch 角速度取 <code>imu_data.gyro_x</code> 转成 deg/s，并做低通：</p>
+          <span class="formula">now_gyro = 0.8·now_gyro_old + 0.2·gyro_x_deg_s</span>
+          <span class="formula">e_gyro = angle_loop_out - now_gyro</span>
+          <span class="formula">gyro_loop_out = clamp(-16·e_gyro, -9000, 9000)</span>
+          <p>最后左右轮差动：</p>
+          <span class="formula">pwm_left = gyro_loop_out + drive_ff + turn_gyro_loop_out</span>
+          <span class="formula">pwm_right = -gyro_loop_out - drive_ff + turn_gyro_loop_out</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="turn-roll">
+      <div class="section-head">
+        <h2>转向与主动侧倾</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>转向 PID</h3>
+          <p>转向先把 yaw 误差归一化到 <code>-180° ~ 180°</code>，再把输入误差限到 <code>±45°</code>：</p>
+          <span class="formula">yaw_error = wrap(err_degree, -180°, 180°)</span>
+          <span class="formula">yaw_error = clamp(yaw_error, -45°, 45°)</span>
+          <span class="formula">turn_angle_loop_out = clamp(-8·yaw_error, -8000, 8000)</span>
+          <span class="formula">turn_gyro_loop_out = clamp(20·e + 16·(e - e_last), -8000, 8000)</span>
+          <p class="muted">转向 PWM 是同向加到左右轮上，所以它让两轮形成偏航力矩，而不是维持直立的差动平衡力矩。</p>
+        </div>
+        <div class="card">
+          <h3>主动侧倾的物理式</h3>
+          <p>转弯时，车身需要向内侧倾来抵抗向心加速度。代码用速度与 yaw 角速度估计横向加速度：</p>
+          <span class="formula">v_m_s = current_actual_speed × 0.004936 × (-1)</span>
+          <span class="formula">a_lat = v_m_s × yaw_rate_rad_s</span>
+          <span class="formula">roll_request = -atan2(a_lat, 9.80665) × 57.2958</span>
+          <span class="formula">roll_target = clamp(roll_request, -18°, 18°)</span>
+          <p>再把目标横滚角换成左右腿高度差，最大单侧高度差为 <code>3.5cm</code>，并由 5ms ramp 平滑建立。</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="tuning">
+      <div class="section-head">
+        <h2>按公式调参，而不是只看波形试</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>1. 先把速度和加速度算出来</h3>
+          <p>每 9ms 记录一次实际 rpm，就能算实车线速度和加速度：</p>
+          <span class="formula">v[k] = 4.936 × rpm[k]  (mm/s)</span>
+          <span class="formula">a[k] = (v[k] - v[k-1]) / 0.009  (mm/s²)</span>
+          <span class="formula">a_m_s2[k] = a[k] / 1000</span>
+          <p>如果你希望从 <code>v0</code> 在 <code>t</code> 秒内变到 <code>v1</code>：</p>
+          <span class="formula">a_des = (v1 - v0) / t</span>
+          <span class="formula">每 9ms 应变化 Δrpm = a_des × 0.009 / 4.936</span>
+        </div>
+        <div class="card">
+          <h3>2. 再看限幅是否合理</h3>
+          <p>舵机速度环当前总输出限幅为 <code>1000 duty</code>。若执行器单次增量为 <code>S duty/ms</code>：</p>
+          <span class="formula">执行器最大 duty 速度 = S / 0.001 = 1000S duty/s</span>
+          <span class="formula">9ms 内最多追上 min(1000, 9S) duty</span>
+          <span class="formula">等效舵机角速度 ≈ 0.03S / 0.001 = 30S °/s</span>
+          <p class="muted">如果波形里 <code>g_target_pwm_speed_adj</code> 经常顶到 ±1000，说明速度环总输出限幅或 Kp/Kd 过强；如果目标没顶但实际舵机 duty 跟不上，问题更可能在单次增量太小。</p>
+        </div>
+        <div class="card">
+          <h3>3. 平衡角度环 Kp/Kd 怎么看</h3>
+          <p><code>Kp</code> 是“扶正力度”，<code>Kd</code> 是“刹住晃动的阻尼”。</p>
+          <span class="formula">u_angle = Kp·角度误差 + Kd·误差变化</span>
+          <p>调试思路：</p>
+          <ul>
+            <li>车身软、倒得慢但扶不住：Kp 可能偏小。</li>
+            <li>车身大幅来回摆：Kp 可能偏大或 Kd 不够。</li>
+            <li>高频抖、噪声放大：Kd 可能偏大，或 gyro/pitch 滤波不够。</li>
+            <li>改采样周期后，优先按 <code>Kd_new = Kd_old × T_old / T_new</code> 换算，再微调。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>4. 建议记录的波形</h3>
+          <ul>
+            <li><code>target_speed_set</code>、<code>current_actual_speed</code>、换算后的 <code>v_mm_s</code>。</li>
+            <li><code>pid_servo_speed.error</code>、<code>g_target_pwm_speed_adj</code>、实际四舵机 duty。</li>
+            <li><code>euler_angle.pitch</code>、<code>angle_loop_out</code>、<code>now_gyro</code>、<code>gyro_loop_out</code>。</li>
+            <li><code>turn_angle_loop_out</code>、<code>turn_gyro_loop_out</code>、最终 <code>pwm_left/right</code>。</li>
+            <li>刹车/加速前馈：<code>brake_pwm</code>、<code>accel_ff_pwm</code>。</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="speed-up">
+      <div class="section-head">
+        <h2>想在赛道上跑得更快，底层该怎么优化</h2>
+      </div>
+      <div class="note">
+        <strong>短答案：</strong>不是简单把加速度和减速度都调大，而是做“动态加减速”。直道允许更大加速度，弯前按刹车距离提前降速，弯中保留平衡和转向 PWM 余量，出弯再用可控加速度拉起来。更快的本质是平均速度更高，而不是每一瞬间都更猛。
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>当前代码里的提速瓶颈</h3>
+          <ul>
+            <li><code>target_speed_set</code> 经常被上层任务直接写成固定值，底层 9ms 速度环会看到台阶输入，缺少统一的速度斜率与 jerk 管理。</li>
+            <li><code>Accel_Feedforward_Update()</code> 目前主要服务复刻运行窗口；PVC、桥梁、三阶段、特殊动作等场景会屏蔽或清空加速前馈。</li>
+            <li><code>OUR_PWM_MAX_LIMIT = 8000</code>，但平衡、转向、加速前馈、刹车前馈都在抢同一个最终 PWM 余量。</li>
+            <li><code>GYR_MAX_O = 9000</code> 大于最终电机限幅 8000，平衡内环自己就可能把最终输出顶满，导致转向和驱动前馈没有余量。</li>
+            <li><code>ROLL_BALANCE_ENABLE_INIT = 0</code>，主动侧倾默认关闭；高速弯道时如果没有侧倾支撑，能跑的弯中速度会受限。</li>
+            <li>传统 <code>Speed_Loop_Control()</code> 在当前 Core0 ISR 中没有参与，<code>speed_loop_out</code> 基本不会给平衡角度环提供速度外环倾角补偿。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>更快不等于更暴力</h3>
+          <p>速度提升要同时满足三个约束：</p>
+          <span class="formula">纵向约束：|a_x| ≤ a_x_max，防止后坐、前栽、打滑、舵机跟不上</span>
+          <span class="formula">横向约束：|a_y| = |v·ω| ≤ a_y_max，防止弯中侧翻或横向漂移</span>
+          <span class="formula">PWM 约束：|balance + drive + turn| ≤ 8000，并保留平衡优先余量</span>
+          <p>所以应该用动态速度规划：</p>
+          <span class="formula">v_plan[k] = ramp_with_jerk(v_plan[k-1], v_limit_by_track, a_up, a_down, j_limit)</span>
+          <p class="muted">如果没有规划器，目标速度一跳变，底层只能靠 PID、前馈、限幅硬接，波形看起来会“猛”，但平均速度未必更高。</p>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>建议 1：加统一速度规划器</h3>
+          <p>在所有上层任务写 <code>target_speed_set</code> 之前或之后增加一层：</p>
+          <span class="formula">target_speed_raw：遥控/导航/视觉想要的速度</span>
+          <span class="formula">target_speed_plan：经过加速度、减速度、jerk、弯道限速后的速度</span>
+          <span class="formula">底层 PID 只看 target_speed_plan</span>
+          <p>推荐按场景分参数：</p>
+          <ul>
+            <li>直道：较大的 <code>a_up</code>，较小 jerk，允许快速提速但不突然给满。</li>
+            <li>弯前：较大的 <code>a_down</code>，按刹车距离提前降速。</li>
+            <li>弯中：速度上限由 yaw 角速度、视觉曲率或转向误差决定。</li>
+            <li>出弯：短时间提高 <code>a_up</code> 或加速前馈，但要看 PWM 余量。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>建议 2：用刹车距离，而不是到弯口才刹</h3>
+          <p>如果当前速度是 <code>v_now</code>，弯中安全速度是 <code>v_turn</code>，允许最大减速度是 <code>a_down</code>，应提前这么远开始减速：</p>
+          <span class="formula">d_brake = (v_now² - v_turn²) / (2·a_down) + margin</span>
+          <p>例子：从 <code>1000mm/s</code> 降到 <code>400mm/s</code>，允许减速度 <code>2.0m/s²</code>：</p>
+          <span class="formula">d = (1.0² - 0.4²) / (2×2.0) = 0.21m</span>
+          <p class="muted">这会比“看见弯再把目标速度切低”稳定很多，因为刹车前馈、舵机姿态保护、平衡环都有时间进入状态。</p>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>建议 3：做 PWM 余量仲裁</h3>
+          <p>现在最终融合是直接相加再统一限幅：</p>
+          <span class="formula">left = gyro + brake/accel + turn</span>
+          <span class="formula">right = -gyro - brake/accel + turn</span>
+          <p>更稳的做法是明确优先级：</p>
+          <span class="formula">优先级：平衡 gyro > 刹车 brake > 转向 turn > 加速 accel</span>
+          <span class="formula">如果 |总和| 超过 8000，先缩小低优先级项，而不是让最终限幅悄悄截断</span>
+          <p>建议增加饱和计数：</p>
+          <ul>
+            <li><code>gyro_saturation_count</code>：平衡环是否经常顶满。</li>
+            <li><code>drive_ff_cut_count</code>：加速前馈是否经常被刹车/特殊任务清掉。</li>
+            <li><code>motor_final_saturation_count</code>：最终左右轮是否经常被 8000 截断。</li>
+            <li><code>servo_speed_saturation_count</code>：舵机速度环是否经常到 ±1000。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>建议 4：不要急着恢复传统速度外环</h3>
+          <p>代码里 <code>Speed_Loop_Control()</code> 存在，但当前没有参与。理论上速度外环可以输出目标倾角，让车通过“倾斜追重心”加速；但你现在已经用舵机速度环改变腿部姿态。</p>
+          <p>如果两个速度外环同时工作，容易出现：</p>
+          <ul>
+            <li>舵机速度环想通过腿部姿态提速。</li>
+            <li>传统速度环又想通过车身倾角提速。</li>
+            <li>平衡角度环同时要救直立，最后互相抢控制权。</li>
+          </ul>
+          <p class="muted">建议先选择一个主速度执行器。当前架构下优先把“舵机速度环 + 电机前馈 + 平衡保护”调清楚，再考虑小幅、低频地把速度外环接回 <code>speed_loop_out</code>。</p>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card">
+          <h3>建议 5：加速前馈改成规划器驱动</h3>
+          <p>当前加速前馈触发条件强调复刻起步/目标速度阶跃：</p>
+          <span class="formula">speed_lag = |target| > |actual| + 30</span>
+          <span class="formula">target_step_up = |target| - |last_target| ≥ 30</span>
+          <span class="formula">accel_ff_target = clamp(10 × speed_deficit × direction, ±3000)</span>
+          <p>如果要比赛提速，建议让规划器输出 <code>a_request</code>，前馈按加速度请求给，而不是只看速度缺口：</p>
+          <span class="formula">accel_ff_target = Kff_a · a_request + Kff_v · (v_plan - v_actual)</span>
+          <p class="muted">这样直道、出弯、低速起步可以共用一套逻辑，也更容易用波形验证。</p>
+        </div>
+        <div class="card">
+          <h3>建议 6：主动侧倾可以成为高速弯道工具</h3>
+          <p>代码已经有主动侧倾公式：</p>
+          <span class="formula">a_lat = v_m_s × yaw_rate_rad_s</span>
+          <span class="formula">roll = atan2(a_lat, g)</span>
+          <p>但默认 <code>roll_balance_enable = 0</code>。如果赛道弯道速度上不去，可以做分阶段测试：</p>
+          <ul>
+            <li>先只在中高速、非刹车、非跳跃、非特殊任务时启用。</li>
+            <li>从较小 <code>TURN_ACTIVE_ROLL_MAX</code> 和较小 ramp 开始。</li>
+            <li>观察四舵机是否触边界、弯中 pitch 是否恶化、最终电机 PWM 是否更少饱和。</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <h3>建议优先级</h3>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>优先级</th>
+                <th>优化项</th>
+                <th>为什么先做</th>
+                <th>验证波形</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>1</td>
+                <td>加饱和计数和速度/加速度记录</td>
+                <td>先知道是电机 PWM、舵机 duty、还是目标速度规划卡住了。</td>
+                <td><code>v</code>、<code>a</code>、<code>gyro_loop_out</code>、<code>turn_gyro_loop_out</code>、<code>drive_ff</code>、最终 PWM。</td>
+              </tr>
+              <tr>
+                <td>2</td>
+                <td>统一速度规划器</td>
+                <td>消除上层速度台阶，动态控制加减速和 jerk。</td>
+                <td><code>target_speed_raw</code> vs <code>target_speed_plan</code> vs <code>current_actual_speed</code>。</td>
+              </tr>
+              <tr>
+                <td>3</td>
+                <td>PWM 余量仲裁</td>
+                <td>保证平衡优先，避免直接相加后被最终限幅悄悄截断。</td>
+                <td>最终饱和次数下降，弯中不突然失控。</td>
+              </tr>
+              <tr>
+                <td>4</td>
+                <td>按规划器重构加速/刹车前馈</td>
+                <td>让前馈服务全赛道，而不是只服务复刻起步窗口。</td>
+                <td>出弯速度响应变快，但 pitch 不明显后坐/前栽。</td>
+              </tr>
+              <tr>
+                <td>5</td>
+                <td>高速弯道启用主动侧倾</td>
+                <td>提高弯中横向稳定性，但必须先确认舵机余量。</td>
+                <td><code>roll_degree</code>、四舵机 duty、横滚角、弯中速度。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="solvers">
+      <div class="section-head">
+        <h2>交互求解器</h2>
+      </div>
+
+      <div class="grid two">
+        <div class="card prominent">
+          <h3>速度换算器</h3>
+          <div class="controls">
+            <label>左轮 rpm
+              <input id="speedLeft" type="number" value="-120" step="1" />
+            </label>
+            <label>右轮 rpm
+              <input id="speedRight" type="number" value="120" step="1" />
+            </label>
+            <label>目标线速度 mm/s
+              <input id="speedTargetMm" type="number" value="800" step="10" />
+            </label>
+            <label>速度换算系数
+              <input id="speedFactor" type="number" value="4.936" step="0.001" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">current_actual_speed</span><span id="speedActualRpm" class="value">--</span><span class="hint">0.5 × (right - left)</span></div>
+            <div class="metric"><span class="label">实际线速度</span><span id="speedActualMm" class="value">--</span><span class="hint">rpm × 4.936</span></div>
+            <div class="metric"><span class="label">实际 m/s</span><span id="speedActualM" class="value">--</span><span class="hint">mm/s ÷ 1000</span></div>
+            <div class="metric"><span class="label">目标 rpm</span><span id="speedTargetRpm" class="value">--</span><span class="hint">mm/s ÷ 4.936</span></div>
+          </div>
+        </div>
+
+        <div class="card prominent">
+          <h3>加减速度规划器</h3>
+          <div class="controls">
+            <label>初速度 v0 mm/s
+              <input id="accV0" type="number" value="0" step="10" />
+            </label>
+            <label>目标速度 v1 mm/s
+              <input id="accV1" type="number" value="900" step="10" />
+            </label>
+            <label>完成时间 ms
+              <input id="accTime" type="number" value="600" step="10" />
+            </label>
+            <label>控制周期 ms
+              <input id="accPeriod" type="number" value="9" step="1" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">所需加速度</span><span id="accA" class="value">--</span><span class="hint">mm/s² 与 m/s²</span></div>
+            <div class="metric"><span class="label">每周期速度变化</span><span id="accDvTick" class="value">--</span><span class="hint">mm/s per tick</span></div>
+            <div class="metric"><span class="label">每周期 rpm 变化</span><span id="accRpmTick" class="value">--</span><span class="hint">Δrpm = Δv / 4.936</span></div>
+            <div class="metric"><span class="label">理想等效倾角</span><span id="accTilt" class="value">--</span><span class="hint">atan(a/g)，只做物理估算</span></div>
+          </div>
+          <canvas id="accChart" width="760" height="260" aria-label="速度规划曲线"></canvas>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card prominent">
+          <h3>赛道动态加减速求解器</h3>
+          <div class="controls">
+            <label>当前速度 rpm
+              <input id="raceNowRpm" type="number" value="200" step="1" />
+            </label>
+            <label>直道目标 rpm
+              <input id="raceStraightRpm" type="number" value="300" step="1" />
+            </label>
+            <label>弯中目标 rpm
+              <input id="raceTurnRpm" type="number" value="120" step="1" />
+            </label>
+            <label>允许加速度 m/s²
+              <input id="raceAccel" type="number" value="1.6" step="0.1" />
+            </label>
+            <label>允许减速度 m/s²
+              <input id="raceDecel" type="number" value="2.4" step="0.1" />
+            </label>
+            <label>安全横向加速度 m/s²
+              <input id="raceLatMax" type="number" value="2.2" step="0.1" />
+            </label>
+            <label>当前 yaw 角速度 °/s
+              <input id="raceYawRate" type="number" value="120" step="1" />
+            </label>
+            <label>刹车余量 mm
+              <input id="raceBrakeMargin" type="number" value="120" step="10" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">当前线速度</span><span id="raceNowSpeed" class="value">--</span><span class="hint">rpm × 4.936</span></div>
+            <div class="metric"><span class="label">加到直道目标时间</span><span id="raceAccelTime" class="value">--</span><span class="hint">按允许加速度估算</span></div>
+            <div class="metric"><span class="label">弯前刹车距离</span><span id="raceBrakeDist" class="value">--</span><span class="hint">含安全余量</span></div>
+            <div class="metric"><span class="label">当前横向加速度</span><span id="raceLatA" class="value">--</span><span class="hint">a_lat = v × yaw_rate</span></div>
+            <div class="metric"><span class="label">按 yaw 限速</span><span id="raceYawLimit" class="value">--</span><span class="hint">a_y 不超过设定值</span></div>
+            <div class="metric"><span class="label">建议弯中速度</span><span id="raceSuggestedTurn" class="value">--</span><span id="raceRisk" class="hint">--</span></div>
+          </div>
+        </div>
+
+        <div class="card prominent">
+          <h3>PWM 余量预算器</h3>
+          <div class="controls">
+            <label>平衡 PWM gyro
+              <input id="budgetGyro" type="number" value="3200" step="100" />
+            </label>
+            <label>转向 PWM turn
+              <input id="budgetTurn" type="number" value="1400" step="100" />
+            </label>
+            <label>驱动前馈 PWM drive
+              <input id="budgetDrive" type="number" value="1800" step="100" />
+            </label>
+            <label>最终电机限幅
+              <input id="budgetLimit" type="number" value="8000" step="100" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">左轮原始 PWM</span><span id="budgetLeft" class="value">--</span><span class="hint">gyro + drive + turn</span></div>
+            <div class="metric"><span class="label">右轮原始 PWM</span><span id="budgetRight" class="value">--</span><span class="hint">-gyro - drive + turn</span></div>
+            <div class="metric"><span class="label">剩余余量</span><span id="budgetMargin" class="value">--</span><span class="hint">离 8000 还差多少</span></div>
+            <div class="metric"><span class="label">建议动作</span><span id="budgetAdvice" class="value">--</span><span class="hint">优先保平衡</span></div>
+          </div>
+          <p class="muted" style="margin-top:12px">如果这里经常显示余量不足，单纯加大速度环或前馈只会让最终 PWM 更早被截断，应该先降低弯中目标速度、降低转向命令峰值，或按优先级缩放 drive/turn。</p>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card prominent">
+          <h3>舵机速度环单步求解</h3>
+          <div class="controls">
+            <label>目标速度 target rpm
+              <input id="servoTarget" type="number" value="180" step="1" />
+            </label>
+            <label>实际速度 actual rpm
+              <input id="servoActual" type="number" value="80" step="1" />
+            </label>
+            <label>上次滤波速度 last
+              <input id="servoLast" type="number" value="70" step="1" />
+            </label>
+            <label>上上次滤波速度 prelast
+              <input id="servoPre" type="number" value="60" step="1" />
+            </label>
+            <label>上次误差 e_last
+              <input id="servoLastErr" type="number" value="70" step="1" />
+            </label>
+            <label>Kp boost
+              <input id="servoKpBoost" type="number" value="1" step="0.05" />
+            </label>
+            <label>速度环总输出限幅 duty
+              <input id="servoOmax" type="number" value="1000" step="10" />
+            </label>
+            <label>单次舵机增量 duty/ms
+              <input id="servoStep" type="number" value="80" step="1" />
+            </label>
+          </div>
+          <div class="btn-row">
+            <button class="primary" type="button" id="servoPresetSoft">柔和起步</button>
+            <button type="button" id="servoPresetHard">大速度差</button>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">滤波后速度</span><span id="servoFiltered" class="value">--</span><span class="hint">0.6/0.3/0.1 滤波</span></div>
+            <div class="metric"><span class="label">速度误差</span><span id="servoErr" class="value">--</span><span class="hint">同时显示 mm/s</span></div>
+            <div class="metric"><span class="label">自适应 k 与 Kp_eff</span><span id="servoK" class="value">--</span><span class="hint">k ∈ [0.4, 1.0]</span></div>
+            <div class="metric"><span class="label">PID 原始输出</span><span id="servoRaw" class="value">--</span><span class="hint">未限幅</span></div>
+            <div class="metric"><span class="label">限幅后输出</span><span id="servoOut" class="value">--</span><span id="servoSat" class="hint">--</span></div>
+            <div class="metric"><span class="label">执行器追上时间</span><span id="servoCatch" class="value">--</span><span class="hint">按单次增量估算</span></div>
+            <div class="metric"><span class="label">等效舵机角度</span><span id="servoDeg" class="value">--</span><span class="hint">0.03°/duty 粗估算</span></div>
+            <div class="metric"><span class="label">近似饱和误差</span><span id="servoSatErr" class="value">--</span><span class="hint">last_error=0 时</span></div>
+          </div>
+          <canvas id="servoChart" width="760" height="260" aria-label="舵机速度环输出曲线"></canvas>
+        </div>
+
+        <div class="card prominent">
+          <h3>平衡电机链路求解</h3>
+          <div class="controls">
+            <label>speed_loop_out
+              <input id="balSpeedLoop" type="number" value="0" step="10" />
+            </label>
+            <label>当前 pitch ° 
+              <input id="balPitch" type="number" value="-1.5" step="0.1" />
+            </label>
+            <label>上次角度误差
+              <input id="balLastAngleErr" type="number" value="0" step="0.1" />
+            </label>
+            <label>当前 pitch gyro °/s
+              <input id="balGyro" type="number" value="20" step="1" />
+            </label>
+            <label>drive_ff PWM
+              <input id="balDrive" type="number" value="0" step="10" />
+            </label>
+            <label>turn_gyro_loop_out
+              <input id="balTurn" type="number" value="0" step="10" />
+            </label>
+            <label>电机总限幅
+              <input id="balPwmMax" type="number" value="10000" step="100" />
+            </label>
+            <label>机械零点 °
+              <input id="balZero" type="number" value="-3" step="0.1" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">目标角度</span><span id="balTargetAngle" class="value">--</span><span class="hint">zero - speed_loop_out</span></div>
+            <div class="metric"><span class="label">角度环输出</span><span id="balAngleOut" class="value">--</span><span class="hint">作为目标角速度</span></div>
+            <div class="metric"><span class="label">角速度环 PWM</span><span id="balGyroOut" class="value">--</span><span class="hint">gyro_loop_out</span></div>
+            <div class="metric"><span class="label">左轮 PWM</span><span id="balLeft" class="value">--</span><span class="hint">gyro + drive + turn</span></div>
+            <div class="metric"><span class="label">右轮 PWM</span><span id="balRight" class="value">--</span><span class="hint">-gyro - drive + turn</span></div>
+            <div class="metric"><span class="label">状态</span><span id="balStatus" class="value">--</span><span class="hint">限幅检查</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid two" style="margin-top:14px">
+        <div class="card prominent">
+          <h3>转向 PID 求解</h3>
+          <div class="controls">
+            <label>输入 yaw 误差 °
+              <input id="turnYaw" type="number" value="12" step="0.5" />
+            </label>
+            <label>实际 yaw 角速度 °/s
+              <input id="turnActualGyro" type="number" value="30" step="1" />
+            </label>
+            <label>上次转向角速度误差
+              <input id="turnLastGyroErr" type="number" value="0" step="1" />
+            </label>
+            <label>转向输出限幅
+              <input id="turnOmax" type="number" value="8000" step="100" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">归一化 yaw 误差</span><span id="turnYawNorm" class="value">--</span><span class="hint">wrap 后再限 ±45°</span></div>
+            <div class="metric"><span class="label">目标 yaw 角速度</span><span id="turnAngleOut" class="value">--</span><span class="hint">turn_angle_loop_out</span></div>
+            <div class="metric"><span class="label">角速度误差</span><span id="turnGyroErr" class="value">--</span><span class="hint">target - actual</span></div>
+            <div class="metric"><span class="label">转向 PWM</span><span id="turnPwm" class="value">--</span><span id="turnSat" class="hint">--</span></div>
+          </div>
+        </div>
+
+        <div class="card prominent">
+          <h3>主动侧倾估算</h3>
+          <div class="controls">
+            <label>实际速度 rpm
+              <input id="rollRpm" type="number" value="160" step="1" />
+            </label>
+            <label>yaw 角速度 °/s
+              <input id="rollYawRate" type="number" value="90" step="1" />
+            </label>
+            <label>半轮距 cm
+              <input id="rollHalfTrack" type="number" value="11.2" step="0.1" />
+            </label>
+            <label>单侧高度差限幅 cm
+              <input id="rollHeightMax" type="number" value="3.5" step="0.1" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">纵向速度</span><span id="rollSpeed" class="value">--</span><span class="hint">rpm × 0.004936 × -1</span></div>
+            <div class="metric"><span class="label">向心加速度</span><span id="rollLatA" class="value">--</span><span class="hint">v × yaw_rate</span></div>
+            <div class="metric"><span class="label">理论侧倾角</span><span id="rollDeg" class="value">--</span><span class="hint">atan2(a_lat, g)</span></div>
+            <div class="metric"><span class="label">单侧高度差</span><span id="rollHeight" class="value">--</span><span class="hint">tan(roll) × half_track</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="section-head">
+        <h2>代码依据</h2>
+      </div>
+      <div class="grid two">
+        <div class="card">
+          <h3>本文读取的文件</h3>
+          <ul class="source-list">
+            <li><code>code/calculate/pid-new.h</code>：CAR_SELECT=3 参数、PID 结构体、前馈/侧倾参数。</li>
+            <li><code>code/calculate/pid-new.c</code>：各 PID 函数的实际公式。</li>
+            <li><code>code/servo/servo.h</code>：四舵机中位 duty、方向、限幅、duty 到角度换算。</li>
+            <li><code>code/servo/servo.c</code>：查表接口、舵机 duty 写入、角度缓存接口。</li>
+            <li><code>code/servo/servo_executor.h</code>：执行器目标变量和 1ms 更新接口。</li>
+            <li><code>user/cm7_0_isr.c</code> 第 285-979 行：1ms 中断调度与控制调用链。</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>刻意没有读取</h3>
+          <p><code>code/servo/servo_executor.c</code> 没有读取，因为你说明里面是五连杆打表实现且不要读取。</p>
+          <p>因此文档中凡是涉及执行器内部斜率限制的地方，都用“单次舵机增量”作为可调输入，并建议用实际 duty 波形确认。</p>
+        </div>
+      </div>
+      <details style="margin-top:14px">
+        <summary>关键代码摘录</summary>
+        <pre><code>current_actual_speed = 0.5f * (right_speed - left_speed);
+duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed, euler_angle.pitch);
+g_target_pwm_speed_adj = (int16)duty_adjustment;
+
+angle_loop_out = Angle_Loop_Control(speed_loop_out, now_angle);
+gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
+
+pwm_left  = gyro_loop_out + drive_ff_pwm + turn_gyro_loop_out;
+pwm_right = -gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out;</code></pre>
+      </details>
+    </section>
+  </main>
+
+  <footer>
+    <div class="shell">
+      这份文档用于底层控制调试：先算清楚单位、采样周期、限幅和执行器速度，再去看波形。波形不是不要看，而是要带着公式看。
+    </div>
+  </footer>
+
+  <script>
+    const CONST = {
+      speedFactor: 4.936,
+      servoKp: -4.5,
+      servoKi: 0,
+      servoKd: -0.17,
+      degreePerDuty: 0.03,
+      angleKp: -12,
+      angleKd: -13.3333,
+      angleMax: 8000,
+      gyroKp: -16,
+      gyroMax: 9000,
+      turnAngleKp: -8,
+      turnAngleMax: 8000,
+      turnGyroKp: 20,
+      turnGyroKd: 16,
+      g: 9.80665
+    };
+
+    function el(id) { return document.getElementById(id); }
+    function num(id) {
+      const value = Number(el(id).value);
+      return Number.isFinite(value) ? value : 0;
+    }
+    function set(id, text) { el(id).textContent = text; }
+    function fmt(x, digits = 2) {
+      if (!Number.isFinite(x)) return "--";
+      const abs = Math.abs(x);
+      if (abs >= 10000) return x.toFixed(0);
+      if (abs >= 1000) return x.toFixed(1);
+      return x.toFixed(digits);
+    }
+    function clamp(x, min, max) { return Math.max(min, Math.min(max, x)); }
+    function satText(raw, out, limit) {
+      if (Math.abs(raw) > limit + 1e-6) return ["已限幅", "danger"];
+      if (Math.abs(out) > limit * 0.8) return ["接近限幅", "warn"];
+      return ["未限幅", ""];
+    }
+    function setStatus(id, text, type) {
+      const node = el(id);
+      node.textContent = text;
+      node.className = type ? "hint " + type : "hint";
+    }
+
+    function servoAdaptiveK(error) {
+      const e = Math.exp(-Math.abs(error / 10));
+      return ((1 - e) / (1 + e)) * 0.6 + 0.4;
+    }
+
+    function speedCalc() {
+      const factor = num("speedFactor") || CONST.speedFactor;
+      const left = num("speedLeft");
+      const right = num("speedRight");
+      const actualRpm = 0.5 * (right - left);
+      const speedMm = actualRpm * factor;
+      const targetRpm = num("speedTargetMm") / factor;
+      set("speedActualRpm", fmt(actualRpm, 2) + " rpm");
+      set("speedActualMm", fmt(speedMm, 2) + " mm/s");
+      set("speedActualM", fmt(speedMm / 1000, 3) + " m/s");
+      set("speedTargetRpm", fmt(targetRpm, 2) + " rpm");
+    }
+
+    function accelCalc() {
+      const v0 = num("accV0");
+      const v1 = num("accV1");
+      const t = Math.max(num("accTime") / 1000, 0.001);
+      const period = Math.max(num("accPeriod") / 1000, 0.001);
+      const factor = num("speedFactor") || CONST.speedFactor;
+      const a = (v1 - v0) / t;
+      const aM = a / 1000;
+      const dvTick = a * period;
+      const rpmTick = dvTick / factor;
+      const tilt = Math.atan(aM / CONST.g) * 180 / Math.PI;
+      set("accA", fmt(a, 1) + " mm/s² / " + fmt(aM, 3) + " m/s²");
+      set("accDvTick", fmt(dvTick, 2) + " mm/s");
+      set("accRpmTick", fmt(rpmTick, 3) + " rpm");
+      set("accTilt", fmt(tilt, 2) + "°");
+      renderAccelChart(v0, v1, Math.ceil(t / period));
+    }
+
+    function racePlannerCalc() {
+      const factor = num("speedFactor") || CONST.speedFactor;
+      const nowRpm = num("raceNowRpm");
+      const straightRpm = num("raceStraightRpm");
+      const turnRpm = num("raceTurnRpm");
+      const accel = Math.max(num("raceAccel"), 0.001);
+      const decel = Math.max(num("raceDecel"), 0.001);
+      const latMax = Math.max(num("raceLatMax"), 0.001);
+      const yawRate = Math.abs(num("raceYawRate")) * Math.PI / 180;
+      const marginMm = Math.max(num("raceBrakeMargin"), 0);
+
+      const vNowMm = Math.abs(nowRpm * factor);
+      const vStraightMm = Math.abs(straightRpm * factor);
+      const vTurnMm = Math.abs(turnRpm * factor);
+      const vNow = vNowMm / 1000;
+      const vStraight = vStraightMm / 1000;
+      const vTurn = vTurnMm / 1000;
+      const accelTime = Math.max(vStraight - vNow, 0) / accel;
+      const brakeDistM = Math.max((vNow * vNow - vTurn * vTurn) / (2 * decel), 0);
+      const latA = vNow * yawRate;
+      const yawLimitMps = yawRate > 0.0001 ? latMax / yawRate : Infinity;
+      const yawLimitRpm = Number.isFinite(yawLimitMps) ? (yawLimitMps * 1000 / factor) : Infinity;
+      const suggestedRpm = Math.min(Math.abs(turnRpm), Math.abs(yawLimitRpm));
+      const risky = latA > latMax;
+
+      set("raceNowSpeed", fmt(vNowMm, 1) + " mm/s");
+      set("raceAccelTime", fmt(accelTime * 1000, 0) + " ms");
+      set("raceBrakeDist", fmt(brakeDistM * 1000 + marginMm, 0) + " mm");
+      set("raceLatA", fmt(latA, 3) + " m/s²");
+      set("raceYawLimit", Number.isFinite(yawLimitRpm) ? fmt(yawLimitRpm, 1) + " rpm" : "不限");
+      set("raceSuggestedTurn", fmt(suggestedRpm, 1) + " rpm");
+      setStatus("raceRisk", risky ? "横向加速度偏高，建议降速或开侧倾" : "横向余量可接受", risky ? "danger" : "");
+    }
+
+    function pwmBudgetCalc() {
+      const gyro = num("budgetGyro");
+      const turn = num("budgetTurn");
+      const drive = num("budgetDrive");
+      const limit = Math.max(num("budgetLimit"), 1);
+      const left = gyro + drive + turn;
+      const right = -gyro - drive + turn;
+      const peak = Math.max(Math.abs(left), Math.abs(right));
+      const margin = limit - peak;
+      let advice = "余量足够";
+      if (margin < 0) advice = "已超限，先缩 drive/turn";
+      else if (margin < limit * 0.15) advice = "余量很小，弯中应降速";
+      else if (Math.abs(gyro) > limit * 0.65) advice = "平衡占用高，别再加前馈";
+      set("budgetLeft", fmt(left, 0));
+      set("budgetRight", fmt(right, 0));
+      set("budgetMargin", fmt(margin, 0) + " PWM");
+      set("budgetAdvice", advice);
+    }
+
+    function servoOutputFromError(error, lastError, kpBoost, omax) {
+      const k = servoAdaptiveK(error);
+      const kpEff = CONST.servoKp * k * kpBoost;
+      const raw = kpEff * error + CONST.servoKd * (error - lastError);
+      return { k, kpEff, raw, out: clamp(raw, -omax, omax) };
+    }
+
+    function solveServoSat(kpBoost, omax) {
+      let lo = 0;
+      let hi = 3000;
+      for (let i = 0; i < 60; i++) {
+        const mid = (lo + hi) / 2;
+        const got = Math.abs(servoOutputFromError(mid, 0, kpBoost, omax).raw);
+        if (got < omax) lo = mid;
+        else hi = mid;
+      }
+      return hi;
+    }
+
+    function servoCalc() {
+      const target = num("servoTarget");
+      const actual = num("servoActual");
+      const last = num("servoLast");
+      const pre = num("servoPre");
+      const lastErr = num("servoLastErr");
+      const kpBoost = Math.max(num("servoKpBoost"), 0);
+      const omax = Math.max(num("servoOmax"), 1);
+      const step = Math.max(num("servoStep"), 0.001);
+      const factor = num("speedFactor") || CONST.speedFactor;
+      const filtered = actual * 0.6 + last * 0.3 + pre * 0.1;
+      const err = target - filtered;
+      const solved = servoOutputFromError(err, lastErr, kpBoost, omax);
+      const catchMs = Math.ceil(Math.abs(solved.out) / step);
+      const catchInPeriod = Math.min(Math.abs(solved.out), step * 9);
+      const satErr = solveServoSat(kpBoost, omax);
+      const sat = satText(solved.raw, solved.out, omax);
+
+      set("servoFiltered", fmt(filtered, 2) + " rpm");
+      set("servoErr", fmt(err, 2) + " rpm / " + fmt(err * factor, 1) + " mm/s");
+      set("servoK", "k=" + fmt(solved.k, 3) + ", Kp=" + fmt(solved.kpEff, 3));
+      set("servoRaw", fmt(solved.raw, 2) + " duty");
+      set("servoOut", fmt(solved.out, 2) + " duty");
+      setStatus("servoSat", sat[0] + " · 9ms 可追 " + fmt(catchInPeriod, 1) + " duty", sat[1]);
+      set("servoCatch", catchMs + " ms");
+      set("servoDeg", fmt(Math.abs(solved.out) * CONST.degreePerDuty, 2) + "°");
+      set("servoSatErr", fmt(satErr, 1) + " rpm / " + fmt(satErr * factor, 1) + " mm/s");
+      renderServoChart(kpBoost, omax, lastErr);
+    }
+
+    function balanceCalc() {
+      const zero = num("balZero");
+      const speedLoop = num("balSpeedLoop");
+      const pitch = num("balPitch");
+      const lastAngleErr = num("balLastAngleErr");
+      const gyro = num("balGyro");
+      const drive = num("balDrive");
+      const turn = num("balTurn");
+      const pwmMax = Math.max(num("balPwmMax"), 1);
+
+      const targetAngle = zero - speedLoop;
+      const eAngle = targetAngle - pitch;
+      const rawAngle = CONST.angleKp * eAngle + CONST.angleKd * (eAngle - lastAngleErr);
+      const limitedAngle = clamp(rawAngle, -CONST.angleMax, CONST.angleMax);
+      const angleLoopOut = -limitedAngle;
+      const eGyro = angleLoopOut - gyro;
+      const rawGyro = CONST.gyroKp * eGyro;
+      const gyroOut = clamp(rawGyro, -CONST.gyroMax, CONST.gyroMax);
+      const leftRaw = gyroOut + drive + turn;
+      const rightRaw = -gyroOut - drive + turn;
+      const left = clamp(leftRaw, -pwmMax, pwmMax);
+      const right = clamp(rightRaw, -pwmMax, pwmMax);
+      const limited = Math.abs(rawAngle) > CONST.angleMax || Math.abs(rawGyro) > CONST.gyroMax || Math.abs(leftRaw) > pwmMax || Math.abs(rightRaw) > pwmMax;
+
+      set("balTargetAngle", fmt(targetAngle, 2) + "°");
+      set("balAngleOut", fmt(angleLoopOut, 2));
+      set("balGyroOut", fmt(gyroOut, 2));
+      set("balLeft", fmt(left, 0));
+      set("balRight", fmt(right, 0));
+      set("balStatus", limited ? "有环节限幅" : "未限幅");
+    }
+
+    function wrap180(x) {
+      let y = x % 360;
+      if (y > 180) y -= 360;
+      if (y < -180) y += 360;
+      return y;
+    }
+
+    function turnCalc() {
+      const yawRaw = num("turnYaw");
+      const actualGyro = num("turnActualGyro");
+      const lastGyroErr = num("turnLastGyroErr");
+      const omax = Math.max(num("turnOmax"), 1);
+      const yaw = clamp(wrap180(yawRaw), -45, 45);
+      const turnAngleRaw = CONST.turnAngleKp * yaw;
+      const turnAngleOut = clamp(turnAngleRaw, -CONST.turnAngleMax, CONST.turnAngleMax);
+      const e = turnAngleOut - actualGyro;
+      const raw = CONST.turnGyroKp * e + CONST.turnGyroKd * (e - lastGyroErr);
+      const out = clamp(raw, -omax, omax);
+      const sat = satText(raw, out, omax);
+      set("turnYawNorm", fmt(yaw, 2) + "°");
+      set("turnAngleOut", fmt(turnAngleOut, 2) + " °/s");
+      set("turnGyroErr", fmt(e, 2) + " °/s");
+      set("turnPwm", fmt(out, 0) + " PWM");
+      setStatus("turnSat", sat[0], sat[1]);
+    }
+
+    function rollCalc() {
+      const rpm = num("rollRpm");
+      const yawDps = num("rollYawRate");
+      const halfTrack = num("rollHalfTrack");
+      const heightMax = Math.max(num("rollHeightMax"), 0);
+      const v = rpm * 0.004936 * -1;
+      const yawRad = yawDps * Math.PI / 180;
+      const aLat = v * yawRad;
+      const roll = clamp(-Math.atan2(aLat, CONST.g) * 180 / Math.PI, -18, 18);
+      const height = clamp(Math.tan(roll * Math.PI / 180) * halfTrack, -heightMax, heightMax);
+      set("rollSpeed", fmt(v, 3) + " m/s");
+      set("rollLatA", fmt(aLat, 3) + " m/s²");
+      set("rollDeg", fmt(roll, 2) + "°");
+      set("rollHeight", fmt(height, 2) + " cm");
+    }
+
+    function drawAxes(ctx, w, h, pad, yLabel) {
+      ctx.clearRect(0, 0, w, h);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = "#deded8";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(pad, pad);
+      ctx.lineTo(pad, h - pad);
+      ctx.lineTo(w - pad, h - pad);
+      ctx.stroke();
+      ctx.fillStyle = "#62666d";
+      ctx.font = "12px ui-sans-serif, system-ui";
+      ctx.fillText(yLabel, pad, 18);
+    }
+
+    function renderServoChart(kpBoost, omax, lastErr) {
+      const canvas = el("servoChart");
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      const pad = 36;
+      drawAxes(ctx, w, h, pad, "u(duty) vs speed error(rpm)");
+
+      const xMin = -500;
+      const xMax = 500;
+      const yMin = -omax * 1.15;
+      const yMax = omax * 1.15;
+      const sx = x => pad + (x - xMin) / (xMax - xMin) * (w - 2 * pad);
+      const sy = y => h - pad - (y - yMin) / (yMax - yMin) * (h - 2 * pad);
+
+      ctx.strokeStyle = "#d0d0ca";
+      ctx.setLineDash([5, 5]);
+      ctx.beginPath();
+      ctx.moveTo(sx(xMin), sy(omax));
+      ctx.lineTo(sx(xMax), sy(omax));
+      ctx.moveTo(sx(xMin), sy(-omax));
+      ctx.lineTo(sx(xMax), sy(-omax));
+      ctx.moveTo(sx(0), sy(yMin));
+      ctx.lineTo(sx(0), sy(yMax));
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.strokeStyle = "#10a37f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i <= 240; i++) {
+        const x = xMin + (xMax - xMin) * i / 240;
+        const y = servoOutputFromError(x, lastErr, kpBoost, omax).out;
+        if (i === 0) ctx.moveTo(sx(x), sy(y));
+        else ctx.lineTo(sx(x), sy(y));
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = "#62666d";
+      ctx.fillText("-500", sx(-500) - 12, h - 12);
+      ctx.fillText("0", sx(0) - 4, h - 12);
+      ctx.fillText("500", sx(500) - 16, h - 12);
+      ctx.fillText("+" + omax, 8, sy(omax) + 4);
+      ctx.fillText("-" + omax, 8, sy(-omax) + 4);
+    }
+
+    function renderAccelChart(v0, v1, n) {
+      const canvas = el("accChart");
+      const ctx = canvas.getContext("2d");
+      const w = canvas.width;
+      const h = canvas.height;
+      const pad = 36;
+      drawAxes(ctx, w, h, pad, "v(mm/s) plan");
+      const count = Math.max(n, 2);
+      const yMin = Math.min(v0, v1, 0) - Math.max(Math.abs(v1 - v0) * 0.15, 100);
+      const yMax = Math.max(v0, v1, 0) + Math.max(Math.abs(v1 - v0) * 0.15, 100);
+      const sx = i => pad + i / (count - 1) * (w - 2 * pad);
+      const sy = y => h - pad - (y - yMin) / (yMax - yMin) * (h - 2 * pad);
+
+      ctx.strokeStyle = "#10a37f";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < count; i++) {
+        const y = v0 + (v1 - v0) * i / (count - 1);
+        if (i === 0) ctx.moveTo(sx(i), sy(y));
+        else ctx.lineTo(sx(i), sy(y));
+      }
+      ctx.stroke();
+
+      ctx.fillStyle = "#62666d";
+      ctx.fillText("tick 0", pad, h - 12);
+      ctx.fillText("tick " + (count - 1), w - pad - 48, h - 12);
+      ctx.fillText(fmt(yMax, 0), 8, sy(yMax) + 12);
+      ctx.fillText(fmt(yMin, 0), 8, sy(yMin));
+    }
+
+    function wire() {
+      document.querySelectorAll("input").forEach(input => {
+        input.addEventListener("input", updateAll);
+      });
+      el("servoPresetSoft").addEventListener("click", () => {
+        el("servoTarget").value = 120;
+        el("servoActual").value = 80;
+        el("servoLast").value = 78;
+        el("servoPre").value = 74;
+        el("servoLastErr").value = 40;
+        el("servoStep").value = 60;
+        updateAll();
+      });
+      el("servoPresetHard").addEventListener("click", () => {
+        el("servoTarget").value = 320;
+        el("servoActual").value = 20;
+        el("servoLast").value = 15;
+        el("servoPre").value = 10;
+        el("servoLastErr").value = 0;
+        el("servoStep").value = 80;
+        updateAll();
+      });
+    }
+
+    function updateAll() {
+      speedCalc();
+      accelCalc();
+      racePlannerCalc();
+      pwmBudgetCalc();
+      servoCalc();
+      balanceCalc();
+      turnCalc();
+      rollCalc();
+    }
+
+    wire();
+    updateAll();
+  </script>
+</body>
+</html>

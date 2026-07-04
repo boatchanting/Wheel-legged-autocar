@@ -74,6 +74,10 @@ uint32_t loop_counter = 0;
 static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
+static bool g_fallen_last = false;
+static uint16 g_fallen_standup_grace_ticks = 0U;
+
+#define FALLEN_STANDUP_GRACE_MS (1500U)
 
 #if IMU_REFRESH_TEST_ENABLE
 #define IMU_REFRESH_TEST_TIME_MS (10000U)
@@ -300,10 +304,30 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     ImuRefreshTest_Update1ms(); // 每1ms读取当前IMU，测试开启时分别统计陀螺仪/加速度计/磁力计跳变次数
 
+    if (g_fallen != g_fallen_last)
+    {
+        PID_Param_Init();
+        Brake_Feedforward_Reset();
+        Accel_Feedforward_Reset();
+        if (!g_fallen)
+        {
+            g_fallen_standup_grace_ticks = FALLEN_STANDUP_GRACE_MS;
+        }
+        else
+        {
+            g_fallen_standup_grace_ticks = 0U;
+        }
+        g_fallen_last = g_fallen;
+    }
+    else if (g_fallen_standup_grace_ticks > 0U)
+    {
+        g_fallen_standup_grace_ticks--;
+    }
+
     // 颠簸路段状态机（1ms调度）：
     // 1) 锁定 target_speed_set = -150.0f
     // 2) 里程累计到 1000mm 后停车并退出状态机
-    if(g_motor_enable ==1){
+    if((g_motor_enable == 1) && (!g_fallen)){
         BumpyRoad_Update_1ms(); // 颠簸路段状态机
     }
 
@@ -387,7 +411,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ------------------------------------------------------
     if (loop_counter % 10 == 3) {  // 10ms 一次
         // 颠簸状态机激活时，暂停导航复现，避免覆盖锁速目标
-        if (g_motor_enable && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) 
+        if (g_motor_enable && (!g_fallen) && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) 
         { 
             NavReplay_Process();
             #if GNSS_NAV == 1
@@ -397,7 +421,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
-        if(g_motor_enable && (VisionBridgeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
+        if(g_motor_enable && (!g_fallen) && (VisionBridgeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
         } //复现控制
     };//【测试】抬高双腿
 
@@ -417,7 +441,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
             // 2.2 全局刹车前馈
-            Brake_Feedforward_Update(target_speed_set, current_actual_speed, g_motor_enable, jump_flag);
+            Brake_Feedforward_Update(target_speed_set, current_actual_speed, (uint8)((g_motor_enable != 0) && (!g_fallen)), jump_flag);
             {
                 uint8 accel_ff_replay_running = 0U;
                 uint8 accel_ff_inhibit = 0U;
@@ -457,7 +481,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
                 Accel_Feedforward_Update(target_speed_set,
                                          current_actual_speed,
-                                         g_motor_enable,
+                                         (uint8)((g_motor_enable != 0) && (!g_fallen)),
                                          jump_flag,
                                          accel_ff_replay_running,
                                          accel_ff_inhibit);
@@ -654,6 +678,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；强刹时清侧倾，避免刹车叠加压低单侧车身。
         uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
                                             (g_motor_enable == 0U) ||
+                                            (g_fallen) ||
                                             (jump_flag != 0U) ||
                                             ((now_angle - ANG_MECH_ZERO) > 70.0f) ||
                                             ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
@@ -724,14 +749,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         //   (4) 第一次站起来之后，loop_counter > 2000(中断开启两秒后)
         if (g_yaw_initialized && (jump_flag == 0) && (loop_counter > 2000))
         {
-             // 如果角度过大（例如超过 40 度），判定为倒地
-            if (now_angle-ANG_MECH_ZERO > 70.0f || now_angle-ANG_MECH_ZERO < -70.0f)
+             // 如果角度过大（例如超过 70 度），判定为倒地
+            if (((now_angle-ANG_MECH_ZERO > 70.0f) || (now_angle-ANG_MECH_ZERO < -70.0f)) &&
+                (g_fallen_standup_grace_ticks == 0U))
             {
                 gyro_loop_out = 0;          // 清零平衡PWM
                 turn_gyro_loop_out = 0.0f;  // 清零转向PWM  
-                PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
+                //PID_Data_Reset();// 清除 PID 的除了限幅之外所有参数，否则扶起来的瞬间电机还是全速旋转
+                PID_Param_Init();
                 Accel_Feedforward_Reset();//【accel_ff】倒地保护时清空加速前馈
-                // 彻底关闭电机使能，可以取消下面这行的注释
+                // 倒地保护只进入倒下状态，不再拉低 g_motor_enable，便于后续主动起立。
+                g_fallen = true;
+                g_fallen_last = true;
+                // 彻底关闭电机使能
                 //g_motor_enable = 0; 
                 NavReplay_Stop();//【nav】复现停止
                 #if GNSS_NAV == 1
@@ -740,7 +770,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             }
         }
             
-        if(g_motor_enable==0)
+        if((g_motor_enable==0) || (g_fallen))
         {
             gyro_loop_out = 0.0f;      // 清零平衡PWM
             turn_gyro_loop_out = 0.0f; // 清零转向PWM
@@ -783,6 +813,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         #endif
         if ((accel_ff_replay_running_fast == 0U) ||
             (g_motor_enable == 0) ||
+            (g_fallen) ||
             (jump_flag != 0) ||
             (g_is_push_mode == 1U) ||
             (g_brake_active != 0U) ||
@@ -823,6 +854,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // 统一限幅（防止叠加后超限）
         pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
         pwm_right = (int16_t)Float_Constrain(pwm_right, -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
+        if ((g_motor_enable == 0) || (g_fallen))
+        {
+            pwm_left = 0;
+            pwm_right = 0;
+        }
         // 直接输出即可
         
          // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
@@ -918,6 +954,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     // [映射 1: 安全开关]
     // robot_ctrl.motor_enable: 1=使能, 0=急停
     // g_motor_enable:          1=使能, 0=关机
+    // g_fallen:                true=主动倒下, false=主动起立
     if (robot_ctrl.motor_enable == 0) {
         g_motor_enable = 0; // 关机/急停
     } else {
@@ -967,7 +1004,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     }
     
     // [可选: 保护] 如果处于未使能状态，强制目标速度归零，防止后台积分
-    if(g_motor_enable == 0) {
+    if((g_motor_enable == 0) || (g_fallen)) {
         target_speed_set = 0.0f;
         Accel_Feedforward_Reset();//【accel_ff】关机/急停时清空加速前馈
         // 同时清除遥控器内部积分，防止再次使能时车突然冲出去

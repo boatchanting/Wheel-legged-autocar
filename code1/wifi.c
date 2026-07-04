@@ -125,8 +125,8 @@ void wifi_camera_init(void)
     // 如果需要发送边线则还需调用seekfree_assistant_camera_boundary_config函数设置边线的信息
 
 #if(0 == INCLUDE_BOUNDARY_TYPE)
-    // 【修改】发送的图像从 image_copy 更改为 compressed_image_copy (带有识别框的压缩图)，尺寸改为 PVC_IMAGE_W 和 PVC_IMAGE_H
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
+    // 根据 WIFI_CAMERA_SEND_MODE 选择发送压缩图或原图。
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, WIFI_CAMERA_SEND_IMAGE_PTR, WIFI_CAMERA_SEND_W, WIFI_CAMERA_SEND_H);
 
 #elif(1 == INCLUDE_BOUNDARY_TYPE)
     // 发送总钻风图像信息(并且包含三条边界信息，边界信息只含有横轴坐标，纵轴坐标由图像高度得到，意味着每个边界在一行中只会有一个点)
@@ -137,8 +137,7 @@ void wifi_camera_init(void)
         x2_boundary[i] = MT9V03X_W / 2;
         x3_boundary[i] = 118 + (168 - 118) * i / MT9V03X_H;
     }
-    // 【修改】发送压缩后的图像
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, WIFI_CAMERA_SEND_IMAGE_PTR, WIFI_CAMERA_SEND_W, WIFI_CAMERA_SEND_H);
     seekfree_assistant_camera_boundary_config(X_BOUNDARY, MT9V03X_H, x1_boundary, x2_boundary, x3_boundary, NULL, NULL ,NULL);
 
 #elif(2 == INCLUDE_BOUNDARY_TYPE)
@@ -151,8 +150,7 @@ void wifi_camera_init(void)
         y2_boundary[i] = MT9V03X_H / 2;
         y3_boundary[i] = (MT9V03X_W - i) * MT9V03X_H / MT9V03X_W;
     }
-    // 【修改】发送压缩后的图像
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, WIFI_CAMERA_SEND_IMAGE_PTR, WIFI_CAMERA_SEND_W, WIFI_CAMERA_SEND_H);
     seekfree_assistant_camera_boundary_config(Y_BOUNDARY, MT9V03X_W, NULL, NULL ,NULL, y1_boundary, y2_boundary, y3_boundary);
 
 #elif(3 == INCLUDE_BOUNDARY_TYPE)
@@ -200,8 +198,7 @@ void wifi_camera_init(void)
         xy_y3_boundary[j] = 30 + i / 2;
         j++;
     }
-    // 【修改】发送压缩后的图像
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, compressed_image_copy[0], PVC_IMAGE_W, PVC_IMAGE_H);
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, WIFI_CAMERA_SEND_IMAGE_PTR, WIFI_CAMERA_SEND_W, WIFI_CAMERA_SEND_H);
     seekfree_assistant_camera_boundary_config(XY_BOUNDARY, BOUNDARY_NUM, xy_x1_boundary, xy_x2_boundary, xy_x3_boundary, xy_y1_boundary, xy_y2_boundary, xy_y3_boundary);
 
 #elif(4 == INCLUDE_BOUNDARY_TYPE)
@@ -213,8 +210,8 @@ void wifi_camera_init(void)
         x2_boundary[i] = MT9V03X_W / 2;
         x3_boundary[i] = 118 + (168 - 118) * i / MT9V03X_H;
     }
-    // 【修改】由于原本发送 NULL，此处若无发图需求可不动，或者统一跟随
-    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, NULL, PVC_IMAGE_W, PVC_IMAGE_H);
+    // 类型 4 不发送图像，仅发送边界；尺寸跟随当前发送模式，便于上位机坐标系保持一致。
+    seekfree_assistant_camera_information_config(SEEKFREE_ASSISTANT_MT9V03X, NULL, WIFI_CAMERA_SEND_W, WIFI_CAMERA_SEND_H);
     seekfree_assistant_camera_boundary_config(X_BOUNDARY, MT9V03X_H, x1_boundary, x2_boundary, x3_boundary, NULL, NULL ,NULL);
 
 #endif
