@@ -558,32 +558,53 @@ def generate_u_turn_arc(
 
 
 def generate_slalom_apex_points(
+    u_turn: RoutePoint,
     cones: List[RoutePoint],
-    base_dx: float,
-    base_dy: float,
     first_cone_sign: float,
 ) -> List[Tuple[float, float]]:
     """
     绕桩走线生成：根据传入的 first_cone_sign 决定首个桩桶的偏置方向，后续交替。
+    使用局部切线法向量，完美适配弯曲的绕桩赛道。
 
+    @param u_turn 掉头点
     @param cones 桩桶列表
-    @param base_dx, base_dy 返程基准方向
     @param first_cone_sign 首个桩桶的偏置方向（+1 或 -1），由掉头弯甩出方向决定
     @return Apex 控制点坐标列表
     """
     if not cones:
         return []
 
-    # 法向量（垂直于基准方向）
-    normal_x = -base_dy
-    normal_y = base_dx
-
     apex_points = []
     current_sign = first_cone_sign
-    for cone in cones:
-        offset_x = cone.x + normal_x * CONE_OFFSET_MM * current_sign
-        offset_y = cone.y + normal_y * CONE_OFFSET_MM * current_sign
+    
+    # 提取所有参考点计算局部切线
+    pts = [(u_turn.x, u_turn.y)] + [(c.x, c.y) for c in cones]
+    
+    for i in range(1, len(pts)):
+        # 计算局部切向 (使用 i-1 和 i+1，如果在两端则使用 i-1 和 i)
+        if i < len(pts) - 1:
+            dx = pts[i+1][0] - pts[i-1][0]
+            dy = pts[i+1][1] - pts[i-1][1]
+        else:
+            dx = pts[i][0] - pts[i-1][0]
+            dy = pts[i][1] - pts[i-1][1]
+            
+        length = math.hypot(dx, dy)
+        if length < 1e-6:
+            dx, dy = 0.0, 1.0
+        else:
+            dx /= length
+            dy /= length
+            
+        # 局部法向量 (顺时针旋转90度)
+        normal_x = -dy
+        normal_y = dx
+        
+        cone_x, cone_y = pts[i]
+        offset_x = cone_x + normal_x * CONE_OFFSET_MM * current_sign
+        offset_y = cone_y + normal_y * CONE_OFFSET_MM * current_sign
         apex_points.append((offset_x, offset_y))
+        
         current_sign *= -1.0  # 下一个桩桶方向反转
 
     return apex_points
@@ -630,7 +651,7 @@ def generate_control_points(
         u_turn_radius = U_TURN_RADIUS_MM
 
     # 4. 绕桩 Apex 控制点（传入 swing_sign，确保第一个桩与掉头弯同侧）
-    apex_pts = generate_slalom_apex_points(cones, base_dx, base_dy, swing_sign)
+    apex_pts = generate_slalom_apex_points(u_turn, cones, swing_sign)
 
     # 5. 追加出弯直道约束，防止尾部收缩撞桩
     #    顺着最后两个 Apex 点的趋势方向，往前延伸 1500mm
