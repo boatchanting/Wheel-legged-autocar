@@ -148,6 +148,11 @@ class DiffHostApi:
         self.osc_names = DEFAULT_OSC_NAMES[:]
         self._refresh_osc_names_if_needed(force=True)
 
+    # ---------- 新增：确保退出时释放录制器 ----------
+    def __del__(self):
+        self._close_sockets()
+        self._stop_record_writer()
+
     def _default_output_root(self) -> Path:
         # 固定相对路径：当前脚本目录下 output_realtime
         return Path(__file__).resolve().parent / "output_realtime"
@@ -224,6 +229,7 @@ class DiffHostApi:
                 pass
             self.record_writer = None
 
+    # ---------- 修改：优先使用 mp4v + .mp4 容器，兼容性更好 ----------
     def _open_video_writer_auto(self):
         if self.frame_w <= 0 or self.frame_h <= 0:
             return None, "", ""
@@ -231,8 +237,9 @@ class DiffHostApi:
         ts = time.strftime("%Y%m%d_%H%M%S")
         base_name = f"realtime_record_{ts}"
         codec_candidates = [
+            ("mp4v", ".mp4"),   # 首选 MP4，通用性强
+            ("avc1", ".mp4"),   # H.264 备选
             ("MJPG", ".avi"),
-            ("mp4v", ".mp4"),
             ("XVID", ".avi"),
         ]
         for codec, ext in codec_candidates:
