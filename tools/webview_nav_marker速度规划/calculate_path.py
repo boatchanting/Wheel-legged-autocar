@@ -38,6 +38,8 @@ U_TURN_DETECT_MODE = 0
 # ============================================================
 INTERPOLATE_DIST = 50.0
 PATH_SPEED_MAX_MM_S = 3000.0
+ENABLE_FINISH_SPRINT = True    # 开启终点冲刺：绕过最后一个桩桶后不减速并提速
+SPRINT_SPEED_MM_S = 4000.0     # 最后的冲刺极速
 MAX_ACCEL_MM_S2 = 2000.0
 MAX_DECEL_MM_S2 = 1500.0
 MAX_LATERAL_ACCEL_MM_S2 = 2000.0
@@ -338,27 +340,27 @@ def read_csv_points(csv_path: str) -> List[RoutePoint]:
 # 核心解算逻辑
 # ============================================================
 
-def classify_points(raw_points: List[RoutePoint]) -> Tuple[RoutePoint, RoutePoint, List[RoutePoint]]:
+def classify_points(raw_points: List[RoutePoint]) -> Tuple[RoutePoint, RoutePoint, List[RoutePoint], RoutePoint]:
     """
     拓扑识别与点位分类。
 
     @param raw_points 按打点时间排序的稀疏坐标列表
-    @return (起点, 掉头点, 绕桩点列表)
+    @return (起点, 掉头点, 绕桩点列表, 终点)
     """
-    if len(raw_points) < 2:
-        raise ValueError("至少需要 2 个点（起点 + 掉头点）")
+    if len(raw_points) < 3:
+        raise ValueError("至少需要 3 个点（起点 + 掉头点 + 终点）")
 
     start = raw_points[0]
 
     if U_TURN_DETECT_MODE == 0:
         # 模式 0：掉头点为列表的第 1 个点
         u_turn = raw_points[1]
-        cones = raw_points[2:]
+        cones = raw_points[2:-1]
     else:
         # 模式 1：遍历所有点，找出距离起点直线距离最远的点
         max_dist = -1.0
         u_turn_idx = 1
-        for i in range(1, len(raw_points)):
+        for i in range(1, len(raw_points) - 1):
             dx = raw_points[i].x - start.x
             dy = raw_points[i].y - start.y
             dist = math.sqrt(dx * dx + dy * dy)
@@ -366,9 +368,10 @@ def classify_points(raw_points: List[RoutePoint]) -> Tuple[RoutePoint, RoutePoin
                 max_dist = dist
                 u_turn_idx = i
         u_turn = raw_points[u_turn_idx]
-        cones = raw_points[u_turn_idx + 1:]
+        cones = raw_points[u_turn_idx + 1: -1]
 
-    return start, u_turn, cones
+    end_point = raw_points[-1]
+    return start, u_turn, cones, end_point
 
 
 def compute_base_direction(u_turn: RoutePoint, cones: List[RoutePoint]) -> Tuple[float, float]:
@@ -614,9 +617,10 @@ def generate_control_points(
     start: RoutePoint,
     u_turn: RoutePoint,
     cones: List[RoutePoint],
+    end_point: RoutePoint
 ) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
     """
-    生成用于 B 样条拟合的全部控制点（解决掉头与绕桩的相位错配）。
+    生成用于 B 样条拟合的全部控制点（解决掉头与绕桩的相位错配），并在末尾拉直通向终点。
 
     @return (全部控制点, 仅 Apex 控制点用于可视化)
     """
@@ -653,18 +657,19 @@ def generate_control_points(
     # 4. 绕桩 Apex 控制点（传入 swing_sign，确保第一个桩与掉头弯同侧）
     apex_pts = generate_slalom_apex_points(u_turn, cones, swing_sign)
 
-    # 5. 追加出弯直道约束，防止尾部收缩撞桩
-    #    顺着最后两个 Apex 点的趋势方向，往前延伸 1500mm
-    if len(apex_pts) >= 2:
+    # 5. 追加出弯直道约束，强制直线冲向结束点 (end_point)
+    if len(apex_pts) >= 1:
         last_pt = apex_pts[-1]
-        prev_pt = apex_pts[-2]
-        out_vec_x = last_pt[0] - prev_pt[0]
-        out_vec_y = last_pt[1] - prev_pt[1]
-        out_len = math.hypot(out_vec_x, out_vec_y)
-        if out_len > 1e-6:
-            ext_x = last_pt[0] + (out_vec_x / out_len) * 1500.0
-            ext_y = last_pt[1] + (out_vec_y / out_len) * 1500.0
-            apex_pts.append((ext_x, ext_y))
+    else:
+        last_pt = (u_turn.x - base_dx * u_turn_radius, u_turn.y - base_dy * u_turn_radius)
+        
+    gap_x = end_point.x - last_pt[0]
+    gap_y = end_point.y - last_pt[1]
+    
+    # 插入多个等分控制点，强迫 B 样条在此处退化为逼近直线的形状
+    apex_pts.append((last_pt[0] + gap_x * 0.33, last_pt[1] + gap_y * 0.33))
+    apex_pts.append((last_pt[0] + gap_x * 0.66, last_pt[1] + gap_y * 0.66))
+    apex_pts.append((end_point.x, end_point.y))
 
     # 6. 起步直道控制点
     straight_pts = generate_start_straight(start, u_turn, radius=u_turn_radius, n_points=5)
@@ -786,7 +791,7 @@ def generate_calculated_path(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[f
     input_points, drop_first_count = prepare_input_points(raw_points)
 
     # 1. 拓扑识别与点位分类
-    start, u_turn, cones = classify_points(input_points)
+    start, u_turn, cones, end_point = classify_points(input_points)
 
     print(f"[分类] 起点: ({start.x:.1f}, {start.y:.1f})")
     print(f"[分类] 掉头点: ({u_turn.x:.1f}, {u_turn.y:.1f})")
@@ -802,7 +807,7 @@ def generate_calculated_path(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[f
     print(f"[参数] 实际掉头半径: {eff_radius:.0f}mm")
 
     # 2. 控制点生成
-    control_points, apex_pts = generate_control_points(start, u_turn, cones)
+    control_points, apex_pts = generate_control_points(start, u_turn, cones, end_point)
     print(f"[控制点] 总数: {len(control_points)}")
 
     # 3. B 样条平滑
@@ -880,6 +885,21 @@ def apply_speed_plan(points: List[RoutePoint]) -> None:
         points[i].curvature = float(kappa)
 
     speed_limit[-1] = 0.0
+
+    if ENABLE_FINISH_SPRINT:
+        last_curve_idx = -1
+        # 逆序寻找最后一个大于一定阈值的曲率点（即最后一个桩桶）
+        for i in range(len(curvature) - 1, -1, -1):
+            if abs(curvature[i]) > 0.0005:
+                last_curve_idx = i
+                break
+        
+        # 如果找到了桩桶，并且距离终点还有一段距离，则把剩余路段设为冲刺速度
+        if last_curve_idx != -1 and last_curve_idx < len(points) - 5:
+            # 桩桶后缓冲几个点（例如 5个点，约25cm）再开始冲刺，并且取消终点为 0 的限制
+            speed_limit[-1] = SPRINT_SPEED_MM_S
+            for i in range(last_curve_idx + 5, len(points)):
+                speed_limit[i] = SPRINT_SPEED_MM_S
 
     for i, point in enumerate(points):
         if point.point_type == POINT_TYPE_TOKENS["NAV_POINT_CIRCLE"]:

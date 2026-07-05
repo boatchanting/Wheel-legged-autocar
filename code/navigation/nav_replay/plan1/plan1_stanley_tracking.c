@@ -555,9 +555,7 @@ void NavReplay_Process(void)
 
     if (nav_ram_data.point_count == 0)
     {
-        g_replay_state = REPLAY_FINISHED;
-        target_speed_set = NAV_SPEED_STOP;
-        err_degree = 0.0f;
+        NavReplay_Stop();
         return;
     }
 
@@ -569,13 +567,7 @@ void NavReplay_Process(void)
 
     if (stop_idx == last_idx && dist_to_stop <= NAV_DIST_ARRIVE)
     {
-        g_replay_state = REPLAY_FINISHED;
-        g_target_idx = stop_idx;
-        target_speed_set = NAV_SPEED_STOP;
-        err_degree = 0.0f;
-        s_prev_speed_set = 0.0f;
-        s_prev_err_degree = 0.0f;
-        NavReplay_ClearStopLock();
+        NavReplay_Stop();
         return;
     }
 
