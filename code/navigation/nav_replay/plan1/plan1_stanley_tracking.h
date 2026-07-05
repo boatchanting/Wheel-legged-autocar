@@ -11,7 +11,7 @@
 /** @brief 停车速度指令，0 表示停止 */
 #define NAV_SPEED_STOP                   0.0f
 /** @brief Stanley 横向误差增益系数。越大越紧贴轨迹；越小越平滑但会轻微切弯 */
-#define STANLEY_K 5.0f             //调参可以更改的值STANLEY_K   2.5和K_FF_CURVATURE  100 
+#define STANLEY_K 2.0f             //调参可以更改的值STANLEY_K   2.5和K_FF_CURVATURE  100 
 
 /** @brief 转向误差一阶低通系数（0~1），越大越跟手 */
 #define FILTER_ALPHA_ANGLE              0.45f
