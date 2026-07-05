@@ -529,6 +529,9 @@
       <a href="#turn-roll">转向与侧倾</a>
       <a href="#tuning">调参方法</a>
       <a href="#speed-up">跑得更快</a>
+      <a href="#servo-2000-slow">2000仍慢</a>
+      <a href="#monotonic-control">单调加减速</a>
+      <a href="#pid-response-architecture">架构改造</a>
       <a href="#solvers">交互求解器</a>
       <a href="#sources">代码依据</a>
     </div>
@@ -1049,6 +1052,351 @@
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+
+      <div id="servo-2000-slow" class="card" style="margin-top:14px">
+        <h3>SERVO_SPEED_MAX_O 已到 2000 但仍然慢，下一步该查什么</h3>
+        <div class="note">
+          <strong>核心判断：</strong><code>SERVO_SPEED_MAX_O</code> 只是舵机速度环输出 <code>g_target_pwm_speed_adj</code> 的限幅，不是最终电机 PWM 的总油门。调到 2000 后仍慢，通常说明瓶颈已经转移到“输出没有长期打满”“舵机执行斜率/机械姿态跟不上”“最终电机 PWM 被平衡或转向吃掉”“加速前馈被场景屏蔽”这几类。
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>1. 先判断 2000 有没有真的起作用</h4>
+            <p>舵机速度环近似是：</p>
+            <span class="formula">speed_now = 0.6v[k] + 0.3v[k-1] + 0.1v[k-2]</span>
+            <span class="formula">e_v = target_speed - speed_now</span>
+            <span class="formula">Kp_eff = Kp · k(e_v) · kp_boost</span>
+            <span class="formula">u_raw = Kp_eff · e_v + Kd · (e_v - e_v_last)</span>
+            <span class="formula">u_servo = clamp(u_raw, -SERVO_SPEED_MAX_O, +SERVO_SPEED_MAX_O)</span>
+            <p>如果记录波形发现 <code>|u_raw|</code> 很少超过 1000，或者 <code>g_target_pwm_speed_adj</code> 很少贴着 ±2000，那么把限幅从 1000 调到 2000 本来就不会明显变快。此时该加的是目标速度规划、前馈或有效 <code>Kp</code>，不是继续加限幅。</p>
+          </div>
+          <div>
+            <h4>2. 如果已经打满，查下游</h4>
+            <ul>
+              <li><strong>舵机单次增量：</strong>如果执行层每 1ms 只允许走很小的 duty，2000 只是目标差值，真实腿部姿态仍会慢慢爬。</li>
+              <li><strong>机械限位：</strong><code>LF/RF/RR/LR_LIMIT_DUTY_MIN/MAX</code> 约束了四个舵机最终范围，贴边后再大的速度输出也没有有效姿态变化。</li>
+              <li><strong>最终 PWM 余量：</strong>当前融合是 <code>left = gyro + drive_ff + turn</code>、<code>right = -gyro - drive_ff + turn</code>，最后再限到 ±8000。平衡和转向占满时，加速前馈会被最终限幅吞掉。</li>
+              <li><strong>前馈屏蔽条件：</strong>桥梁、三阶段、PVC、特殊动作、强刹、推车、跳跃等场景会屏蔽或清空 <code>Accel_Feedforward</code>。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>3. 更快的底层优化建议</h4>
+            <ul>
+              <li><strong>记录饱和计数：</strong>每 9ms 记录 <code>u_raw</code>、<code>u_servo</code>、<code>g_target_pwm_speed_adj</code>，每 1ms 记录 <code>gyro_loop_out</code>、<code>turn_gyro_loop_out</code>、<code>drive_ff_pwm</code>、最终左右轮 PWM。</li>
+              <li><strong>把加速前馈从“速度缺口触发”升级为“规划器驱动”：</strong><code>accel_ff = Kff_a·a_request + Kff_v·(v_plan-v_actual)</code>，直道和出弯会更主动。</li>
+              <li><strong>小步提高前馈建立速度：</strong>优先试 <code>ACCEL_FF_RAMP_UP</code>，再试 <code>ACCEL_FF_GAIN</code>，最后才试 <code>ACCEL_FF_MAX</code>。因为慢往往是“建立太慢”，不是“峰值不够”。</li>
+              <li><strong>按场景给速度斜率：</strong>直道大 <code>a_up</code>，弯前大 <code>a_down</code>，弯中按 <code>a_y=v·ω</code> 限速，出弯短时间提高 <code>a_up</code> 和前馈。</li>
+              <li><strong>做 PWM 预算仲裁：</strong>先保平衡，再保刹车，再保转向，最后给加速。不要让最终 <code>Float_Constrain()</code> 悄悄截断所有量。</li>
+              <li><strong>减少速度反馈滞后：</strong>当前速度滤波 <code>0.6/0.3/0.1</code> 比较稳，但急加速时会让误差反应慢。可测试低延迟版本，例如 <code>0.75/0.2/0.05</code>，观察噪声和超调。</li>
+              <li><strong>把 9ms 速度段缩短做 A/B 测试：</strong>如果 CPU 余量够，可试 6ms 或 3ms 更新舵机速度环和前馈，但要同时下调每周期 ramp，保持每秒斜率一致。</li>
+              <li><strong>弯中启用主动侧倾的保守版本：</strong>它不直接提高直线加速度，但能提高弯中可用速度，平均速度会更高。</li>
+            </ul>
+          </div>
+          <div>
+            <h4>4. 建议测试顺序</h4>
+            <ol>
+              <li>空旷直线，用固定目标速度阶跃，记录 <code>target_speed_set/current_actual_speed/u_raw/u_servo/final_pwm</code>。</li>
+              <li>看 <code>u_servo</code> 是否长期贴 ±2000。没贴满就调 <code>Kp/kp_boost/速度规划</code>，贴满再查执行斜率。</li>
+              <li>看最终 PWM 是否贴 ±8000。若贴满，先降低同一时刻的转向或加速前馈，保留平衡余量。</li>
+              <li>逐步提高 <code>ACCEL_FF_RAMP_UP</code>：800 → 1000 → 1200，每次只改一个参数，看起步 0.3s 内速度斜率。</li>
+              <li>再小步提高 <code>ACCEL_FF_GAIN</code>：10 → 12 → 14。如果 pitch 明显后坐、轮胎打滑或平衡 PWM 饱和，就退回。</li>
+              <li>最后按赛道分段调 <code>a_up/a_down/v_turn</code>，不要用一个全局速度跑完整条赛道。</li>
+            </ol>
+          </div>
+        </div>
+
+        <div class="card prominent" style="margin-top:14px">
+          <h4>2000 仍慢快速诊断求解器</h4>
+          <div class="controls">
+            <label>目标速度 rpm
+              <input id="fastTargetRpm" type="number" value="320" step="1" />
+            </label>
+            <label>当前速度 rpm
+              <input id="fastActualRpm" type="number" value="80" step="1" />
+            </label>
+            <label>上一速度 rpm
+              <input id="fastLastRpm" type="number" value="70" step="1" />
+            </label>
+            <label>上上速度 rpm
+              <input id="fastPreRpm" type="number" value="60" step="1" />
+            </label>
+            <label>上一误差 rpm
+              <input id="fastLastErr" type="number" value="180" step="1" />
+            </label>
+            <label>SERVO_SPEED_MAX_O
+              <input id="fastServoOmax" type="number" value="2000" step="50" />
+            </label>
+            <label>单舵机每 1ms 可走 duty
+              <input id="fastServoStep" type="number" value="60" step="5" />
+            </label>
+            <label>gyro_loop_out
+              <input id="fastGyro" type="number" value="4200" step="100" />
+            </label>
+            <label>turn_gyro_loop_out
+              <input id="fastTurn" type="number" value="900" step="100" />
+            </label>
+            <label>当前 drive_ff_pwm
+              <input id="fastDrive" type="number" value="1200" step="100" />
+            </label>
+            <label>电机最终限幅
+              <input id="fastMotorLimit" type="number" value="8000" step="100" />
+            </label>
+            <label>ACCEL_FF_RAMP_UP
+              <input id="fastAccelRamp" type="number" value="800" step="50" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">滤波后速度</span><span id="fastFiltered" class="value">--</span><span class="hint">0.6/0.3/0.1</span></div>
+            <div class="metric"><span class="label">舵机速度环输出</span><span id="fastServoOut" class="value">--</span><span id="fastServoHint" class="hint">--</span></div>
+            <div class="metric"><span class="label">追上 2000 目标需时</span><span id="fastServoTime" class="value">--</span><span class="hint">由单次增量估算</span></div>
+            <div class="metric"><span class="label">PWM 峰值/余量</span><span id="fastPwmMargin" class="value">--</span><span id="fastPwmHint" class="hint">--</span></div>
+          </div>
+          <p id="fastAdvice" class="hint warn" style="margin-top:14px">--</p>
+        </div>
+      </div>
+
+      <div id="monotonic-control" class="card" style="margin-top:14px">
+        <h3>已知小车正在单调加速/减速时，可以做的更细控制</h3>
+        <div class="note">
+          <strong>核心思路：</strong>不要让底层只看到“目标速度”和“当前速度”的误差，而是额外告诉底层：我现在是在加速、减速、匀速、弯前收速、还是出弯提速。这样舵机每周期增量、电机前馈、刹车前馈和 PWM 预算都可以提前进入正确状态，而不是等速度误差变大后再被动补救。
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>1. 加一个运动趋势状态机</h4>
+            <p>速度规划器每 9ms 输出两个量：计划速度 <code>v_plan</code> 和计划加速度 <code>a_req</code>。</p>
+            <span class="formula">a_req[k] = (v_plan[k] - v_plan[k-1]) / T</span>
+            <span class="formula">trend = ACCEL，当 a_req &gt; a_th 且连续 N 次同号</span>
+            <span class="formula">trend = DECEL，当 a_req &lt; -a_th 且连续 N 次同号</span>
+            <span class="formula">trend = HOLD，当 |a_req| ≤ a_th 或目标速度基本不变</span>
+            <p>建议不要单次判断，至少连续 <code>N=3</code> 个 9ms 周期再切状态，避免视觉速度抖动让底层反复切换。</p>
+            <pre><code>if (a_req &gt; +a_th) accel_count++;
+else accel_count = 0;
+
+if (a_req &lt; -a_th) decel_count++;
+else decel_count = 0;
+
+if (accel_count &gt;= 3) trend = ACCEL;
+else if (decel_count &gt;= 3) trend = DECEL;
+else trend = HOLD;</code></pre>
+          </div>
+          <div>
+            <h4>2. 舵机每周期增量动态化</h4>
+            <p>现在的关键不是只把 <code>g_target_pwm_speed_adj</code> 算大，而是让执行层知道“什么时候该快，什么时候该慢”。可以把单次舵机增量从常数改成动态值：</p>
+            <span class="formula">step_servo = clamp(step_base + K_a|a_req| + K_e|e_v|, step_min, step_max)</span>
+            <span class="formula">duty_next = duty_now + clamp(duty_target - duty_now, -step_servo, +step_servo)</span>
+            <p>建议分方向：加速方向允许更大步长，回正方向保持较小步长；减速时相反。方向标定不要凭感觉，用实车看 <code>g_target_pwm_speed_adj</code> 正负对应前压还是后坐。</p>
+            <ul>
+              <li><strong>ACCEL：</strong>加速姿态方向 <code>step_fast</code>，反方向 <code>step_slow</code>，快速把腿打到提速姿态。</li>
+              <li><strong>DECEL：</strong>刹车/反后坐姿态方向 <code>step_brake_fast</code>，释放方向 <code>step_release</code>，避免一下松开导致回弹。</li>
+              <li><strong>HOLD：</strong>用 <code>step_base</code>，让姿态安静，减少舵机抖动和电流峰值。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>3. 电机端做加速度前馈，而不只看速度缺口</h4>
+            <p>当前加速前馈主要由速度缺口触发：</p>
+            <span class="formula">accel_ff ≈ K_v · (|v_target| - |v_actual|)</span>
+            <p>更适合比赛的做法是加入计划加速度：</p>
+            <span class="formula">drive_ff_target = K_a · a_req + K_v · (v_plan - v_actual) + K_s · sign(v_plan)</span>
+            <span class="formula">drive_ff = ramp(drive_ff, drive_ff_target, ramp_up, ramp_down)</span>
+            <p><code>K_a</code> 负责“提前给力”，<code>K_v</code> 负责“没跟上时补力”，<code>K_s</code> 负责克服静摩擦。这样直道刚开始加速时，不必等速度误差变大才输出电机前馈。</p>
+          </div>
+          <div>
+            <h4>4. PWM 预算要先算余量，再给加速</h4>
+            <p>最终电机融合不能只靠最后的 <code>Float_Constrain()</code>。推荐先估计剩余可用驱动量：</p>
+            <span class="formula">reserve_balance = 1000 ~ 1800 PWM</span>
+            <span class="formula">drive_cap = PWM_LIMIT - |gyro| - |turn| - reserve_balance</span>
+            <span class="formula">drive_ff = clamp(drive_ff_target, -drive_cap, +drive_cap)</span>
+            <p>如果 <code>drive_cap &lt; 0</code>，说明平衡/转向已经吃满电机能力，此时继续加速只会被最终限幅截掉，甚至破坏平衡。正确动作是：弯中降速、减小转向峰值、或者提前减速。</p>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>5. 单调减速时的专门策略</h4>
+            <ul>
+              <li><strong>先撤加速前馈：</strong>当 <code>trend=DECEL</code>，先让 <code>accel_ff</code> 快速回零，不要加速和刹车同时拉扯。</li>
+              <li><strong>再建立刹车前馈：</strong><code>brake_ff = -K_b · |a_req| - K_overspeed · max(|v|-|v_plan|,0)</code>。</li>
+              <li><strong>舵机给反后坐支撑：</strong>强刹时保留一点反后坐姿态，避免车身被刹车力矩压塌。</li>
+              <li><strong>低速释放：</strong>低于 30~40rpm 或接近目标速度时，刹车 ramp_down 要快，防止低速反抽。</li>
+              <li><strong>弯前公式：</strong><code>d_brake=(v_now²-v_turn²)/(2a_down)+margin</code>，提前进入 DECEL，而不是到弯口才急刹。</li>
+            </ul>
+          </div>
+          <div>
+            <h4>6. 单调加速时的专门策略</h4>
+            <ul>
+              <li><strong>预充前馈：</strong>只要 <code>v_plan</code> 开始单调上升，就给 <code>K_a·a_req</code>，不等速度误差变大。</li>
+              <li><strong>舵机快速进入提速姿态：</strong>加速方向使用更大的 <code>step_servo</code>，但加一个 <code>pitch_guard</code>，车身后坐过大时自动降步长。</li>
+              <li><strong>出弯短 boost：</strong>在 yaw 角速度下降且目标速度上升时，允许 200~400ms 的较高 <code>a_up</code> 和 <code>ACCEL_FF_RAMP_UP</code>。</li>
+              <li><strong>打滑保护：</strong>如果电机 PWM 很大但编码器加速度上不来，判定轮胎打滑或姿态不对，降低前馈而不是继续加。</li>
+              <li><strong>平衡优先：</strong>如果 <code>|gyro_loop_out|</code> 长时间超过最终限幅的 65%，停止继续加速，先让车站稳。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="card prominent" style="margin-top:14px">
+          <h4>单调加减速动态步长求解器</h4>
+          <div class="controls">
+            <label>计划加速度 a_req m/s²
+              <input id="monoAReq" type="number" value="1.8" step="0.1" />
+            </label>
+            <label>速度误差 e_v rpm
+              <input id="monoErr" type="number" value="140" step="5" />
+            </label>
+            <label>基础舵机步长 duty/ms
+              <input id="monoStepBase" type="number" value="35" step="5" />
+            </label>
+            <label>加速度步长系数 duty/(ms·m/s²)
+              <input id="monoStepKa" type="number" value="18" step="1" />
+            </label>
+            <label>误差步长系数 duty/(ms·100rpm)
+              <input id="monoStepKe" type="number" value="8" step="1" />
+            </label>
+            <label>最大舵机步长 duty/ms
+              <input id="monoStepMax" type="number" value="95" step="5" />
+            </label>
+            <label>gyro_loop_out
+              <input id="monoGyro" type="number" value="3800" step="100" />
+            </label>
+            <label>turn_gyro_loop_out
+              <input id="monoTurn" type="number" value="700" step="100" />
+            </label>
+            <label>平衡保留余量 PWM
+              <input id="monoReserve" type="number" value="1300" step="100" />
+            </label>
+            <label>电机最终限幅 PWM
+              <input id="monoLimit" type="number" value="8000" step="100" />
+            </label>
+            <label>电机 Ka PWM/(m/s²)
+              <input id="monoMotorKa" type="number" value="650" step="50" />
+            </label>
+            <label>电机 Kv PWM/(m/s)
+              <input id="monoMotorKv" type="number" value="420" step="20" />
+            </label>
+          </div>
+          <div class="kpi" style="margin-top:14px">
+            <div class="metric"><span class="label">趋势判断</span><span id="monoTrend" class="value">--</span><span class="hint">由 a_req 符号决定</span></div>
+            <div class="metric"><span class="label">建议舵机步长</span><span id="monoServoStep" class="value">--</span><span class="hint">动态 step_servo</span></div>
+            <div class="metric"><span class="label">电机前馈目标</span><span id="monoMotorFF" class="value">--</span><span id="monoMotorHint" class="hint">--</span></div>
+            <div class="metric"><span class="label">可用 drive_cap</span><span id="monoDriveCap" class="value">--</span><span class="hint">先扣平衡/转向/保留余量</span></div>
+          </div>
+          <p id="monoAdvice" class="hint warn" style="margin-top:14px">--</p>
+        </div>
+      </div>
+
+      <div id="pid-response-architecture" class="card" style="margin-top:14px">
+        <h3>从“调 PID”升级到“改控制架构”</h3>
+        <div class="note">
+          <strong>先建立一个关键认知：</strong>PID 本身不会理解赛道，也不会主动知道“现在应该猛加速还是提前刹车”。PID 只会做一件事：看误差，输出修正量。想让车整体跑快，架构上要给 PID 一个更聪明的目标、更合适的前馈、更清楚的限幅和更明确的优先级。
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>1. PID 响应到底在看什么</h4>
+            <p>最基础的离散 PID 可以写成：</p>
+            <span class="formula">e[k] = target[k] - feedback[k]</span>
+            <span class="formula">P = Kp · e[k]</span>
+            <span class="formula">I = I + Ki · e[k] · T</span>
+            <span class="formula">D = Kd · (e[k] - e[k-1]) / T</span>
+            <span class="formula">u[k] = clamp(P + I + D, -limit, +limit)</span>
+            <p>小白理解：<strong>P 看现在差多少，I 看过去欠多少，D 看变化有多猛。</strong>加速响应慢，可能是 P 不够，也可能是目标规划太保守、前馈太慢、限幅太早、执行器斜率太小，不能只怪 PID。</p>
+          </div>
+          <div>
+            <h4>2. 加速响应的几个指标</h4>
+            <ul>
+              <li><strong>上升时间：</strong>从低速到目标速度需要多久。它决定直道提速快不快。</li>
+              <li><strong>超调：</strong>速度冲过目标多少。超调大会导致弯前刹不住、姿态乱。</li>
+              <li><strong>稳定时间：</strong>速度接近目标后多久不再晃。它决定跑起来是不是“稳”。</li>
+              <li><strong>饱和时间：</strong>输出有多久贴着限幅。长期饱和说明系统想做但做不到，继续加 Kp 不一定有效。</li>
+              <li><strong>相位滞后：</strong>反馈和执行器慢半拍。速度滤波太重、舵机斜率太小、控制周期太长都会增加滞后。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>3. 为什么只调 PID 很容易遇到瓶颈</h4>
+            <p>你的车不是单个电机速度环，而是平衡车加并联腿：</p>
+            <span class="formula">速度目标 → 舵机姿态/腿部形态 → 车身 pitch → 平衡电机 PWM → 实际速度</span>
+            <p>这条链路中每一层都会产生延迟和限幅。比如：</p>
+            <ul>
+              <li>舵机速度环输出很大，但执行层每 1ms 只能走一点点，腿部姿态慢。</li>
+              <li>腿部姿态到了，但平衡环为了防倒车，把电机 PWM 用在救姿态上，没余量加速。</li>
+              <li>电机前馈给了，但最终左右轮 PWM 已经被 ±8000 截断。</li>
+              <li>目标速度突然跳变，PID 输出猛，但车身姿态和轮胎抓地跟不上。</li>
+            </ul>
+          </div>
+          <div>
+            <h4>4. 架构上应该分成五层</h4>
+            <ol>
+              <li><strong>赛道速度层：</strong>根据直道、弯道、障碍决定原始目标速度 <code>v_raw</code>。</li>
+              <li><strong>速度规划层：</strong>把 <code>v_raw</code> 变成连续的 <code>v_plan</code>、<code>a_req</code>、<code>jerk_req</code>。</li>
+              <li><strong>运动状态层：</strong>判断 <code>ACCEL / DECEL / HOLD / TURN / BRAKE</code>。</li>
+              <li><strong>执行器分配层：</strong>把目标分给舵机姿态、电机前馈、刹车前馈、主动侧倾。</li>
+              <li><strong>PID 稳定层：</strong>各个 PID 只负责把分配后的目标稳定跟住。</li>
+            </ol>
+            <p class="muted">这样改完之后，PID 不再被迫猜你的意图。上层明确说“我要加速”，底层就提前给舵机快步长和电机前馈；上层说“我要减速”，底层就提前撤加速、建刹车、保护姿态。</p>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>5. 加速响应应该由 PID + 前馈共同完成</h4>
+            <p>纯 PID 是“错了再补”，前馈是“知道要发生，提前给”。加速要快，不能只靠误差变大后 PID 再追。</p>
+            <span class="formula">u_total = u_pid + u_feedforward</span>
+            <span class="formula">u_feedforward = K_a · a_req + K_v · (v_plan - v_actual) + K_s · sign(v_plan)</span>
+            <p>其中：</p>
+            <ul>
+              <li><code>K_a·a_req</code>：我要多大加速度，就提前给多大力矩。</li>
+              <li><code>K_v·速度差</code>：如果实际速度没跟上，再补一点。</li>
+              <li><code>K_s</code>：低速克服静摩擦、齿轮阻力和死区。</li>
+            </ul>
+          </div>
+          <div>
+            <h4>6. 限幅也要从“固定值”变成“有条件的值”</h4>
+            <p>固定限幅适合保命，但不适合跑快。建议把限幅变成动态表：</p>
+            <span class="formula">servo_step = f(mode, |a_req|, |e_v|, pitch, pwm_margin)</span>
+            <span class="formula">drive_cap = PWM_LIMIT - |gyro| - |turn| - balance_reserve</span>
+            <span class="formula">accel_ff = clamp(accel_ff_target, -drive_cap, +drive_cap)</span>
+            <p>比如直道加速时允许舵机大步长；弯中或平衡 PWM 紧张时缩小加速前馈；强刹时允许刹车前馈大，但要给舵机反后坐支撑。</p>
+          </div>
+        </div>
+
+        <div class="grid two" style="margin-top:14px">
+          <div>
+            <h4>7. 建议你真正改代码时的顺序</h4>
+            <ol>
+              <li>先加日志：记录 <code>v_raw/v_plan/a_req/current_speed/u_servo/gyro/turn/drive/final_pwm</code>。</li>
+              <li>加速度规划器：不要让任务直接写台阶速度，统一经过 <code>v_plan</code>。</li>
+              <li>加运动状态机：至少有 <code>ACCEL/DECEL/HOLD</code>。</li>
+              <li>舵机执行层支持动态步长：加速方向、刹车方向、回正方向分开限速。</li>
+              <li>电机端加入 <code>K_a·a_req</code> 前馈，并受 PWM 余量限制。</li>
+              <li>最后再调 PID：先调内环稳定，再调外层响应。</li>
+            </ol>
+          </div>
+          <div>
+            <h4>8. 调参时不要同时改很多</h4>
+            <p>建议一轮只改一个类别：</p>
+            <ul>
+              <li><strong>响应慢但不饱和：</strong>先加前馈或有效 Kp。</li>
+              <li><strong>响应慢且舵机目标饱和：</strong>查舵机每周期步长和机械限位。</li>
+              <li><strong>响应慢且电机 PWM 饱和：</strong>做 PWM 仲裁，降弯中速度或减转向峰值。</li>
+              <li><strong>响应快但晃：</strong>降低 jerk、降低步长、加 D 或增加滤波。</li>
+              <li><strong>刹车后反抽：</strong>低速释放刹车前馈，减小减速末端舵机步长。</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="note" style="margin-top:14px">
+          <strong>一句话总结：</strong>真正的架构优化不是把 PID 变复杂，而是让 PID 前面有规划器，旁边有前馈，后面有限幅仲裁。PID 负责稳定，规划器负责聪明，前馈负责快，仲裁负责不失控。
         </div>
       </div>
     </section>
@@ -1609,6 +1957,117 @@ pwm_right = -gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out;</code></pre>
       set("rollHeight", fmt(height, 2) + " cm");
     }
 
+    function servo2000SlowCalc() {
+      const target = num("fastTargetRpm");
+      const actual = num("fastActualRpm");
+      const last = num("fastLastRpm");
+      const pre = num("fastPreRpm");
+      const lastErr = num("fastLastErr");
+      const omax = Math.max(num("fastServoOmax"), 1);
+      const servoStep = Math.max(num("fastServoStep"), 0.001);
+      const gyro = num("fastGyro");
+      const turn = num("fastTurn");
+      const drive = num("fastDrive");
+      const motorLimit = Math.max(num("fastMotorLimit"), 1);
+      const accelRamp = Math.max(num("fastAccelRamp"), 0);
+
+      const filtered = actual * 0.6 + last * 0.3 + pre * 0.1;
+      const err = target - filtered;
+      const solved = servoOutputFromError(err, lastErr, 1, omax);
+      const oldLimited = clamp(solved.raw, -1000, 1000);
+      const extraBy2000 = Math.abs(solved.out) - Math.abs(oldLimited);
+      const fullTargetMs = Math.ceil(omax / servoStep);
+      const outputMs = Math.ceil(Math.abs(solved.out) / servoStep);
+
+      const left = gyro + drive + turn;
+      const right = -gyro - drive + turn;
+      const peak = Math.max(Math.abs(left), Math.abs(right));
+      const margin = motorLimit - peak;
+      const possibleExtraDrive = Math.max(margin, 0);
+      const nextAccelRoom = Math.min(accelRamp, possibleExtraDrive);
+
+      set("fastFiltered", fmt(filtered, 2) + " rpm / " + fmt(filtered * CONST.speedFactor, 1) + " mm/s");
+      set("fastServoOut", fmt(solved.out, 0) + " duty");
+      set("fastServoTime", outputMs + " ms / 满幅约 " + fullTargetMs + " ms");
+      set("fastPwmMargin", fmt(peak, 0) + " / 余量 " + fmt(margin, 0));
+
+      if (Math.abs(solved.raw) < 1000) {
+        setHint("fastServoHint", "未碰到旧 1000，调到 2000 基本无效", "warn");
+      } else if (extraBy2000 < 50) {
+        setHint("fastServoHint", "接近旧限幅，2000 增益有限", "warn");
+      } else {
+        setHint("fastServoHint", "2000 正在提供额外输出 +" + fmt(extraBy2000, 0), "ok");
+      }
+
+      if (margin < 0) {
+        setHint("fastPwmHint", "最终 PWM 已饱和，加速会被截断", "danger");
+      } else if (margin < motorLimit * 0.15) {
+        setHint("fastPwmHint", "PWM 余量很小，弯中/起步容易慢", "warn");
+      } else {
+        setHint("fastPwmHint", "仍可增加约 " + fmt(nextAccelRoom, 0) + " PWM 前馈", "ok");
+      }
+
+      let advice = "";
+      if (Math.abs(solved.raw) < 1000) {
+        advice = "结论：慢点不在 SERVO_SPEED_MAX_O。优先提高速度规划的目标斜率、有效 Kp/kp_boost，或让加速前馈按 a_request 主动给力。";
+      } else if (outputMs > 20) {
+        advice = "结论：舵机速度环已经给了较大目标，但执行斜率可能慢。优先测单舵机每 ms duty 增量和四舵机是否触及机械限位。";
+      } else if (margin < motorLimit * 0.15) {
+        advice = "结论：最终电机 PWM 余量不足。先做 PWM 仲裁，弯中降低 drive/turn，保证平衡余量，否则加速前馈会被最终限幅吃掉。";
+      } else {
+        advice = "结论：当前参数下仍有提速空间。可以小步提高 ACCEL_FF_RAMP_UP，再提高 ACCEL_FF_GAIN，并同步观察 pitch、轮胎打滑和最终 PWM 饱和次数。";
+      }
+      setHint("fastAdvice", advice, margin < 0 ? "danger" : "warn");
+    }
+
+    function monotonicControlCalc() {
+      const aReq = num("monoAReq");
+      const err = num("monoErr");
+      const stepBase = Math.max(num("monoStepBase"), 0);
+      const stepKa = Math.max(num("monoStepKa"), 0);
+      const stepKe = Math.max(num("monoStepKe"), 0);
+      const stepMax = Math.max(num("monoStepMax"), 1);
+      const gyro = num("monoGyro");
+      const turn = num("monoTurn");
+      const reserve = Math.max(num("monoReserve"), 0);
+      const limit = Math.max(num("monoLimit"), 1);
+      const motorKa = num("monoMotorKa");
+      const motorKv = num("monoMotorKv");
+
+      const trend = aReq > 0.08 ? "ACCEL 单调加速" : (aReq < -0.08 ? "DECEL 单调减速" : "HOLD 匀速/微调");
+      const stepRaw = stepBase + stepKa * Math.abs(aReq) + stepKe * Math.abs(err) / 100;
+      const servoStep = clamp(stepRaw, Math.min(stepBase, stepMax), stepMax);
+
+      const speedErrMps = err * CONST.speedFactor / 1000;
+      const motorTarget = motorKa * aReq + motorKv * speedErrMps;
+      const driveCap = Math.max(limit - Math.abs(gyro) - Math.abs(turn) - reserve, 0);
+      const motorLimited = clamp(motorTarget, -driveCap, driveCap);
+      const cutRatio = Math.abs(motorTarget) > 1 ? Math.abs(motorLimited / motorTarget) : 1;
+
+      set("monoTrend", trend);
+      set("monoServoStep", fmt(servoStep, 1) + " duty/ms");
+      set("monoMotorFF", fmt(motorLimited, 0) + " PWM");
+      set("monoDriveCap", fmt(driveCap, 0) + " PWM");
+
+      if (driveCap <= 0) {
+        setHint("monoMotorHint", "无 drive 余量，必须降速或缩转向", "danger");
+      } else if (cutRatio < 0.75) {
+        setHint("monoMotorHint", "前馈被余量裁剪到 " + fmt(cutRatio * 100, 0) + "%", "warn");
+      } else {
+        setHint("monoMotorHint", "前馈基本可完整输出", "ok");
+      }
+
+      let advice = "";
+      if (aReq > 0.08) {
+        advice = "建议：进入 ACCEL 后，舵机加速方向用该动态步长，电机端提前给 K_a·a_req；若 |gyro| 过高或 drive_cap 小于 1000，暂停继续加速。";
+      } else if (aReq < -0.08) {
+        advice = "建议：进入 DECEL 后，先快速撤 accel_ff，再按 a_req 建立 brake_ff；舵机用刹车/反后坐方向的快步长，释放方向慢一点。";
+      } else {
+        advice = "建议：HOLD 状态保持较小舵机步长和较低前馈，重点减少抖动、电流峰值和低速反抽。";
+      }
+      setHint("monoAdvice", advice, driveCap <= 0 ? "danger" : "warn");
+    }
+
     function drawAxes(ctx, w, h, pad, yLabel) {
       ctx.clearRect(0, 0, w, h);
       ctx.fillStyle = "#ffffff";
@@ -1730,6 +2189,8 @@ pwm_right = -gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out;</code></pre>
       accelCalc();
       racePlannerCalc();
       pwmBudgetCalc();
+      servo2000SlowCalc();
+      monotonicControlCalc();
       servoCalc();
       balanceCalc();
       turnCalc();
