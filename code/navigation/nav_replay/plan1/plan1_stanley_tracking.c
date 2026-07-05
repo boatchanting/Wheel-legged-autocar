@@ -427,7 +427,7 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
         }
     }
 
-    if (!is_recovering && min_dist_sq > 800.0f * 800.0f)
+    if (!is_recovering && min_dist_sq > 2800.0f * 2800.0f)
     {
         return current_idx;
     }
