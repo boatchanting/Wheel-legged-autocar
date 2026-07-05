@@ -1,6 +1,7 @@
 #include "wifi_protocol.h"
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
+#include "../navigation/inertial_nav.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -107,10 +108,21 @@ static void wifi_protocol_send_host_ack(uint8_t control_id, uint8_t status)
     wifi_protocol_send_simple_frame(WIFI_CMD_HOST_ACK, payload, WIFI_ACK_PAYLOAD_LEN);
 }
 
+static float read_float_le(const uint8_t *p)
+{
+    float val;
+    uint8_t *dst = (uint8_t *)&val;
+    dst[0] = p[0];
+    dst[1] = p[1];
+    dst[2] = p[2];
+    dst[3] = p[3];
+    return val;
+}
+
 // ------------------------------------------------------------------
 // Host control command handling
 // ------------------------------------------------------------------
-static void wifi_protocol_apply_host_control(uint8_t control_id)
+static void wifi_protocol_apply_host_control(uint8_t control_id, const uint8_t *payload, uint8_t payload_len)
 {
     uint8_t ack_status = WIFI_HOST_ACK_UNKNOWN_CMD;
 
@@ -191,6 +203,40 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
         break;
     }
 
+    case WIFI_HOST_CTRL_NAV_OFFSET:
+    {
+        float forward_mm;
+        float left_mm;
+        uint8_t accepted;
+
+        if (payload_len < 8U)
+        {
+            ack_status = WIFI_HOST_ACK_INVALID_PAYLOAD;
+            break;
+        }
+
+        forward_mm = read_float_le(payload);
+        left_mm = read_float_le(payload + 4U);
+        accepted = (uint8_t)g_yaw_initialized;
+
+        if (accepted)
+        {
+            InertialNav_ApplyBodyOffset(forward_mm, left_mm);
+            ack_status = WIFI_HOST_ACK_ACCEPTED;
+#if DEBUG_LOG_ENABLE
+            printf("[WIFI] Host cmd NAV_OFFSET accepted: forward=%.2f left=%.2f.\r\n", forward_mm, left_mm);
+#endif
+        }
+        else
+        {
+            ack_status = WIFI_HOST_ACK_REJECTED;
+#if DEBUG_LOG_ENABLE
+            printf("[WIFI] Host cmd NAV_OFFSET ignored (yaw not ready).\r\n");
+#endif
+        }
+        break;
+    }
+
     default:
 #if DEBUG_LOG_ENABLE
         printf("[WIFI] Unknown host control cmd: 0x%02X\r\n", control_id);
@@ -207,7 +253,7 @@ static void wifi_protocol_handle_frame(uint8_t cmd, const uint8_t *payload, uint
     {
         if (payload_len >= 1U)
         {
-            wifi_protocol_apply_host_control(payload[0]);
+            wifi_protocol_apply_host_control(payload[0], &payload[1], (uint8_t)(payload_len - 1U));
         }
         else
         {

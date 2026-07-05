@@ -84,6 +84,8 @@ uint8 NavRam_RecordPoint(uint8 point_type);
  */
 uint16 NavRam_GetPointCount(void);
 
+void NavRam_ApplyOffset(float dx_mm, float dy_mm);
+
 /**
  * @brief  根据点类型鸣叫蜂鸣器
  * @param  point_type 点类型 n

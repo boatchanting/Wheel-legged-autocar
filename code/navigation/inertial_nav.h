@@ -59,6 +59,8 @@ extern InertialNav_t inertial_nav;
 
 // --- 函数声明 ---
 void InertialNav_Init(void);//初始化惯性导航系统
+void InertialNav_ApplyOffset(float dx_mm, float dy_mm);
+void InertialNav_ApplyBodyOffset(float forward_mm, float left_mm);
 void InertialNav_Update(float curr_yaw,
                         float acc_lat_left, float acc_lon_forward, 
                         float speed_L, float speed_R);

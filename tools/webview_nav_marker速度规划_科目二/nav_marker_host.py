@@ -21,11 +21,13 @@ CMD_HOST_CONTROL = 0x10
 CMD_HOST_ACK = 0x11
 HOST_CTRL_CLEAR_TRAJECTORY = 0x01
 HOST_CTRL_START_CAR = 0x02
+HOST_CTRL_NAV_OFFSET = 0x06
 HOST_ACK_ACCEPTED = 0x00
 HOST_ACK_REJECTED = 0x01
 HOST_ACK_UNKNOWN_CMD = 0x02
 HOST_ACK_INVALID_PAYLOAD = 0x03
 HOST_ACK_TIMEOUT_SEC = 1.5
+NAV_OFFSET_LIMIT_MM = 100000.0
 
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
@@ -128,6 +130,8 @@ def _wait_host_ack(control_code, start_seq, timeout_sec):
 
 def _format_host_ack_result(control_code, ack_status):
     if ack_status == HOST_ACK_ACCEPTED:
+        if control_code == HOST_CTRL_NAV_OFFSET:
+            return {"success": True, "executed": True, "msg": "小车回传成功：当前位置瞬移已执行"}
         return {"success": True, "msg": "小车回传成功：命令已执行"}
 
     if ack_status == HOST_ACK_REJECTED:
@@ -143,6 +147,12 @@ def _format_host_ack_result(control_code, ack_status):
                 "executed": False,
                 "msg": "小车已回传：开始发车被拒绝（需电机使能）",
             }
+        if control_code == HOST_CTRL_NAV_OFFSET:
+            return {
+                "success": True,
+                "executed": False,
+                "msg": "小车已回传：当前位置瞬移被拒绝（需航向已初始化）",
+            }
         return {"success": True, "executed": False, "msg": "小车已回传：命令被拒绝（条件不满足）"}
 
     if ack_status == HOST_ACK_UNKNOWN_CMD:
@@ -154,11 +164,11 @@ def _format_host_ack_result(control_code, ack_status):
     return {"success": False, "msg": f"小车回传失败：未知ACK状态 0x{ack_status:02X}"}
 
 
-def _send_control_to_vehicle(ctrl_code):
+def _send_control_to_vehicle(ctrl_code, payload_bytes=b""):
     global active_conn, peer_addr, server_error
 
     code = int(ctrl_code) & 0xFF
-    frame = _build_frame(CMD_HOST_CONTROL, bytes([code]))
+    frame = _build_frame(CMD_HOST_CONTROL, bytes([code]) + bytes(payload_bytes))
 
     with ack_cond:
         start_seq = ack_seq
@@ -465,6 +475,20 @@ class Api:
             all_history_data.clear()
             new_data_buffer.clear()
         return {"success": True, "msg": "历史数据已清空"}
+
+    def send_nav_offset(self, forward_mm, left_mm):
+        forward = _safe_float(forward_mm)
+        left = _safe_float(left_mm)
+        if forward is None or left is None:
+            return {"success": False, "msg": "当前位置瞬移量非法"}
+        if abs(forward) > NAV_OFFSET_LIMIT_MM or abs(left) > NAV_OFFSET_LIMIT_MM:
+            return {"success": False, "msg": f"当前位置瞬移量超出范围（单轴最大 {NAV_OFFSET_LIMIT_MM:.0f} mm）"}
+
+        result = _send_control_to_vehicle(HOST_CTRL_NAV_OFFSET, struct.pack("<ff", forward, left))
+        if result.get("success") and result.get("executed") is not False:
+            with state_lock:
+                new_data_buffer.clear()
+        return result
 
     def send_host_control(self, control_code):
         try:

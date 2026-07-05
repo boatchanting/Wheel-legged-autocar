@@ -84,6 +84,17 @@ uint16 NavRam_GetPointCount(void)
     return nav_ram_data.point_count;
 }
 
+void NavRam_ApplyOffset(float dx_mm, float dy_mm)
+{
+    uint16 i;
+
+    for (i = 0; i < nav_ram_data.point_count; i++)
+    {
+        nav_ram_data.points[i].x += dx_mm;
+        nav_ram_data.points[i].y += dy_mm;
+    }
+}
+
 /**
  * @brief 根据点类型进行蜂鸣器提示
  * @param point_type 点类型枚举值

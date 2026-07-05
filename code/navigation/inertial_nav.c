@@ -24,6 +24,23 @@ void InertialNav_Init(void) {
     inertial_nav.slip_flag = 0;// 初始化打滑标志位
 }
 
+void InertialNav_ApplyOffset(float dx_mm, float dy_mm)
+{
+    inertial_nav.x += dx_mm;
+    inertial_nav.y += dy_mm;
+}
+
+void InertialNav_ApplyBodyOffset(float forward_mm, float left_mm)
+{
+    float yaw_rad = DEG2RAD(inertial_nav.relative_yaw);
+    float cos_yaw = cosf(yaw_rad);
+    float sin_yaw = sinf(yaw_rad);
+    float dx_mm = -forward_mm * cos_yaw + left_mm * sin_yaw;
+    float dy_mm = -forward_mm * sin_yaw - left_mm * cos_yaw;
+
+    InertialNav_ApplyOffset(dx_mm, dy_mm);
+}
+
 static float last_yaw_rad = 0.0f; 
 /**
  * @brief 惯性导航更新函数 (10ms 调用一次)

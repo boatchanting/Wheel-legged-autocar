@@ -29,8 +29,15 @@ input{width:108px}
 .side{display:flex;flex-direction:column;gap:10px;padding:10px}
 .box{border:1px solid var(--bd);border-radius:8px;padding:8px}
 .box h3{margin:0 0 8px;font-size:14px}
+.edit-layout{display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:8px;align-items:start}
 .kv{display:grid;grid-template-columns:88px 1fr;gap:5px;font-size:12px}
 .k{color:var(--muted)}
+.nav-offset{justify-self:end;width:150px}
+.nav-offset label{display:grid;grid-template-columns:auto 74px;gap:5px;align-items:center;font-size:12px;color:var(--muted);white-space:nowrap}
+.nav-offset input{width:74px;padding:5px 6px}
+.offset-pad{display:grid;grid-template-columns:40px 40px 40px;gap:5px;justify-content:center;margin-top:6px}
+.offset-pad button{width:40px;height:30px;padding:0}
+.offset-pad .empty{visibility:hidden}
 .ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
 .table-wrap{flex:1;min-height:0;overflow:auto;border:1px solid var(--bd);border-radius:8px}
 table{width:100%;border-collapse:collapse;font-size:12px}
@@ -70,13 +77,23 @@ tr.sel{background:#eaf2ff}
   <div class="card side">
     <div class="box">
       <h3>选中点编辑</h3>
-      <div class="kv">
-        <div class="k">序号</div><div id="si">-</div>
-        <div class="k">X(mm)</div><div id="sx">-</div>
-        <div class="k">Y(mm)</div><div id="sy">-</div>
-        <div class="k">偏航角</div><div id="syaw">-</div>
-        <div class="k">Heading</div><div id="sheading">-</div>
-        <div class="k">来源</div><div id="ss">-</div>
+      <div class="edit-layout">
+        <div class="kv">
+          <div class="k">序号</div><div id="si">-</div>
+          <div class="k">X(mm)</div><div id="sx">-</div>
+          <div class="k">Y(mm)</div><div id="sy">-</div>
+          <div class="k">偏航角</div><div id="syaw">-</div>
+          <div class="k">Heading</div><div id="sheading">-</div>
+          <div class="k">来源</div><div id="ss">-</div>
+        </div>
+        <div class="nav-offset">
+          <label>距离(mm)<input id="inpOffsetDist" type="number" step="1" value="0" /></label>
+          <div class="offset-pad">
+            <span class="empty"></span><button id="bOffsetF">前</button><span class="empty"></span>
+            <button id="bOffsetL">左</button><span class="empty"></span><button id="bOffsetR">右</button>
+            <span class="empty"></span><button id="bOffsetB">后</button><span class="empty"></span>
+          </div>
+        </div>
       </div>
       <div class="ops">
         <label>类型<select id="selType"></select></label>
@@ -117,11 +134,12 @@ const TYPES=[{value:0,label:'0 PATH'},{value:1,label:'1 CIRCLE'},{value:2,label:
 const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#059669'};
 const HOST_CTRL_CLEAR_TRAJECTORY=1;
 const HOST_CTRL_START_CAR=2;
+const HOST_CTRL_NAV_OFFSET=6;
 // 在 S 中加入 vx_body 变量
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0};
+const S={api:false,traj:[],marks:[],jumps:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,maxJumps:200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,offsetBusy:false,pendingJump:null};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 // 在 E 元素绑定中加入 vxBody 节点映射
-const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,inpOffsetDist:inpOffsetDist,bOffsetF:bOffsetF,bOffsetL:bOffsetL,bOffsetR:bOffsetR,bOffsetB:bOffsetB,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -138,15 +156,16 @@ function s2w(x,y){const c=center();return{x:(x-c.x)/V.scale,y:-(y-c.y)/V.scale}}
 function getSel(){return S.marks.find(m=>m.id===S.sel)||null}
 function addMark(x,y,t,src,targetYaw,headingDeg){const m={id:S.nextId++,x:Number(x),y:Number(y),type:clampType(t),src:src||'manual',targetYaw:normalizeYaw(targetYaw),heading:normalizeHeading(headingDeg)};S.marks.push(m);if(S.marks.length>S.maxMarks)S.marks.splice(0,S.marks.length-S.maxMarks);S.sel=m.id;syncMarks();draw()}
 function rmSel(){if(S.sel==null)return;const n=S.marks.length;S.marks=S.marks.filter(m=>m.id!==S.sel);if(S.marks.length!==n){S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()}}
-function fitAll(){const pts=[];for(const p of S.traj)pts.push({x:p.x,y:p.y});for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
+function fitAll(){const pts=[];for(const p of S.traj)pts.push({x:p.x,y:p.y});for(const m of S.marks)pts.push({x:m.x,y:m.y});for(const j of S.jumps){pts.push(j.from);pts.push(j.to)}if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
 function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale}
 function hit(px,py){let best=null,bd=9999;for(const m of S.marks){const p=w2s(m.x,m.y);const d=Math.hypot(px-p.x,py-p.y);if(d<12&&d<bd){best=m;bd=d}}return best}
 function grid(w,h){let sp=1000*V.scale;while(sp<24)sp*=2;while(sp>120)sp*=0.5;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let sx=((c.x%sp)+sp)%sp;for(let x=sx;x<w;x+=sp){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let sy=((c.y%sp)+sp)%sp;for(let y=sy;y<h;y+=sp){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}}
 function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
-function drawTraj(){if(S.traj.length<2)return;ctx.strokeStyle='#2f6fed';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<S.traj.length;i++){const p=w2s(S.traj[i].x,S.traj[i].y);if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y)}ctx.stroke();const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
+function drawTraj(){if(S.traj.length<1)return;ctx.strokeStyle='#2f6fed';ctx.lineWidth=2;ctx.beginPath();let has=false;for(let i=0;i<S.traj.length;i++){const item=S.traj[i],p=w2s(item.x,item.y);if(i===0||item.jump)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);has=true}if(has)ctx.stroke();const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
+function drawJumps(){if(!S.jumps.length)return;ctx.save();ctx.strokeStyle='#d97706';ctx.fillStyle='#d97706';ctx.lineWidth=2;ctx.setLineDash([7,5]);for(const j of S.jumps){const a=w2s(j.from.x,j.from.y),b=w2s(j.to.x,j.to.y);ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();ctx.setLineDash([]);ctx.beginPath();ctx.arc(a.x,a.y,4,0,Math.PI*2);ctx.arc(b.x,b.y,4,0,Math.PI*2);ctx.fill();ctx.font='12px Microsoft YaHei';ctx.fillText('瞬移 '+j.label,(a.x+b.x)*0.5+6,(a.y+b.y)*0.5-6);ctx.setLineDash([7,5])}ctx.restore()}
 function drawArrow(px,py,yawDeg,color,selected){const rad=yawDeg*Math.PI/180;const len=selected?30:24;const dx=-Math.cos(rad);const dy=Math.sin(rad);const tailX=px-dx*len*0.35;const tailY=py-dy*len*0.35;const tipX=px+dx*len;const tipY=py+dy*len;ctx.strokeStyle=color;ctx.lineWidth=selected?3:2;ctx.beginPath();ctx.moveTo(tailX,tailY);ctx.lineTo(tipX,tipY);ctx.stroke();const head=7;const ang=Math.atan2(tipY-tailY,tipX-tailX);ctx.beginPath();ctx.moveTo(tipX,tipY);ctx.lineTo(tipX-head*Math.cos(ang-Math.PI/7),tipY-head*Math.sin(ang-Math.PI/7));ctx.lineTo(tipX-head*Math.cos(ang+Math.PI/7),tipY-head*Math.sin(ang+Math.PI/7));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
 function drawMarks(){for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=COLORS[m.type]||'#374151';ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();if(m.type!==0)drawArrow(p.x,p.y,m.targetYaw,col,sel);if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
-function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawMarks()}
+function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawJumps();drawMarks()}
 // 渲染 vxBody 内容
 function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
 function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent='-';E.sy.textContent='-';E.syaw.textContent='-';E.sheading.textContent='-';E.ss.textContent='-';fillType(E.selType,0);E.inpYaw.value='';E.inpHeading.value='';return}const idx=S.marks.findIndex(v=>v.id===m.id);E.si.textContent=String(idx);E.sx.textContent=m.x.toFixed(1);E.sy.textContent=m.y.toFixed(1);E.syaw.textContent=m.targetYaw.toFixed(1);E.sheading.textContent=m.heading.toFixed(1);E.ss.textContent=m.src;fillType(E.selType,m.type);E.inpYaw.value=m.targetYaw.toFixed(1);E.inpHeading.value=m.heading.toFixed(1)}
@@ -156,6 +175,12 @@ function setConn(ok,text,cls){E.st.className='tag '+cls;E.st.textContent=text;if
 function setTxStatus(state,autoReset=true){if(state==='ok'){E.txState.className='tag ok';E.txState.textContent='回传成功'}else if(state==='err'){E.txState.className='tag err';E.txState.textContent='回传失败'}else{E.txState.className='tag warn';E.txState.textContent='尚未回传'}if(autoReset&&state!=='idle'){clearTimeout(txStatusTimer);txStatusTimer=setTimeout(()=>setTxStatus('idle',false),3000)}else if(state==='idle'){clearTimeout(txStatusTimer);txStatusTimer=null}}
 function exportPayload(){return S.marks.map((m,i)=>({index:i,x:m.x,y:m.y,relative_yaw:m.targetYaw,heading:m.heading,point_type:m.type}))}
 async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pywebview.api)return{success:false,msg:'后端 API 未就绪'};try{return await window.pywebview.api.send_host_control(code)}catch(e){return{success:false,msg:'命令发送异常:'+(e.message||e)}}}
+async function sendNavOffset(forward,left){if(!S.api||!window.pywebview||!window.pywebview.api)return{success:false,msg:'后端 API 未就绪'};try{return await window.pywebview.api.send_nav_offset(forward,left)}catch(e){return{success:false,msg:'当前位置瞬移发送异常:'+(e.message||e)}}}
+function getOffsetDistance(){const dist=Math.abs(Number(E.inpOffsetDist.value));if(!Number.isFinite(dist)){tip('当前位置瞬移距离非法');return null}return dist}
+function offsetLabel(dir){return dir==='front'?'前':dir==='back'?'后':dir==='left'?'左':dir==='right'?'右':'?'}
+function registerPendingJump(forward,left,dir){S.pendingJump=S.last?{from:{x:S.last.x,y:S.last.y},forward,left,label:offsetLabel(dir)}:null}
+function finishPendingJump(x,y){const p=S.pendingJump;S.pendingJump=null;if(!p||!p.from)return false;S.jumps.push({from:p.from,to:{x,y},forward:p.forward,left:p.left,label:p.label});if(S.jumps.length>S.maxJumps)S.jumps.splice(0,S.jumps.length-S.maxJumps);return true}
+async function moveNavOffset(dir){const dist=getOffsetDistance();if(dist==null)return;if(dist===0){tip('当前位置瞬移距离为0，未发送');return}let forward=0,left=0;if(dir==='front')forward=dist;else if(dir==='back')forward=-dist;else if(dir==='left')left=dist;else if(dir==='right')left=-dist;else return;S.offsetBusy=true;try{const r=await sendNavOffset(forward,left);const executed=!!(r&&r.success&&r.executed!==false);if(executed){registerPendingJump(forward,left,dir);setTxStatus('ok');tip((r.msg||'当前位置瞬移已执行')+` ${offsetLabel(dir)}=${dist.toFixed(1)}mm`)}else{setTxStatus('err');tip(r&&r.msg?r.msg:'当前位置瞬移命令失败')}}finally{S.offsetBusy=false}}
 
 // 提取并保存 it.vx_body 信息
 function feed(frames){
@@ -163,8 +188,9 @@ function feed(frames){
   for(const it of frames){
     const x=Number(it.nav_x),y=Number(it.nav_y),yaw=normalizeYaw(it.relative_yaw||0),hdg=normalizeHeading(it.heading||0);
     if(Number.isFinite(x)&&Number.isFinite(y)){
+      const jumped=finishPendingJump(x,y);
       S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg};
-      S.traj.push({x,y})
+      S.traj.push({x,y,jump:jumped})
     }
     const trig=Number(it.mark_trigger)||0;
     if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',yaw,hdg);S.lastMarkLoop=Number(it.loop)||0}
@@ -178,7 +204,7 @@ function feed(frames){
   syncTop();draw()
 }
 
-async function pollData(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,120);return}try{const d=await window.pywebview.api.get_new_data();if(d&&d.length){setConn(true,'\u5df2\u8fde\u63a5','ok');feed(d)}}catch(_){setConn(false,'\u63a5\u53e3\u5f02\u5e38','err')}setTimeout(pollData,38)}
+async function pollData(){if(S.offsetBusy){setTimeout(pollData,60);return}if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,120);return}try{const d=await window.pywebview.api.get_new_data();if(S.offsetBusy){setTimeout(pollData,60);return}if(d&&d.length){setConn(true,'\u5df2\u8fde\u63a5','ok');feed(d)}}catch(_){setConn(false,'\u63a5\u53e3\u5f02\u5e38','err')}setTimeout(pollData,38)}
 let stTick=0;
 async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
 function updateSelectedYaw(){const m=getSel();if(!m)return;const raw=Number(E.inpYaw.value);if(!Number.isFinite(raw))return;m.targetYaw=normalizeYaw(raw);syncSel();syncRows();draw()}
@@ -189,6 +215,10 @@ fillType(E.selType,0);
 E.selType.onchange=()=>{const m=getSel();if(!m)return;m.type=clampType(E.selType.value);syncRows();draw()};
 E.inpYaw.onchange=updateSelectedYaw;
 E.inpHeading.onchange=updateSelectedHeading;
+E.bOffsetF.onclick=()=>moveNavOffset('front');
+E.bOffsetL.onclick=()=>moveNavOffset('left');
+E.bOffsetR.onclick=()=>moveNavOffset('right');
+E.bOffsetB.onclick=()=>moveNavOffset('back');
 E.bFollow.onclick=()=>{V.follow=!V.follow;E.bFollow.classList.toggle('active',V.follow);if(V.follow){follow();draw()}};
 E.bAdaptive.onclick=()=>{V.adaptive=!V.adaptive;E.bAdaptive.classList.toggle('active',V.adaptive);if(V.adaptive){fitAll();draw()}};
 E.bFit.onclick=()=>{fitAll();draw()};
@@ -197,7 +227,7 @@ E.bAdd.onclick=()=>{if(!S.last){tip('\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u8f68\
 E.bDel.onclick=()=>{rmSel();tip('\u5df2\u5220\u9664\u9009\u4e2d\u70b9')};
 E.bClrM.onclick=()=>{S.marks=[];S.sel=null;syncMarks();draw();tip('\u5df2\u6e05\u7a7a\u6807\u8bb0\u70b9')};
 E.bClrT.onclick=async()=>{
-S.traj=[];S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
+S.traj=[];S.jumps=[];S.pendingJump=null;S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
 if(S.api&&window.pywebview&&window.pywebview.api){try{await window.pywebview.api.clear_history()}catch(_){ }}
 draw();syncTop();tip('\u5df2\u6e05\u7a7a\u8f68\u8ff9');
 const sendResult=await sendHostControl(HOST_CTRL_CLEAR_TRAJECTORY);
