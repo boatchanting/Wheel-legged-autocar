@@ -95,11 +95,11 @@ int main(void)
 
 
     // 此处编写用户代码 例如外设初始化代码等
-    // 跳帧控制：摄像头 ~100fps，WiFi 目标 ~60fps
-    //#define CAMERA_FPS          100U
-    //#define WIFI_TARGET_FPS     100U
-    //#define FRAME_SKIP_RATIO    ((CAMERA_FPS + WIFI_TARGET_FPS - 1) / WIFI_TARGET_FPS)  // = 2
-    //static uint32_t frame_skip_counter = 0U;
+    // 跳帧控制：摄像头 ~100fps，WiFi 目标设定为 25fps 左右，防止 TCP 队列在远距离下阻塞
+    #define CAMERA_FPS          100U
+    #define WIFI_TARGET_FPS     25U
+    #define FRAME_SKIP_RATIO    ((CAMERA_FPS + WIFI_TARGET_FPS - 1) / WIFI_TARGET_FPS)
+    static uint32_t frame_skip_counter = 0U;
     
     while(true)
     {
@@ -151,9 +151,9 @@ int main(void)
             }
 #endif
 
-            // 跳帧控制：视觉算法满帧运行(100fps)，只限制 WiFi 发送速率(~60fps)
-            //if((frame_skip_counter % FRAME_SKIP_RATIO) == 0U)
-            //{
+            // 跳帧控制：视觉算法满帧运行(100fps)，只限制 WiFi 发送速率(~25fps)
+            if((frame_skip_counter % FRAME_SKIP_RATIO) == 0U)
+            {
                 // 发送图像
                 #if WIFI_CORE1_USE && WIFI_CORE1_ASSISTANT
                 seekfree_assistant_camera_send();
@@ -166,8 +166,8 @@ int main(void)
                 CameraMenu_Update();
             #endif
             
-            //}
-            //frame_skip_counter++;
+            }
+            frame_skip_counter++;
             // 如果使用UDP协议传输数据则推荐在数据全部发送到模块之后立即调用wifi_spi_udp_send_now()函数，以告知模块立即将收到的数据发送到网络上
             // 如果没有立即调用则模块会在持续2毫秒未收到数据后，将数据发送到网络上
             // 调用wifi_spi_udp_send_now()前传输给模块的数据数量建议不要超过40960字节

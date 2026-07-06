@@ -62,6 +62,7 @@
 #define WIFI_CONNECT_TIME_OUT       10000       // 单位毫秒
 #define SOCKET_CONNECT_TIME_OUT     50000       // 单位毫秒
 #define OTHER_TIME_OUT              1000        // 单位毫秒
+#define DATA_SEND_TIME_OUT          10          // 专门用于发数据的超时时间，单位毫秒
 
 char wifi_spi_version[12];                      // 保存模块固件版本信息
 char wifi_spi_mac_addr[20];                     // 保存模块MAC地址信息
@@ -507,7 +508,7 @@ uint32 wifi_spi_send_buffer (const uint8 *buffer, uint32 length)
         {
             send_length = length > WIFI_SPI_TRANSFER_SIZE ? (uint16)WIFI_SPI_TRANSFER_SIZE : (uint16)length;
             
-            if(wifi_spi_wait_idle(OTHER_TIME_OUT))
+            if(wifi_spi_wait_idle(DATA_SEND_TIME_OUT))
             {
                 break;
             }
@@ -531,7 +532,7 @@ uint32 wifi_spi_send_buffer (const uint8 *buffer, uint32 length)
         // 检查最后一次的接收是否将所有的数据都接收完毕
         while(WIFI_SPI_REPLY_DATA_START == temp_packets.head.command)
         {
-            if(wifi_spi_wait_idle(OTHER_TIME_OUT))
+            if(wifi_spi_wait_idle(DATA_SEND_TIME_OUT))
             {
                 break;
             }
