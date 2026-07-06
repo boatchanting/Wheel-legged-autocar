@@ -68,6 +68,9 @@ char wifi_spi_version[12];                      // 保存模块固件版本信�
 char wifi_spi_mac_addr[20];                     // 保存模块MAC地址信息
 char wifi_spi_ip_addr_port[25];                 // 保存模块IP地址与端口信息
 
+uint32 wifi_tx_congestion_count = 0;
+uint8 wifi_needs_reconnect = 0;
+
 static fifo_struct  wifi_spi_fifo;
 static uint8        wifi_spi_buffer[WIFI_SPI_RECVIVE_FIFO_SIZE];
 static volatile     wifi_spi_state_enum wifi_spi_mutex;
@@ -510,8 +513,15 @@ uint32 wifi_spi_send_buffer (const uint8 *buffer, uint32 length)
             
             if(wifi_spi_wait_idle(DATA_SEND_TIME_OUT))
             {
+                wifi_tx_congestion_count++;
+                if (wifi_tx_congestion_count > 50)
+                {
+                    wifi_needs_reconnect = 1;
+                    wifi_tx_congestion_count = 0;
+                }
                 break;
             }
+            wifi_tx_congestion_count = 0;
             
             wifi_spi_transfer_data(buffer, &temp_packets, send_length);
             

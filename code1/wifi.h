@@ -135,6 +135,7 @@ extern int g_motor_enable;
 
 // 函数声明
 void wifi_init(void);
+void wifi_reconnect_tcp_server(void);
 void wifi_connect_tcp_server(void);
 void wifi_camera_init(void);
 void wifi_update_pid_params(void);//检查并更新从上位机接收到的PID等参数

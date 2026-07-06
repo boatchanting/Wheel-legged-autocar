@@ -95,6 +95,16 @@ void wifi_init(void)
     printf("\r\n module ip     :%s",wifi_spi_ip_addr_port);                     // 模块 IP 地址
 }
 
+void wifi_reconnect_tcp_server(void)
+{
+    if(1 != WIFI_SPI_AUTO_CONNECT)
+    {
+        wifi_spi_socket_disconnect();
+        system_delay_ms(100);
+        wifi_connect_tcp_server();
+    }
+}
+
 void wifi_connect_tcp_server(void)
 {
     // zf_device_wifi_spi.h 文件内的宏定义可以更改模块连接(建立) WIFI 之后，是否自动连接 TCP 服务器、创建 UDP 连接

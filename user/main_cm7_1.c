@@ -97,12 +97,19 @@ int main(void)
     // 此处编写用户代码 例如外设初始化代码等
     // 跳帧控制：摄像头 ~100fps，WiFi 目标设定为 25fps 左右，防止 TCP 队列在远距离下阻塞
     #define CAMERA_FPS          100U
-    #define WIFI_TARGET_FPS     25U
+    #define WIFI_TARGET_FPS     50U
     #define FRAME_SKIP_RATIO    ((CAMERA_FPS + WIFI_TARGET_FPS - 1) / WIFI_TARGET_FPS)
     static uint32_t frame_skip_counter = 0U;
     
+    extern uint8 wifi_needs_reconnect;
+
     while(true)
     {
+        if(wifi_needs_reconnect)
+        {
+            wifi_needs_reconnect = 0;
+            wifi_reconnect_tcp_server();
+        }
         #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
         wifi_protocol_poll_rx();
         #endif
