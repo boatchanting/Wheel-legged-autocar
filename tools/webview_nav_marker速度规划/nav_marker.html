@@ -71,7 +71,10 @@ tr.sel{background:#eaf2ff}
     <div class="card chart-card" style="height: 160px; display:flex; flex-direction:column; padding:10px 10px 10px 10px; flex-shrink:0;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:5px;">
         <h3 style="margin:0; font-size:14px; color:var(--muted)">磁力计航向角 (Heading)</h3>
-        <div id="headingVal" style="font-size:14px; font-weight:bold; color:var(--pri);">--°</div>
+        <div style="font-size:12px; display:flex; gap:12px;">
+          <div style="color:#8bb0df;">● 原始: <span id="headingRawVal" style="font-weight:bold; font-size:14px;">--°</span></div>
+          <div style="color:#d97706;">● 滤波: <span id="headingSmoothVal" style="font-weight:bold; font-size:14px;">--°</span></div>
+        </div>
       </div>
       <div style="flex:1; position:relative; overflow:hidden; background:#f9fbff; border:1px solid var(--bd); border-radius:4px;">
         <canvas id="chartCv" style="width:100%; height:100%; display:block;"></canvas>
@@ -129,10 +132,10 @@ const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#05
 const HOST_CTRL_CLEAR_TRAJECTORY=1;
 const HOST_CTRL_START_CAR=2;
 // 在 S 中加入 vx_body 变量
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,headingHistory:[],maxHeadingHistory:600};
+const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,headingHistory:[],headingSmoothHistory:[],maxHeadingHistory:600,smoothWindowSize:15};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 // 在 E 元素绑定中加入 vxBody 节点映射
-const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,chartCv:chartCv,headingVal:headingVal,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,chartCv:chartCv,headingRawVal:headingRawVal,headingSmoothVal:headingSmoothVal,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
 const chartCtx=E.chartCv.getContext('2d');
 let txStatusTimer=null;
@@ -187,25 +190,30 @@ function drawChart() {
   chartCtx.fillText('180', 2, Math.max(10, h/2 - 2));
   chartCtx.fillText('0', 2, h - 2);
 
-  if (!S.headingHistory.length) return;
-  chartCtx.strokeStyle = '#2f6fed';
-  chartCtx.lineWidth = 1.5;
-  chartCtx.beginPath();
-  const step = w / S.maxHeadingHistory;
-  const startX = w - S.headingHistory.length * step;
-  for (let i = 0; i < S.headingHistory.length; i++) {
-    const cx = startX + i * step;
-    const cy = h - (S.headingHistory[i] / 360) * h;
-    if (i === 0) chartCtx.moveTo(cx, cy);
-    else {
-      if (Math.abs(S.headingHistory[i] - S.headingHistory[i-1]) > 180) {
-        chartCtx.moveTo(cx, cy);
-      } else {
-        chartCtx.lineTo(cx, cy);
+  const drawLine = (history, color, lineWidth) => {
+    if (!history.length) return;
+    chartCtx.strokeStyle = color;
+    chartCtx.lineWidth = lineWidth;
+    chartCtx.beginPath();
+    const step = w / S.maxHeadingHistory;
+    const startX = w - history.length * step;
+    for (let i = 0; i < history.length; i++) {
+      const cx = startX + i * step;
+      const cy = h - (history[i] / 360) * h;
+      if (i === 0) chartCtx.moveTo(cx, cy);
+      else {
+        if (Math.abs(history[i] - history[i-1]) > 180) {
+          chartCtx.moveTo(cx, cy);
+        } else {
+          chartCtx.lineTo(cx, cy);
+        }
       }
     }
-  }
-  chartCtx.stroke();
+    chartCtx.stroke();
+  };
+
+  drawLine(S.headingHistory, '#8bb0df', 1.0);
+  drawLine(S.headingSmoothHistory, '#d97706', 1.8);
 }
 
 // 提取并保存 it.vx_body 信息
@@ -223,13 +231,39 @@ function feed(frames){
     S.payload=it.payload_size||'--';
     S.vx_body=it.vx_body!=null?Number(it.vx_body).toFixed(3):'--'; 
     S.headingHistory.push(hdg);
+    
+    let sumSin = 0;
+    let sumCos = 0;
+    const startIdx = Math.max(0, S.headingHistory.length - S.smoothWindowSize);
+    let count = 0;
+    for (let i = startIdx; i < S.headingHistory.length; i++) {
+      const rad = S.headingHistory[i] * Math.PI / 180.0;
+      sumSin += Math.sin(rad);
+      sumCos += Math.cos(rad);
+      count++;
+    }
+    let smoothedHdg = hdg;
+    if (count > 0) {
+      smoothedHdg = Math.atan2(sumSin / count, sumCos / count) * 180.0 / Math.PI;
+      if (smoothedHdg < 0) smoothedHdg += 360;
+    }
+    S.headingSmoothHistory.push(smoothedHdg);
   }
   if(S.traj.length>S.maxTraj)S.traj.splice(0,S.traj.length-S.maxTraj);
-  if(S.headingHistory.length>S.maxHeadingHistory)S.headingHistory.splice(0,S.headingHistory.length-S.maxHeadingHistory);
+  if(S.headingHistory.length>S.maxHeadingHistory) {
+    S.headingHistory.splice(0,S.headingHistory.length-S.maxHeadingHistory);
+    S.headingSmoothHistory.splice(0,S.headingSmoothHistory.length-S.maxHeadingHistory);
+  }
   S.rx+=frames.length;S.lastDataAt=performance.now();
   if(V.adaptive)fitAll();else if(V.follow)follow();
   syncTop();draw();
-  E.headingVal.textContent = S.last ? S.last.heading.toFixed(2) + '°' : '--°';
+  if (S.last) {
+    E.headingRawVal.textContent = S.last.heading.toFixed(2) + '°';
+    E.headingSmoothVal.textContent = S.headingSmoothHistory.length ? S.headingSmoothHistory[S.headingSmoothHistory.length-1].toFixed(2) + '°' : '--°';
+  } else {
+    E.headingRawVal.textContent = '--°';
+    E.headingSmoothVal.textContent = '--°';
+  }
   drawChart();
 }
 
