@@ -323,6 +323,7 @@ extern uint8 wifi_needs_reconnect;                          // IP地址与端口
 uint8  wifi_spi_connect_wifi    (char *wifi_ssid, char *pass_word);
 
 uint8  wifi_spi_socket_connect  (char *transport_type, char *ip_addr, char *port, char *local_port);
+uint8  wifi_spi_socket_connect_timeout  (char *transport_type, char *ip_addr, char *port, char *local_port, uint32 timeout);
 
 uint8  wifi_spi_socket_disconnect(void);
 

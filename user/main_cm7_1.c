@@ -105,10 +105,16 @@ int main(void)
 
     while(true)
     {
-        if(wifi_needs_reconnect)
+        static uint32_t reconnect_cooldown = 0;
+        if(reconnect_cooldown > 0)
+        {
+            reconnect_cooldown--;
+        }
+        else if(wifi_needs_reconnect)
         {
             wifi_needs_reconnect = 0;
             wifi_reconnect_tcp_server();
+            reconnect_cooldown = 50; // 冷却期(假如主循环50Hz，约1秒)
         }
         #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
         wifi_protocol_poll_rx();

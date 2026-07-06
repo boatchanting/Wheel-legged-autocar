@@ -368,6 +368,21 @@ uint8 wifi_spi_wifi_connect (char *wifi_ssid, char *pass_word)
 // 使用示例     wifi_spi_socket_connect("TCP", "192.168.2.5", "8080", "6060");
 // 备注信息
 //-------------------------------------------------------------------------------------------------------------------
+uint8 wifi_spi_socket_connect_timeout (char *transport_type, char *ip_addr, char *port, char *local_port, uint32 timeout)
+{
+    uint8 return_state;
+    uint8 temp_buffer[41];
+    uint16 length;
+    
+    length = (uint16)sprintf((char *)temp_buffer, "%s\r\n%s\r\n%s\r\n%s\r\n", transport_type, ip_addr, port, local_port);
+
+    return_state = wifi_spi_set_parameter(WIFI_SPI_SET_SOCKET_INFORMATION, temp_buffer, length, timeout);
+
+    wifi_spi_get_ip_addr_port();
+
+    return return_state;
+}
+
 uint8 wifi_spi_socket_connect (char *transport_type, char *ip_addr, char *port, char *local_port)
 {
     uint8 return_state;

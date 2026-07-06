@@ -100,8 +100,15 @@ void wifi_reconnect_tcp_server(void)
     if(1 != WIFI_SPI_AUTO_CONNECT)
     {
         wifi_spi_socket_disconnect();
-        system_delay_ms(100);
-        wifi_connect_tcp_server();
+        system_delay_ms(10);
+        // 使用非阻塞(短超时)连接，避免在脱机时卡死主循环
+        wifi_spi_socket_connect_timeout(
+            "TCP",
+            TCP_TARGET_IP,
+            TCP_TARGET_PORT,
+            WIFI_LOCAL_PORT,
+            10000 // 单位为100us，10000即1秒
+        );
     }
 }
 
