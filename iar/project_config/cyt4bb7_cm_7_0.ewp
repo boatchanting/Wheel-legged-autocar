@@ -1215,6 +1215,12 @@
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_gnss.c</name>
               </file>
               <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_lqr_tracking.h</name>
+              </file>
+              <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_lqr_tracking.c</name>
+              </file>
+              <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_pure_pursuit_speed_planning.h</name>
               </file>
               <file>

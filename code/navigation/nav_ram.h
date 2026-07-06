@@ -42,6 +42,7 @@ typedef struct
     float heading_deg;
     uint8 point_type;
     float target_speed;
+    float curvature;
 } NavRamPoint_t;
 
 typedef struct
