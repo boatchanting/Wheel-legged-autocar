@@ -6,7 +6,7 @@
 // 1. 普通路径点按点对点导航，速度由剩余距离在线规划。
 // 2. 雷区点不再等进中心后才慢慢收速，而是进入准备区就直接给 0 速度，
 //    让底层普通刹车前馈尽快介入；速度压下来后再用超低速补进中心。
-// 3. 雷区旋转从触发瞬间的车头角开始规划，在车头/车尾朝向下一个目标点之间选更快的一组，总角度至少 721 度。
+// 3. 雷区旋转从触发瞬间的车头角开始规划，在车头/车尾朝向下一个目标点之间选更快的一组，总角度至少 720 度。
 
 // 1 表示直接使用编译期静态路表，不再依赖 Flash 读表。
 #define NAV_REPLAY_USE_STATIC_ROUTE_TABLE       1
@@ -35,12 +35,21 @@
 #define NAV_POINT_SPECIAL_CRAWL_SPEED           (-90.0f)
 // 执行动作允许的最大实际速度（mm/s）；必须同时满足执行圈和航向条件。
 #define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    80.0f
-// 最终终点的停车半径（mm）。
-#define NAV_POINT_FINAL_STOP_RADIUS             80.0f
+// 最后点通过结束半径（mm）：只判定完成，不强制精确停车。
+#define NAV_POINT_FINAL_PASS_RADIUS             350.0f
+// High-speed finish fallback: if the car crosses the last segment end line
+// within this lateral width, finish even when one 10ms tick skips the radius.
+#define NAV_POINT_FINAL_PASS_LATERAL_RADIUS     500.0f
 // 中等角度偏差阈值（deg）；超过后只允许低速逼近。
 #define NAV_POINT_YAW_STOP_TOLERANCE            18.0f
 // 大角度偏差阈值（deg）；超过后直接停车原地修方向。
 #define NAV_POINT_YAW_SLOW_TOLERANCE            35.0f
+// 雷区旋转结束后的移动对准窗口周期数；窗口内允许边低速出发边修正航向。
+#define NAV_POINT_SPIN_EXIT_ALIGN_TICKS         40U
+// 移动对准允许的最大残余航向误差（deg）；超过后仍然原地修正，避免方向明显错误时硬冲。
+#define NAV_POINT_SPIN_EXIT_MOVE_YAW_MAX        90.0f
+// 移动对准低速上限占正常速度的比例；0.5 表示最多按正常速度的一半出发。
+#define NAV_POINT_SPIN_EXIT_SPEED_RATIO         0.5f
 // 允许优先倒车/反向朝向的偏置量（deg）。
 #define NAV_POINT_REVERSE_SELECT_BIAS_DEG       10.0f
 // 停稳判定计数阈值（周期数）；满足后才允许触发旋转。
@@ -65,8 +74,8 @@
 // 跨零或瞬时停车时的最大速度变化量。
 #define NAV_POINT_SPEED_CROSS_ZERO_STEP         90.0f
 
-// 雷区旋转最小总角度（deg）；统一按至少 721 度处理。
-#define NAV_POINT_SPIN_MIN_TOTAL_ANGLE          721.0f
+// 雷区旋转最小总角度（deg）；统一按至少 720 度处理。
+#define NAV_POINT_SPIN_MIN_TOTAL_ANGLE          720.0f
 
 // 输出到底盘控制层的目标速度指令。
 extern volatile float target_speed_set;
@@ -79,6 +88,14 @@ extern NavReplayState_e g_replay_state;
 extern uint8 g_current_point_type;
 // 特殊动作触发标志；置 1 后导航暂停，由上层动作状态机接管。
 extern uint8 g_special_action_trigger;
+// 最近一次雷区旋转规划调试量：direction 1=CW，-1=CCW。
+extern volatile uint16 g_nav_point_spin_debug_idx;
+extern volatile float g_nav_point_spin_debug_current_yaw;
+extern volatile float g_nav_point_spin_debug_exit_yaw;
+extern volatile float g_nav_point_spin_debug_total_angle;
+extern volatile float g_nav_point_spin_debug_direction;
+extern volatile float g_nav_point_spin_debug_cw_total_angle;
+extern volatile float g_nav_point_spin_debug_ccw_total_angle;
 
 // 启动导航回放并初始化状态机。
 void NavReplay_Start(void);

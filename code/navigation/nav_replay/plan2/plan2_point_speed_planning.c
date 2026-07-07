@@ -12,6 +12,13 @@ extern volatile float err_degree;
 NavReplayState_e g_replay_state = REPLAY_IDLE;
 uint8 g_current_point_type = NAV_POINT_PATH;
 uint8 g_special_action_trigger = 0;
+volatile uint16 g_nav_point_spin_debug_idx = 0U;
+volatile float g_nav_point_spin_debug_current_yaw = 0.0f;
+volatile float g_nav_point_spin_debug_exit_yaw = 0.0f;
+volatile float g_nav_point_spin_debug_total_angle = 0.0f;
+volatile float g_nav_point_spin_debug_direction = 0.0f;
+volatile float g_nav_point_spin_debug_cw_total_angle = 0.0f;
+volatile float g_nav_point_spin_debug_ccw_total_angle = 0.0f;
 
 static uint16 g_target_idx = 0U;
 static uint8 g_start_heading_aligned = 1U;
@@ -19,6 +26,11 @@ static uint8 s_stop_stable_ticks = 0U;
 static uint8 s_stop_yaw_locked = 0U;
 static float s_stop_yaw_deg = 0.0f;
 static float s_prev_speed_cmd = 0.0f;
+static uint8 s_spin_exit_pending = 0U;
+static uint8 s_spin_exit_align_ticks = 0U;
+
+#define NAV_POINT_SPIN_DIR_CW_SIGN             (1.0f)
+#define NAV_POINT_SPIN_DIR_CCW_SIGN            (-1.0f)
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
 #define NAV_REPLAY_START_HEADING_VALID 0
@@ -54,6 +66,12 @@ static void ResetStopState(void)
     s_stop_yaw_deg = 0.0f;
 }
 
+static void ResetSpinExitState(void)
+{
+    s_spin_exit_pending = 0U;
+    s_spin_exit_align_ticks = 0U;
+}
+
 static uint8 IsSpinPointType(uint8 point_type)
 {
     return (uint8)((point_type == NAV_POINT_CIRCLE) || (point_type == NAV_POINT_JUMP));
@@ -67,11 +85,17 @@ static uint8 IsSpecialPointType(uint8 point_type)
 static float CalcSpecialEstimatedStopDist(float speed_abs);
 static float CalcSpecialHardBrakeStrength(float dist_to_point, float speed_abs);
 static float CalcSpecialBrakePrepareRadius(float speed_abs);
+static float PositiveAngle360(float angle);
+static float CalcSpinTotalAngle(float current_yaw, float exit_yaw, float spin_sign);
+static float PlanDistanceSpeedAbs(float dist_mm, float stop_radius_mm);
 static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float yaw_err_deg);
+static float PlanSpeedAbsAfterSpinExit(float dist_mm, float stop_radius_mm, float yaw_err_deg);
 static uint8 ShouldStartSpecialBrakeCapture(float dist_to_point, float speed_abs);
 static void UpdateSpecialHardBrakeBySpeed(float hard_brake_strength);
 static float PlanSpecialApproachSpeed(float dist_to_point, float speed_sign, float hard_brake_strength);
 static uint8 ShouldTriggerSpecialAction(float dist_to_point, float speed_abs, float yaw_err);
+static uint8 ShouldFinishAtLastPoint(uint16 point_idx, float dist_to_point);
+static float PlanFinalPassSpeedAbs(float yaw_err_deg);
 
 static float CalcSpecialEstimatedStopDist(float speed_abs)
 {
@@ -194,6 +218,32 @@ static float SpeedSlew(float raw_speed)
     return s_prev_speed_cmd;
 }
 
+static float PositiveAngle360(float angle)
+{
+    angle = NormalizeAngle(angle);
+    if (angle < 0.0f)
+    {
+        angle += 360.0f;
+    }
+    return angle;
+}
+
+static float CalcSpinTotalAngle(float current_yaw, float exit_yaw, float spin_sign)
+{
+    float delta;
+
+    if (spin_sign == NAV_POINT_SPIN_DIR_CW_SIGN)
+    {
+        delta = PositiveAngle360(current_yaw - exit_yaw);
+    }
+    else
+    {
+        delta = PositiveAngle360(exit_yaw - current_yaw);
+    }
+
+    return NAV_POINT_SPIN_MIN_TOTAL_ANGLE + delta;
+}
+
 // 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组。
 static void ConfigureSpinPlanForPoint(uint16 point_idx)
 {
@@ -203,10 +253,11 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
     float exit_reverse_yaw;
     float best_total_angle = 1000000.0f;
     float best_exit_yaw = current_yaw;
-    float best_spin_sign = 1.0f;
+    float best_spin_sign = NAV_POINT_SPIN_DIR_CW_SIGN;
+    float best_cw_total_angle = 0.0f;
+    float best_ccw_total_angle = 0.0f;
     uint8 exit_candidate_count = (NAV_PLAN2_ALLOW_REVERSE_TO_NEXT_POINT != 0) ? 2U : 1U;
     uint8 exit_candidate_idx;
-    uint8 dir_candidate_idx;
 
     if (next_idx < nav_ram_data.point_count)
     {
@@ -225,39 +276,39 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
     for (exit_candidate_idx = 0U; exit_candidate_idx < exit_candidate_count; exit_candidate_idx++)
     {
         float exit_yaw = (exit_candidate_idx == 0U) ? exit_forward_yaw : exit_reverse_yaw;
+        float cw_total_angle = CalcSpinTotalAngle(current_yaw,
+                                                  exit_yaw,
+                                                  NAV_POINT_SPIN_DIR_CW_SIGN);
+        float ccw_total_angle = CalcSpinTotalAngle(current_yaw,
+                                                   exit_yaw,
+                                                   NAV_POINT_SPIN_DIR_CCW_SIGN);
 
-        for (dir_candidate_idx = 0U; dir_candidate_idx < 2U; dir_candidate_idx++)
+        if (cw_total_angle < best_total_angle)
         {
-            float spin_sign = (dir_candidate_idx == 0U) ? 1.0f : -1.0f;
-            float total_angle;
+            best_total_angle = cw_total_angle;
+            best_exit_yaw = exit_yaw;
+            best_spin_sign = NAV_POINT_SPIN_DIR_CW_SIGN;
+            best_cw_total_angle = cw_total_angle;
+            best_ccw_total_angle = ccw_total_angle;
+        }
 
-            if (spin_sign >= 0.0f)
-            {
-                total_angle = NormalizeAngle(exit_yaw - current_yaw);
-            }
-            else
-            {
-                total_angle = NormalizeAngle(current_yaw - exit_yaw);
-            }
-
-            if (total_angle < 0.0f)
-            {
-                total_angle += 360.0f;
-            }
-
-            while (total_angle < NAV_POINT_SPIN_MIN_TOTAL_ANGLE)
-            {
-                total_angle += 360.0f;
-            }
-
-            if (total_angle < best_total_angle)
-            {
-                best_total_angle = total_angle;
-                best_exit_yaw = exit_yaw;
-                best_spin_sign = spin_sign;
-            }
+        if (ccw_total_angle < best_total_angle)
+        {
+            best_total_angle = ccw_total_angle;
+            best_exit_yaw = exit_yaw;
+            best_spin_sign = NAV_POINT_SPIN_DIR_CCW_SIGN;
+            best_cw_total_angle = cw_total_angle;
+            best_ccw_total_angle = ccw_total_angle;
         }
     }
+
+    g_nav_point_spin_debug_idx = point_idx;
+    g_nav_point_spin_debug_current_yaw = current_yaw;
+    g_nav_point_spin_debug_exit_yaw = best_exit_yaw;
+    g_nav_point_spin_debug_total_angle = best_total_angle;
+    g_nav_point_spin_debug_direction = best_spin_sign;
+    g_nav_point_spin_debug_cw_total_angle = best_cw_total_angle;
+    g_nav_point_spin_debug_ccw_total_angle = best_ccw_total_angle;
 
     Minefield_SetSpinPlan(best_total_angle, best_exit_yaw, best_spin_sign);
 }
@@ -285,7 +336,7 @@ static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, flo
 }
 
 // 按“离停车边界还剩多少距离”实时规划允许速度上限。
-static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float yaw_err_deg)
+static float PlanDistanceSpeedAbs(float dist_mm, float stop_radius_mm)
 {
     float remain = dist_mm - stop_radius_mm;
     float speed_abs;
@@ -302,6 +353,13 @@ static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float y
     {
         speed_abs = fabsf(NAV_POINT_SPEED_SLOW);
     }
+
+    return speed_abs;
+}
+
+static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float yaw_err_deg)
+{
+    float speed_abs = PlanDistanceSpeedAbs(dist_mm, stop_radius_mm);
 
     if (fabsf(yaw_err_deg) > NAV_POINT_YAW_SLOW_TOLERANCE)
     {
@@ -376,6 +434,11 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
         {
             ConfigureSpinPlanForPoint(point_idx);
             minefield_flag = 1U;
+            s_spin_exit_pending = 1U;
+        }
+        else
+        {
+            ResetSpinExitState();
         }
 
         g_special_action_trigger = 1U;
@@ -387,49 +450,82 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     return 1U;
 }
 
-// 统一处理终点停车稳定判定。
-static uint8 HandleFinalStopAndFinish(float dist_to_point)
+// 最后点是通过结束点，不做精确停车稳定判定。
+static uint8 ShouldFinishAtLastPoint(uint16 point_idx, float dist_to_point)
 {
-    if (dist_to_point > NAV_POINT_FINAL_STOP_RADIUS)
-    {
-        Brake_NavHardStop_Reset();
-        ResetStopState();
-        return 0U;
-    }
+    const NavRamPoint_t *finish_point = &nav_ram_data.points[point_idx];
+    const NavRamPoint_t *prev_point;
+    float vx;
+    float vy;
+    float wx;
+    float wy;
+    float len2;
+    float progress;
+    float lateral_err;
 
-    if (s_stop_yaw_locked == 0U)
-    {
-        s_stop_yaw_locked = 1U;
-        s_stop_yaw_deg = inertial_nav.relative_yaw;
-    }
-
-    target_speed_set = NAV_POINT_SPEED_STOP;
-    s_prev_speed_cmd = 0.0f;
-    err_degree = NormalizeAngle(s_stop_yaw_deg - inertial_nav.relative_yaw);
-
-    if (fabsf(current_actual_speed) <= NAV_POINT_STOP_SPEED_MM_S)
-    {
-        if (s_stop_stable_ticks < 255U)
-        {
-            s_stop_stable_ticks++;
-        }
-    }
-    else
-    {
-        s_stop_stable_ticks = 0U;
-    }
-
-    if (s_stop_stable_ticks < NAV_POINT_STOP_STABLE_TICKS)
+    if (dist_to_point <= NAV_POINT_FINAL_PASS_RADIUS)
     {
         return 1U;
     }
 
-    g_replay_state = REPLAY_FINISHED;
-    target_speed_set = NAV_POINT_SPEED_STOP;
-    err_degree = 0.0f;
-    Brake_NavHardStop_Reset();
-    ResetStopState();
-    return 1U;
+    if (point_idx == 0U)
+    {
+        return 0U;
+    }
+
+    prev_point = &nav_ram_data.points[(uint16)(point_idx - 1U)];
+    vx = finish_point->x - prev_point->x;
+    vy = finish_point->y - prev_point->y;
+    len2 = vx * vx + vy * vy;
+    if (len2 <= 1.0f)
+    {
+        return 0U;
+    }
+
+    wx = inertial_nav.x - prev_point->x;
+    wy = inertial_nav.y - prev_point->y;
+    progress = ((wx * vx) + (wy * vy)) / len2;
+    lateral_err = fabsf((wx * vy) - (wy * vx)) / sqrtf(len2);
+
+    return (uint8)((progress >= 1.0f) &&
+                   (lateral_err <= NAV_POINT_FINAL_PASS_LATERAL_RADIUS));
+}
+
+static float PlanFinalPassSpeedAbs(float yaw_err_deg)
+{
+    float speed_abs = fabsf(NAV_POINT_SPEED_FAST);
+
+    if (fabsf(yaw_err_deg) > NAV_POINT_YAW_SLOW_TOLERANCE)
+    {
+        speed_abs = 0.0f;
+    }
+    else if (fabsf(yaw_err_deg) > NAV_POINT_YAW_STOP_TOLERANCE)
+    {
+        speed_abs *= 0.35f;
+    }
+
+    return speed_abs;
+}
+
+static float PlanSpeedAbsAfterSpinExit(float dist_mm, float stop_radius_mm, float yaw_err_deg)
+{
+    float speed_abs = PlanDistanceSpeedAbs(dist_mm, stop_radius_mm);
+    float yaw_abs = fabsf(yaw_err_deg);
+    float spin_exit_speed_max = fabsf(NAV_POINT_SPEED_FAST) *
+                                NAV_POINT_SPIN_EXIT_SPEED_RATIO;
+
+    if (yaw_abs <= NAV_POINT_YAW_STOP_TOLERANCE)
+    {
+        s_spin_exit_align_ticks = 0U;
+        return PlanSpeedAbsByDistance(dist_mm, stop_radius_mm, yaw_err_deg);
+    }
+
+    if (yaw_abs > NAV_POINT_SPIN_EXIT_MOVE_YAW_MAX)
+    {
+        return PlanSpeedAbsByDistance(dist_mm, stop_radius_mm, yaw_err_deg);
+    }
+
+    return Float_Constrain(speed_abs, 0.0f, spin_exit_speed_max);
 }
 
 uint16 NavReplay_LoadStaticRouteToRam(void)
@@ -480,6 +576,7 @@ void NavReplay_Start(void)
     err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
     ResetStopState();
+    ResetSpinExitState();
     Minefield_Init();
     Brake_NavHardStop_Reset();
 
@@ -500,6 +597,7 @@ void NavReplay_Stop(void)
     g_start_heading_aligned = 1U;
     s_prev_speed_cmd = 0.0f;
     ResetStopState();
+    ResetSpinExitState();
     Minefield_Init();
     Brake_NavHardStop_Reset();
 }
@@ -517,11 +615,24 @@ void NavReplay_Process(void)
     float speed_abs;
     uint8 point_type;
     uint8 is_last_point;
+    uint8 use_spin_exit_align;
 
-    if ((g_replay_state != REPLAY_RUNNING) || (g_special_action_trigger != 0U))
+    if (g_replay_state != REPLAY_RUNNING)
     {
         Brake_NavHardStop_Reset();
         return;
+    }
+
+    if (g_special_action_trigger != 0U)
+    {
+        Brake_NavHardStop_Reset();
+        return;
+    }
+
+    if (s_spin_exit_pending != 0U)
+    {
+        s_spin_exit_pending = 0U;
+        s_spin_exit_align_ticks = NAV_POINT_SPIN_EXIT_ALIGN_TICKS;
     }
 
 #if IMU_CATEGORY == 3
@@ -544,6 +655,7 @@ void NavReplay_Process(void)
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_POINT_SPEED_STOP;
         err_degree = 0.0f;
+        ResetSpinExitState();
         Brake_NavHardStop_Reset();
         return;
     }
@@ -562,6 +674,7 @@ void NavReplay_Process(void)
     {
         g_target_idx++;
         ResetStopState();
+        ResetSpinExitState();
         Brake_NavHardStop_Reset();
         return;
     }
@@ -595,10 +708,16 @@ void NavReplay_Process(void)
     }
     else if (is_last_point != 0U)
     {
-        if (HandleFinalStopAndFinish(dist_to_point) != 0U)
+        if (ShouldFinishAtLastPoint(g_target_idx, dist_to_point) != 0U)
         {
+            g_replay_state = REPLAY_FINISHED;
+            Brake_NavHardStop_Reset();
+            ResetStopState();
+            ResetSpinExitState();
             return;
         }
+        ResetStopState();
+        Brake_NavHardStop_Reset();
     }
     else
     {
@@ -607,14 +726,26 @@ void NavReplay_Process(void)
     }
 
     stop_radius = IsSpecialPointType(point_type) ? NAV_POINT_SPECIAL_EXECUTE_RADIUS : NAV_POINT_PATH_ARRIVE_RADIUS;
+    use_spin_exit_align = (uint8)((s_spin_exit_align_ticks != 0U) &&
+                                  (is_last_point == 0U));
     if (is_last_point != 0U)
     {
-        stop_radius = NAV_POINT_FINAL_STOP_RADIUS;
+        speed_abs = PlanFinalPassSpeedAbs(selected_err_deg);
+    }
+    else if (use_spin_exit_align != 0U)
+    {
+        speed_abs = PlanSpeedAbsAfterSpinExit(dist_to_point, stop_radius, selected_err_deg);
+    }
+    else
+    {
+        speed_abs = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
     }
 
-    speed_abs = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
-
     target_speed_set = SpeedSlew(speed_sign * speed_abs);
+    if (s_spin_exit_align_ticks != 0U)
+    {
+        s_spin_exit_align_ticks--;
+    }
     Brake_NavHardStop_Reset();
 }
 

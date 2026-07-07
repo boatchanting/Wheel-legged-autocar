@@ -2,18 +2,18 @@
 
 extern uint8 g_special_action_trigger;
 
-// 默认旋转总角度（deg）；当前统一要求至少 721 度。
-#define SPIN_TARGET_ANGLE_DEFAULT 721.0f
+// 默认旋转总角度（deg）；当前统一要求至少 720 度。
+#define SPIN_TARGET_ANGLE_DEFAULT 720.0f
 // 旋转总角度下限（deg）；外部即使给得更小，也会被钳到这个值。
-#define SPIN_TARGET_ANGLE_MIN     721.0f
+#define SPIN_TARGET_ANGLE_MIN     720.0f
 // 旋转阶段的最大角速度指令（deg/s）。
 #define SPIN_MAX_SPEED            360.0f
 // 角速度爬升斜率；避免转圈动作起转过猛。
 #define SPIN_ACCEL_STEP           0.6f
 // 减速区角度（deg）；进入最后这段角度后开始线性收速。
-#define SPIN_DECEL_ANGLE          180.0f
+#define SPIN_DECEL_ANGLE          90.0f
 // 旋转末段的最小角速度指令（deg/s）；避免末段因速度过低卡住。
-#define SPIN_MIN_SPEED            45.0f
+#define SPIN_MIN_SPEED            (SPIN_MAX_SPEED * 0.5f)
 // 旋转输出符号；用于统一适配底层角速度方向定义。
 #define SPIN_OUTPUT_SIGN          1.0f
 
