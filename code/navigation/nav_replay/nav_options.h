@@ -3,16 +3,18 @@
 
 #include "../config/sys_options.h"
 
+
+
 // ========================================================
 // [ 科目一 (Plan 1) 算法方案定义 ]
 // ========================================================
 #define PLAN1_PURE_PURSUIT_SPEED_PLANNING 1 // 方案1：惯导纯追踪带速度规划算法方案
 #define PLAN1_PURE_PURSUIT      2 // 方案2:惯导纯追踪算法方案
 #define PLAN1_METHOD_GNSS         3 // 方案3：GNSS纯追踪算法方案
-
+#define PLAN1_LQR_TRACKING        4 // Plan1 simplified LQR + curvature feedforward tracking
 // 科目一方案
 #ifndef NAV_PLAN1_METHOD
-#define NAV_PLAN1_METHOD  PLAN1_PURE_PURSUIT_SPEED_PLANNING
+#define NAV_PLAN1_METHOD  PLAN1_LQR_TRACKING
 #endif
 
 // ========================================================

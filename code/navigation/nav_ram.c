@@ -25,6 +25,7 @@ void NavRam_Init(void)
         nav_ram_data.points[i].heading_deg = 0.0f;
         nav_ram_data.points[i].target_speed = 0.0f;
         nav_ram_data.points[i].point_type = 0;
+        nav_ram_data.points[i].curvature = 0.0f;
     }
 }
 
@@ -67,6 +68,7 @@ uint8 NavRam_RecordPoint(uint8 point_type)
 #endif
     nav_ram_data.points[idx].target_speed = 0.0f;
     nav_ram_data.points[idx].point_type = point_type;
+    nav_ram_data.points[idx].curvature = 0.0f;
 
     nav_ram_data.point_count++;
 
