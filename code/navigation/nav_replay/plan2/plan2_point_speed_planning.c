@@ -231,6 +231,7 @@ static float PositiveAngle360(float angle)
 static float CalcSpinTotalAngle(float current_yaw, float exit_yaw, float spin_sign)
 {
     float delta;
+    float total_angle;
 
     if (spin_sign == NAV_POINT_SPIN_DIR_CW_SIGN)
     {
@@ -241,7 +242,13 @@ static float CalcSpinTotalAngle(float current_yaw, float exit_yaw, float spin_si
         delta = PositiveAngle360(exit_yaw - current_yaw);
     }
 
-    return NAV_POINT_SPIN_MIN_TOTAL_ANGLE + delta;
+    total_angle = MINEFIELD_SPIN_BASE_CIRCLE_ANGLE + delta;
+    if (total_angle < MINEFIELD_SPIN_MIN_TOTAL_ANGLE)
+    {
+        total_angle = MINEFIELD_SPIN_MIN_TOTAL_ANGLE;
+    }
+
+    return total_angle;
 }
 
 // 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组。

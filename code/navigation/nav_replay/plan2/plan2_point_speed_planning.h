@@ -6,7 +6,7 @@
 // 1. 普通路径点按点对点导航，速度由剩余距离在线规划。
 // 2. 雷区点不再等进中心后才慢慢收速，而是进入准备区就直接给 0 速度，
 //    让底层普通刹车前馈尽快介入；速度压下来后再用超低速补进中心。
-// 3. 雷区旋转从触发瞬间的车头角开始规划，在车头/车尾朝向下一个目标点之间选更快的一组，总角度至少 720 度。
+// 3. 雷区旋转从触发瞬间的车头角开始规划，至少 725 度后若出口航向可用则提前释放。
 
 // 1 表示直接使用编译期静态路表，不再依赖 Flash 读表。
 #define NAV_REPLAY_USE_STATIC_ROUTE_TABLE       1
@@ -73,9 +73,6 @@
 #define NAV_POINT_SPEED_DECEL_STEP              45.0f
 // 跨零或瞬时停车时的最大速度变化量。
 #define NAV_POINT_SPEED_CROSS_ZERO_STEP         90.0f
-
-// 雷区旋转最小总角度（deg）；统一按至少 720 度处理。
-#define NAV_POINT_SPIN_MIN_TOTAL_ANGLE          720.0f
 
 // 输出到底盘控制层的目标速度指令。
 extern volatile float target_speed_set;

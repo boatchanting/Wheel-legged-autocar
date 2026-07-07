@@ -5,6 +5,12 @@
 
 // 导出触发标志位，外部逻辑（如图像处理/gps信号）将此置1触发动作
 extern volatile uint8_t minefield_flag;
+// 雷区转圈规则：720 度是基础圈数，额外 5 度作为硬性安全余量。
+#define MINEFIELD_SPIN_BASE_CIRCLE_ANGLE          720.0f
+#define MINEFIELD_SPIN_RESERVE_ANGLE              5.0f
+#define MINEFIELD_SPIN_MIN_TOTAL_ANGLE            (MINEFIELD_SPIN_BASE_CIRCLE_ANGLE + MINEFIELD_SPIN_RESERVE_ANGLE)
+// 满足最小转圈角后，出口航向在该误差内即可释放，剩余偏差由导航边跑边修。
+#define MINEFIELD_SPIN_EXIT_RELEASE_YAW_TOLERANCE 35.0f
 extern uint8 vision_detected_marker;//雷区调用,测试用
 /**
  * @brief 初始化/复位旋转控制的相关变量
@@ -28,7 +34,7 @@ uint8_t Minefield_Is_Active(void);
  * 
  * @return float          计算出的目标旋转角速度 (单位: °/s)，若未激活则返回 0.0f
  * 
- * @note 此函数内部实现了梯形速度规划（加速-匀速-减速），旋转出口角由导航触发前并入总角度。
+ * @note 此函数内部实现梯形速度规划；满足 725 度后会用出口航向判断是否提前释放。
  */
 float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_deg,volatile float* target_yaw_ptr);
 
