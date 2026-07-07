@@ -33,7 +33,7 @@
 #define NAV_SPEED_STOP                      0.0f
 
 // 参考点往前看几个路径点。调大：更平顺、提前看弯，但可能切弯；调小：更贴线，但绕桩更容易抖。
-#define LQR_PREVIEW_POINTS                  3U
+#define LQR_PREVIEW_POINTS                  4U
 
 // 正常跟踪时最近点向前搜索窗口，单位：点数。调大：更容易追上索引；调小：更不容易跳到相似回程段。
 #define LQR_SEARCH_RANGE_NORMAL            80U
@@ -53,15 +53,15 @@
 
 // 曲率前馈增益。调大：进弯更主动、弯道滞后少；过大：提前扎进弯里，容易切桩。
 // 调小：弯道更依赖反馈，车更稳但进弯可能慢半拍。
-#define LQR_K_CURV                       9000.0f
+#define LQR_K_CURV                       6500.0f
 
 // 横向误差增益，单位约 deg/mm。调大：离线后回线更快；过大：绕桩左右摆、贴线过猛。
 // 调小：更柔和，但可能带着横向偏差跑。
-#define LQR_K_LATERAL                       0.012f
+#define LQR_K_LATERAL                       0.010f
 
 // 航向误差增益，单位约 deg/deg。调大：车头更快对准路径切线；过大：掉头出口或绕桩容易抽。
 // 调小：航向修正更慢，可能出现车身斜着贴线走。
-#define LQR_K_HEADING                       0.85f
+#define LQR_K_HEADING                       0.65f
 
 // 是否根据速度方向修正曲率前馈符号。1：启用；0：曲率直接使用路径表符号。
 #define LQR_CURVATURE_SPEED_SIGN_ENABLE     1
@@ -71,19 +71,19 @@
 
 // err_degree 最大限幅，单位 deg。调大：极端偏差恢复能力强；过大：可能猛打方向。
 // 调小：输出更稳，但偏差大时可能拉不回来。
-#define LQR_ERR_MAX_DEG                    35.0f
+#define LQR_ERR_MAX_DEG                    28.0f
 
 // err_degree 单周期最大变化量，单位 deg/周期。调大：响应快；过大：绕桩抽搐。
 // 调小：输出平顺；过小：进弯跟不上。
-#define LQR_ERR_SLEW_DEG                   18.0f
+#define LQR_ERR_SLEW_DEG                   10.0f
 
 // err_degree 一阶低通系数，范围 0~1。调大：更跟手；过大：噪声和曲率突变更明显。
 // 调小：更平顺；过小：明显滞后，容易切弯。
-#define LQR_FILTER_ALPHA                    0.35f
+#define LQR_FILTER_ALPHA                    0.25f
 
 // 横向误差限幅，单位 mm。调大：大偏差时纠偏更强；过大：离线后可能突然猛打。
 // 调小：极端情况下更稳，但回线能力变弱。
-#define LQR_LATERAL_ERR_LIMIT_MM          500.0f
+#define LQR_LATERAL_ERR_LIMIT_MM          350.0f
 
 // 速度变化死区，单位为速度指令。调大：小速度波动会被忽略；调小：更严格跟随路径表速度。
 #define NAV_SPEED_SLEW_EPS                  1.0f
