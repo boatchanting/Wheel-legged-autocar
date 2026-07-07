@@ -2,18 +2,18 @@
 
 extern uint8 g_special_action_trigger;
 
-// 默认旋转总角度（deg）；当前统一要求至少 721 度。
-#define SPIN_TARGET_ANGLE_DEFAULT 721.0f
+// 默认旋转总角度（deg）；当前统一要求至少 725 度。
+#define SPIN_TARGET_ANGLE_DEFAULT MINEFIELD_SPIN_MIN_TOTAL_ANGLE
 // 旋转总角度下限（deg）；外部即使给得更小，也会被钳到这个值。
-#define SPIN_TARGET_ANGLE_MIN     721.0f
+#define SPIN_TARGET_ANGLE_MIN     MINEFIELD_SPIN_MIN_TOTAL_ANGLE
 // 旋转阶段的最大角速度指令（deg/s）。
 #define SPIN_MAX_SPEED            360.0f
 // 角速度爬升斜率；避免转圈动作起转过猛。
 #define SPIN_ACCEL_STEP           0.6f
 // 减速区角度（deg）；进入最后这段角度后开始线性收速。
-#define SPIN_DECEL_ANGLE          180.0f
+#define SPIN_DECEL_ANGLE          90.0f
 // 旋转末段的最小角速度指令（deg/s）；避免末段因速度过低卡住。
-#define SPIN_MIN_SPEED            45.0f
+#define SPIN_MIN_SPEED            (SPIN_MAX_SPEED * 0.5f)
 // 旋转输出符号；用于统一适配底层角速度方向定义。
 #define SPIN_OUTPUT_SIGN          1.0f
 
@@ -23,7 +23,48 @@ static float    s_accumulated_angle = 0.0f;
 static float    s_current_speed_cmd = 0.0f;
 static float    s_planned_total_angle = SPIN_TARGET_ANGLE_DEFAULT;
 static float    s_spin_speed_sign = 1.0f;
+static float    s_exit_yaw_deg = 0.0f;
+static uint8_t  s_exit_release_enabled = 0;
 uint8_t vision_detected_marker = 0;
+
+static float Minefield_NormalizeAngle(float angle)
+{
+    while (angle > 180.0f) angle -= 360.0f;
+    while (angle < -180.0f) angle += 360.0f;
+    return angle;
+}
+
+static void Minefield_FinishSpin(void)
+{
+    s_is_spinning = 0;
+    s_current_speed_cmd = 0.0f;
+    s_exit_release_enabled = 0;
+    g_special_action_trigger = 0;
+}
+
+static uint8_t Minefield_ShouldReleaseByExitYaw(float current_yaw_deg)
+{
+    float exit_yaw_err;
+
+    if ((s_exit_release_enabled == 0) ||
+        (s_accumulated_angle < MINEFIELD_SPIN_MIN_TOTAL_ANGLE))
+    {
+        return 0;
+    }
+
+    exit_yaw_err = Minefield_NormalizeAngle(s_exit_yaw_deg - current_yaw_deg);
+    return (uint8_t)(fabsf(exit_yaw_err) <= MINEFIELD_SPIN_EXIT_RELEASE_YAW_TOLERANCE);
+}
+
+static uint8_t Minefield_ShouldFinishSpin(float current_yaw_deg)
+{
+    if (Minefield_ShouldReleaseByExitYaw(current_yaw_deg) != 0)
+    {
+        return 1;
+    }
+
+    return (uint8_t)(s_accumulated_angle >= s_planned_total_angle);
+}
 
 // 浮点爬坡函数：将当前速度逐步逼近目标速度，而不是一步跳变。
 static float Minefield_RampFloat(float current, float target, float step)
@@ -49,20 +90,21 @@ void Minefield_Init(void)
     s_current_speed_cmd = 0.0f;
     s_planned_total_angle = SPIN_TARGET_ANGLE_DEFAULT;
     s_spin_speed_sign = 1.0f;
+    s_exit_yaw_deg = 0.0f;
+    s_exit_release_enabled = 0;
 }
 
-// 设置本次旋转动作的目标：总角度、退出航向、顺/逆时针方向。
-// 注意：退出航向已经由导航层折算进 total_spin_deg，这里只保存总角度和旋转方向。
+// 设置本次旋转动作：total_spin_deg 是兜底总角，exit_yaw_deg 用于 725 度后的提前释放。
 void Minefield_SetSpinPlan(float total_spin_deg, float exit_yaw_deg, float spin_speed_sign)
 {
-    (void)exit_yaw_deg;
-
     s_planned_total_angle = total_spin_deg;
     if (s_planned_total_angle < SPIN_TARGET_ANGLE_MIN)
     {
         s_planned_total_angle = SPIN_TARGET_ANGLE_MIN;
     }
 
+    s_exit_yaw_deg = exit_yaw_deg;
+    s_exit_release_enabled = 1;
     s_spin_speed_sign = (spin_speed_sign >= 0.0f) ? 1.0f : -1.0f;
 }
 
@@ -76,7 +118,6 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
     float remaining;
     float target_speed = 0.0f;
 
-    (void)current_yaw_deg;
     (void)target_yaw_ptr;
 
     // 外部将 minefield_flag 置 1 后，这里正式进入旋转状态机。
@@ -96,17 +137,13 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
     s_accumulated_angle += fabsf(gyro_z_deg * dt_s);
     remaining = s_planned_total_angle - s_accumulated_angle;
 
-    if (s_accumulated_angle >= s_planned_total_angle)
+    if (Minefield_ShouldFinishSpin(current_yaw_deg) != 0)
     {
-        s_is_spinning = 0;
-        s_current_speed_cmd = 0.0f;
-        g_special_action_trigger = 0;
-
+        Minefield_FinishSpin();
         return 0.0f;
     }
 
     // 采用“匀速 + 末段线性减速”的简单梯形速度思想。
-    // 出口角已经提前并入 s_planned_total_angle，这里只按陀螺累计角度判断是否转满。
     if (remaining < SPIN_DECEL_ANGLE)
     {
         target_speed = SPIN_MAX_SPEED * (remaining / SPIN_DECEL_ANGLE);
