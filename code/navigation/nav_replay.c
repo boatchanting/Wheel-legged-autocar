@@ -1,7 +1,6 @@
 #include "nav_replay/plan1/plan1_pure_pursuit_speed_planning.c"
 #include "nav_replay/plan1/plan1_pure_pursuit.c"
 #include "nav_replay/plan1/plan1_gnss.c"
-// Plan1 简化 LQR 跟踪方案也通过本聚合文件参与编译，保持和旧 Plan1 方案一致。
 #include "nav_replay/plan1/plan1_lqr_tracking.c"
 #include "nav_replay/plan2/plan2_pure_pursuit_speed_planning.c"
 #include "nav_replay/plan2/plan2_pure_pursuit.c"
