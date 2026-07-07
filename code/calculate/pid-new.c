@@ -45,6 +45,7 @@ static float brake_ff_target = 0.0f;
 static float brake_last_target_speed = 0.0f;
 static uint8 brake_nav_hard_stop_active = 0U;      // 导航强停刹锁存，主要由科目二雷区准备圆请求
 static uint8 brake_nav_hard_stop_life_ticks = 0U;  // 强停刹保持计数，用于桥接导航周期和刹车前馈周期
+static float brake_nav_hard_stop_strength = 0.0f;  // 导航强停刹强度，0.0 释放，1.0 等价旧强停刹
 static uint8 brake_lockout = 0;     // 重置屏蔽锁
 static uint8 brake_zero_hold = 0;   // 刹停零速迟滞锁，避免停车附近反复建压/释放
 static uint8 brake_overspeed_ticks = 0U;  // 持续超速计数，达到 BRAKE_OVERSPEED_HOLD_TICKS 后才允许纠偏刹车
@@ -95,20 +96,30 @@ void Brake_NavHardStop_Reset(void)
 {
     brake_nav_hard_stop_active = 0U;
     brake_nav_hard_stop_life_ticks = 0U;
+    brake_nav_hard_stop_strength = 0.0f;
 }
 
-// 更新导航强停刹请求；active 为 1 时刷新保持计数，让底层使用更强的刹车前馈档位。
-void Brake_NavHardStop_Update(uint8 active)
+// 更新导航强停刹强度；strength 为 0 时释放，大于 0 时刷新保持计数。
+void Brake_NavHardStop_UpdateStrength(float strength)
 {
-    if (active != 0U)
+    strength = Float_Constrain(strength, 0.0f, 1.0f);
+
+    if (strength > 0.0f)
     {
         brake_nav_hard_stop_active = 1U;
         brake_nav_hard_stop_life_ticks = NAV_HARD_BRAKE_LIFE_TICKS;
+        brake_nav_hard_stop_strength = strength;
     }
     else
     {
         Brake_NavHardStop_Reset();
     }
+}
+
+// 更新导航强停刹请求；active 为 1 时等价于满强度，兼容旧调用点。
+void Brake_NavHardStop_Update(uint8 active)
+{
+    Brake_NavHardStop_UpdateStrength((active != 0U) ? 1.0f : 0.0f);
 }
 
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag)
@@ -127,6 +138,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     uint8 decel_request = 0U;
     uint8 nav_hard_stop_request = 0U;
     uint8 zero_stop_request = 0U;
+    float nav_hard_stop_strength = 0.0f;
 
     if ((motor_enable == 0U) || (jump_flag != 0U) || (abs_speed <= NAV_HARD_BRAKE_RELEASE_SPEED))
     {
@@ -135,6 +147,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     else if ((brake_nav_hard_stop_active != 0U) && (brake_nav_hard_stop_life_ticks > 0U))
     {
         nav_hard_stop_request = 1U;
+        nav_hard_stop_strength = brake_nav_hard_stop_strength;
         brake_nav_hard_stop_life_ticks--;
     }
     else if (brake_nav_hard_stop_active != 0U)
@@ -247,7 +260,12 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         return 0.0f;
     }
 
-    if (brake_level == 4U) { brake_gain = NAV_HARD_BRAKE_GAIN; brake_max = NAV_HARD_BRAKE_MAX_PWM; brake_ramp_up = NAV_HARD_BRAKE_RAMP_UP; }
+    if (brake_level == 4U)
+    {
+        brake_gain = BRAKE_GAIN_HEAVY + (NAV_HARD_BRAKE_GAIN - BRAKE_GAIN_HEAVY) * nav_hard_stop_strength;
+        brake_max = BRAKE_MAX_HEAVY + (NAV_HARD_BRAKE_MAX_PWM - BRAKE_MAX_HEAVY) * nav_hard_stop_strength;
+        brake_ramp_up = BRAKE_RAMP_UP_HEAVY + (NAV_HARD_BRAKE_RAMP_UP - BRAKE_RAMP_UP_HEAVY) * nav_hard_stop_strength;
+    }
     else if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
     else if (brake_level == 2U) { brake_gain = BRAKE_GAIN_MED; brake_max = BRAKE_MAX_MED; brake_ramp_up = BRAKE_RAMP_UP_MED; }
     else if (brake_level == 1U) { brake_gain = BRAKE_GAIN_LIGHT; brake_max = BRAKE_MAX_LIGHT; brake_ramp_up = BRAKE_RAMP_UP_LIGHT; }

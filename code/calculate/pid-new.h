@@ -400,9 +400,9 @@ extern float current_actual_speed;
 // ----------------------------------------------------------------------------
 // 当前Core0调度目标周期：9ms
 #define SERVO_SPEED_KP  -4.5f   // [比例控制] 控制舵机速度响应的快慢
-#define SERVO_SPEED_KI  -0.17f   // [积分控制] 
+#define SERVO_SPEED_KI  0.0f   // [积分控制] 
 // 周期换算：20ms -> 9ms，ratio=0.45，Kd /= 0.45
-#define SERVO_SPEED_KD  0.0f   // [微分控制]
+#define SERVO_SPEED_KD  -0.17f   // [微分控制]
 #define SERVO_SPEED_MAX_I  100000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  2000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
@@ -678,6 +678,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
 void Brake_Feedforward_Reset(void);//清空刹车前馈并短暂上锁，避免复位后立即被旧条件重新触发
 float Brake_Feedforward_GetPwm(void);//读取当前刹车前馈 PWM，供 ISR 前馈仲裁使用
 void Brake_NavHardStop_Update(uint8 active);//导航强停刹请求，主要用于科目二雷区刹车准备圆
+void Brake_NavHardStop_UpdateStrength(float strength);//导航强停刹强度请求，0.0 释放，1.0 等价旧强停刹
 void Brake_NavHardStop_Reset(void);//清空导航强停刹请求，退出雷区刹车准备区或复位时调用
 /**
  * @brief 加速前馈更新：在复刻起步和目标速度明显抬升时补额外驱动力

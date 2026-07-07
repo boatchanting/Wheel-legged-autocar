@@ -13,28 +13,28 @@
 
 // 普通路径点的通过半径（mm）；进入后直接推进索引，不停车。
 #define NAV_POINT_PATH_ARRIVE_RADIUS            70.0f
-// 雷区点/跳跃点等特殊点的中心停车执行圆半径（mm）；直径 70cm，因此半径为 350mm。
-#define NAV_POINT_SPECIAL_STOP_RADIUS           350.0f
-// 雷区执行圆外的近距离补进半径（mm）；只在执行圆外沿附近且速度很低时爬进执行圆，避免提前很远就慢慢爬。
-#define NAV_POINT_SPECIAL_CRAWL_NEAR_RADIUS     500.0f
-// 雷区动态刹车准备圆最小半径（mm）；实测需要近 1m 刹停，因此默认从 950mm 起步。
-#define NAV_POINT_SPECIAL_BRAKE_PREP_MIN_RADIUS 950.0f
-// 雷区动态刹车准备圆最大半径（mm）；限制极端速度下过早停车。
-#define NAV_POINT_SPECIAL_BRAKE_PREP_MAX_RADIUS 2000.0f
-// 速度平方到准备圆半径的换算系数；当前速度越快，准备圆越大。
-#define NAV_POINT_SPECIAL_BRAKE_SPEED2_RADIUS_GAIN 0.0040f
-// 判断刹车前馈已经明显建压的 PWM 阈值；低于该值时准备圆会额外放大。
-#define NAV_POINT_SPECIAL_BRAKE_READY_PWM       1200.0f
-// 刹车前馈尚未建压时的额外准备距离（mm）。
-#define NAV_POINT_SPECIAL_BRAKE_WEAK_FF_MARGIN  180.0f
-// 雷区补进中心时使用的低速速度指令；执行圆已放大到 70cm，补进速度可略高，减少贴近后等待时间。
+// 特殊点落点预算：estimated_stop_dist = v^2 / (2 * STOP_DECEL)。
+// 调参顺序：
+// 1) 停太早、圈外刹死：调大 NAV_POINT_SPECIAL_STOP_DECEL_MM_S2。
+// 2) 冲过中心：调小 NAV_POINT_SPECIAL_STOP_DECEL_MM_S2。
+// 3) 还容易冲：加大 NAV_POINT_SPECIAL_BRAKE_SAFETY_MARGIN。
+// 4) 过于保守：减小 NAV_POINT_SPECIAL_BRAKE_SAFETY_MARGIN。
+// 5) 强刹忽大忽小、抽动：加大 NAV_POINT_SPECIAL_BRAKE_BLEND_DIST。
+// 6) 强刹反应慢：减小 NAV_POINT_SPECIAL_BRAKE_BLEND_DIST。
+// 7) 最后再调 EXECUTE_RADIUS 和 TRIGGER_SPEED。
+#define NAV_POINT_SPECIAL_STOP_DECEL_MM_S2      90.0f
+// 刹车安全余量（mm）；越大越保守，越早提高强停刹强度。
+#define NAV_POINT_SPECIAL_BRAKE_SAFETY_MARGIN   180.0f
+// 强停刹强度从弱到强的过渡距离（mm）；越大越平顺，越小越敏捷。
+#define NAV_POINT_SPECIAL_BRAKE_BLEND_DIST      600.0f
+// 特殊动作最终执行中心圈半径（mm）；小于雷区物理半径，避免边缘或外侧提前旋转。
+#define NAV_POINT_SPECIAL_EXECUTE_RADIUS        180.0f
+// 末端低速补中心范围（mm）；低速且未进执行圈时用爬行速度继续贴近中心。
+#define NAV_POINT_SPECIAL_CRAWL_RADIUS          500.0f
+// 雷区补进中心时使用的低速速度指令。
 #define NAV_POINT_SPECIAL_CRAWL_SPEED           (-90.0f)
-// 当前速度低于该阈值（mm/s）后，才从“直接刹停”切到“超低速爬行补中心”。
-#define NAV_POINT_SPECIAL_CRAWL_ENTRY_SPEED_MM_S 60.0f
-// 雷区强停刹释放速度（mm/s）；低于该速度后关闭重重刹，避免中心附近反复反抽。
-#define NAV_POINT_SPECIAL_HARD_BRAKE_RELEASE_SPEED_MM_S 80.0f
-// 雷区执行圆内允许直接触发旋转的速度阈值（mm/s）；不再要求连续停稳，避免进圈后还要慢走几步才触发。
-#define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    180.0f
+// 执行动作允许的最大实际速度（mm/s）；必须同时满足执行圈和航向条件。
+#define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    80.0f
 // 最终终点的停车半径（mm）。
 #define NAV_POINT_FINAL_STOP_RADIUS             80.0f
 // 中等角度偏差阈值（deg）；超过后只允许低速逼近。
