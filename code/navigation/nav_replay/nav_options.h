@@ -14,7 +14,7 @@
 #define PLAN1_LQR_TRACKING        4 // Plan1 simplified LQR + curvature feedforward tracking
 // 科目一方案
 #ifndef NAV_PLAN1_METHOD
-#define NAV_PLAN1_METHOD  PLAN1_PURE_PURSUIT_SPEED_PLANNING
+#define NAV_PLAN1_METHOD  PLAN1_LQR_TRACKING
 #endif
 
 // ========================================================

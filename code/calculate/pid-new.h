@@ -400,9 +400,9 @@ extern float current_actual_speed;
 // ----------------------------------------------------------------------------
 // 当前Core0调度目标周期：9ms
 #define SERVO_SPEED_KP  -4.5f   // [比例控制] 控制舵机速度响应的快慢
-#define SERVO_SPEED_KI  -0.17f   // [积分控制] 
+#define SERVO_SPEED_KI  -0.0f   // [积分控制] 
 // 周期换算：20ms -> 9ms，ratio=0.45，Kd /= 0.45
-#define SERVO_SPEED_KD  0.0f   // [微分控制]
+#define SERVO_SPEED_KD  -0.17f   // [微分控制]
 #define SERVO_SPEED_MAX_I  100000.0f  // [积分限幅] 限制积分项的最大值
 #define SERVO_SPEED_MAX_O  2000.0f   // [输出限幅] 限制舵机速度的最大值，避免过快
 #define SERVO_SPEED_COMP   0.0f   // [关键补偿] 舵机速度环的补偿值
@@ -417,7 +417,7 @@ extern float current_actual_speed;
 #define SPD_KI      0.0f  // [消除静差] 值越大，车越能克服阻力达到目标速度，但回正越慢
 #define SPD_KD      0.0f    // [抑制震荡] 速度环一般不加D，因为编码器噪声大，且不需要极快响应
 
-#define SPD_MAX_I   2000.0f // [积分防饱和] 限制积分项的最大贡献
+#define SPD_MAX_I   1000.0f // [积分防饱和] 限制积分项的最大贡献
 #define SPD_MAX_O   1500.0f    // [安全角度] 速度环输出的是“期望角度”。限制为8度，意味着车最快加速时也不能倾斜超过8度，防止扑街。
 #define SPD_COMP    0.0f    // 速度环暂不需要额外补偿
 
