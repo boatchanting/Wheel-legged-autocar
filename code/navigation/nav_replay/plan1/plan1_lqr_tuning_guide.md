@@ -15,6 +15,8 @@ err_raw = LQR_SIGN * (LQR_K_CURV * curvature * speed_sign
 ## 关键参数
 
 - `LQR_PREVIEW_POINTS`：参考航向和曲率往前看几个点。大一点更稳，小一点更贴线。
+- `LQR_SHARP_CURVATURE_TH`：急弯判断阈值。调大时只有更急的弯才软化；调小时普通弯也会更保守。
+- `LQR_SHARP_PREVIEW_POINTS`：急弯附近的预瞄点数。调大入弯更主动；调小入弯更稳，不容易突然崴脚。
 - `LQR_SEARCH_RANGE_NORMAL`：正常最近点向前搜索窗口。太小会跟不上，太大可能跨到后面相似路段。
 - `LQR_SEARCH_RANGE_RECOVER`：特殊动作恢复后的搜索窗口。恢复时可比正常大。
 - `LQR_K_CURV`：曲率前馈。主要负责弯道提前给角。
@@ -22,7 +24,9 @@ err_raw = LQR_SIGN * (LQR_K_CURV * curvature * speed_sign
 - `LQR_K_HEADING`：航向误差反馈。车头和路径切线差得越多，纠偏越强。
 - `LQR_ERR_MAX_DEG`：最大输出角度，防止一下打太狠。
 - `LQR_ERR_SLEW_DEG`：单周期最大角度变化，防止绕桩抽搐。
+- `LQR_SHARP_ERR_SLEW_DEG`：急弯段单周期最大角度变化。调大更跟手；调小更柔，能减少急弯入口颤一下。
 - `LQR_FILTER_ALPHA`：低通滤波系数。大一点反应快，小一点更稳。
+- `LQR_SHARP_FILTER_ALPHA`：急弯段低通滤波系数。调大急弯更灵；调小急弯更顺，但太小会转得慢。
 - `LQR_LATERAL_ERR_LIMIT_MM`：横向误差限幅，防止离线很远时输出爆掉。
 - `LQR_SIGN`：总方向符号。实车方向整体反了，优先改它。
 - `LQR_FORWARD_SPEED_IS_NEGATIVE`：本车负速度为前进，默认设为 1。

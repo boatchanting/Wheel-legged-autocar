@@ -419,12 +419,16 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
  * @param base_idx 最近路径点索引。
  * @param stop_idx 前方停车屏障索引。
  * @return 预览点索引。
- * @note 预览点最多向前 LQR_PREVIEW_POINTS 个点，且不会越过 stop_idx。
+ * @note 默认最多向前 LQR_PREVIEW_POINTS 个点；检测到急弯时自动缩短到
+ *       LQR_SHARP_PREVIEW_POINTS，且不会越过 stop_idx。
  */
 static uint16 NavReplay_GetPreviewIndex(uint16 base_idx, uint16 stop_idx)
 {
     uint16 last_idx;
     uint16 ref_idx;
+    uint16 nominal_ref_idx;
+    uint16 preview_points = LQR_PREVIEW_POINTS;
+    uint16 i;
 
     if (nav_ram_data.point_count == 0)
     {
@@ -445,7 +449,27 @@ static uint16 NavReplay_GetPreviewIndex(uint16 base_idx, uint16 stop_idx)
         stop_idx = last_idx;
     }
 
-    ref_idx = (uint16)(base_idx + LQR_PREVIEW_POINTS);
+    nominal_ref_idx = (uint16)(base_idx + LQR_PREVIEW_POINTS);
+    if (nominal_ref_idx > stop_idx)
+    {
+        nominal_ref_idx = stop_idx;
+    }
+    if (nominal_ref_idx > last_idx)
+    {
+        nominal_ref_idx = last_idx;
+    }
+
+    /* 急弯入口不看太远，避免参考航向一下子跳到弯内很深的位置。 */
+    for (i = base_idx; i <= nominal_ref_idx; i++)
+    {
+        if (fabsf(nav_ram_data.points[i].curvature) >= LQR_SHARP_CURVATURE_TH)
+        {
+            preview_points = LQR_SHARP_PREVIEW_POINTS;
+            break;
+        }
+    }
+
+    ref_idx = (uint16)(base_idx + preview_points);
     if (ref_idx > stop_idx)
     {
         ref_idx = stop_idx;
@@ -558,18 +582,26 @@ static float NavReplay_CalcLqrErr(const LqrReference_t *ref)
     float e_psi = NormalizeAngle(ref->yaw_deg - inertial_nav.relative_yaw);
     float curv_sign = NavReplay_GetCurvatureDirectionSign(ref->target_speed);
     float curv_ff = LQR_K_CURV * ref->curvature * curv_sign;
+    float slew_limit = LQR_ERR_SLEW_DEG;
+    float filter_alpha = LQR_FILTER_ALPHA;
     float err_raw;
     float diff;
 
     e_y = Float_Constrain(e_y, -LQR_LATERAL_ERR_LIMIT_MM, LQR_LATERAL_ERR_LIMIT_MM);
 
+    if (fabsf(ref->curvature) >= LQR_SHARP_CURVATURE_TH)
+    {
+        slew_limit = LQR_SHARP_ERR_SLEW_DEG;
+        filter_alpha = LQR_SHARP_FILTER_ALPHA;
+    }
+
     err_raw = LQR_SIGN * (curv_ff + LQR_K_LATERAL * e_y + LQR_K_HEADING * e_psi);
     err_raw = Float_Constrain(err_raw, -LQR_ERR_MAX_DEG, LQR_ERR_MAX_DEG);
 
     diff = err_raw - s_prev_err_degree;
-    err_raw = s_prev_err_degree + Float_Constrain(diff, -LQR_ERR_SLEW_DEG, LQR_ERR_SLEW_DEG);
+    err_raw = s_prev_err_degree + Float_Constrain(diff, -slew_limit, slew_limit);
 
-    return LQR_FILTER_ALPHA * err_raw + (1.0f - LQR_FILTER_ALPHA) * s_prev_err_degree;
+    return filter_alpha * err_raw + (1.0f - filter_alpha) * s_prev_err_degree;
 }
 
 /**
