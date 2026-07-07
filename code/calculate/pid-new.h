@@ -40,19 +40,6 @@
 extern float current_actual_speed;
 
 // ----------------------------------------------------------------------------
-// 1. 速度环参数 (最外环 - 周期约 20ms~50ms)
-//    作用：通过改变车身倾角，让车“跑”起来去追重心，从而保持位置或达到目标速度。
-// ----------------------------------------------------------------------------
-// 当前Core0 ISR未调用 Speed_Loop_Control，未按9ms换算此组参数
-#define SPD_KP      0.0f   // [响应力度] 值越大，车对速度误差越敏感，加速越猛，但容易超调晃动
-#define SPD_KI      0.0f  // [消除静差] 值越大，车越能克服阻力达到目标速度，但回正越慢
-#define SPD_KD      0.0f    // [抑制震荡] 速度环一般不加D，因为编码器噪声大，且不需要极快响应
-
-#define SPD_MAX_I   2000.0f // [积分防饱和] 限制积分项的最大贡献
-#define SPD_MAX_O   1500.0f    // [安全角度] 速度环输出的是“期望角度”。限制为8度，意味着车最快加速时也不能倾斜超过8度，防止扑街。
-#define SPD_COMP    0.0f    // 速度环暂不需要额外补偿
-
-// ----------------------------------------------------------------------------
 // 2. 角度环参数 (中间环 - 周期约 5ms)
 //    作用：根据期望角度(来自机械零点+速度环)，计算出需要的角速度。
 //    这是维持直立最关键的一环。
@@ -164,7 +151,6 @@ typedef struct {
 // ============================================================================
 extern PID_Param_t pid_servo_speed;//速度环(舵机)pid参数
 extern PID_Param_t pid_angle;//角度环(pid参数)
-extern PID_Param_t pid_speed;//速度环(外环)pid参数，未调用
 extern PID_Param_t pid_gyro;//加速度环pid参数
 extern PID_Param_t pid_turn_angle;//转向角度环pid参数
 extern PID_Param_t pid_turn_gyro;//转向角速度环pid参数
@@ -284,13 +270,12 @@ extern volatile uint8 g_reverse_brake_active;
 #define ACCEL_KP_BOOST_RAMP_DOWN 0.08f    /* Kp 增强模式下每个 9ms 更新周期允许释放的最大倍率 */
 #define ACCEL_KP_OUTPUT_MAX      1500.0f  /* Kp 增强模式下临时放宽后的舵机速度环输出上限 */
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
-void PID_Data_Reset(void);//pid参数全清空，暂时未使用
+void PID_Data_Reset(void);//pid参数全清空
 float Float_Constrain(float val, float min, float max);//限幅函数
 
 float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
 float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
 float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)
-float Speed_Loop_Control(float target_speed, float actual_speed);//速度环(外环)(电机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制

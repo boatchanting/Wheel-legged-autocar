@@ -7,7 +7,6 @@
 //  将宏定义的参数填入结构体
 // ============================================================================
 PID_Param_t pid_servo_speed = {SERVO_SPEED_KP, SERVO_SPEED_KI, SERVO_SPEED_KD, SERVO_SPEED_MAX_O, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP, 0,0,0,0,0};//舵机速度环初始化参数
-PID_Param_t pid_speed = {SPD_KP, SPD_KI, SPD_KD, SPD_MAX_O, SPD_MAX_I, SPD_COMP,      0,0,0,0,0};//速度环初始化参数
 PID_Param_t pid_angle = {ANG_KP, ANG_KI, ANG_KD, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO, 0,0,0,0,0};//角度环初始化参数
 PID_Param_t pid_gyro  = {GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE, 0,0,0,0,0};//角速度环初始化参数
 PID_Param_t pid_turn_angle = {TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE, 0,0,0,0,0};//转向角度环初始化参数
@@ -880,21 +879,6 @@ void PID_Param_Init(void) {
     pid_servo_speed.error_integral = 0;
     pid_servo_speed.output = 0;
 
-    // 初始化速度环PID参数
-    pid_speed.kp = SPD_KP;
-    pid_speed.ki = SPD_KI;
-    pid_speed.kd = SPD_KD;
-    pid_speed.max_output = SPD_MAX_O;
-    pid_speed.max_integral = SPD_MAX_I;
-    pid_speed.compensation = SPD_COMP;
-    
-    // 重置速度环状态变量
-    pid_speed.error = 0;
-    pid_speed.last_error = 0;
-    pid_speed.prev_error = 0;
-    pid_speed.error_integral = 0;
-    pid_speed.output = 0;
-
     // 初始化角度环PID参数
     pid_angle.kp = ANG_KP;
     pid_angle.ki = ANG_KI;
@@ -998,21 +982,6 @@ void PID_Data_Reset(void) {
     pid_servo_speed.prev_error = 0;
     pid_servo_speed.error_integral = 0;
     pid_servo_speed.output = 0;
-
-    // 初始化速度环PID参数
-    pid_speed.kp = 0;
-    pid_speed.ki = 0;
-    pid_speed.kd = 0;
-    pid_speed.max_output = SPD_MAX_O;
-    pid_speed.max_integral = SPD_MAX_I;
-    pid_speed.compensation = SPD_COMP;
-    
-    // 重置速度环状态变量
-    pid_speed.error = 0;
-    pid_speed.last_error = 0;
-    pid_speed.prev_error = 0;
-    pid_speed.error_integral = 0;
-    pid_speed.output = 0;
 
     // 初始化角度环PID参数
     pid_angle.kp = 0;
@@ -1315,44 +1284,6 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
     pid_servo_speed.last_error = pid_servo_speed.error;
 
     return pid_servo_speed.output;
-}
-
-
-/**
- * @brief 速度环控制 (外环)无刷电机
- * @param target_speed 期望速度 (通常遥控给定)
- * @param actual_speed 实际速度 (编码器测得)
- * @return 期望的角度调整量 (单位：度)
- * @note   原理：想让车加速，就得让车身先往前倾斜，利用重力分量加速。
- *         所以速度环的输出，实际上是角度环的目标输入。
- */
-float Speed_Loop_Control(float target_speed, float actual_speed)
-{
-    // 1. 计算误差
-    pid_speed.error = target_speed - actual_speed;
-    
-    // 2. 积分计算 (速度环核心)
-    // 速度环主要靠积分作用来消除静差，达到恒定速度
-    pid_speed.error_integral += pid_speed.error;
-    
-    // 积分限幅：防止积分项过大导致系统失控
-    pid_speed.error_integral = Float_Constrain(pid_speed.error_integral, -pid_speed.max_integral, pid_speed.max_integral);
-
-    // 3. PI计算 (速度环通常不需要D项)
-    pid_speed.output = (pid_speed.kp * pid_speed.error) + 
-                       (pid_speed.ki * pid_speed.error_integral);
-
-    // 4. 输出限幅 (关键！)
-    // 速度环输出的是“目标倾角”。我们不能让车为了加速而倾斜45度，那样就倒了。
-    // 所以这里限制最大倾角为 pid_speed.max_output (例如8度)。
-    pid_speed.output = Float_Constrain(pid_speed.output, -pid_speed.max_output, pid_speed.max_output);
-    
-    // 5. 更新历史误差链
-    // 顺序很重要：先把 上次 存为 上上次，再把 这次 存为 上次
-    pid_speed.prev_error = pid_speed.last_error; 
-    pid_speed.last_error = pid_speed.error;
-    
-    return pid_speed.output; 
 }
 
 /**
