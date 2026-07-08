@@ -13,11 +13,6 @@ from scipy import ndimage
 from scipy.spatial import ConvexHull, QhullError
 
 
-ROOT = Path(__file__).resolve().parent
-FRAMES_DIR = ROOT / "frames"
-DEFAULT_SUBSET = ROOT / "single_bridge_subset.json"
-DEFAULT_OUTPUT = ROOT / "python_results"
-
 STATE_NONE = "无"
 STATE_PREPARE_ENTER = "准备进入"
 STATE_ON_PVC = "在PVC上"
@@ -26,13 +21,52 @@ STATE_PREPARE_EXIT = "准备退出"
 MIN_VALID_SCORE = 350.0
 
 
+def resolve_project_root() -> Path:
+    here = Path(__file__).resolve()
+    for parent in here.parents:
+        if (parent / "data" / "单边桥").exists():
+            return parent
+    raise FileNotFoundError("Could not locate project root containing data/单边桥.")
+
+
+PROJECT_ROOT = resolve_project_root()
+DATA_ROOT = PROJECT_ROOT / "data" / "单边桥"
+FRAMES_DIR = DATA_ROOT / "frames"
+DEFAULT_SUBSET = DATA_ROOT / "single_bridge_subset.json"
+DEFAULT_OUTPUT = DATA_ROOT / "python_results"
+PEOPLE_DIR = DEFAULT_OUTPUT / "people"
+
+
+@dataclass
+class LineFit:
+    model: str
+    slope: float
+    intercept: float
+    support_min: float
+    support_max: float
+    inlier_count: int
+    span: float
+    residual: float
+    border_touch_ratio: float
+    mean_value: float
+
+    def x_at_y(self, y: float) -> float:
+        if self.model != "x_from_y":
+            raise ValueError("x_at_y is only valid for x_from_y lines.")
+        return self.slope * y + self.intercept
+
+    def y_at_x(self, x: float) -> float:
+        if self.model != "y_from_x":
+            raise ValueError("y_at_x is only valid for y_from_x lines.")
+        return self.slope * x + self.intercept
+
+
 @dataclass
 class PvcCandidate:
     threshold: int
     score: float
-    mask: np.ndarray
-    left: np.ndarray
-    right: np.ndarray
+    visible_mask: np.ndarray
+    outer_mask: np.ndarray
     top_row: int
     start_row: int
     bottom_row: int
@@ -72,8 +106,14 @@ class BridgeResult:
     dual_clip_ratio: float
     border_monotonic: float
     candidate_score: float
-    pvc_left_border: list[int]
-    pvc_right_border: list[int]
+    left_line_visible: bool
+    right_line_visible: bool
+    pink_line_visible: bool
+    yellow_line_visible: bool
+    left_line_segment: list[int] | None
+    right_line_segment: list[int] | None
+    pink_line_segment: list[int] | None
+    yellow_line_segment: list[int] | None
 
 
 def otsu_threshold(image: np.ndarray, search_limit: int = 180) -> int:
@@ -146,7 +186,7 @@ def convex_hull_mask(mask: np.ndarray) -> np.ndarray:
     return np.array(hull_image, dtype=bool)
 
 
-def extract_borders(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+def extract_row_borders(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     height = mask.shape[0]
     left = np.full(height, -1, dtype=np.int16)
     right = np.full(height, -1, dtype=np.int16)
@@ -158,6 +198,18 @@ def extract_borders(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarra
             right[row] = int(cols[-1])
             width[row] = int(cols[-1] - cols[0] + 1)
     return left, right, width
+
+
+def extract_column_borders(mask: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    width = mask.shape[1]
+    top = np.full(width, -1, dtype=np.int16)
+    bottom = np.full(width, -1, dtype=np.int16)
+    for col in range(width):
+        rows = np.flatnonzero(mask[:, col])
+        if rows.size:
+            top[col] = int(rows[0])
+            bottom[col] = int(rows[-1])
+    return top, bottom
 
 
 def find_start_row(widths: np.ndarray, valid_rows: np.ndarray, max_width: int) -> int:
@@ -209,50 +261,15 @@ def compute_edge_contrast(
     return float(np.mean(inside_values) - np.mean(outside_values))
 
 
-def smooth_borders(
-    left: np.ndarray,
-    right: np.ndarray,
-    start_row: int,
-    end_row: int,
-    image_width: int,
-) -> tuple[np.ndarray, np.ndarray]:
-    smoothed_left = np.full(left.shape[0], -1, dtype=np.int16)
-    smoothed_right = np.full(right.shape[0], -1, dtype=np.int16)
-    if start_row < 0 or end_row < start_row:
-        return smoothed_left, smoothed_right
-
-    kernel = np.array([1.0, 2.0, 3.0, 2.0, 1.0], dtype=np.float64)
-    kernel /= kernel.sum()
-
-    left_segment = left[start_row : end_row + 1].astype(np.float64)
-    right_segment = right[start_row : end_row + 1].astype(np.float64)
-
-    if left_segment.size >= kernel.size:
-        left_segment = np.convolve(np.pad(left_segment, (2, 2), mode="edge"), kernel, mode="valid")
-        right_segment = np.convolve(np.pad(right_segment, (2, 2), mode="edge"), kernel, mode="valid")
-
-    left_segment = np.rint(left_segment).astype(np.int16)
-    right_segment = np.rint(right_segment).astype(np.int16)
-
-    for index in range(left_segment.size):
-        if right_segment[index] <= left_segment[index]:
-            center = int(round((int(left_segment[index]) + int(right_segment[index])) * 0.5))
-            left_segment[index] = max(center - 1, 0)
-            right_segment[index] = min(center + 1, image_width - 1)
-
-    smoothed_left[start_row : end_row + 1] = left_segment
-    smoothed_right[start_row : end_row + 1] = right_segment
-    return smoothed_left, smoothed_right
-
-
 def evaluate_component(gray: np.ndarray, component: np.ndarray, threshold: int) -> PvcCandidate | None:
-    filled = ndimage.binary_fill_holes(component)
-    filled = ndimage.binary_closing(filled, structure=np.ones((3, 3), dtype=bool))
-    outer_mask = convex_hull_mask(filled)
+    visible_mask = ndimage.binary_closing(component, structure=np.ones((3, 3), dtype=bool))
+    visible_mask = ndimage.binary_opening(visible_mask, structure=np.ones((2, 2), dtype=bool))
+    filled_mask = ndimage.binary_fill_holes(visible_mask)
+    outer_mask = convex_hull_mask(filled_mask)
     if not outer_mask.any():
-        outer_mask = filled.astype(bool)
+        outer_mask = filled_mask.astype(bool)
 
-    left, right, widths = extract_borders(outer_mask)
+    left, right, widths = extract_row_borders(outer_mask)
     valid_rows = np.flatnonzero(widths > 0)
     if valid_rows.size < 10:
         return None
@@ -309,9 +326,8 @@ def evaluate_component(gray: np.ndarray, component: np.ndarray, threshold: int) 
     return PvcCandidate(
         threshold=threshold,
         score=float(score),
-        mask=outer_mask.astype(bool),
-        left=left,
-        right=right,
+        visible_mask=visible_mask.astype(bool),
+        outer_mask=outer_mask.astype(bool),
         top_row=top_row,
         start_row=start_row,
         bottom_row=bottom_row,
@@ -351,15 +367,386 @@ def detect_pvc_candidate(gray: np.ndarray) -> PvcCandidate | None:
     return best_candidate
 
 
-def infer_pvc_state(candidate: PvcCandidate | None, image_height: int) -> tuple[bool, str]:
+def fit_line_exhaustive(
+    independent: np.ndarray,
+    dependent: np.ndarray,
+    *,
+    model: str,
+    slope_range: tuple[float, float],
+    residual_threshold: float,
+    min_inliers: int,
+    min_span: float,
+    border_limit: float,
+    prefer: str,
+) -> LineFit | None:
+    if independent.size < min_inliers:
+        return None
+
+    independent = independent.astype(np.float64)
+    dependent = dependent.astype(np.float64)
+
+    best_score = -1e18
+    best_inliers: np.ndarray | None = None
+    best_slope = 0.0
+    best_intercept = 0.0
+
+    for i in range(independent.size - 1):
+        for j in range(i + 1, independent.size):
+            delta = independent[j] - independent[i]
+            if abs(delta) < 3.0:
+                continue
+
+            slope = (dependent[j] - dependent[i]) / delta
+            if not (slope_range[0] <= slope <= slope_range[1]):
+                continue
+
+            intercept = dependent[i] - slope * independent[i]
+            residuals = np.abs(dependent - (slope * independent + intercept))
+            inliers = residuals <= residual_threshold
+            inlier_count = int(inliers.sum())
+            if inlier_count < min_inliers:
+                continue
+
+            span = float(independent[inliers].max() - independent[inliers].min())
+            if span < min_span:
+                continue
+
+            mean_value = float(dependent[inliers].mean())
+            mean_residual = float(residuals[inliers].mean())
+
+            score = inlier_count * 12.0 + span * 2.0 - mean_residual * 6.0
+            if prefer == "top":
+                score -= mean_value * 0.7
+            elif prefer == "bottom":
+                score += mean_value * 0.7
+            elif prefer == "left":
+                score -= mean_value * 0.25
+            elif prefer == "right":
+                score += mean_value * 0.25
+
+            if score > best_score:
+                best_score = score
+                best_inliers = inliers
+                best_slope = slope
+                best_intercept = intercept
+
+    if best_inliers is None or int(best_inliers.sum()) < min_inliers:
+        return None
+
+    slope, intercept = np.polyfit(independent[best_inliers], dependent[best_inliers], 1)
+    residuals = np.abs(dependent - (slope * independent + intercept))
+    inliers = residuals <= max(residual_threshold, float(np.percentile(residuals[best_inliers], 80)) * 1.3)
+    if int(inliers.sum()) < min_inliers:
+        inliers = best_inliers
+
+    slope, intercept = np.polyfit(independent[inliers], dependent[inliers], 1)
+    residuals = np.abs(dependent - (slope * independent + intercept))
+    inliers = residuals <= max(residual_threshold, float(np.percentile(residuals[inliers], 80)) * 1.2)
+    if int(inliers.sum()) < min_inliers:
+        inliers = best_inliers
+
+    support_min = float(independent[inliers].min())
+    support_max = float(independent[inliers].max())
+    span = support_max - support_min
+    mean_value = float(dependent[inliers].mean())
+    mean_residual = float(residuals[inliers].mean())
+
+    if prefer == "left":
+        border_touch_ratio = float(np.mean(dependent[inliers] <= border_limit))
+    elif prefer == "right":
+        border_touch_ratio = float(np.mean(dependent[inliers] >= border_limit))
+    elif prefer == "top":
+        border_touch_ratio = float(np.mean(dependent[inliers] <= border_limit))
+    else:
+        border_touch_ratio = float(np.mean(dependent[inliers] >= border_limit))
+
+    return LineFit(
+        model=model,
+        slope=float(slope),
+        intercept=float(intercept),
+        support_min=support_min,
+        support_max=support_max,
+        inlier_count=int(inliers.sum()),
+        span=float(span),
+        residual=mean_residual,
+        border_touch_ratio=border_touch_ratio,
+        mean_value=mean_value,
+    )
+
+
+def fit_side_lines(mask: np.ndarray) -> tuple[LineFit | None, LineFit | None]:
+    raise NotImplementedError("Use fit_side_lines_from_masks instead.")
+
+
+def fit_one_side(mask: np.ndarray, side: str) -> LineFit | None:
+    left, right, widths = extract_row_borders(mask)
+    rows = np.flatnonzero(widths > 0)
+    if rows.size < 8:
+        return None
+
+    if side == "left":
+        dependent = left
+        border_limit = 1.5
+        unclipped_rows = rows[left[rows] > 1]
+        prefer = "left"
+    else:
+        dependent = right
+        border_limit = mask.shape[1] - 2.5
+        unclipped_rows = rows[right[rows] < mask.shape[1] - 2]
+        prefer = "right"
+
+    use_rows = rows
+    if unclipped_rows.size >= 6 and float(unclipped_rows.max() - unclipped_rows.min()) >= 10.0:
+        use_rows = unclipped_rows
+
+    return fit_line_exhaustive(
+        use_rows,
+        dependent[use_rows],
+        model="x_from_y",
+        slope_range=(-2.5, 2.5),
+        residual_threshold=1.35,
+        min_inliers=6,
+        min_span=10.0,
+        border_limit=border_limit,
+        prefer=prefer,
+    )
+
+
+def score_side_fit(line: LineFit | None) -> float:
+    if line is None:
+        return -1e9
+    return (
+        line.inlier_count * 5.0
+        + line.span * 1.8
+        - line.residual * 10.0
+        - line.border_touch_ratio * 30.0
+        + abs(line.slope) * 10.0
+        + abs(line.slope) * line.span * 3.0
+    )
+
+
+def fit_side_lines_from_masks(visible_mask: np.ndarray, outer_mask: np.ndarray) -> tuple[LineFit | None, LineFit | None]:
+    visible_left = fit_one_side(visible_mask, "left")
+    visible_right = fit_one_side(visible_mask, "right")
+    outer_left = fit_one_side(outer_mask, "left")
+    outer_right = fit_one_side(outer_mask, "right")
+
+    left_fit = visible_left if score_side_fit(visible_left) >= score_side_fit(outer_left) else outer_left
+    right_fit = visible_right if score_side_fit(visible_right) >= score_side_fit(outer_right) else outer_right
+    return left_fit, right_fit
+
+
+def fit_horizontal_lines(mask: np.ndarray) -> tuple[LineFit | None, LineFit | None]:
+    top, bottom = extract_column_borders(mask)
+    top_cols = np.flatnonzero(top >= 0)
+    bottom_cols = np.flatnonzero(bottom >= 0)
+
+    top_fit = fit_line_exhaustive(
+        top_cols,
+        top[top_cols],
+        model="y_from_x",
+        slope_range=(-0.32, 0.32),
+        residual_threshold=1.2,
+        min_inliers=6,
+        min_span=8.0,
+        border_limit=1.5,
+        prefer="top",
+    )
+    bottom_fit = fit_line_exhaustive(
+        bottom_cols,
+        bottom[bottom_cols],
+        model="y_from_x",
+        slope_range=(-0.32, 0.32),
+        residual_threshold=1.2,
+        min_inliers=6,
+        min_span=8.0,
+        border_limit=mask.shape[0] - 2.5,
+        prefer="bottom",
+    )
+    return top_fit, bottom_fit
+
+
+def longest_contiguous_indices(values: np.ndarray) -> np.ndarray:
+    if values.size == 0:
+        return values
+    best_start = 0
+    best_end = 0
+    start = 0
+    for index in range(1, values.size):
+        if values[index] != values[index - 1] + 1:
+            if index - 1 - start > best_end - best_start:
+                best_start = start
+                best_end = index - 1
+            start = index
+    if values.size - 1 - start > best_end - best_start:
+        best_start = start
+        best_end = values.size - 1
+    return values[best_start : best_end + 1]
+
+
+def fit_pink_from_plateau(mask: np.ndarray) -> LineFit | None:
+    top, _ = extract_column_borders(mask)
+    cols = np.flatnonzero(top >= 0)
+    if cols.size < 6:
+        return None
+
+    min_top = int(top[cols].min())
+    for tolerance in (0, 1, 2, 3):
+        candidates = cols[top[cols] <= min_top + tolerance]
+        span = longest_contiguous_indices(candidates)
+        if span.size < 6:
+            continue
+        fit = fit_line_exhaustive(
+            span,
+            top[span],
+            model="y_from_x",
+            slope_range=(-0.32, 0.32),
+            residual_threshold=0.9,
+            min_inliers=4,
+            min_span=6.0,
+            border_limit=1.5,
+            prefer="top",
+        )
+        if fit is not None:
+            return fit
+    return None
+
+
+def top_anchor_point(mask: np.ndarray, side: str) -> tuple[int, int] | None:
+    top, _ = extract_column_borders(mask)
+    cols = np.flatnonzero(top >= 0)
+    if cols.size == 0:
+        return None
+
+    if side == "left":
+        edge_cols = cols[: min(8, cols.size)]
+    else:
+        edge_cols = cols[max(0, cols.size - 8) :]
+
+    x = int(edge_cols[0] if side == "left" else edge_cols[-1])
+    y = int(round(float(np.median(top[edge_cols]))))
+    return x, y
+
+
+def should_draw_left(line: LineFit | None) -> bool:
+    if line is None:
+        return False
+    if line.inlier_count < 6 or line.span < 10.0:
+        return False
+    return not (line.border_touch_ratio >= 0.75 and abs(line.slope) <= 0.25 and line.mean_value <= 1.6)
+
+
+def should_draw_right(line: LineFit | None, image_width: int) -> bool:
+    if line is None:
+        return False
+    if line.inlier_count < 6 or line.span < 10.0:
+        return False
+    return not (
+        line.border_touch_ratio >= 0.75
+        and abs(line.slope) <= 0.25
+        and line.mean_value >= image_width - 2.6
+    )
+
+
+def should_draw_pink(line: LineFit | None) -> bool:
+    if line is None:
+        return False
+    if line.inlier_count < 6 or line.span < 8.0:
+        return False
+    return not (line.border_touch_ratio >= 0.75 and line.mean_value <= 1.6)
+
+
+def should_draw_yellow(line: LineFit | None, image_height: int) -> bool:
+    if line is None:
+        return False
+    if line.inlier_count < 6 or line.span < 8.0:
+        return False
+    return not (line.border_touch_ratio >= 0.55 and line.mean_value >= image_height - 2.6)
+
+
+def intersect_side_with_horizontal(side: LineFit, horizontal: LineFit) -> tuple[float, float] | None:
+    denominator = 1.0 - horizontal.slope * side.slope
+    if abs(denominator) < 1e-6:
+        return None
+    y = (horizontal.slope * side.intercept + horizontal.intercept) / denominator
+    x = side.x_at_y(y)
+    if not np.isfinite(x) or not np.isfinite(y):
+        return None
+    return float(x), float(y)
+
+
+def clip_point(x: float, y: float, image_width: int, image_height: int) -> tuple[int, int]:
+    x = int(round(float(np.clip(x, 0, image_width - 1))))
+    y = int(round(float(np.clip(y, 0, image_height - 1))))
+    return x, y
+
+
+def segment_from_side(
+    line: LineFit | None,
+    *,
+    side: str,
+    bottom_row: int,
+    image_width: int,
+    image_height: int,
+) -> list[int] | None:
+    if line is None:
+        return None
+
+    y0 = line.support_min
+    y1 = line.support_max
+    if bottom_row - y1 >= 8:
+        x_bottom = line.x_at_y(bottom_row)
+        if side == "left" and x_bottom > 2.5:
+            y1 = float(bottom_row)
+        if side == "right" and x_bottom < image_width - 3.5:
+            y1 = float(bottom_row)
+
+    x0, y0c = clip_point(line.x_at_y(y0), y0, image_width, image_height)
+    x1, y1c = clip_point(line.x_at_y(y1), y1, image_width, image_height)
+    return [x0, y0c, x1, y1c]
+
+
+def segment_from_horizontal(
+    line: LineFit | None,
+    *,
+    image_width: int,
+    image_height: int,
+    left_line: LineFit | None,
+    right_line: LineFit | None,
+    draw_left: bool,
+    draw_right: bool,
+) -> list[int] | None:
+    if line is None:
+        return None
+
+    x0 = line.support_min
+    x1 = line.support_max
+    p0 = (x0, line.y_at_x(x0))
+    p1 = (x1, line.y_at_x(x1))
+
+    if draw_left and left_line is not None:
+        hit = intersect_side_with_horizontal(left_line, line)
+        if hit is not None and x0 - 8.0 <= hit[0] <= x0 + 8.0:
+            p0 = hit
+    if draw_right and right_line is not None:
+        hit = intersect_side_with_horizontal(right_line, line)
+        if hit is not None and x1 - 8.0 <= hit[0] <= x1 + 8.0:
+            p1 = hit
+
+    x0c, y0c = clip_point(p0[0], p0[1], image_width, image_height)
+    x1c, y1c = clip_point(p1[0], p1[1], image_width, image_height)
+    return [x0c, y0c, x1c, y1c]
+
+
+def infer_pvc_state(candidate: PvcCandidate | None, image_height: int, yellow_visible: bool) -> tuple[bool, str]:
     if candidate is None:
         return False, STATE_NONE
     if candidate.score < MIN_VALID_SCORE or candidate.edge_contrast < 20.0:
         return False, STATE_NONE
+    if yellow_visible or candidate.bottom_row <= image_height - 10:
+        return True, STATE_PREPARE_ENTER
 
     exit_clip_ratio = max(candidate.left_clip_ratio, candidate.right_clip_ratio)
-    if candidate.bottom_row <= image_height - 10:
-        return True, STATE_PREPARE_ENTER
     if exit_clip_ratio >= 0.82:
         return True, STATE_PREPARE_EXIT
     if exit_clip_ratio >= 0.68 and candidate.start_row >= 18:
@@ -373,17 +760,107 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         gray = np.array(image.convert("L"), dtype=np.uint8)
 
     candidate = detect_pvc_candidate(gray)
-    pvc_found, pvc_state = infer_pvc_state(candidate, gray.shape[0])
+
+    if candidate is not None:
+        left_fit, right_fit = fit_side_lines_from_masks(candidate.visible_mask, candidate.outer_mask)
+        top_fit, yellow_fit = fit_horizontal_lines(candidate.outer_mask)
+        plateau_pink_fit = fit_pink_from_plateau(candidate.outer_mask)
+        left_visible = should_draw_left(left_fit)
+        right_visible = should_draw_right(right_fit, gray.shape[1])
+        if left_visible and right_visible:
+            pink_visible = plateau_pink_fit is not None or should_draw_pink(top_fit)
+        else:
+            pink_visible = should_draw_pink(top_fit)
+        yellow_visible = should_draw_yellow(yellow_fit, gray.shape[0])
+    else:
+        left_fit = None
+        right_fit = None
+        top_fit = None
+        plateau_pink_fit = None
+        yellow_fit = None
+        left_visible = False
+        right_visible = False
+        pink_visible = False
+        yellow_visible = False
+
+    pvc_found, pvc_state = infer_pvc_state(candidate, gray.shape[0], yellow_visible)
 
     if pvc_found and candidate is not None:
-        left_border, right_border = smooth_borders(
-            candidate.left,
-            candidate.right,
-            candidate.start_row,
-            candidate.bottom_row,
-            gray.shape[1],
+        left_segment = segment_from_side(
+            left_fit if left_visible else None,
+            side="left",
+            bottom_row=candidate.bottom_row,
+            image_width=gray.shape[1],
+            image_height=gray.shape[0],
         )
-        pvc_center_x = round(candidate.center_x, 3)
+        right_segment = segment_from_side(
+            right_fit if right_visible else None,
+            side="right",
+            bottom_row=candidate.bottom_row,
+            image_width=gray.shape[1],
+            image_height=gray.shape[0],
+        )
+        pink_fit = plateau_pink_fit if plateau_pink_fit is not None else top_fit
+        pink_segment = None
+        if pink_visible:
+            if left_segment is not None and right_segment is not None:
+                left_top = (left_segment[0], left_segment[1])
+                right_top = (right_segment[0], right_segment[1])
+                if pink_fit is not None and left_fit is not None and right_fit is not None:
+                    left_hit = intersect_side_with_horizontal(left_fit, pink_fit)
+                    right_hit = intersect_side_with_horizontal(right_fit, pink_fit)
+                    if left_hit is not None:
+                        left_top = clip_point(left_hit[0], left_hit[1], gray.shape[1], gray.shape[0])
+                    if right_hit is not None:
+                        right_top = clip_point(right_hit[0], right_hit[1], gray.shape[1], gray.shape[0])
+                pink_segment = [left_top[0], left_top[1], right_top[0], right_top[1]]
+                left_segment[0], left_segment[1] = left_top
+                right_segment[0], right_segment[1] = right_top
+            else:
+                if right_segment is not None:
+                    anchor = top_anchor_point(candidate.outer_mask, "left")
+                    if anchor is not None:
+                        pink_segment = [anchor[0], anchor[1], right_segment[0], right_segment[1]]
+                elif left_segment is not None:
+                    anchor = top_anchor_point(candidate.outer_mask, "right")
+                    if anchor is not None:
+                        pink_segment = [left_segment[0], left_segment[1], anchor[0], anchor[1]]
+                if pink_segment is None:
+                    pink_segment = segment_from_horizontal(
+                        pink_fit if pink_fit is not None else top_fit,
+                        image_width=gray.shape[1],
+                        image_height=gray.shape[0],
+                        left_line=left_fit,
+                        right_line=right_fit,
+                        draw_left=left_visible,
+                        draw_right=right_visible,
+                    )
+
+        yellow_segment = None
+        if yellow_visible:
+            if left_segment is not None and right_segment is not None and yellow_fit is not None:
+                left_bottom = (left_segment[2], left_segment[3])
+                right_bottom = (right_segment[2], right_segment[3])
+                left_hit = intersect_side_with_horizontal(left_fit, yellow_fit) if left_fit is not None else None
+                right_hit = intersect_side_with_horizontal(right_fit, yellow_fit) if right_fit is not None else None
+                if left_hit is not None:
+                    left_bottom = clip_point(left_hit[0], left_hit[1], gray.shape[1], gray.shape[0])
+                if right_hit is not None:
+                    right_bottom = clip_point(right_hit[0], right_hit[1], gray.shape[1], gray.shape[0])
+                yellow_segment = [left_bottom[0], left_bottom[1], right_bottom[0], right_bottom[1]]
+                left_segment[2], left_segment[3] = left_bottom
+                right_segment[2], right_segment[3] = right_bottom
+            else:
+                yellow_segment = segment_from_horizontal(
+                    yellow_fit,
+                    image_width=gray.shape[1],
+                    image_height=gray.shape[0],
+                    left_line=left_fit,
+                    right_line=right_fit,
+                    draw_left=left_visible,
+                    draw_right=right_visible,
+                )
+
         threshold = candidate.threshold
         area = candidate.area
         area_ratio = round(candidate.area_ratio, 4)
@@ -392,17 +869,21 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         bottom_row = candidate.bottom_row
         max_width = candidate.max_width
         bottom_width = candidate.bottom_width
+        pvc_center_x = round(candidate.center_x, 3)
         edge_contrast = round(candidate.edge_contrast, 3)
         left_clip_ratio = round(candidate.left_clip_ratio, 3)
         right_clip_ratio = round(candidate.right_clip_ratio, 3)
         dual_clip_ratio = round(candidate.dual_clip_ratio, 3)
         border_monotonic = round(candidate.border_monotonic, 3)
         candidate_score = round(candidate.score, 3)
-        draw_mask = candidate.mask
+        mask_image = Image.fromarray((candidate.outer_mask.astype(np.uint8) * 255), mode="L")
     else:
-        left_border = np.full(gray.shape[0], -1, dtype=np.int16)
-        right_border = np.full(gray.shape[0], -1, dtype=np.int16)
-        pvc_center_x = None
+        left_segment = None
+        right_segment = None
+        pink_segment = None
+        yellow_segment = None
+        top_fit = None
+        plateau_pink_fit = None
         threshold = candidate.threshold if candidate is not None else -1
         area = candidate.area if candidate is not None else 0
         area_ratio = round(candidate.area_ratio, 4) if candidate is not None else 0.0
@@ -411,13 +892,18 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         bottom_row = candidate.bottom_row if candidate is not None else -1
         max_width = candidate.max_width if candidate is not None else 0
         bottom_width = candidate.bottom_width if candidate is not None else 0
+        pvc_center_x = round(candidate.center_x, 3) if candidate is not None else None
         edge_contrast = round(candidate.edge_contrast, 3) if candidate is not None else 0.0
         left_clip_ratio = round(candidate.left_clip_ratio, 3) if candidate is not None else 0.0
         right_clip_ratio = round(candidate.right_clip_ratio, 3) if candidate is not None else 0.0
         dual_clip_ratio = round(candidate.dual_clip_ratio, 3) if candidate is not None else 0.0
         border_monotonic = round(candidate.border_monotonic, 3) if candidate is not None else 0.0
         candidate_score = round(candidate.score, 3) if candidate is not None else 0.0
-        draw_mask = np.zeros_like(gray, dtype=bool)
+        mask_image = Image.fromarray(np.zeros_like(gray, dtype=np.uint8), mode="L")
+        left_visible = False
+        right_visible = False
+        pink_visible = False
+        yellow_visible = False
 
     expected_state = item.get("expected_state")
     state_match = None if expected_state is None else bool(expected_state == pvc_state)
@@ -445,12 +931,17 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         dual_clip_ratio=dual_clip_ratio,
         border_monotonic=border_monotonic,
         candidate_score=candidate_score,
-        pvc_left_border=left_border.astype(int).tolist(),
-        pvc_right_border=right_border.astype(int).tolist(),
+        left_line_visible=left_visible,
+        right_line_visible=right_visible,
+        pink_line_visible=pink_visible,
+        yellow_line_visible=yellow_visible,
+        left_line_segment=left_segment,
+        right_line_segment=right_segment,
+        pink_line_segment=pink_segment,
+        yellow_line_segment=yellow_segment,
     )
 
     draw_image = render_draw(gray, result)
-    mask_image = Image.fromarray((draw_mask.astype(np.uint8) * 255), mode="L")
     return result, draw_image, mask_image
 
 
@@ -459,44 +950,15 @@ def render_draw(gray: np.ndarray, result: BridgeResult) -> Image.Image:
     image = Image.fromarray(rgb, mode="RGB")
     draw = ImageDraw.Draw(image)
 
-    rows = [row for row, left_x in enumerate(result.pvc_left_border) if left_x >= 0 and result.pvc_right_border[row] >= 0]
-    if rows:
-        left_points = [(int(result.pvc_left_border[row]), int(row)) for row in rows]
-        right_points = [(int(result.pvc_right_border[row]), int(row)) for row in rows]
-        if len(left_points) >= 2:
-            draw.line(left_points, fill=(255, 0, 0), width=1)
-        else:
-            draw.point(left_points[0], fill=(255, 0, 0))
-
-        if len(right_points) >= 2:
-            draw.line(right_points, fill=(0, 150, 255), width=1)
-        else:
-            draw.point(right_points[0], fill=(0, 150, 255))
-
-        start_row = result.pvc_start_row
-        end_row = result.pvc_bottom_row
-        if start_row >= 0 and result.pvc_left_border[start_row] >= 0 and result.pvc_right_border[start_row] >= 0:
-            draw.line(
-                (
-                    int(result.pvc_left_border[start_row]),
-                    int(start_row),
-                    int(result.pvc_right_border[start_row]),
-                    int(start_row),
-                ),
-                fill=(255, 105, 180),
-                width=1,
-            )
-        if end_row >= 0 and result.pvc_left_border[end_row] >= 0 and result.pvc_right_border[end_row] >= 0:
-            draw.line(
-                (
-                    int(result.pvc_left_border[end_row]),
-                    int(end_row),
-                    int(result.pvc_right_border[end_row]),
-                    int(end_row),
-                ),
-                fill=(255, 220, 0),
-                width=1,
-            )
+    for segment, color in [
+        (result.left_line_segment, (255, 0, 0)),
+        (result.right_line_segment, (0, 150, 255)),
+        (result.pink_line_segment, (255, 105, 180)),
+        (result.yellow_line_segment, (255, 220, 0)),
+    ]:
+        if segment is None:
+            continue
+        draw.line(tuple(segment), fill=color, width=1)
 
     return image
 
@@ -578,6 +1040,14 @@ def write_summary_csv(path: Path, results: list[BridgeResult]) -> None:
         "dual_clip_ratio",
         "border_monotonic",
         "candidate_score",
+        "left_line_visible",
+        "right_line_visible",
+        "pink_line_visible",
+        "yellow_line_visible",
+        "left_line_segment",
+        "right_line_segment",
+        "pink_line_segment",
+        "yellow_line_segment",
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -591,18 +1061,23 @@ def write_readme(output_dir: Path) -> None:
         [
             "单边桥 PVC 识别原型输出说明",
             "",
-            "draw/: 巡线结果图，只画四类线。",
-            "originals/: 对应原图拷贝，方便逐张对比。",
-            "masks/: 恢复出的 PVC 外轮廓掩码。",
+            "draw/: 仅保留四条直线段结果图。",
+            "originals/: 对应原图拷贝，便于逐张对比。",
+            "masks/: PVC 外轮廓掩码。",
             "compare/: 每张图的 原图 | 巡线图 并排对照图。",
+            "people/: 人工标注参考图，不会被脚本覆盖。",
             "",
-            "线条颜色：",
-            "红色 = 左边线",
-            "蓝色 = 右边线",
-            "粉色 = 起始线",
-            "黄色 = 终止线",
+            "颜色约定：",
+            "红色 = 左线",
+            "蓝色 = 右线",
+            "粉色 = 上边线",
+            "黄色 = 下边线",
             "",
-            "summary.csv / summary.json 中只保留 PVC 四状态：无、准备进入、在PVC上、准备退出。",
+            "抑制规则：",
+            "黄色贴底则不画。",
+            "粉色贴顶则不画。",
+            "左线贴左边且近似竖直则不画。",
+            "右线贴右边且近似竖直则不画。",
         ]
     )
     (output_dir / "README.txt").write_text(readme, encoding="utf-8")
@@ -610,7 +1085,7 @@ def write_readme(output_dir: Path) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="PVC-only single-bridge prototype for representative frames.")
+    parser = argparse.ArgumentParser(description="PVC-only single-bridge prototype with straight-line fitting.")
     parser.add_argument("--subset", type=Path, default=DEFAULT_SUBSET, help="Subset JSON file.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT, help="Directory for generated results.")
     args = parser.parse_args()
