@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
+import struct
+import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -13,28 +17,31 @@ from scipy import ndimage
 from scipy.spatial import ConvexHull, QhullError
 
 
-STATE_NONE = "无"
-STATE_PREPARE_ENTER = "准备进入"
-STATE_ON_PVC = "在PVC上"
-STATE_PREPARE_EXIT = "准备退出"
+DATA_DIR_NAME = "\u5355\u8fb9\u6865"
+STATE_NONE = "\u65e0"
+STATE_PREPARE_ENTER = "\u51c6\u5907\u8fdb\u5165"
+STATE_ON_PVC = "\u5728PVC\u4e0a"
+STATE_PREPARE_EXIT = "\u51c6\u5907\u9000\u51fa"
 
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp"}
 MIN_VALID_SCORE = 350.0
+DEFAULT_SOURCE_FPS = 50.0
+JPEG_QUALITY = 90
 
 
 def resolve_project_root() -> Path:
     here = Path(__file__).resolve()
     for parent in here.parents:
-        if (parent / "data" / "单边桥").exists():
+        if (parent / "data" / DATA_DIR_NAME).exists():
             return parent
-    raise FileNotFoundError("Could not locate project root containing data/单边桥.")
+    raise FileNotFoundError(f"Could not locate project root containing data/{DATA_DIR_NAME}.")
 
 
 PROJECT_ROOT = resolve_project_root()
-DATA_ROOT = PROJECT_ROOT / "data" / "单边桥"
+DATA_ROOT = PROJECT_ROOT / "data" / DATA_DIR_NAME
 FRAMES_DIR = DATA_ROOT / "frames"
 DEFAULT_SUBSET = DATA_ROOT / "single_bridge_subset.json"
 DEFAULT_OUTPUT = DATA_ROOT / "python_results"
-PEOPLE_DIR = DEFAULT_OUTPUT / "people"
 
 
 @dataclass
@@ -114,6 +121,26 @@ class BridgeResult:
     right_line_segment: list[int] | None
     pink_line_segment: list[int] | None
     yellow_line_segment: list[int] | None
+
+
+@dataclass
+class FolderTimingStats:
+    folder_name: str
+    output_dir: str
+    frame_count: int
+    fps: float
+    avg_recognition_ms: float
+    median_recognition_ms: float
+    p95_recognition_ms: float
+    min_recognition_ms: float
+    min_recognition_frame: str
+    max_recognition_ms: float
+    max_recognition_frame: str
+    total_recognition_ms: float
+    video_encode_ms: float
+    total_wall_ms: float
+    state_counts: dict[str, int]
+    video_path: str
 
 
 def otsu_threshold(image: np.ndarray, search_limit: int = 180) -> int:
@@ -387,8 +414,6 @@ def fit_line_exhaustive(
 
     best_score = -1e18
     best_inliers: np.ndarray | None = None
-    best_slope = 0.0
-    best_intercept = 0.0
 
     for i in range(independent.size - 1):
         for j in range(i + 1, independent.size):
@@ -427,23 +452,25 @@ def fit_line_exhaustive(
             if score > best_score:
                 best_score = score
                 best_inliers = inliers
-                best_slope = slope
-                best_intercept = intercept
 
     if best_inliers is None or int(best_inliers.sum()) < min_inliers:
         return None
 
     slope, intercept = np.polyfit(independent[best_inliers], dependent[best_inliers], 1)
     residuals = np.abs(dependent - (slope * independent + intercept))
-    inliers = residuals <= max(residual_threshold, float(np.percentile(residuals[best_inliers], 80)) * 1.3)
+    relaxed_threshold = max(residual_threshold, float(np.percentile(residuals[best_inliers], 80)) * 1.3)
+    inliers = residuals <= relaxed_threshold
     if int(inliers.sum()) < min_inliers:
         inliers = best_inliers
 
     slope, intercept = np.polyfit(independent[inliers], dependent[inliers], 1)
     residuals = np.abs(dependent - (slope * independent + intercept))
-    inliers = residuals <= max(residual_threshold, float(np.percentile(residuals[inliers], 80)) * 1.2)
+    final_threshold = max(residual_threshold, float(np.percentile(residuals[inliers], 80)) * 1.2)
+    inliers = residuals <= final_threshold
     if int(inliers.sum()) < min_inliers:
         inliers = best_inliers
+        slope, intercept = np.polyfit(independent[inliers], dependent[inliers], 1)
+        residuals = np.abs(dependent - (slope * independent + intercept))
 
     support_min = float(independent[inliers].min())
     support_max = float(independent[inliers].max())
@@ -472,10 +499,6 @@ def fit_line_exhaustive(
         border_touch_ratio=border_touch_ratio,
         mean_value=mean_value,
     )
-
-
-def fit_side_lines(mask: np.ndarray) -> tuple[LineFit | None, LineFit | None]:
-    raise NotImplementedError("Use fit_side_lines_from_masks instead.")
 
 
 def fit_one_side(mask: np.ndarray, side: str) -> LineFit | None:
@@ -620,26 +643,22 @@ def top_anchor_point(mask: np.ndarray, side: str) -> tuple[int, int] | None:
 
     if side == "left":
         edge_cols = cols[: min(8, cols.size)]
+        x = int(edge_cols[0])
     else:
         edge_cols = cols[max(0, cols.size - 8) :]
-
-    x = int(edge_cols[0] if side == "left" else edge_cols[-1])
+        x = int(edge_cols[-1])
     y = int(round(float(np.median(top[edge_cols]))))
     return x, y
 
 
 def should_draw_left(line: LineFit | None) -> bool:
-    if line is None:
-        return False
-    if line.inlier_count < 6 or line.span < 10.0:
+    if line is None or line.inlier_count < 6 or line.span < 10.0:
         return False
     return not (line.border_touch_ratio >= 0.75 and abs(line.slope) <= 0.25 and line.mean_value <= 1.6)
 
 
 def should_draw_right(line: LineFit | None, image_width: int) -> bool:
-    if line is None:
-        return False
-    if line.inlier_count < 6 or line.span < 10.0:
+    if line is None or line.inlier_count < 6 or line.span < 10.0:
         return False
     return not (
         line.border_touch_ratio >= 0.75
@@ -649,17 +668,13 @@ def should_draw_right(line: LineFit | None, image_width: int) -> bool:
 
 
 def should_draw_pink(line: LineFit | None) -> bool:
-    if line is None:
-        return False
-    if line.inlier_count < 6 or line.span < 8.0:
+    if line is None or line.inlier_count < 6 or line.span < 8.0:
         return False
     return not (line.border_touch_ratio >= 0.75 and line.mean_value <= 1.6)
 
 
 def should_draw_yellow(line: LineFit | None, image_height: int) -> bool:
-    if line is None:
-        return False
-    if line.inlier_count < 6 or line.span < 8.0:
+    if line is None or line.inlier_count < 6 or line.span < 8.0:
         return False
     return not (line.border_touch_ratio >= 0.55 and line.mean_value >= image_height - 2.6)
 
@@ -755,7 +770,10 @@ def infer_pvc_state(candidate: PvcCandidate | None, image_height: int, yellow_vi
 
 
 def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Image.Image]:
-    image_path = FRAMES_DIR / item["video"] / item["frame"]
+    if "image_path" in item:
+        image_path = Path(item["image_path"])
+    else:
+        image_path = FRAMES_DIR / item["video"] / item["frame"]
     with Image.open(image_path) as image:
         gray = np.array(image.convert("L"), dtype=np.uint8)
 
@@ -800,6 +818,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             image_width=gray.shape[1],
             image_height=gray.shape[0],
         )
+
         pink_fit = plateau_pink_fit if plateau_pink_fit is not None else top_fit
         pink_segment = None
         if pink_visible:
@@ -882,8 +901,6 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         right_segment = None
         pink_segment = None
         yellow_segment = None
-        top_fit = None
-        plateau_pink_fit = None
         threshold = candidate.threshold if candidate is not None else -1
         area = candidate.area if candidate is not None else 0
         area_ratio = round(candidate.area_ratio, 4) if candidate is not None else 0.0
@@ -911,7 +928,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
     result = BridgeResult(
         video=item["video"],
         frame=item["frame"],
-        tag=item["tag"],
+        tag=item.get("tag", ""),
         expected_state=expected_state,
         state_match=state_match,
         threshold=threshold,
@@ -1059,38 +1076,368 @@ def write_summary_csv(path: Path, results: list[BridgeResult]) -> None:
 def write_readme(output_dir: Path) -> None:
     readme = "\n".join(
         [
-            "单边桥 PVC 识别原型输出说明",
+            "\u5355\u8fb9\u6865 PVC \u8bc6\u522b\u539f\u578b\u8f93\u51fa\u8bf4\u660e",
             "",
-            "draw/: 仅保留四条直线段结果图。",
-            "originals/: 对应原图拷贝，便于逐张对比。",
-            "masks/: PVC 外轮廓掩码。",
-            "compare/: 每张图的 原图 | 巡线图 并排对照图。",
-            "people/: 人工标注参考图，不会被脚本覆盖。",
+            "draw/: \u4ec5\u4fdd\u7559\u56db\u6761\u76f4\u7ebf\u6bb5\u7ed3\u679c\u56fe\u3002",
+            "originals/: \u5bf9\u5e94\u539f\u56fe\u62f7\u8d1d\uff0c\u4fbf\u4e8e\u9010\u5f20\u5bf9\u6bd4\u3002",
+            "masks/: PVC \u5916\u8f6e\u5ed3\u63a9\u7801\u3002",
+            "compare/: \u6bcf\u5f20\u56fe\u7684 \u539f\u56fe | \u5de1\u7ebf\u56fe \u5e76\u6392\u5bf9\u7167\u56fe\u3002",
             "",
-            "颜色约定：",
-            "红色 = 左线",
-            "蓝色 = 右线",
-            "粉色 = 上边线",
-            "黄色 = 下边线",
+            "\u989c\u8272\u7ea6\u5b9a\uff1a",
+            "\u7ea2\u8272 = \u5de6\u7ebf",
+            "\u84dd\u8272 = \u53f3\u7ebf",
+            "\u7c89\u8272 = \u4e0a\u8fb9\u7ebf",
+            "\u9ec4\u8272 = \u4e0b\u8fb9\u7ebf",
             "",
-            "抑制规则：",
-            "黄色贴底则不画。",
-            "粉色贴顶则不画。",
-            "左线贴左边且近似竖直则不画。",
-            "右线贴右边且近似竖直则不画。",
+            "\u6291\u5236\u89c4\u5219\uff1a",
+            "\u9ec4\u7ebf\u8d34\u5e95\u5219\u4e0d\u753b\u3002",
+            "\u7c89\u7ebf\u8d34\u9876\u5219\u4e0d\u753b\u3002",
+            "\u5de6\u7ebf\u8d34\u5de6\u8fb9\u4e14\u8fd1\u4f3c\u7ad6\u76f4\u5219\u4e0d\u753b\u3002",
+            "\u53f3\u7ebf\u8d34\u53f3\u8fb9\u4e14\u8fd1\u4f3c\u7ad6\u76f4\u5219\u4e0d\u753b\u3002",
         ]
     )
     (output_dir / "README.txt").write_text(readme, encoding="utf-8")
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="PVC-only single-bridge prototype with straight-line fitting.")
-    parser.add_argument("--subset", type=Path, default=DEFAULT_SUBSET, help="Subset JSON file.")
-    parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT, help="Directory for generated results.")
-    args = parser.parse_args()
+def collect_frame_paths(frame_dir: Path) -> list[Path]:
+    return sorted(path for path in frame_dir.iterdir() if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES)
 
-    output_dir = args.output_dir
+
+def read_avi_fps(video_path: Path, default_fps: float = DEFAULT_SOURCE_FPS) -> float:
+    if not video_path.exists():
+        return default_fps
+    data = video_path.read_bytes()
+    index = data.find(b"avih")
+    if index < 0 or index + 8 + 4 > len(data):
+        return default_fps
+    microseconds = struct.unpack_from("<I", data, index + 8)[0]
+    if microseconds <= 0:
+        return default_fps
+    return 1_000_000.0 / float(microseconds)
+
+
+def encode_jpeg(image: Image.Image, quality: int = JPEG_QUALITY) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=quality, optimize=False)
+    return buffer.getvalue()
+
+
+def write_chunk(file, fourcc: bytes, payload: bytes) -> None:
+    file.write(fourcc)
+    file.write(struct.pack("<I", len(payload)))
+    file.write(payload)
+    if len(payload) & 1:
+        file.write(b"\x00")
+
+
+def write_list(file, list_type: bytes, payload: bytes) -> None:
+    file.write(b"LIST")
+    file.write(struct.pack("<I", len(payload) + 4))
+    file.write(list_type)
+    file.write(payload)
+
+
+def write_mjpeg_avi(images: list[Image.Image], video_path: Path, fps: float) -> None:
+    if not images:
+        raise ValueError("No images provided for video generation.")
+
+    rgb_images = [image.convert("RGB") for image in images]
+    width, height = rgb_images[0].size
+    jpeg_frames = [encode_jpeg(image) for image in rgb_images]
+    frame_count = len(jpeg_frames)
+    max_frame_size = max(len(frame) for frame in jpeg_frames)
+    average_bytes_per_second = int(sum(len(frame) for frame in jpeg_frames) * fps / max(frame_count, 1))
+    microseconds_per_frame = int(round(1_000_000.0 / max(fps, 1e-6)))
+
+    stream_scale = 1
+    stream_rate = max(1, int(round(fps)))
+    compression = int.from_bytes(b"MJPG", byteorder="little", signed=False)
+
+    avih_payload = struct.pack(
+        "<IIIIIIIIII4I",
+        microseconds_per_frame,
+        average_bytes_per_second,
+        0,
+        0x10,
+        frame_count,
+        0,
+        1,
+        max_frame_size,
+        width,
+        height,
+        0,
+        0,
+        0,
+        0,
+    )
+
+    strh_payload = struct.pack(
+        "<4s4sIHHIIIIIIIIhhhh",
+        b"vids",
+        b"MJPG",
+        0,
+        0,
+        0,
+        0,
+        stream_scale,
+        stream_rate,
+        0,
+        frame_count,
+        max_frame_size,
+        0xFFFFFFFF,
+        0,
+        0,
+        0,
+        width,
+        height,
+    )
+
+    strf_payload = struct.pack(
+        "<IiiHHIIiiII",
+        40,
+        width,
+        height,
+        1,
+        24,
+        compression,
+        width * height * 3,
+        0,
+        0,
+        0,
+        0,
+    )
+
+    strl_payload = b"".join(
+        [
+            b"strh",
+            struct.pack("<I", len(strh_payload)),
+            strh_payload,
+            b"strf",
+            struct.pack("<I", len(strf_payload)),
+            strf_payload,
+        ]
+    )
+    hdrl_payload = b"".join(
+        [
+            b"avih",
+            struct.pack("<I", len(avih_payload)),
+            avih_payload,
+            b"LIST",
+            struct.pack("<I", len(strl_payload) + 4),
+            b"strl",
+            strl_payload,
+        ]
+    )
+
+    movi_buffer = io.BytesIO()
+    idx_entries: list[bytes] = []
+    chunk_offset = 4
+    for frame in jpeg_frames:
+        movi_buffer.write(b"00dc")
+        movi_buffer.write(struct.pack("<I", len(frame)))
+        movi_buffer.write(frame)
+        if len(frame) & 1:
+            movi_buffer.write(b"\x00")
+        idx_entries.append(struct.pack("<4sIII", b"00dc", 0x10, chunk_offset, len(frame)))
+        chunk_offset += 8 + len(frame) + (len(frame) & 1)
+
+    movi_payload = movi_buffer.getvalue()
+    idx_payload = b"".join(idx_entries)
+
+    riff_size = (
+        4
+        + (8 + len(hdrl_payload) + 4)
+        + (8 + len(movi_payload) + 4)
+        + (8 + len(idx_payload))
+    )
+
+    with video_path.open("wb") as file:
+        file.write(b"RIFF")
+        file.write(struct.pack("<I", riff_size))
+        file.write(b"AVI ")
+        write_list(file, b"hdrl", hdrl_payload)
+        write_list(file, b"movi", movi_payload)
+        write_chunk(file, b"idx1", idx_payload)
+
+
+def write_frame_timing_csv(
+    path: Path,
+    frame_names: list[str],
+    analysis_times_ms: list[float],
+    results: list[BridgeResult],
+) -> None:
+    with path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(
+            file,
+            fieldnames=[
+                "frame",
+                "analysis_ms",
+                "pvc_state",
+                "pvc_found",
+                "left_line_visible",
+                "right_line_visible",
+                "pink_line_visible",
+                "yellow_line_visible",
+            ],
+        )
+        writer.writeheader()
+        for frame_name, analysis_ms, result in zip(frame_names, analysis_times_ms, results):
+            writer.writerow(
+                {
+                    "frame": frame_name,
+                    "analysis_ms": round(analysis_ms, 6),
+                    "pvc_state": result.pvc_state,
+                    "pvc_found": result.pvc_found,
+                    "left_line_visible": result.left_line_visible,
+                    "right_line_visible": result.right_line_visible,
+                    "pink_line_visible": result.pink_line_visible,
+                    "yellow_line_visible": result.yellow_line_visible,
+                }
+            )
+
+
+def summarize_folder_timings(
+    folder_name: str,
+    output_dir: Path,
+    frame_names: list[str],
+    analysis_times_ms: list[float],
+    results: list[BridgeResult],
+    fps: float,
+    video_path: Path,
+    video_encode_ms: float,
+    total_wall_ms: float,
+) -> FolderTimingStats:
+    values = np.array(analysis_times_ms, dtype=np.float64)
+    max_index = int(values.argmax())
+    min_index = int(values.argmin())
+    state_counts = dict(Counter(result.pvc_state for result in results))
+    return FolderTimingStats(
+        folder_name=folder_name,
+        output_dir=str(output_dir),
+        frame_count=len(frame_names),
+        fps=round(float(fps), 6),
+        avg_recognition_ms=round(float(values.mean()), 6),
+        median_recognition_ms=round(float(np.median(values)), 6),
+        p95_recognition_ms=round(float(np.percentile(values, 95)), 6),
+        min_recognition_ms=round(float(values[min_index]), 6),
+        min_recognition_frame=frame_names[min_index],
+        max_recognition_ms=round(float(values[max_index]), 6),
+        max_recognition_frame=frame_names[max_index],
+        total_recognition_ms=round(float(values.sum()), 6),
+        video_encode_ms=round(float(video_encode_ms), 6),
+        total_wall_ms=round(float(total_wall_ms), 6),
+        state_counts=state_counts,
+        video_path=str(video_path),
+    )
+
+
+def write_timing_summary(output_dir: Path, stats: FolderTimingStats) -> None:
+    summary_json = output_dir / "timing_summary.json"
+    summary_txt = output_dir / "timing_summary.txt"
+    summary_json.write_text(json.dumps(asdict(stats), ensure_ascii=False, indent=2), encoding="utf-8")
+
+    lines = [
+        f"folder: {stats.folder_name}",
+        f"frame_count: {stats.frame_count}",
+        f"fps: {stats.fps}",
+        f"avg_recognition_ms: {stats.avg_recognition_ms}",
+        f"median_recognition_ms: {stats.median_recognition_ms}",
+        f"p95_recognition_ms: {stats.p95_recognition_ms}",
+        f"min_recognition_ms: {stats.min_recognition_ms} ({stats.min_recognition_frame})",
+        f"max_recognition_ms: {stats.max_recognition_ms} ({stats.max_recognition_frame})",
+        f"total_recognition_ms: {stats.total_recognition_ms}",
+        f"video_encode_ms: {stats.video_encode_ms}",
+        f"total_wall_ms: {stats.total_wall_ms}",
+        f"video_path: {stats.video_path}",
+        f"state_counts: {json.dumps(stats.state_counts, ensure_ascii=False)}",
+    ]
+    summary_txt.write_text("\n".join(lines), encoding="utf-8")
+
+
+def default_output_dir_for_frame_dir(frame_dir: Path) -> Path:
+    return frame_dir.parent / f"{frame_dir.name}_output"
+
+
+def resolve_frame_dir(input_dir: Path) -> Path:
+    if input_dir.is_absolute():
+        return input_dir
+    candidate = input_dir
+    if candidate.exists():
+        return candidate.resolve()
+    candidate = FRAMES_DIR / input_dir
+    if candidate.exists():
+        return candidate.resolve()
+    raise FileNotFoundError(f"Frame directory not found: {input_dir}")
+
+
+def process_frame_directory(frame_dir: Path, output_dir: Path) -> FolderTimingStats:
+    frame_paths = collect_frame_paths(frame_dir)
+    if not frame_paths:
+        raise ValueError(f"No image frames found in {frame_dir}")
+
+    draw_dir = output_dir / "draw"
+    mask_dir = output_dir / "masks"
+    draw_dir.mkdir(parents=True, exist_ok=True)
+    mask_dir.mkdir(parents=True, exist_ok=True)
+
+    results: list[BridgeResult] = []
+    draw_images: list[Image.Image] = []
+    frame_names: list[str] = []
+    analysis_times_ms: list[float] = []
+
+    folder_start = time.perf_counter()
+
+    for frame_path in frame_paths:
+        item = {
+            "video": frame_dir.name,
+            "frame": frame_path.name,
+            "tag": "",
+            "image_path": str(frame_path),
+        }
+
+        t0 = time.perf_counter()
+        result, draw_image, mask_image = analyze_frame(item)
+        analysis_ms = (time.perf_counter() - t0) * 1000.0
+
+        results.append(result)
+        frame_names.append(frame_path.name)
+        analysis_times_ms.append(analysis_ms)
+        draw_images.append(draw_image.copy())
+
+        draw_image.save(draw_dir / frame_path.name, format="PNG")
+        mask_image.save(mask_dir / frame_path.name, format="PNG")
+
+    write_summary_csv(output_dir / "summary.csv", results)
+    (output_dir / "summary.json").write_text(
+        json.dumps([asdict(result) for result in results], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    write_frame_timing_csv(output_dir / "frame_timing.csv", frame_names, analysis_times_ms, results)
+
+    fps = read_avi_fps(DATA_ROOT / f"{frame_dir.name}.avi")
+    video_path = output_dir / f"{frame_dir.name}_draw.avi"
+    video_start = time.perf_counter()
+    write_mjpeg_avi(draw_images, video_path, fps)
+    video_encode_ms = (time.perf_counter() - video_start) * 1000.0
+
+    total_wall_ms = (time.perf_counter() - folder_start) * 1000.0
+    stats = summarize_folder_timings(
+        folder_name=frame_dir.name,
+        output_dir=output_dir,
+        frame_names=frame_names,
+        analysis_times_ms=analysis_times_ms,
+        results=results,
+        fps=fps,
+        video_path=video_path,
+        video_encode_ms=video_encode_ms,
+        total_wall_ms=total_wall_ms,
+    )
+    write_timing_summary(output_dir, stats)
+    return stats
+
+
+def build_subset_outputs(output_dir: Path, subset: dict[str, Any]) -> None:
     draw_dir = output_dir / "draw"
     mask_dir = output_dir / "masks"
     original_dir = output_dir / "originals"
@@ -1100,7 +1447,6 @@ def main() -> None:
     original_dir.mkdir(parents=True, exist_ok=True)
     compare_dir.mkdir(parents=True, exist_ok=True)
 
-    subset = json.loads(args.subset.read_text(encoding="utf-8"))
     results: list[BridgeResult] = []
     original_images: list[Image.Image] = []
     draw_images: list[Image.Image] = []
@@ -1146,8 +1492,183 @@ def main() -> None:
     pair_contact_sheet.save(output_dir / "original_vs_overlay_contact_sheet.png", format="PNG")
     write_readme(output_dir)
 
-    print(f"Processed {len(results)} frames.")
+
+def write_batch_summary(stats_list: list[FolderTimingStats]) -> None:
+    if not stats_list:
+        return
+    csv_path = DATA_ROOT / "frames_batch_summary.csv"
+    json_path = DATA_ROOT / "frames_batch_summary.json"
+    txt_path = DATA_ROOT / "frames_batch_summary.txt"
+
+    fieldnames = [
+        "folder_name",
+        "output_dir",
+        "frame_count",
+        "fps",
+        "avg_recognition_ms",
+        "median_recognition_ms",
+        "p95_recognition_ms",
+        "min_recognition_ms",
+        "min_recognition_frame",
+        "max_recognition_ms",
+        "max_recognition_frame",
+        "total_recognition_ms",
+        "video_encode_ms",
+        "total_wall_ms",
+        "video_path",
+        "state_counts",
+    ]
+    with csv_path.open("w", encoding="utf-8-sig", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        writer.writeheader()
+        for stats in stats_list:
+            row = asdict(stats)
+            row["state_counts"] = json.dumps(stats.state_counts, ensure_ascii=False)
+            writer.writerow(row)
+
+    json_path.write_text(
+        json.dumps([asdict(stats) for stats in stats_list], ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    total_frames = sum(stats.frame_count for stats in stats_list)
+    total_recognition_ms = sum(stats.total_recognition_ms for stats in stats_list)
+    total_wall_ms = sum(stats.total_wall_ms for stats in stats_list)
+    weighted_avg_ms = total_recognition_ms / max(total_frames, 1)
+    max_stats = max(stats_list, key=lambda item: item.max_recognition_ms)
+    aggregate_states: Counter[str] = Counter()
+    for stats in stats_list:
+        aggregate_states.update(stats.state_counts)
+
+    lines = [
+        f"folder_count: {len(stats_list)}",
+        f"total_frames: {total_frames}",
+        f"weighted_avg_recognition_ms: {round(weighted_avg_ms, 6)}",
+        f"total_recognition_ms: {round(total_recognition_ms, 6)}",
+        f"total_wall_ms: {round(total_wall_ms, 6)}",
+        (
+            "overall_max_recognition_ms: "
+            f"{max_stats.max_recognition_ms} "
+            f"({max_stats.folder_name} / {max_stats.max_recognition_frame})"
+        ),
+        f"state_counts: {json.dumps(dict(aggregate_states), ensure_ascii=False)}",
+    ]
+    txt_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def load_timing_stats(summary_path: Path) -> FolderTimingStats:
+    data = json.loads(summary_path.read_text(encoding="utf-8"))
+    return FolderTimingStats(
+        folder_name=str(data["folder_name"]),
+        output_dir=str(data["output_dir"]),
+        frame_count=int(data["frame_count"]),
+        fps=float(data["fps"]),
+        avg_recognition_ms=float(data["avg_recognition_ms"]),
+        median_recognition_ms=float(data["median_recognition_ms"]),
+        p95_recognition_ms=float(data["p95_recognition_ms"]),
+        min_recognition_ms=float(data["min_recognition_ms"]),
+        min_recognition_frame=str(data["min_recognition_frame"]),
+        max_recognition_ms=float(data["max_recognition_ms"]),
+        max_recognition_frame=str(data["max_recognition_frame"]),
+        total_recognition_ms=float(data["total_recognition_ms"]),
+        video_encode_ms=float(data["video_encode_ms"]),
+        total_wall_ms=float(data["total_wall_ms"]),
+        state_counts={str(key): int(value) for key, value in dict(data["state_counts"]).items()},
+        video_path=str(data["video_path"]),
+    )
+
+
+def run_subset_mode(output_dir: Path, subset_path: Path) -> None:
+    subset = json.loads(subset_path.read_text(encoding="utf-8"))
+    build_subset_outputs(output_dir, subset)
+    print(f"Processed {len(subset['items'])} subset frames.")
     print(f"Results written to: {output_dir}")
+
+
+def run_single_directory(frame_dir: Path, output_dir: Path) -> None:
+    stats = process_frame_directory(frame_dir, output_dir)
+    print(f"Processed {stats.frame_count} frames from: {frame_dir.name}")
+    print(f"Results written to: {output_dir}")
+    print(
+        "Timing ms: "
+        f"avg={stats.avg_recognition_ms:.3f}, "
+        f"median={stats.median_recognition_ms:.3f}, "
+        f"p95={stats.p95_recognition_ms:.3f}, "
+        f"max={stats.max_recognition_ms:.3f} ({stats.max_recognition_frame})"
+    )
+    print(f"Video written to: {stats.video_path}")
+
+
+def run_all_frame_dirs() -> None:
+    frame_dirs = sorted(
+        path
+        for path in FRAMES_DIR.iterdir()
+        if path.is_dir() and not path.name.endswith("_output")
+    )
+    stats_list: list[FolderTimingStats] = []
+    for frame_dir in frame_dirs:
+        output_dir = default_output_dir_for_frame_dir(frame_dir)
+        stats = process_frame_directory(frame_dir, output_dir)
+        stats_list.append(stats)
+        print(
+            f"[{frame_dir.name}] frames={stats.frame_count} "
+            f"avg_ms={stats.avg_recognition_ms:.3f} "
+            f"max_ms={stats.max_recognition_ms:.3f}"
+        )
+    write_batch_summary(stats_list)
+    print(f"Batch summary written to: {DATA_ROOT / 'frames_batch_summary.csv'}")
+
+
+def run_existing_batch_summary() -> None:
+    frame_dirs = sorted(
+        path
+        for path in FRAMES_DIR.iterdir()
+        if path.is_dir() and not path.name.endswith("_output")
+    )
+    stats_list: list[FolderTimingStats] = []
+    for frame_dir in frame_dirs:
+        output_dir = default_output_dir_for_frame_dir(frame_dir)
+        summary_path = output_dir / "timing_summary.json"
+        if not summary_path.exists():
+            raise FileNotFoundError(f"Missing timing summary: {summary_path}")
+        stats_list.append(load_timing_stats(summary_path))
+    write_batch_summary(stats_list)
+    print(f"Batch summary written to: {DATA_ROOT / 'frames_batch_summary.csv'}")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="PVC-only single-bridge prototype with straight-line fitting.")
+    parser.add_argument("--subset", type=Path, default=DEFAULT_SUBSET, help="Subset JSON file.")
+    parser.add_argument("--output-dir", type=Path, default=None, help="Directory for generated results.")
+    parser.add_argument("--input-dir", type=Path, default=None, help="Process all frames from one frame directory.")
+    parser.add_argument(
+        "--all-frame-dirs",
+        action="store_true",
+        help="Process all subdirectories under data/单边桥/frames.",
+    )
+    parser.add_argument(
+        "--summarize-existing-outputs",
+        action="store_true",
+        help="Build the batch summary from existing *_output folders without rerunning recognition.",
+    )
+    args = parser.parse_args()
+
+    if args.summarize_existing_outputs:
+        run_existing_batch_summary()
+        return
+
+    if args.all_frame_dirs:
+        run_all_frame_dirs()
+        return
+
+    if args.input_dir is not None:
+        frame_dir = resolve_frame_dir(args.input_dir)
+        output_dir = args.output_dir if args.output_dir is not None else default_output_dir_for_frame_dir(frame_dir)
+        run_single_directory(frame_dir, output_dir)
+        return
+
+    output_dir = args.output_dir if args.output_dir is not None else DEFAULT_OUTPUT
+    run_subset_mode(output_dir, args.subset)
 
 
 if __name__ == "__main__":
