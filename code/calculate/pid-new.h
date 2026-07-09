@@ -146,6 +146,78 @@ typedef struct {
 
 } PID_Param_t;
 
+typedef enum {
+    CONTROL_MODE_NORMAL = 0U,
+    CONTROL_MODE_ACCEL  = 1U,
+    CONTROL_MODE_BRAKE  = 2U
+} ControlMode_e;
+
+typedef struct {
+    float servo_speed_kp;
+    float servo_speed_ki;
+    float servo_speed_kd;
+    float servo_speed_max_output;
+    float servo_speed_max_integral;
+    float servo_speed_compensation;
+
+    float angle_kp;
+    float angle_ki;
+    float angle_kd;
+    float angle_max_output;
+    float angle_max_integral;
+    float angle_compensation;
+
+    float gyro_kp;
+    float gyro_ki;
+    float gyro_kd;
+    float gyro_max_output;
+    float gyro_max_integral;
+    float gyro_compensation;
+
+    float turn_angle_kp;
+    float turn_angle_ki;
+    float turn_angle_kd;
+    float turn_angle_max_output;
+    float turn_angle_max_integral;
+    float turn_angle_compensation;
+
+    float turn_gyro_kp;
+    float turn_gyro_ki;
+    float turn_gyro_kd;
+    float turn_gyro_max_output;
+    float turn_gyro_max_integral;
+    float turn_gyro_compensation;
+
+    float roll_kp;
+    float roll_ki;
+    float roll_kd;
+    float roll_max_output;
+    float roll_max_integral;
+    float roll_compensation;
+
+    float brake_gain_light;
+    float brake_gain_med;
+    float brake_gain_heavy;
+    float brake_max_light;
+    float brake_max_med;
+    float brake_max_heavy;
+    float brake_ramp_up_light;
+    float brake_ramp_up_med;
+    float brake_ramp_up_heavy;
+    float brake_ramp_down;
+
+    float accel_ff_gain;
+    float accel_ff_max;
+    float accel_ff_ramp_up;
+    float accel_ff_ramp_down;
+
+    float servo_exec_acc_limit;
+    float servo_exec_dec_limit;
+    float servo_exec_boost_from_speed;
+    float servo_exec_boost_from_error;
+    float servo_exec_boost_max;
+} ControlProfile_t;
+
 // ============================================================================
 // 2. 全局声明
 // ============================================================================
@@ -170,6 +242,9 @@ extern volatile float turn_gyro_loop_out; // 转向角速度环输出（PWM）
 extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern volatile float target_speed_set;
+extern volatile ControlMode_e g_control_mode_requested;
+extern volatile ControlMode_e g_control_mode_applied;
+extern ControlProfile_t g_control_profile_active;
 extern uint8_t roll_balance_enable; // rolling环使能开关
 extern volatile float g_turn_active_roll_height_delta_cm; // 转向主动侧倾单侧目标高度差，单位 cm
 extern volatile float g_turn_active_roll_request_degree; // 转向主动侧倾未斜率限制前的目标横滚角，单位 deg
@@ -269,8 +344,14 @@ extern volatile uint8 g_reverse_brake_active;
 #define ACCEL_KP_BOOST_RAMP_UP   0.18f    /* Kp 增强模式下每个 9ms 更新周期允许增加的最大倍率 */
 #define ACCEL_KP_BOOST_RAMP_DOWN 0.08f    /* Kp 增强模式下每个 9ms 更新周期允许释放的最大倍率 */
 #define ACCEL_KP_OUTPUT_MAX      1500.0f  /* Kp 增强模式下临时放宽后的舵机速度环输出上限 */
+
+void Control_Profile_Init(void);//控制参数调度层初始化，默认切到 NORMAL 档
+void Control_Profile_RequestMode(ControlMode_e mode);//上层只请求场景，底层按 profile 接管参数
+void Control_Profile_ApplyNow(ControlMode_e mode);//立即切到指定 profile，用于上电/复位
+void Control_Profile_Update1ms(void);//1ms 平滑参数更新器：当前生效参数追踪目标 profile
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
-void PID_Data_Reset(void);//pid参数全清空
+void PID_Data_Reset(void);//pid运算相关数据重置，参数不重置
+void PID_Data_Clean_All(void);//pid运算相关数据全重置，参数也重置为0，即所有数据全部清空
 float Float_Constrain(float val, float min, float max);//限幅函数
 
 float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制

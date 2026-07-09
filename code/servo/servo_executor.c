@@ -1,4 +1,5 @@
 #include "servo_executor.h"
+#include "../calculate/pid-new.h"
 // --- 目标值定义 ---
 volatile int16 g_target_pwm_high = 0;
 volatile int16 g_target_pwm_speed_adj = 0;
@@ -44,8 +45,69 @@ void servo_executor_init(void)
 // 定义斜率限制 (加速和减速限制)
 int32 acc_limit = 10;  // <<-- 【需要您根据实际情况调整】
 int32 dec_limit = 10;  // <<-- 【需要您根据实际情况调整】
+static float servo_exec_boost_from_speed = 0.020f;
+static float servo_exec_boost_from_error = 0.010f;
+static float servo_exec_boost_max = 60.0f;
+
+void servo_executor_set_profile(float acc_limit_cfg,
+                                float dec_limit_cfg,
+                                float boost_from_speed_cfg,
+                                float boost_from_error_cfg,
+                                float boost_max_cfg)
+{
+    if (acc_limit_cfg < 1.0f) acc_limit_cfg = 1.0f;
+    if (dec_limit_cfg < 1.0f) dec_limit_cfg = 1.0f;
+    if (boost_from_speed_cfg < 0.0f) boost_from_speed_cfg = 0.0f;
+    if (boost_from_error_cfg < 0.0f) boost_from_error_cfg = 0.0f;
+    if (boost_max_cfg < 0.0f) boost_max_cfg = 0.0f;
+
+    acc_limit = (int32)(acc_limit_cfg + 0.5f);
+    dec_limit = (int32)(dec_limit_cfg + 0.5f);
+    servo_exec_boost_from_speed = boost_from_speed_cfg;
+    servo_exec_boost_from_error = boost_from_error_cfg;
+    servo_exec_boost_max = boost_max_cfg;
+}
+
+static void servo_executor_get_runtime_limits(int32 *runtime_acc_limit, int32 *runtime_dec_limit)
+{
+    float speed_error_abs = fabsf(target_speed_set - current_actual_speed);
+    float boost = fabsf((float)g_target_pwm_speed_adj) * servo_exec_boost_from_speed +
+                  speed_error_abs * servo_exec_boost_from_error;
+    int32 acc_runtime = acc_limit;
+    int32 dec_runtime = dec_limit;
+
+    boost = Float_Constrain(boost, 0.0f, servo_exec_boost_max);
+
+    if (g_control_mode_applied == CONTROL_MODE_ACCEL)
+    {
+        acc_runtime += (int32)(boost);
+        dec_runtime += (int32)(boost * 0.60f);
+    }
+    else if (g_control_mode_applied == CONTROL_MODE_BRAKE)
+    {
+        acc_runtime += (int32)(boost * 0.40f);
+        dec_runtime += (int32)(boost * 1.25f);
+    }
+    else
+    {
+        acc_runtime += (int32)(boost * 0.20f);
+        dec_runtime += (int32)(boost * 0.20f);
+    }
+
+    if (acc_runtime < 1) acc_runtime = 1;
+    if (dec_runtime < 1) dec_runtime = 1;
+
+    *runtime_acc_limit = acc_runtime;
+    *runtime_dec_limit = dec_runtime;
+}
+
 void servo_executor_update(void)
 {
+    int32 runtime_acc_limit = acc_limit;
+    int32 runtime_dec_limit = dec_limit;
+
+    servo_executor_get_runtime_limits(&runtime_acc_limit, &runtime_dec_limit);
+
     // 2.2 尝试计算目标高度分量
     high_control_table(servo_height);
     if (pwm_high != 10000)
@@ -118,10 +180,10 @@ void servo_executor_update(void)
 
     // 4. 【核心】使用斜率限制，平滑地趋近目标值
     // 公式: new = last + limit(target - last, -dec, +acc)
-    current_duty_lf = PWM_CH1_LAST + (int32)Float_Constrain(target_final_duty_lf - PWM_CH1_LAST, -dec_limit, acc_limit);
-    current_duty_rf = PWM_CH2_LAST + (int32)Float_Constrain(target_final_duty_rf - PWM_CH2_LAST, -dec_limit, acc_limit);
-    current_duty_rr = PWM_CH3_LAST + (int32)Float_Constrain(target_final_duty_rr - PWM_CH3_LAST, -dec_limit, acc_limit);
-    current_duty_lr = PWM_CH4_LAST + (int32)Float_Constrain(target_final_duty_lr - PWM_CH4_LAST, -dec_limit, acc_limit);
+    current_duty_lf = PWM_CH1_LAST + (int32)Float_Constrain(target_final_duty_lf - PWM_CH1_LAST, -runtime_dec_limit, runtime_acc_limit);
+    current_duty_rf = PWM_CH2_LAST + (int32)Float_Constrain(target_final_duty_rf - PWM_CH2_LAST, -runtime_dec_limit, runtime_acc_limit);
+    current_duty_rr = PWM_CH3_LAST + (int32)Float_Constrain(target_final_duty_rr - PWM_CH3_LAST, -runtime_dec_limit, runtime_acc_limit);
+    current_duty_lr = PWM_CH4_LAST + (int32)Float_Constrain(target_final_duty_lr - PWM_CH4_LAST, -runtime_dec_limit, runtime_acc_limit);
 
 
     // 5. 更新内部状态，为下一次计算做准备

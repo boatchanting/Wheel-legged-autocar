@@ -1,5 +1,6 @@
 #include "zf_common_headfile.h"
 #include "../servo/servo.h"
+#include "../servo/servo_executor.h"
 
 
 // ============================================================================
@@ -13,6 +14,53 @@ PID_Param_t pid_turn_angle = {TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MA
 PID_Param_t pid_turn_gyro = {TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, TURN_GYR_MAX_O, TURN_GYR_MAX_I, TURN_GYR_DEAD_ZONE, 0,0,0,0,0};//转向角速度环初始化参数
 PID_Param_t pid_roll = {ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_MECH_ZERO, 0,0,0,0,0};//横滚环初始化参数
 
+
+volatile ControlMode_e g_control_mode_requested = CONTROL_MODE_NORMAL;
+volatile ControlMode_e g_control_mode_applied = CONTROL_MODE_NORMAL;
+ControlProfile_t g_control_profile_active;
+static ControlProfile_t g_control_profile_target;
+
+static const ControlProfile_t g_control_profile_normal = {
+    SERVO_SPEED_KP, SERVO_SPEED_KI, SERVO_SPEED_KD, SERVO_SPEED_MAX_O, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
+    ANG_KP, ANG_KI, ANG_KD, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO,
+    GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE,
+    TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE,
+    TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, TURN_GYR_MAX_O, TURN_GYR_MAX_I, TURN_GYR_DEAD_ZONE,
+    ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_MECH_ZERO,
+    BRAKE_GAIN_LIGHT, BRAKE_GAIN_MED, BRAKE_GAIN_HEAVY,
+    BRAKE_MAX_LIGHT, BRAKE_MAX_MED, BRAKE_MAX_HEAVY,
+    BRAKE_RAMP_UP_LIGHT, BRAKE_RAMP_UP_MED, BRAKE_RAMP_UP_HEAVY, BRAKE_RAMP_DOWN,
+    ACCEL_FF_GAIN, ACCEL_FF_MAX, ACCEL_FF_RAMP_UP, ACCEL_FF_RAMP_DOWN,
+    10.0f, 10.0f, 0.020f, 0.010f, 60.0f
+};
+
+static const ControlProfile_t g_control_profile_accel = {
+    -5.4f, SERVO_SPEED_KI, -0.14f, 2600.0f, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
+    -13.2f, ANG_KI, -11.8f, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO,
+    GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE,
+    TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE,
+    TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, TURN_GYR_MAX_O, TURN_GYR_MAX_I, TURN_GYR_DEAD_ZONE,
+    ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_MECH_ZERO,
+    3.2f, 8.5f, 18.0f,
+    700.0f, 1450.0f, 3000.0f,
+    100.0f, 260.0f, 620.0f, 850.0f,
+    13.0f, 3600.0f, 1100.0f, 650.0f,
+    22.0f, 16.0f, 0.028f, 0.013f, 95.0f
+};
+
+static const ControlProfile_t g_control_profile_brake = {
+    -4.8f, SERVO_SPEED_KI, -0.22f, 2300.0f, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
+    -10.8f, ANG_KI, -15.0f, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO,
+    GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE,
+    TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE,
+    TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, 7200.0f, TURN_GYR_MAX_I, TURN_GYR_DEAD_ZONE,
+    ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_MECH_ZERO,
+    4.8f, 11.5f, 25.0f,
+    900.0f, 1800.0f, 3900.0f,
+    150.0f, 360.0f, 900.0f, 900.0f,
+    6.0f, 1800.0f, 450.0f, 900.0f,
+    14.0f, 28.0f, 0.018f, 0.015f, 80.0f
+};
 
 volatile float target_speed_set = 0.0f;
 
@@ -130,7 +178,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     float err_ratio = 0.0f;
     float brake_gain = 0.0f;
     float brake_max = 0.0f;
-    float brake_ramp_up = BRAKE_RAMP_UP_LIGHT;
+    float brake_ramp_up = g_control_profile_active.brake_ramp_up_light;
     uint8 brake_level = 0;
     uint8 target_decel_cmd = 0U;
     uint8 overspeed_request = 0U;
@@ -261,13 +309,13 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
 
     if (brake_level == 4U)
     {
-        brake_gain = BRAKE_GAIN_HEAVY + (NAV_HARD_BRAKE_GAIN - BRAKE_GAIN_HEAVY) * nav_hard_stop_strength;
-        brake_max = BRAKE_MAX_HEAVY + (NAV_HARD_BRAKE_MAX_PWM - BRAKE_MAX_HEAVY) * nav_hard_stop_strength;
-        brake_ramp_up = BRAKE_RAMP_UP_HEAVY + (NAV_HARD_BRAKE_RAMP_UP - BRAKE_RAMP_UP_HEAVY) * nav_hard_stop_strength;
+        brake_gain = g_control_profile_active.brake_gain_heavy + (NAV_HARD_BRAKE_GAIN - g_control_profile_active.brake_gain_heavy) * nav_hard_stop_strength;
+        brake_max = g_control_profile_active.brake_max_heavy + (NAV_HARD_BRAKE_MAX_PWM - g_control_profile_active.brake_max_heavy) * nav_hard_stop_strength;
+        brake_ramp_up = g_control_profile_active.brake_ramp_up_heavy + (NAV_HARD_BRAKE_RAMP_UP - g_control_profile_active.brake_ramp_up_heavy) * nav_hard_stop_strength;
     }
-    else if (brake_level == 3U) { brake_gain = BRAKE_GAIN_HEAVY; brake_max = BRAKE_MAX_HEAVY; brake_ramp_up = BRAKE_RAMP_UP_HEAVY; }
-    else if (brake_level == 2U) { brake_gain = BRAKE_GAIN_MED; brake_max = BRAKE_MAX_MED; brake_ramp_up = BRAKE_RAMP_UP_MED; }
-    else if (brake_level == 1U) { brake_gain = BRAKE_GAIN_LIGHT; brake_max = BRAKE_MAX_LIGHT; brake_ramp_up = BRAKE_RAMP_UP_LIGHT; }
+    else if (brake_level == 3U) { brake_gain = g_control_profile_active.brake_gain_heavy; brake_max = g_control_profile_active.brake_max_heavy; brake_ramp_up = g_control_profile_active.brake_ramp_up_heavy; }
+    else if (brake_level == 2U) { brake_gain = g_control_profile_active.brake_gain_med; brake_max = g_control_profile_active.brake_max_med; brake_ramp_up = g_control_profile_active.brake_ramp_up_med; }
+    else if (brake_level == 1U) { brake_gain = g_control_profile_active.brake_gain_light; brake_max = g_control_profile_active.brake_max_light; brake_ramp_up = g_control_profile_active.brake_ramp_up_light; }
 
     if (nav_hard_stop_request != 0U)
     {
@@ -290,7 +338,7 @@ float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
 
     // 3. 正常的输出计算
     brake_ff_target = (brake_gain > 0.0f) ? Float_Constrain(-brake_gain * actual_speed, -brake_max, brake_max) : 0.0f;
-    brake_ff_pwm += Float_Constrain(brake_ff_target - brake_ff_pwm, -BRAKE_RAMP_DOWN, brake_ramp_up);
+    brake_ff_pwm += Float_Constrain(brake_ff_target - brake_ff_pwm, -g_control_profile_active.brake_ramp_down, brake_ramp_up);
     brake_last_target_speed = target_speed;
     return brake_ff_pwm;
 }
@@ -392,7 +440,9 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
         return 0.0f;
 #else
         accel_ff_target = 0.0f;
-        accel_ff_pwm += Float_Constrain(accel_ff_target - accel_ff_pwm, -ACCEL_FF_RAMP_DOWN, ACCEL_FF_RAMP_DOWN);
+        accel_ff_pwm += Float_Constrain(accel_ff_target - accel_ff_pwm,
+                                        -g_control_profile_active.accel_ff_ramp_down,
+                                        g_control_profile_active.accel_ff_ramp_down);
         if (fabsf(accel_ff_pwm) < 1.0f)
         {
             accel_ff_pwm = 0.0f;
@@ -422,9 +472,9 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     {
         float speed_deficit = abs_target - abs_speed;
         float target_dir = (target_speed >= 0.0f) ? 1.0f : -1.0f;
-        accel_ff_target = Float_Constrain(ACCEL_FF_SIGN * ACCEL_FF_GAIN * speed_deficit * target_dir,
-                                          -ACCEL_FF_MAX,
-                                          ACCEL_FF_MAX);
+        accel_ff_target = Float_Constrain(ACCEL_FF_SIGN * g_control_profile_active.accel_ff_gain * speed_deficit * target_dir,
+                                          -g_control_profile_active.accel_ff_max,
+                                          g_control_profile_active.accel_ff_max);
     }
     else
     {
@@ -432,12 +482,12 @@ float Accel_Feedforward_Update(float target_speed, float actual_speed, uint8 mot
     }
 
     {
-        float ramp_limit = ACCEL_FF_RAMP_UP;
+        float ramp_limit = g_control_profile_active.accel_ff_ramp_up;
         if ((accel_ff_target == 0.0f) ||
             ((accel_ff_pwm * accel_ff_target) < 0.0f) ||
             (fabsf(accel_ff_target) < fabsf(accel_ff_pwm)))
         {
-            ramp_limit = ACCEL_FF_RAMP_DOWN;
+            ramp_limit = g_control_profile_active.accel_ff_ramp_down;
         }
         accel_ff_pwm += Float_Constrain(accel_ff_target - accel_ff_pwm, -ramp_limit, ramp_limit);
     }
@@ -858,12 +908,185 @@ float Float_Constrain(float val, float min, float max) {
     return val;
 }
 
+static const ControlProfile_t *Control_Profile_GetPreset(ControlMode_e mode)
+{
+    if (mode == CONTROL_MODE_ACCEL)
+    {
+        return &g_control_profile_accel;
+    }
+    if (mode == CONTROL_MODE_BRAKE)
+    {
+        return &g_control_profile_brake;
+    }
+    return &g_control_profile_normal;
+}
+
+static float Control_Profile_Follow(float current, float target, float alpha, float epsilon)
+{
+    float next = current + (target - current) * alpha;
+
+    if (fabsf(target - next) <= epsilon)
+    {
+        return target;
+    }
+    return next;
+}
+
+static void Control_Profile_ApplyToControllers(const ControlProfile_t *profile)
+{
+    pid_servo_speed.kp = profile->servo_speed_kp;
+    pid_servo_speed.ki = profile->servo_speed_ki;
+    pid_servo_speed.kd = profile->servo_speed_kd;
+    pid_servo_speed.max_output = profile->servo_speed_max_output;
+    pid_servo_speed.max_integral = profile->servo_speed_max_integral;
+    pid_servo_speed.compensation = profile->servo_speed_compensation;
+
+    pid_angle.kp = profile->angle_kp;
+    pid_angle.ki = profile->angle_ki;
+    pid_angle.kd = profile->angle_kd;
+    pid_angle.max_output = profile->angle_max_output;
+    pid_angle.max_integral = profile->angle_max_integral;
+    pid_angle.compensation = profile->angle_compensation;
+
+    pid_gyro.kp = profile->gyro_kp;
+    pid_gyro.ki = profile->gyro_ki;
+    pid_gyro.kd = profile->gyro_kd;
+    pid_gyro.max_output = profile->gyro_max_output;
+    pid_gyro.max_integral = profile->gyro_max_integral;
+    pid_gyro.compensation = profile->gyro_compensation;
+
+    pid_turn_angle.kp = profile->turn_angle_kp;
+    pid_turn_angle.ki = profile->turn_angle_ki;
+    pid_turn_angle.kd = profile->turn_angle_kd;
+    pid_turn_angle.max_output = profile->turn_angle_max_output;
+    pid_turn_angle.max_integral = profile->turn_angle_max_integral;
+    pid_turn_angle.compensation = profile->turn_angle_compensation;
+
+    pid_turn_gyro.kp = profile->turn_gyro_kp;
+    pid_turn_gyro.ki = profile->turn_gyro_ki;
+    pid_turn_gyro.kd = profile->turn_gyro_kd;
+    pid_turn_gyro.max_output = profile->turn_gyro_max_output;
+    pid_turn_gyro.max_integral = profile->turn_gyro_max_integral;
+    pid_turn_gyro.compensation = profile->turn_gyro_compensation;
+
+    pid_roll.kp = profile->roll_kp;
+    pid_roll.ki = profile->roll_ki;
+    pid_roll.kd = profile->roll_kd;
+    pid_roll.max_output = profile->roll_max_output;
+    pid_roll.max_integral = profile->roll_max_integral;
+    pid_roll.compensation = profile->roll_compensation;
+
+    servo_executor_set_profile(profile->servo_exec_acc_limit,
+                               profile->servo_exec_dec_limit,
+                               profile->servo_exec_boost_from_speed,
+                               profile->servo_exec_boost_from_error,
+                               profile->servo_exec_boost_max);
+}
+
+void Control_Profile_RequestMode(ControlMode_e mode)
+{
+    g_control_mode_requested = mode;
+    g_control_profile_target = *Control_Profile_GetPreset(mode);
+}
+
+void Control_Profile_ApplyNow(ControlMode_e mode)
+{
+    const ControlProfile_t *preset = Control_Profile_GetPreset(mode);
+
+    g_control_mode_requested = mode;
+    g_control_mode_applied = mode;
+    g_control_profile_target = *preset;
+    g_control_profile_active = *preset;
+    Control_Profile_ApplyToControllers(&g_control_profile_active);
+}
+
+void Control_Profile_Init(void)
+{
+    Control_Profile_ApplyNow(CONTROL_MODE_NORMAL);
+}
+
+void Control_Profile_Update1ms(void)
+{
+    const float pid_alpha = 0.12f;
+    const float ff_alpha = 0.10f;
+    const float limit_alpha = 0.18f;
+    const float eps = 0.0005f;
+
+    g_control_profile_active.servo_speed_kp = Control_Profile_Follow(g_control_profile_active.servo_speed_kp, g_control_profile_target.servo_speed_kp, pid_alpha, eps);
+    g_control_profile_active.servo_speed_ki = Control_Profile_Follow(g_control_profile_active.servo_speed_ki, g_control_profile_target.servo_speed_ki, pid_alpha, eps);
+    g_control_profile_active.servo_speed_kd = Control_Profile_Follow(g_control_profile_active.servo_speed_kd, g_control_profile_target.servo_speed_kd, pid_alpha, eps);
+    g_control_profile_active.servo_speed_max_output = Control_Profile_Follow(g_control_profile_active.servo_speed_max_output, g_control_profile_target.servo_speed_max_output, limit_alpha, 0.5f);
+    g_control_profile_active.servo_speed_max_integral = Control_Profile_Follow(g_control_profile_active.servo_speed_max_integral, g_control_profile_target.servo_speed_max_integral, limit_alpha, 0.5f);
+    g_control_profile_active.servo_speed_compensation = Control_Profile_Follow(g_control_profile_active.servo_speed_compensation, g_control_profile_target.servo_speed_compensation, pid_alpha, eps);
+
+    g_control_profile_active.angle_kp = Control_Profile_Follow(g_control_profile_active.angle_kp, g_control_profile_target.angle_kp, pid_alpha, eps);
+    g_control_profile_active.angle_ki = Control_Profile_Follow(g_control_profile_active.angle_ki, g_control_profile_target.angle_ki, pid_alpha, eps);
+    g_control_profile_active.angle_kd = Control_Profile_Follow(g_control_profile_active.angle_kd, g_control_profile_target.angle_kd, pid_alpha, eps);
+    g_control_profile_active.angle_max_output = Control_Profile_Follow(g_control_profile_active.angle_max_output, g_control_profile_target.angle_max_output, limit_alpha, 0.5f);
+    g_control_profile_active.angle_max_integral = Control_Profile_Follow(g_control_profile_active.angle_max_integral, g_control_profile_target.angle_max_integral, limit_alpha, 0.5f);
+    g_control_profile_active.angle_compensation = Control_Profile_Follow(g_control_profile_active.angle_compensation, g_control_profile_target.angle_compensation, pid_alpha, eps);
+
+    g_control_profile_active.gyro_kp = Control_Profile_Follow(g_control_profile_active.gyro_kp, g_control_profile_target.gyro_kp, pid_alpha, eps);
+    g_control_profile_active.gyro_ki = Control_Profile_Follow(g_control_profile_active.gyro_ki, g_control_profile_target.gyro_ki, pid_alpha, eps);
+    g_control_profile_active.gyro_kd = Control_Profile_Follow(g_control_profile_active.gyro_kd, g_control_profile_target.gyro_kd, pid_alpha, eps);
+    g_control_profile_active.gyro_max_output = Control_Profile_Follow(g_control_profile_active.gyro_max_output, g_control_profile_target.gyro_max_output, limit_alpha, 0.5f);
+    g_control_profile_active.gyro_max_integral = Control_Profile_Follow(g_control_profile_active.gyro_max_integral, g_control_profile_target.gyro_max_integral, limit_alpha, 0.5f);
+    g_control_profile_active.gyro_compensation = Control_Profile_Follow(g_control_profile_active.gyro_compensation, g_control_profile_target.gyro_compensation, pid_alpha, eps);
+
+    g_control_profile_active.turn_angle_kp = Control_Profile_Follow(g_control_profile_active.turn_angle_kp, g_control_profile_target.turn_angle_kp, pid_alpha, eps);
+    g_control_profile_active.turn_angle_ki = Control_Profile_Follow(g_control_profile_active.turn_angle_ki, g_control_profile_target.turn_angle_ki, pid_alpha, eps);
+    g_control_profile_active.turn_angle_kd = Control_Profile_Follow(g_control_profile_active.turn_angle_kd, g_control_profile_target.turn_angle_kd, pid_alpha, eps);
+    g_control_profile_active.turn_angle_max_output = Control_Profile_Follow(g_control_profile_active.turn_angle_max_output, g_control_profile_target.turn_angle_max_output, limit_alpha, 0.5f);
+    g_control_profile_active.turn_angle_max_integral = Control_Profile_Follow(g_control_profile_active.turn_angle_max_integral, g_control_profile_target.turn_angle_max_integral, limit_alpha, 0.5f);
+    g_control_profile_active.turn_angle_compensation = Control_Profile_Follow(g_control_profile_active.turn_angle_compensation, g_control_profile_target.turn_angle_compensation, pid_alpha, eps);
+
+    g_control_profile_active.turn_gyro_kp = Control_Profile_Follow(g_control_profile_active.turn_gyro_kp, g_control_profile_target.turn_gyro_kp, pid_alpha, eps);
+    g_control_profile_active.turn_gyro_ki = Control_Profile_Follow(g_control_profile_active.turn_gyro_ki, g_control_profile_target.turn_gyro_ki, pid_alpha, eps);
+    g_control_profile_active.turn_gyro_kd = Control_Profile_Follow(g_control_profile_active.turn_gyro_kd, g_control_profile_target.turn_gyro_kd, pid_alpha, eps);
+    g_control_profile_active.turn_gyro_max_output = Control_Profile_Follow(g_control_profile_active.turn_gyro_max_output, g_control_profile_target.turn_gyro_max_output, limit_alpha, 0.5f);
+    g_control_profile_active.turn_gyro_max_integral = Control_Profile_Follow(g_control_profile_active.turn_gyro_max_integral, g_control_profile_target.turn_gyro_max_integral, limit_alpha, 0.5f);
+    g_control_profile_active.turn_gyro_compensation = Control_Profile_Follow(g_control_profile_active.turn_gyro_compensation, g_control_profile_target.turn_gyro_compensation, pid_alpha, eps);
+
+    g_control_profile_active.roll_kp = Control_Profile_Follow(g_control_profile_active.roll_kp, g_control_profile_target.roll_kp, pid_alpha, eps);
+    g_control_profile_active.roll_ki = Control_Profile_Follow(g_control_profile_active.roll_ki, g_control_profile_target.roll_ki, pid_alpha, eps);
+    g_control_profile_active.roll_kd = Control_Profile_Follow(g_control_profile_active.roll_kd, g_control_profile_target.roll_kd, pid_alpha, eps);
+    g_control_profile_active.roll_max_output = Control_Profile_Follow(g_control_profile_active.roll_max_output, g_control_profile_target.roll_max_output, limit_alpha, 0.5f);
+    g_control_profile_active.roll_max_integral = Control_Profile_Follow(g_control_profile_active.roll_max_integral, g_control_profile_target.roll_max_integral, limit_alpha, 0.5f);
+    g_control_profile_active.roll_compensation = Control_Profile_Follow(g_control_profile_active.roll_compensation, g_control_profile_target.roll_compensation, pid_alpha, eps);
+
+    g_control_profile_active.brake_gain_light = Control_Profile_Follow(g_control_profile_active.brake_gain_light, g_control_profile_target.brake_gain_light, ff_alpha, eps);
+    g_control_profile_active.brake_gain_med = Control_Profile_Follow(g_control_profile_active.brake_gain_med, g_control_profile_target.brake_gain_med, ff_alpha, eps);
+    g_control_profile_active.brake_gain_heavy = Control_Profile_Follow(g_control_profile_active.brake_gain_heavy, g_control_profile_target.brake_gain_heavy, ff_alpha, eps);
+    g_control_profile_active.brake_max_light = Control_Profile_Follow(g_control_profile_active.brake_max_light, g_control_profile_target.brake_max_light, limit_alpha, 0.5f);
+    g_control_profile_active.brake_max_med = Control_Profile_Follow(g_control_profile_active.brake_max_med, g_control_profile_target.brake_max_med, limit_alpha, 0.5f);
+    g_control_profile_active.brake_max_heavy = Control_Profile_Follow(g_control_profile_active.brake_max_heavy, g_control_profile_target.brake_max_heavy, limit_alpha, 0.5f);
+    g_control_profile_active.brake_ramp_up_light = Control_Profile_Follow(g_control_profile_active.brake_ramp_up_light, g_control_profile_target.brake_ramp_up_light, limit_alpha, 0.5f);
+    g_control_profile_active.brake_ramp_up_med = Control_Profile_Follow(g_control_profile_active.brake_ramp_up_med, g_control_profile_target.brake_ramp_up_med, limit_alpha, 0.5f);
+    g_control_profile_active.brake_ramp_up_heavy = Control_Profile_Follow(g_control_profile_active.brake_ramp_up_heavy, g_control_profile_target.brake_ramp_up_heavy, limit_alpha, 0.5f);
+    g_control_profile_active.brake_ramp_down = Control_Profile_Follow(g_control_profile_active.brake_ramp_down, g_control_profile_target.brake_ramp_down, limit_alpha, 0.5f);
+
+    g_control_profile_active.accel_ff_gain = Control_Profile_Follow(g_control_profile_active.accel_ff_gain, g_control_profile_target.accel_ff_gain, ff_alpha, eps);
+    g_control_profile_active.accel_ff_max = Control_Profile_Follow(g_control_profile_active.accel_ff_max, g_control_profile_target.accel_ff_max, limit_alpha, 0.5f);
+    g_control_profile_active.accel_ff_ramp_up = Control_Profile_Follow(g_control_profile_active.accel_ff_ramp_up, g_control_profile_target.accel_ff_ramp_up, limit_alpha, 0.5f);
+    g_control_profile_active.accel_ff_ramp_down = Control_Profile_Follow(g_control_profile_active.accel_ff_ramp_down, g_control_profile_target.accel_ff_ramp_down, limit_alpha, 0.5f);
+
+    g_control_profile_active.servo_exec_acc_limit = Control_Profile_Follow(g_control_profile_active.servo_exec_acc_limit, g_control_profile_target.servo_exec_acc_limit, limit_alpha, 0.25f);
+    g_control_profile_active.servo_exec_dec_limit = Control_Profile_Follow(g_control_profile_active.servo_exec_dec_limit, g_control_profile_target.servo_exec_dec_limit, limit_alpha, 0.25f);
+    g_control_profile_active.servo_exec_boost_from_speed = Control_Profile_Follow(g_control_profile_active.servo_exec_boost_from_speed, g_control_profile_target.servo_exec_boost_from_speed, ff_alpha, eps);
+    g_control_profile_active.servo_exec_boost_from_error = Control_Profile_Follow(g_control_profile_active.servo_exec_boost_from_error, g_control_profile_target.servo_exec_boost_from_error, ff_alpha, eps);
+    g_control_profile_active.servo_exec_boost_max = Control_Profile_Follow(g_control_profile_active.servo_exec_boost_max, g_control_profile_target.servo_exec_boost_max, limit_alpha, 0.25f);
+
+    Control_Profile_ApplyToControllers(&g_control_profile_active);
+    g_control_mode_applied = g_control_mode_requested;
+}
+
 /**
  * @brief PID 过程数据初始化
  * @note  调用此函数后，所有PID环的积分项和输出都会被重置为0。
  *        
  */
 void PID_Param_Init(void) {
+    Control_Profile_Init();
     // 初始化舵机速度环PID参数
     pid_servo_speed.kp = SERVO_SPEED_KP;
     pid_servo_speed.ki = SERVO_SPEED_KI;
@@ -962,12 +1185,62 @@ void PID_Param_Init(void) {
     // 重置目标速度
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
+    Control_Profile_ApplyToControllers(&g_control_profile_active);
+}
+
+/**
+ * @brief 重置pid数据
+ */
+void PID_Data_Reset(void) {
+    // 只清运行态，不破坏当前 profile 下的参数
+    pid_servo_speed.error = 0;
+    pid_servo_speed.last_error = 0;
+    pid_servo_speed.prev_error = 0;
+    pid_servo_speed.error_integral = 0;
+    pid_servo_speed.output = 0;
+
+    pid_angle.error = 0;
+    pid_angle.last_error = 0;
+    pid_angle.prev_error = 0;
+    pid_angle.error_integral = 0;
+    pid_angle.output = 0;
+
+    pid_gyro.error = 0;
+    pid_gyro.last_error = 0;
+    pid_gyro.prev_error = 0;
+    pid_gyro.error_integral = 0;
+    pid_gyro.output = 0;
+
+    pid_turn_angle.error = 0;
+    pid_turn_angle.last_error = 0;
+    pid_turn_angle.prev_error = 0;
+    pid_turn_angle.error_integral = 0;
+    pid_turn_angle.output = 0;
+
+    pid_turn_gyro.error = 0;
+    pid_turn_gyro.last_error = 0;
+    pid_turn_gyro.prev_error = 0;
+    pid_turn_gyro.error_integral = 0;
+    pid_turn_gyro.output = 0;
+
+    pid_roll.error = 0;
+    pid_roll.last_error = 0;
+    pid_roll.prev_error = 0;
+    pid_roll.error_integral = 0;
+    pid_roll.output = 0;
+    g_target_pwm_roll_adj = 0;
+    Turn_Active_Roll_Duty_Clear();
+
+    // 重置目标速度
+    target_speed_set = 0.0f;
+    Accel_Feedforward_Reset();
+    Control_Profile_ApplyToControllers(&g_control_profile_active);
 }
 
 /**
  * @brief 将所有PID结构体成员变量设置为0
  */
-void PID_Data_Reset(void) {
+void PID_Data_Clean_All(void) {
     // 初始化舵机速度环PID参数
     pid_servo_speed.kp = 0;
     pid_servo_speed.ki = 0;
@@ -1064,7 +1337,6 @@ void PID_Data_Reset(void) {
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
 }
-
 
 // ============================================================================
 //  控制函数实现
