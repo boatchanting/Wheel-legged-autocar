@@ -134,6 +134,10 @@ extern NavReplayState_e g_replay_state;
 extern uint16 g_target_idx;
 extern uint8 g_current_point_type;
 extern uint8 g_special_action_trigger;
+// 科目一极速掉头运行态：0空闲，1接近动作点，2跳轮/大转角，3急刹低速转向，4后段跟踪，5完成。
+extern uint8 g_plan1_fast_uturn_state;
+// 科目一极速掉头接入端：0未选择，1车头超前，2车尾超前。
+extern uint8 g_plan1_fast_uturn_lead;
 extern NavReplayState_e g_gps_replay_state;
 extern uint8 g_gps_current_point_type;
 extern uint8 g_gps_special_action_trigger;

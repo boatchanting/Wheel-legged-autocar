@@ -1,7 +1,7 @@
 #ifndef __SYS_OPTIONS_H__
 #define __SYS_OPTIONS_H__
 
-#define WIFI_USE 1 // 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 0 // 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
 #define WIFI_PROTOCOL_SELECT 2 // 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
@@ -23,13 +23,10 @@
 // ---------------- plan 配置 ----------------
 #define GNSS_NAV 0 // 【全局开关】gps寻迹还是惯导寻迹，现阶段暂时还没联合(date0511)，联合后考虑去除该开关，1表示使用gnss寻迹，0表示不使用gnss寻迹，惯导开关常开
 #define CURRENT_NAV_PLAN   1   // 【全局开关】在这里切换科目几，科目一为1，科目二2，科目三3，nav_replay模版函数99，每个科目的主要逻辑会单独优化，上层控制参数层不共享，互不干扰，后面做到各自独立优化，这个开关现在对惯导寻迹和gps方案均有效(date0520)
-#define PLAN1_FAST_UTURN_ENABLE 1                // 【科目一极速掉头开关】0=沿用原路径生成，1=第一个打点为掉头点并自动生成掉头区线
-#define PLAN1_FAST_UTURN_MODE_JUMP 1              // 【极速掉头方式】跳轮掉头：过线后触发跳轮/偏航动作
-#define PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE 2     // 【极速掉头方式】急刹倒车：过线后改用倒车速度继续跑后段路径
-#define PLAN1_FAST_UTURN_MODE PLAN1_FAST_UTURN_MODE_JUMP // 【极速掉头方式选择】默认跳轮掉头
-#define PLAN1_FAST_UTURN_LINE_OVER_MM 100.0f      // 【动作点距离】动作点位于掉头区线中心前方多少毫米
-#define PLAN1_FAST_UTURN_MARK_WIDTH_MM 1000.0f    // 【打点宽度】用于自动生成掉头区线的基础宽度
-#define PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR 1.25f  // 【掉头线宽度系数】掉头线长度=打点宽度*该系数，左右各留余量
+#define PLAN1_FAST_UTURN_ENABLE 1                // 【科目一极速掉头开关】0=关闭，沿用普通科目一路径跟踪；1=开启极速掉头运行逻辑
+#define PLAN1_FAST_UTURN_MODE_JUMP 1             // 【极速掉头方式】跳轮/大转角掉头：动作点后快速降速并甩向后段路径
+#define PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE 2    // 【极速掉头方式】急刹后倒车：动作点后强停刹，低速转向后用车头或车尾接入后段路径
+#define PLAN1_FAST_UTURN_MODE PLAN1_FAST_UTURN_MODE_JUMP // 【极速掉头方式选择】默认跳轮/大转角掉头
 /*
 【科目一优化与拆分】
 1.1.惯导条件下，去除了任务点搜索code/navigation/nav_replay.c
