@@ -976,9 +976,17 @@ def polygon_guided_segments(
         right_neighbor_index = (right_neighbor_index + right_step) % points.shape[0]
 
     right_chain = collect_right_chain(points, right_top_index, right_neighbor_index, right_step)
-    right_fit = fit_x_from_y_points(right_chain)
+    use_short_right_chain = (
+        len(top_chain) <= 2
+        and right_chain.shape[0] >= 2
+        and right_top[1] <= 6.0
+        and float(right_chain[1, 0] - right_chain[0, 0]) >= 8.0
+        and float(right_chain[1, 1] - right_chain[0, 1]) >= 8.0
+    )
+    right_points = right_chain[:2] if use_short_right_chain else right_chain
+    right_fit = fit_x_from_y_points(right_points)
     if right_fit is not None:
-        tiny_neighbor = right_chain[1] if right_chain.shape[0] >= 2 else None
+        tiny_neighbor = right_points[1] if right_points.shape[0] >= 2 else None
         right_segment = project_segment_to_frame(
             right_top,
             right_fit[0],
