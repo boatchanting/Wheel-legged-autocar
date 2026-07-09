@@ -808,6 +808,71 @@ def project_segment_to_frame(
     return [x0, y0, x1, y1]
 
 
+def project_left_segment_from_fit(
+    line: LineFit | None,
+    *,
+    image_width: int,
+    image_height: int,
+    preferred_y: float | None = None,
+) -> list[int] | None:
+    if line is None:
+        return None
+
+    start_y = float(line.support_min)
+    if preferred_y is not None and line.support_min - 1.0 <= preferred_y <= line.support_max + 4.0:
+        start_y = float(preferred_y)
+
+    start = np.array([line.x_at_y(start_y), start_y], dtype=np.float64)
+    return project_segment_to_frame(
+        start,
+        line.slope,
+        line.intercept,
+        side="left",
+        image_width=image_width,
+        image_height=image_height,
+    )
+
+
+def collect_left_chain(
+    points: np.ndarray,
+    start_index: int,
+    first_side_index: int,
+    step: int,
+) -> np.ndarray:
+    count = points.shape[0]
+    indices = [start_index]
+    next_index = first_side_index % count
+    if points[next_index, 1] < points[start_index, 1]:
+        return points[indices].astype(np.float64)
+
+    indices.append(next_index)
+
+    while len(indices) < 6:
+        candidate_index = (indices[-1] + step) % count
+        if candidate_index in indices:
+            break
+
+        current = points[indices[-1]]
+        candidate = points[candidate_index]
+        vector = candidate - current
+        if vector[1] <= 0.5:
+            if vector[0] <= 0.5:
+                indices[-1] = candidate_index
+                continue
+            break
+        if vector[0] > 1.0:
+            break
+
+        previous = points[indices[-1]] - points[indices[-2]]
+        angle = angle_between_vectors(previous, vector)
+        if angle > 72.0:
+            break
+
+        indices.append(candidate_index)
+
+    return points[indices].astype(np.float64)
+
+
 def collect_right_chain(
     points: np.ndarray,
     start_index: int,
@@ -890,7 +955,10 @@ def polygon_guided_segments(
         left_neighbor_index = (left_neighbor_index + left_step) % points.shape[0]
 
     left_segment = None
-    left_points = np.vstack([left_top, points[left_neighbor_index]])
+    if len(top_chain) <= 2:
+        left_points = collect_left_chain(points, left_top_index, left_neighbor_index, left_step)
+    else:
+        left_points = np.vstack([left_top, points[left_neighbor_index]])
     left_fit = fit_x_from_y_points(left_points)
     if left_fit is not None:
         left_segment = project_segment_to_frame(
@@ -1204,14 +1272,59 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                 )
 
         if not yellow_visible:
-            if left_visible and polygon_left_segment is not None:
+            fit_left_segment = project_left_segment_from_fit(
+                left_fit if left_visible else None,
+                image_width=gray.shape[1],
+                image_height=gray.shape[0],
+                preferred_y=float(polygon_pink_segment[1]) if polygon_pink_segment is not None else None,
+            )
+
+            use_fit_left_segment = (
+                fit_left_segment is not None
+                and left_fit is not None
+                and (
+                    polygon_left_segment is None
+                    or left_fit.support_min <= float(polygon_left_segment[1]) + 4.0
+                )
+            )
+
+            if use_fit_left_segment:
+                left_segment = fit_left_segment
+            elif left_visible and polygon_left_segment is not None:
                 left_segment = polygon_left_segment
+
+            if left_visible and polygon_left_segment is not None:
+                if left_segment is None:
+                    left_segment = polygon_left_segment
             if right_visible and polygon_right_segment is not None:
                 right_segment = polygon_right_segment
             if pink_visible and polygon_pink_segment is not None:
                 pink_segment = polygon_pink_segment
+                allow_raised_polygon_pink = (
+                    left_fit is not None
+                    and left_fit.slope < -0.05
+                    and pink_segment[1] >= 5
+                )
+                if allow_raised_polygon_pink:
+                    pink_segment = [
+                        pink_segment[0],
+                        pink_segment[1] - 1,
+                        pink_segment[2],
+                        pink_segment[3] - 1,
+                    ]
                 if left_segment is not None:
-                    left_segment[0], left_segment[1] = pink_segment[0], pink_segment[1]
+                    if use_fit_left_segment:
+                        if allow_raised_polygon_pink and right_segment is not None:
+                            pink_segment = [
+                                left_segment[0],
+                                pink_segment[1],
+                                right_segment[0],
+                                pink_segment[1],
+                            ]
+                        else:
+                            pink_segment[0], pink_segment[1] = left_segment[0], left_segment[1]
+                    else:
+                        left_segment[0], left_segment[1] = pink_segment[0], pink_segment[1]
                 if right_segment is not None:
                     right_segment[0], right_segment[1] = pink_segment[2], pink_segment[3]
 
