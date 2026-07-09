@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
@@ -630,6 +631,299 @@ def top_anchor_point(mask: np.ndarray, side: str) -> tuple[int, int] | None:
     return x, y
 
 
+def build_annotation_mask(gray: np.ndarray, candidate: PvcCandidate) -> np.ndarray:
+    annotation_mask = candidate.outer_mask.copy()
+    threshold_map = build_threshold_map(gray.shape[1], candidate.threshold)
+    mask = gray > threshold_map[np.newaxis, :]
+    mask = ndimage.binary_closing(mask, structure=np.ones((3, 3), dtype=bool))
+    mask = ndimage.binary_opening(mask, structure=np.ones((2, 2), dtype=bool))
+
+    labels, count = ndimage.label(mask)
+    rows, cols = np.where(candidate.outer_mask)
+    if rows.size == 0:
+        return annotation_mask
+
+    min_x = int(cols.min())
+    max_x = int(cols.max())
+    top_row = int(rows.min())
+    merged_cap = False
+
+    for label in range(1, count + 1):
+        component = labels == label
+        area = int(component.sum())
+        if area < 8 or area > 200:
+            continue
+
+        comp_rows, comp_cols = np.where(component)
+        if comp_rows.size == 0:
+            continue
+
+        comp_top = int(comp_rows.min())
+        comp_bottom = int(comp_rows.max())
+        comp_left = int(comp_cols.min())
+        comp_right = int(comp_cols.max())
+        overlap = max(0, min(max_x + 4, comp_right) - max(min_x - 4, comp_left) + 1)
+
+        if comp_top < top_row and comp_bottom <= top_row + 1 and top_row - comp_bottom <= 10 and overlap >= 5:
+            annotation_mask |= component
+            merged_cap = True
+
+    if merged_cap:
+        hull_mask = convex_hull_mask(annotation_mask)
+        if hull_mask.any():
+            annotation_mask = hull_mask
+    return annotation_mask
+
+
+def approximate_mask_polygon(mask: np.ndarray, epsilon_ratio: float = 0.003) -> np.ndarray | None:
+    contour_mask = (mask.astype(np.uint8) * 255)
+    contours, _ = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None
+
+    contour = max(contours, key=cv2.contourArea)
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter <= 0.0:
+        return None
+
+    points = cv2.approxPolyDP(contour, epsilon_ratio * perimeter, True).reshape(-1, 2).astype(np.float64)
+    if points.shape[0] < 4:
+        return None
+    return points
+
+
+def find_top_chain(points: np.ndarray, y_tolerance: float = 2.0) -> list[int] | None:
+    if points.shape[0] < 2:
+        return None
+
+    eligible = points[:, 1] <= float(points[:, 1].min() + y_tolerance)
+    if int(eligible.sum()) < 2:
+        eligible = points[:, 1] <= float(points[:, 1].min() + 3.0)
+    if int(eligible.sum()) < 2:
+        return None
+
+    count = points.shape[0]
+    best_chain: list[int] | None = None
+    best_span = -1.0
+    run_start: int | None = None
+
+    for offset in range(count * 2):
+        index = offset % count
+        if eligible[index]:
+            if run_start is None:
+                run_start = offset
+            continue
+
+        if run_start is None:
+            continue
+
+        run_length = offset - run_start
+        if 1 < run_length <= count:
+            chain = [value % count for value in range(run_start, offset)]
+            span = float(points[chain, 0].max() - points[chain, 0].min())
+            if span > best_span:
+                best_span = span
+                best_chain = chain
+        run_start = None
+
+    if run_start is not None:
+        run_length = count * 2 - run_start
+        if 1 < run_length <= count:
+            chain = [value % count for value in range(run_start, count * 2)]
+            span = float(points[chain, 0].max() - points[chain, 0].min())
+            if span > best_span:
+                best_chain = chain
+
+    return best_chain
+
+
+def angle_between_vectors(previous: np.ndarray, current: np.ndarray) -> float:
+    previous_norm = float(np.linalg.norm(previous))
+    current_norm = float(np.linalg.norm(current))
+    if previous_norm <= 1e-6 or current_norm <= 1e-6:
+        return 0.0
+
+    cosine = float(np.clip(np.dot(previous, current) / (previous_norm * current_norm), -1.0, 1.0))
+    return float(np.degrees(np.arccos(cosine)))
+
+
+def fit_x_from_y_points(points: np.ndarray) -> tuple[float, float] | None:
+    if points.shape[0] < 2:
+        return None
+
+    ys = points[:, 1].astype(np.float64)
+    xs = points[:, 0].astype(np.float64)
+    slope, intercept = np.polyfit(ys, xs, 1)
+    return float(slope), float(intercept)
+
+
+def project_segment_to_frame(
+    start: np.ndarray,
+    slope: float,
+    intercept: float,
+    *,
+    side: str,
+    image_width: int,
+    image_height: int,
+    tiny_neighbor: np.ndarray | None = None,
+) -> list[int]:
+    start_x = float(start[0])
+    start_y = float(start[1])
+
+    if tiny_neighbor is not None:
+        dx = float(tiny_neighbor[0] - start_x)
+        dy = float(tiny_neighbor[1] - start_y)
+        if side == "right" and start_x >= image_width - 7 and np.hypot(dx, dy) <= 4.5:
+            x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+            x1, y1 = clip_point(tiny_neighbor[0], tiny_neighbor[1], image_width, image_height)
+            return [x0, y0, x1, y1]
+
+    if abs(slope) <= 1e-6:
+        end_x = start_x
+        end_y = float(image_height - 1)
+    else:
+        end_y = float(image_height - 1)
+        end_x = slope * end_y + intercept
+
+    if side == "left":
+        if end_x >= 2.0:
+            x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+            x1, y1 = clip_point(end_x, end_y, image_width, image_height)
+            return [x0, y0, x1, y1]
+
+        border_y = float((0.0 - intercept) / slope) if abs(slope) > 1e-6 else start_y
+        x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+        x1, y1 = clip_point(0.0, border_y, image_width, image_height)
+        return [x0, y0, x1, y1]
+
+    if end_x <= image_width - 3.0:
+        x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+        x1, y1 = clip_point(end_x, end_y, image_width, image_height)
+        return [x0, y0, x1, y1]
+
+    border_x = float(image_width - 1)
+    border_y = float((border_x - intercept) / slope) if abs(slope) > 1e-6 else start_y
+    x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+    x1, y1 = clip_point(border_x, border_y, image_width, image_height)
+    return [x0, y0, x1, y1]
+
+
+def collect_right_chain(
+    points: np.ndarray,
+    start_index: int,
+    first_side_index: int,
+    step: int,
+) -> np.ndarray:
+    count = points.shape[0]
+    indices = [start_index]
+    next_index = first_side_index % count
+    if points[next_index, 1] < points[start_index, 1]:
+        return points[indices].astype(np.float64)
+
+    indices.append(next_index)
+    max_x = float(points[:, 0].max())
+
+    while len(indices) < 5:
+        candidate_index = (indices[-1] + step) % count
+        if candidate_index in indices:
+            break
+
+        current = points[indices[-1]]
+        candidate = points[candidate_index]
+        vector = candidate - current
+        if vector[1] <= 0.5:
+            break
+        if vector[0] < -1.0:
+            break
+
+        previous = points[indices[-1]] - points[indices[-2]]
+        angle = angle_between_vectors(previous, vector)
+        if current[0] >= max_x - 1.0 and vector[0] <= 1.0 and vector[1] >= 4.0:
+            break
+        if angle > 65.0:
+            break
+
+        indices.append(candidate_index)
+
+    return points[indices].astype(np.float64)
+
+
+def polygon_guided_segments(
+    mask: np.ndarray,
+    *,
+    image_width: int,
+    image_height: int,
+) -> tuple[list[int] | None, list[int] | None, list[int] | None]:
+    points = approximate_mask_polygon(mask)
+    if points is None:
+        return None, None, None
+
+    top_chain = find_top_chain(points)
+    if top_chain is None:
+        return None, None, None
+
+    start_index = top_chain[0]
+    end_index = top_chain[-1]
+    if points[start_index, 0] <= points[end_index, 0]:
+        left_top_index = start_index
+        right_top_index = end_index
+        left_step = -1
+        right_step = 1
+    else:
+        left_top_index = end_index
+        right_top_index = start_index
+        left_step = 1
+        right_step = -1
+
+    left_top = points[left_top_index]
+    right_top = points[right_top_index]
+    pink_y = float(np.median(points[top_chain, 1]))
+    pink_segment = [
+        clip_point(left_top[0], pink_y, image_width, image_height)[0],
+        clip_point(left_top[0], pink_y, image_width, image_height)[1],
+        clip_point(right_top[0], pink_y, image_width, image_height)[0],
+        clip_point(right_top[0], pink_y, image_width, image_height)[1],
+    ]
+
+    left_neighbor_index = (left_top_index + left_step) % points.shape[0]
+    while left_neighbor_index in top_chain:
+        left_neighbor_index = (left_neighbor_index + left_step) % points.shape[0]
+
+    left_segment = None
+    left_points = np.vstack([left_top, points[left_neighbor_index]])
+    left_fit = fit_x_from_y_points(left_points)
+    if left_fit is not None:
+        left_segment = project_segment_to_frame(
+            left_top,
+            left_fit[0],
+            left_fit[1],
+            side="left",
+            image_width=image_width,
+            image_height=image_height,
+        )
+
+    right_segment = None
+    right_neighbor_index = (right_top_index + right_step) % points.shape[0]
+    while right_neighbor_index in top_chain:
+        right_neighbor_index = (right_neighbor_index + right_step) % points.shape[0]
+
+    right_chain = collect_right_chain(points, right_top_index, right_neighbor_index, right_step)
+    right_fit = fit_x_from_y_points(right_chain)
+    if right_fit is not None:
+        tiny_neighbor = right_chain[1] if right_chain.shape[0] >= 2 else None
+        right_segment = project_segment_to_frame(
+            right_top,
+            right_fit[0],
+            right_fit[1],
+            side="right",
+            image_width=image_width,
+            image_height=image_height,
+            tiny_neighbor=tiny_neighbor,
+        )
+
+    return left_segment, right_segment, pink_segment
+
+
 def should_draw_left(line: LineFit | None) -> bool:
     if line is None:
         return False
@@ -799,6 +1093,12 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         left_fit, right_fit = fit_side_lines_from_masks(candidate.visible_mask, candidate.outer_mask)
         top_fit, yellow_fit = fit_horizontal_lines(candidate.outer_mask)
         plateau_pink_fit = fit_pink_from_plateau(candidate.outer_mask)
+        annotation_mask = build_annotation_mask(gray, candidate)
+        polygon_left_segment, polygon_right_segment, polygon_pink_segment = polygon_guided_segments(
+            annotation_mask,
+            image_width=gray.shape[1],
+            image_height=gray.shape[0],
+        )
         left_visible = should_draw_left(left_fit)
         right_visible = should_draw_right_with_candidate(right_fit, gray.shape[1], candidate)
         if left_visible and right_visible:
@@ -814,6 +1114,9 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         top_fit = None
         plateau_pink_fit = None
         yellow_fit = None
+        polygon_left_segment = None
+        polygon_right_segment = None
+        polygon_pink_segment = None
         left_visible = False
         right_visible = False
         pink_visible = False
@@ -899,6 +1202,18 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                     draw_left=left_visible,
                     draw_right=right_visible,
                 )
+
+        if not yellow_visible:
+            if left_visible and polygon_left_segment is not None:
+                left_segment = polygon_left_segment
+            if right_visible and polygon_right_segment is not None:
+                right_segment = polygon_right_segment
+            if pink_visible and polygon_pink_segment is not None:
+                pink_segment = polygon_pink_segment
+                if left_segment is not None:
+                    left_segment[0], left_segment[1] = pink_segment[0], pink_segment[1]
+                if right_segment is not None:
+                    right_segment[0], right_segment[1] = pink_segment[2], pink_segment[3]
 
         threshold = candidate.threshold
         area = candidate.area
