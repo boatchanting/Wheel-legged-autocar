@@ -489,11 +489,13 @@ def fit_one_side(mask: np.ndarray, side: str) -> LineFit | None:
         border_limit = 1.5
         unclipped_rows = rows[left[rows] > 1]
         prefer = "left"
+        slope_range = (-2.5, 0.25)
     else:
         dependent = right
         border_limit = mask.shape[1] - 2.5
         unclipped_rows = rows[right[rows] < mask.shape[1] - 2]
         prefer = "right"
+        slope_range = (0.15, 2.5)
 
     use_rows = rows
     if unclipped_rows.size >= 6 and float(unclipped_rows.max() - unclipped_rows.min()) >= 10.0:
@@ -503,7 +505,7 @@ def fit_one_side(mask: np.ndarray, side: str) -> LineFit | None:
         use_rows,
         dependent[use_rows],
         model="x_from_y",
-        slope_range=(-2.5, 2.5),
+        slope_range=slope_range,
         residual_threshold=1.35,
         min_inliers=6,
         min_span=10.0,
@@ -648,6 +650,22 @@ def should_draw_right(line: LineFit | None, image_width: int) -> bool:
     )
 
 
+def should_draw_right_with_candidate(
+    line: LineFit | None,
+    image_width: int,
+    candidate: PvcCandidate | None,
+) -> bool:
+    if not should_draw_right(line, image_width):
+        return False
+    if candidate is None:
+        return False
+
+    # Small right-leaning remnants near the border often produce a fake "right side" line.
+    if candidate.max_width <= 36 and candidate.area_ratio <= 0.19 and line.mean_value >= image_width - 18.0:
+        return False
+    return True
+
+
 def should_draw_pink(line: LineFit | None) -> bool:
     if line is None:
         return False
@@ -662,6 +680,21 @@ def should_draw_yellow(line: LineFit | None, image_height: int) -> bool:
     if line.inlier_count < 6 or line.span < 8.0:
         return False
     return not (line.border_touch_ratio >= 0.55 and line.mean_value >= image_height - 2.6)
+
+
+def should_draw_yellow_with_candidate(
+    line: LineFit | None,
+    image_height: int,
+    candidate: PvcCandidate | None,
+) -> bool:
+    if not should_draw_yellow(line, image_height):
+        return False
+    if candidate is None:
+        return False
+
+    # A true start line needs a meaningful bottom span; pointed tips are usually false positives.
+    min_bottom_width = max(16, int(round(candidate.max_width * 0.28)))
+    return candidate.bottom_width >= min_bottom_width
 
 
 def intersect_side_with_horizontal(side: LineFit, horizontal: LineFit) -> tuple[float, float] | None:
@@ -688,13 +721,14 @@ def segment_from_side(
     bottom_row: int,
     image_width: int,
     image_height: int,
+    extend_to_bottom: bool = True,
 ) -> list[int] | None:
     if line is None:
         return None
 
     y0 = line.support_min
     y1 = line.support_max
-    if bottom_row - y1 >= 8:
+    if extend_to_bottom and bottom_row - y1 >= 8:
         x_bottom = line.x_at_y(bottom_row)
         if side == "left" and x_bottom > 2.5:
             y1 = float(bottom_row)
@@ -766,12 +800,14 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         top_fit, yellow_fit = fit_horizontal_lines(candidate.outer_mask)
         plateau_pink_fit = fit_pink_from_plateau(candidate.outer_mask)
         left_visible = should_draw_left(left_fit)
-        right_visible = should_draw_right(right_fit, gray.shape[1])
+        right_visible = should_draw_right_with_candidate(right_fit, gray.shape[1], candidate)
         if left_visible and right_visible:
             pink_visible = plateau_pink_fit is not None or should_draw_pink(top_fit)
         else:
             pink_visible = should_draw_pink(top_fit)
-        yellow_visible = should_draw_yellow(yellow_fit, gray.shape[0])
+        if pink_visible and candidate.top_row <= 1:
+            pink_visible = False
+        yellow_visible = should_draw_yellow_with_candidate(yellow_fit, gray.shape[0], candidate)
     else:
         left_fit = None
         right_fit = None
@@ -792,6 +828,8 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             bottom_row=candidate.bottom_row,
             image_width=gray.shape[1],
             image_height=gray.shape[0],
+            extend_to_bottom=yellow_visible
+            or candidate.bottom_width <= max(6, int(round(candidate.max_width * 0.12))),
         )
         right_segment = segment_from_side(
             right_fit if right_visible else None,
@@ -799,6 +837,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             bottom_row=candidate.bottom_row,
             image_width=gray.shape[1],
             image_height=gray.shape[0],
+            extend_to_bottom=False,
         )
         pink_fit = plateau_pink_fit if plateau_pink_fit is not None else top_fit
         pink_segment = None
