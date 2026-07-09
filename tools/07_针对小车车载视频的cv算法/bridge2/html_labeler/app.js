@@ -8,6 +8,9 @@ const LINE_TYPES = {
 const TYPE_ORDER = ["left", "right", "pink", "yellow"];
 const MIN_ZOOM = 2;
 const MAX_ZOOM = 20;
+const SESSION_STORAGE_KEY = "single-bridge-html-labeler-session";
+const HANDLE_DB_NAME = "single-bridge-html-labeler-db";
+const HANDLE_STORE_NAME = "handles";
 const EMPTY_VERSION = JSON.stringify({
   removedTypes: [],
   segments: { left: null, right: null, pink: null, yellow: null },
@@ -47,6 +50,78 @@ const state = {
 };
 
 const ctx = elements.canvas.getContext("2d", { willReadFrequently: true });
+
+function openHandleDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(HANDLE_DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(HANDLE_STORE_NAME)) {
+        db.createObjectStore(HANDLE_STORE_NAME);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function setStoredHandle(key, handle) {
+  const db = await openHandleDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(HANDLE_STORE_NAME, "readwrite");
+    tx.objectStore(HANDLE_STORE_NAME).put(handle, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+  db.close();
+}
+
+async function getStoredHandle(key) {
+  const db = await openHandleDb();
+  const handle = await new Promise((resolve, reject) => {
+    const tx = db.transaction(HANDLE_STORE_NAME, "readonly");
+    const request = tx.objectStore(HANDLE_STORE_NAME).get(key);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+  db.close();
+  return handle;
+}
+
+function persistSessionState() {
+  const payload = {
+    currentIndex: state.currentIndex,
+    activeType: state.activeType,
+    zoom: state.zoom,
+    replaceOnDraw: elements.replaceOnDraw.checked,
+    drawDirLabel: elements.drawDirLabel.textContent,
+    originalDirLabel: elements.originalDirLabel.textContent,
+    outputDirLabel: elements.outputDirLabel.textContent,
+  };
+  localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+}
+
+function loadSessionState() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
+async function tryRestoreDirectoryHandle(key) {
+  if (!window.showDirectoryPicker) {
+    return null;
+  }
+  try {
+    return await getStoredHandle(key);
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
 
 function normalizeKey(name) {
   const lower = name.toLowerCase();
@@ -340,6 +415,7 @@ function renderCurrentFrame() {
   drawPreviewLine();
   renderFileList();
   refreshStatus();
+  persistSessionState();
 }
 
 function refreshToolButtons() {
@@ -348,6 +424,7 @@ function refreshToolButtons() {
     button.classList.toggle("active", type === state.activeType);
   }
   elements.activeToolLabel.textContent = LINE_TYPES[state.activeType].label;
+  persistSessionState();
 }
 
 function refreshStatus() {
@@ -545,21 +622,27 @@ async function loadFrame(index) {
   updateCanvasScale();
   resetPendingLine();
   renderCurrentFrame();
+  persistSessionState();
 }
 
 async function applyDrawEntries(drawEntries, sourceLabel) {
   state.drawSource = sourceLabel;
   state.entries = mergeEntries(drawEntries, state.originalSource?.entries || []);
-  state.currentIndex = -1;
   state.currentFrame = null;
-  state.entryState = new Map();
+  if (!(state.entryState instanceof Map)) {
+    state.entryState = new Map();
+  }
+  if (state.currentIndex < 0 || state.currentIndex >= state.entries.length) {
+    state.currentIndex = -1;
+  }
   elements.fileCount.textContent = `${state.entries.length} 张`;
   renderFileList();
   if (state.entries.length > 0) {
-    await loadFrame(0);
+    await loadFrame(state.currentIndex >= 0 ? state.currentIndex : 0);
   } else {
     refreshStatus();
   }
+  persistSessionState();
 }
 
 async function pickDrawDirectory() {
@@ -570,6 +653,7 @@ async function pickDrawDirectory() {
   const dirHandle = await window.showDirectoryPicker({ mode: "read" });
   const entries = await collectHandlesFromDirectory(dirHandle);
   elements.drawDirLabel.textContent = dirHandle.name;
+  await setStoredHandle("drawDirHandle", dirHandle);
   await applyDrawEntries(entries, { mode: "handle", entries, dirHandle });
 }
 
@@ -582,6 +666,7 @@ async function pickOriginalDirectory() {
   const entries = await collectHandlesFromDirectory(dirHandle);
   state.originalSource = { mode: "handle", entries, dirHandle };
   elements.originalDirLabel.textContent = dirHandle.name;
+  await setStoredHandle("originalDirHandle", dirHandle);
   if (state.drawSource) {
     state.entries = mergeEntries(state.drawSource.entries, entries);
     renderFileList();
@@ -599,11 +684,14 @@ async function pickOutputDirectory() {
   const dirHandle = await window.showDirectoryPicker({ mode: "readwrite" });
   state.outputDirHandle = dirHandle;
   elements.outputDirLabel.textContent = dirHandle.name;
+  await setStoredHandle("outputDirHandle", dirHandle);
+  persistSessionState();
 }
 
 function loadDrawInputFiles() {
   const entries = collectHandlesFromInput(elements.drawInput.files);
   elements.drawDirLabel.textContent = "已从文件夹导入";
+  persistSessionState();
   applyDrawEntries(entries, { mode: "input", entries });
 }
 
@@ -611,6 +699,7 @@ async function loadOriginalInputFiles() {
   const entries = collectHandlesFromInput(elements.originalInput.files);
   state.originalSource = { mode: "input", entries };
   elements.originalDirLabel.textContent = "已从文件夹导入";
+  persistSessionState();
   if (state.drawSource) {
     state.entries = mergeEntries(state.drawSource.entries, entries);
     renderFileList();
@@ -623,6 +712,7 @@ async function loadOriginalInputFiles() {
 function updateZoom(step) {
   state.zoom = clamp(state.zoom + step, MIN_ZOOM, MAX_ZOOM);
   updateCanvasScale();
+  persistSessionState();
 }
 
 function getCanvasPoint(event) {
@@ -717,6 +807,11 @@ function bindEvents() {
   document.getElementById("fit-zoom").addEventListener("click", () => {
     state.zoom = 6;
     updateCanvasScale();
+    persistSessionState();
+  });
+
+  elements.replaceOnDraw.addEventListener("change", () => {
+    persistSessionState();
   });
 
   for (const type of TYPE_ORDER) {
@@ -818,11 +913,59 @@ function bindEvents() {
   });
 }
 
-function initialize() {
+async function restoreSession() {
+  const saved = loadSessionState();
+  if (saved) {
+    state.zoom = clamp(saved.zoom || 6, MIN_ZOOM, MAX_ZOOM);
+    state.currentIndex = Number.isInteger(saved.currentIndex) ? saved.currentIndex : -1;
+    elements.replaceOnDraw.checked = saved.replaceOnDraw !== false;
+    elements.drawDirLabel.textContent = saved.drawDirLabel || "未选择";
+    elements.originalDirLabel.textContent = saved.originalDirLabel || "未选择";
+    elements.outputDirLabel.textContent = saved.outputDirLabel || "未选择";
+    if (saved.activeType && LINE_TYPES[saved.activeType]) {
+      state.activeType = saved.activeType;
+    }
+  }
+
+  const originalHandle = await tryRestoreDirectoryHandle("originalDirHandle");
+  if (originalHandle) {
+    try {
+      const entries = await collectHandlesFromDirectory(originalHandle);
+      state.originalSource = { mode: "handle", entries, dirHandle: originalHandle };
+      elements.originalDirLabel.textContent = originalHandle.name;
+    } catch (error) {
+      console.error(error);
+    }
+  }
+
+  const outputHandle = await tryRestoreDirectoryHandle("outputDirHandle");
+  if (outputHandle) {
+    state.outputDirHandle = outputHandle;
+    elements.outputDirLabel.textContent = outputHandle.name;
+  }
+
+  const drawHandle = await tryRestoreDirectoryHandle("drawDirHandle");
+  if (drawHandle) {
+    try {
+      const entries = await collectHandlesFromDirectory(drawHandle);
+      elements.drawDirLabel.textContent = drawHandle.name;
+      await applyDrawEntries(entries, { mode: "handle", entries, dirHandle: drawHandle });
+      setStatus("已恢复上次会话");
+    } catch (error) {
+      console.error(error);
+      setStatus("恢复失败，请重新选择目录");
+    }
+  }
+}
+
+async function initialize() {
+  bindEvents();
   setActiveType("left");
   updateCanvasScale();
-  bindEvents();
   refreshStatus();
+  await restoreSession();
+  setActiveType(state.activeType);
+  updateCanvasScale();
 }
 
 initialize();
