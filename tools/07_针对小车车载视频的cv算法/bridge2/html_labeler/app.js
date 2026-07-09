@@ -47,6 +47,7 @@ const state = {
   outputDirHandle: null,
   currentFrame: null,
   busy: false,
+  suspendSessionPersist: false,
 };
 
 const ctx = elements.canvas.getContext("2d", { willReadFrequently: true });
@@ -89,6 +90,9 @@ async function getStoredHandle(key) {
 }
 
 function persistSessionState() {
+  if (state.suspendSessionPersist) {
+    return;
+  }
   const payload = {
     currentIndex: state.currentIndex,
     activeType: state.activeType,
@@ -914,58 +918,70 @@ function bindEvents() {
 }
 
 async function restoreSession() {
-  const saved = loadSessionState();
-  if (saved) {
-    state.zoom = clamp(saved.zoom || 6, MIN_ZOOM, MAX_ZOOM);
-    state.currentIndex = Number.isInteger(saved.currentIndex) ? saved.currentIndex : -1;
-    elements.replaceOnDraw.checked = saved.replaceOnDraw !== false;
-    elements.drawDirLabel.textContent = saved.drawDirLabel || "未选择";
-    elements.originalDirLabel.textContent = saved.originalDirLabel || "未选择";
-    elements.outputDirLabel.textContent = saved.outputDirLabel || "未选择";
-    if (saved.activeType && LINE_TYPES[saved.activeType]) {
-      state.activeType = saved.activeType;
+  state.suspendSessionPersist = true;
+  try {
+    const saved = loadSessionState();
+    if (saved) {
+      state.zoom = clamp(saved.zoom || 6, MIN_ZOOM, MAX_ZOOM);
+      state.currentIndex = Number.isInteger(saved.currentIndex) ? saved.currentIndex : -1;
+      elements.replaceOnDraw.checked = saved.replaceOnDraw !== false;
+      elements.drawDirLabel.textContent = saved.drawDirLabel || "未选择";
+      elements.originalDirLabel.textContent = saved.originalDirLabel || "未选择";
+      elements.outputDirLabel.textContent = saved.outputDirLabel || "未选择";
+      if (saved.activeType && LINE_TYPES[saved.activeType]) {
+        state.activeType = saved.activeType;
+      }
     }
-  }
 
-  const originalHandle = await tryRestoreDirectoryHandle("originalDirHandle");
-  if (originalHandle) {
-    try {
-      const entries = await collectHandlesFromDirectory(originalHandle);
-      state.originalSource = { mode: "handle", entries, dirHandle: originalHandle };
-      elements.originalDirLabel.textContent = originalHandle.name;
-    } catch (error) {
-      console.error(error);
+    const originalHandle = await tryRestoreDirectoryHandle("originalDirHandle");
+    if (originalHandle) {
+      try {
+        const entries = await collectHandlesFromDirectory(originalHandle);
+        state.originalSource = { mode: "handle", entries, dirHandle: originalHandle };
+        elements.originalDirLabel.textContent = originalHandle.name;
+      } catch (error) {
+        console.error(error);
+      }
     }
-  }
 
-  const outputHandle = await tryRestoreDirectoryHandle("outputDirHandle");
-  if (outputHandle) {
-    state.outputDirHandle = outputHandle;
-    elements.outputDirLabel.textContent = outputHandle.name;
-  }
-
-  const drawHandle = await tryRestoreDirectoryHandle("drawDirHandle");
-  if (drawHandle) {
-    try {
-      const entries = await collectHandlesFromDirectory(drawHandle);
-      elements.drawDirLabel.textContent = drawHandle.name;
-      await applyDrawEntries(entries, { mode: "handle", entries, dirHandle: drawHandle });
-      setStatus("已恢复上次会话");
-    } catch (error) {
-      console.error(error);
-      setStatus("恢复失败，请重新选择目录");
+    const outputHandle = await tryRestoreDirectoryHandle("outputDirHandle");
+    if (outputHandle) {
+      state.outputDirHandle = outputHandle;
+      elements.outputDirLabel.textContent = outputHandle.name;
     }
+
+    const drawHandle = await tryRestoreDirectoryHandle("drawDirHandle");
+    if (drawHandle) {
+      try {
+        const entries = await collectHandlesFromDirectory(drawHandle);
+        elements.drawDirLabel.textContent = drawHandle.name;
+        await applyDrawEntries(entries, { mode: "handle", entries, dirHandle: drawHandle });
+        setStatus("已恢复上次会话");
+      } catch (error) {
+        console.error(error);
+        setStatus("恢复失败，请重新选择目录");
+      }
+    }
+  } finally {
+    state.suspendSessionPersist = false;
+    persistSessionState();
   }
 }
 
 async function initialize() {
-  bindEvents();
-  setActiveType("left");
-  updateCanvasScale();
-  refreshStatus();
-  await restoreSession();
-  setActiveType(state.activeType);
-  updateCanvasScale();
+  state.suspendSessionPersist = true;
+  try {
+    bindEvents();
+    setActiveType("left");
+    updateCanvasScale();
+    refreshStatus();
+    await restoreSession();
+    setActiveType(state.activeType);
+    updateCanvasScale();
+  } finally {
+    state.suspendSessionPersist = false;
+    persistSessionState();
+  }
 }
 
 initialize();
