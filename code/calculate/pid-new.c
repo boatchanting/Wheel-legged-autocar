@@ -1216,20 +1216,10 @@ float Servo_Speed_Control(float target_speed, float actual_speed, float actual_a
     float speed_now = actual_speed * 0.6f + servo_speed_last * 0.3f + servo_speed_prelast * 0.1f;
     servo_speed_prelast = servo_speed_last;
     servo_speed_last = speed_now;
-
-    // 2. 动态速度规划 (移植思想)
-    float speed_qiwang_now = target_speed; // 默认使用传入的目标速度
-    // --- 【核心智能化决策区】 ---
-    // 在这里，您需要根据摄像头的赛道信息、陀螺仪姿态等来动态修改 speed_qiwang_now
-    // 例如：
-    // if (is_in_big_turn()) {
-    //     speed_qiwang_now = 100.0f; // 弯道减速
-    // } else if (is_in_long_straight()) {
-    //     speed_qiwang_now = 300.0f; // 直道加速
-    // }
+    // 2.这部分预留的速度规划已经从pid中移除，其他模块直接使用target_speed即可
 
     // 3. 计算误差
-    pid_servo_speed.error = speed_qiwang_now - speed_now;
+    pid_servo_speed.error = target_speed - speed_now;
 
     // 4. 自适应 Kp
     float k, adaptive_kp, kp_boost;
