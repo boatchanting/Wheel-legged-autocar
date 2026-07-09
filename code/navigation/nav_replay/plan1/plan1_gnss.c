@@ -3,9 +3,10 @@
 #include "../../gps_nav_replay_route_table.h"
 #include "../../gnss_transform.h"
 #include "../../gnss_ins_fusion.h"
-#if (CURRENT_NAV_PLAN == 1) && (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
+#if (CURRENT_NAV_PLAN == 1) && (GNSS_NAV == 1)
 extern volatile float target_speed_set; extern volatile float err_degree;
 
+#if (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
 /** @brief 回放状态机全局变量，由上层任务查询 */
 NavReplayState_e g_replay_state = REPLAY_IDLE;
 /** @brief 当前基准索引（单调前进） */
@@ -14,6 +15,12 @@ uint16 g_target_idx = 0;
 uint8 g_current_point_type = NAV_POINT_PATH;
 /** @brief 特殊动作触发标志，1 表示暂停轨迹跟踪并交由上层处理 */
 uint8 g_special_action_trigger = 0;
+#else
+extern NavReplayState_e g_replay_state;
+extern uint16 g_target_idx;
+extern uint8 g_current_point_type;
+extern uint8 g_special_action_trigger;
+#endif
 
 
 NavReplayState_e g_gps_replay_state = REPLAY_IDLE;
@@ -25,7 +32,7 @@ static uint16 g_gps_target_idx = 0;
 /**
  * @brief 将角度归一化到 [-180, 180] 区间
  */
-static float NormalizeAngle(float angle)
+static float GpsNormalizeAngle(float angle)
 {
     while (angle > 180.0f) angle -= 360.0f;
     while (angle < -180.0f) angle += 360.0f;
@@ -35,7 +42,7 @@ static float NormalizeAngle(float angle)
 /**
  * @brief 计算两点欧氏距离 (mm)
  */
-static float CalcDistance(float x1, float y1, float x2, float y2)
+static float GpsCalcDistance(float x1, float y1, float x2, float y2)
 {
     return sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
 }
@@ -43,7 +50,7 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
 /**
  * @brief 计算两点距离平方（避免频繁开方）
  */
-static float CalcDistanceSq(float x1, float y1, float x2, float y2)
+static float GpsCalcDistanceSq(float x1, float y1, float x2, float y2)
 {
     float dx = x1 - x2;
     float dy = y1 - y2;
@@ -184,7 +191,7 @@ void GpsNavReplay_Process(void)
     {
         target_x = nav_ram_data.points[nav_ram_data.point_count - 1].x;
         target_y = nav_ram_data.points[nav_ram_data.point_count - 1].y;
-        float dist_to_end = CalcDistance(cx, cy, target_x, target_y);
+        float dist_to_end = GpsCalcDistance(cx, cy, target_x, target_y);
 
         uint8 is_crossed_finish = 0;
         if (nav_ram_data.point_count >= 2)
@@ -216,7 +223,7 @@ void GpsNavReplay_Process(void)
         {
             float check_tx = nav_ram_data.points[g_gps_target_idx].x;
             float check_ty = nav_ram_data.points[g_gps_target_idx].y;
-            float dist_current = CalcDistance(cx, cy, check_tx, check_ty);
+            float dist_current = GpsCalcDistance(cx, cy, check_tx, check_ty);
 
             uint8 is_passed = 0;
             if (g_gps_target_idx > 0)
@@ -250,7 +257,7 @@ void GpsNavReplay_Process(void)
 
     // === 4. 计算航向误差 ===
     target_bearing = GpsCalcBearingDegFromNorth(cx, cy, target_x, target_y);
-    raw_err_degree = NormalizeAngle(target_bearing - current_heading);
+    raw_err_degree = GpsNormalizeAngle(target_bearing - current_heading);
 
     // 融合坐标已极度平滑，移除低通滤波，仅保留安全限幅
     float final_err = raw_err_degree;
@@ -263,7 +270,7 @@ void GpsNavReplay_Process(void)
     float abs_err = fabsf(err_degree);
 
     // === 5. 动态速度控制 ===
-    float dist_to_target = CalcDistance(cx, cy, target_x, target_y);
+    float dist_to_target = GpsCalcDistance(cx, cy, target_x, target_y);
     float base_speed;
 
     if (dist_to_target > GPS_NAV_DIST_NEAR && abs_err < 10.0f) {
@@ -279,10 +286,12 @@ void GpsNavReplay_Process(void)
     target_speed_set = base_speed * speed_factor;
 }
 
+#if (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
 //【优化点】惯导上层控制占位用
 void NavReplay_Start(void){ g_replay_state = REPLAY_RUNNING; g_special_action_trigger = 0; }
 void NavReplay_Stop(void){ g_replay_state = REPLAY_IDLE; g_special_action_trigger = 0; }
-void NavReplay_Process(void){ (void)NormalizeAngle(0.0f); (void)CalcDistance(0,0,0,0); }
+void NavReplay_Process(void){ (void)GpsNormalizeAngle(0.0f); (void)GpsCalcDistance(0,0,0,0); }
+#endif
 
 
 #endif

@@ -21,12 +21,15 @@ typedef enum
 
 #if CURRENT_NAV_PLAN == 1
     // ---------------- [ 科目一路由 ] ----------------
+    #if GNSS_NAV == 1
+        #include "plan1/plan1_gnss.h"
+    #endif
+
     #if NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS
         // 【逻辑互斥检查】：如果选中 GNSS 寻迹方案，但系统总开关却没开GNSS，则阻断编译！
         #if GNSS_NAV != 1
             #error "[Nav Config Error] Plan 1 selected GNSS method, but GNSS_NAV is not set to 1 in sys_options.h! Please check config."
         #endif
-        #include "plan1/plan1_gnss.h"
         
     #elif NAV_PLAN1_METHOD == PLAN1_PURE_PURSUIT_SPEED_PLANNING
         // 【资源浪费提醒】：如果选中惯导，但系统总开关依然开了 GNSS，弹出黄色警告提醒。

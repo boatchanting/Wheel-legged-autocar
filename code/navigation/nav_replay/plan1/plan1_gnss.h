@@ -31,8 +31,10 @@ void GpsNavReplay_Start(void);
 void GpsNavReplay_Stop(void);
 void GpsNavReplay_Process(void);
 
+#if (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
 void NavReplay_Start(void);
 void NavReplay_Stop(void);
 void NavReplay_Process(void);
+#endif
 #endif
 #endif
