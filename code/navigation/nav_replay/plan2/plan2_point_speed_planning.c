@@ -147,14 +147,15 @@ static float PlanSpecialApproachSpeed(float dist_to_point, float speed_sign, flo
     float min_approach_abs = (slow_abs < crawl_abs) ? slow_abs : crawl_abs;
     float max_approach_abs = (slow_abs > crawl_abs) ? slow_abs : crawl_abs;
     float approach_abs;
+    uint8 in_crawl_band;
 
-    if ((dist_to_point <= NAV_POINT_SPECIAL_EXECUTE_RADIUS) ||
-        (hard_brake_strength >= 0.65f))
+    if (dist_to_point <= NAV_POINT_SPECIAL_EXECUTE_RADIUS)
     {
         return NAV_POINT_SPEED_STOP;
     }
 
-    if (dist_to_point <= NAV_POINT_SPECIAL_CRAWL_RADIUS)
+    in_crawl_band = (uint8)(dist_to_point <= NAV_POINT_SPECIAL_CRAWL_RADIUS);
+    if (in_crawl_band != 0U)
     {
         approach_abs = crawl_abs;
     }
@@ -168,11 +169,11 @@ static float PlanSpecialApproachSpeed(float dist_to_point, float speed_sign, flo
                                        max_approach_abs);
     }
 
-    if (hard_brake_strength > 0.0f)
+    if ((hard_brake_strength > 0.0f) &&
+        (dist_to_point > NAV_POINT_SPECIAL_CRAWL_RADIUS))
     {
         approach_abs *= (1.0f - hard_brake_strength);
-        if ((approach_abs < min_approach_abs) &&
-            (dist_to_point > NAV_POINT_SPECIAL_CRAWL_RADIUS))
+        if (approach_abs < min_approach_abs)
         {
             approach_abs = min_approach_abs;
         }
