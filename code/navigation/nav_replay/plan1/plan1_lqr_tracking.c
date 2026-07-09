@@ -24,7 +24,6 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #endif
 
 #define LQR_DEG_TO_RAD 0.0174532925f
-#define LQR_RAD_TO_DEG 57.2957795f
 
 #ifndef PLAN1_FAST_UTURN_ENABLE
 #define PLAN1_FAST_UTURN_ENABLE 0
@@ -45,7 +44,6 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 /* 极速掉头运行参数只放在科目一运行模块里，方便试车时局部调整，不污染全局 sys_options.h。 */
 #define PLAN1_FAST_UTURN_INVALID_IDX              0xFFFFU
 #define PLAN1_FAST_UTURN_TRIGGER_DIST_MM          90.0f
-#define PLAN1_FAST_UTURN_POST_YAW_LOOKAHEAD       4U
 #define PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG        30.0f
 #define PLAN1_FAST_UTURN_KICK_STEER_DEG           42.0f
 #define PLAN1_FAST_UTURN_KICK_SPEED_CMD           0.0f
@@ -58,7 +56,6 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #define PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG      36.0f
 #define PLAN1_FAST_UTURN_BRAKE_TIMEOUT_TICKS      180U
 #define PLAN1_FAST_UTURN_RECOVER_TICKS            30U
-#define PLAN1_FAST_UTURN_POST_MIN_SPEED_CMD       80.0f
 
 #if (PLAN1_FAST_UTURN_MODE != PLAN1_FAST_UTURN_MODE_JUMP) && \
     (PLAN1_FAST_UTURN_MODE != PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE)
@@ -197,16 +194,15 @@ static uint8 NavReplay_FastUTurn_IsActiveAction(void)
 }
 
 /**
- * @brief 计算指定索引附近路径的物理切线方向。
- * @note 这里直接由坐标差算几何方向，不依赖路径表 yaw 是否已经为倒车加过 180 度。
+ * @brief 读取指定索引附近路径的车上航向方向。
+ * @note 路径表 target_yaw_deg 才是车上 LQR 使用的航向基准，不能直接用 atan2(dy, dx)，否则坐标系会差 180 度。
+ *       如果离线急刹倒车路径已经把 yaw 加过 180 度，这里按速度符号还原成真实路径切线。
  */
 static float NavReplay_FastUTurn_GetPathYawAtIndex(uint16 start_idx)
 {
     uint16 last_idx;
-    uint16 end_idx;
-    uint16 i;
-    float dx;
-    float dy;
+    const NavRamPoint_t *point;
+    float yaw_deg;
 
     if (nav_ram_data.point_count == 0U)
     {
@@ -214,37 +210,24 @@ static float NavReplay_FastUTurn_GetPathYawAtIndex(uint16 start_idx)
     }
 
     last_idx = (uint16)(nav_ram_data.point_count - 1U);
-    if (start_idx >= last_idx)
+    if (start_idx > last_idx)
     {
-        if (last_idx > 0U)
-        {
-            dx = nav_ram_data.points[last_idx].x - nav_ram_data.points[last_idx - 1U].x;
-            dy = nav_ram_data.points[last_idx].y - nav_ram_data.points[last_idx - 1U].y;
-            if ((dx * dx + dy * dy) > (LQR_PROJECTION_MIN_SEG_LEN_MM * LQR_PROJECTION_MIN_SEG_LEN_MM))
-            {
-                return NormalizeAngle(atan2f(dy, dx) * LQR_RAD_TO_DEG);
-            }
-        }
-        return nav_ram_data.points[last_idx].target_yaw_deg;
+        start_idx = last_idx;
     }
 
-    end_idx = (uint16)(start_idx + PLAN1_FAST_UTURN_POST_YAW_LOOKAHEAD);
-    if (end_idx > last_idx)
+    point = &nav_ram_data.points[start_idx];
+    yaw_deg = point->target_yaw_deg;
+
+#if LQR_FORWARD_SPEED_IS_NEGATIVE
+    if (point->target_speed > NAV_STOP_LOCK_SPEED_EPS)
+#else
+    if (point->target_speed < -NAV_STOP_LOCK_SPEED_EPS)
+#endif
     {
-        end_idx = last_idx;
+        yaw_deg = NormalizeAngle(yaw_deg + 180.0f);
     }
 
-    for (i = (uint16)(start_idx + 1U); i <= end_idx; i++)
-    {
-        dx = nav_ram_data.points[i].x - nav_ram_data.points[start_idx].x;
-        dy = nav_ram_data.points[i].y - nav_ram_data.points[start_idx].y;
-        if ((dx * dx + dy * dy) > (LQR_PROJECTION_MIN_SEG_LEN_MM * LQR_PROJECTION_MIN_SEG_LEN_MM))
-        {
-            return NormalizeAngle(atan2f(dy, dx) * LQR_RAD_TO_DEG);
-        }
-    }
-
-    return nav_ram_data.points[start_idx].target_yaw_deg;
+    return NormalizeAngle(yaw_deg);
 }
 
 static float NavReplay_FastUTurn_GetPostPathYaw(void)
@@ -310,11 +293,6 @@ static float NavReplay_FastUTurn_SpeedForLead(float abs_speed, uint8 lead)
     if (abs_speed <= NAV_STOP_LOCK_SPEED_EPS)
     {
         return NAV_SPEED_STOP;
-    }
-
-    if ((s_fast_uturn_recover_ticks > 0U) && (abs_speed < PLAN1_FAST_UTURN_POST_MIN_SPEED_CMD))
-    {
-        abs_speed = PLAN1_FAST_UTURN_POST_MIN_SPEED_CMD;
     }
 
 #if LQR_FORWARD_SPEED_IS_NEGATIVE
@@ -431,21 +409,15 @@ static uint8 NavReplay_FastUTurn_ProcessAction(void)
     target_speed_set = NAV_SPEED_STOP;
     Brake_NavHardStop_UpdateStrength(PLAN1_FAST_UTURN_BRAKE_STRENGTH);
 
-    if (fabsf(current_actual_speed) <= PLAN1_FAST_UTURN_BRAKE_LOW_SPEED_TH)
-    {
-        err_degree = Float_Constrain(PLAN1_FAST_UTURN_BRAKE_ALIGN_KP * lead_err,
-                                     -PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG,
-                                     PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG);
+    /* 急刹过程中同步给转角，让车一边减速一边甩向后段路径，不等完全刹停。 */
+    err_degree = Float_Constrain(PLAN1_FAST_UTURN_BRAKE_ALIGN_KP * lead_err,
+                                 -PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG,
+                                 PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG);
 
-        if (NavReplay_FastUTurn_SelectReadyLead(path_yaw, &lead) != 0U)
-        {
-            NavReplay_FastUTurn_EnterPostTrack(lead);
-            return 1U;
-        }
-    }
-    else
+    if (NavReplay_FastUTurn_SelectReadyLead(path_yaw, &lead) != 0U)
     {
-        err_degree = 0.0f;
+        NavReplay_FastUTurn_EnterPostTrack(lead);
+        return 1U;
     }
 
     if ((s_fast_uturn_state_ticks >= PLAN1_FAST_UTURN_BRAKE_TIMEOUT_TICKS) &&
