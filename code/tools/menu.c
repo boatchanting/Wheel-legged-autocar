@@ -55,6 +55,7 @@ void Menu_TriggerStartAction(void)
     gpio_toggle_level(P19_0);       // 指示灯切换
     if (g_motor_enable)
     {
+        g_fallen = false;           // 【新增】倒地状态下允许直接起立发车
         g_load_flash_request = 1;   // 请求读取测试
         g_save_flash_request = 0;   // 清除保存请求
         g_nav_recording = 0;        // 确保停止录制
