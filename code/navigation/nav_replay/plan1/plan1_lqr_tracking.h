@@ -39,7 +39,7 @@
 #define LQR_SHARP_CURVATURE_TH              0.0010f
 
 // 急弯附近使用的预瞄点数。调大：提前看弯、入弯更主动；调小：入弯更稳，不容易突然崴脚，但可能稍微晚一点转。
-#define LQR_SHARP_PREVIEW_POINTS            2U
+#define LQR_SHARP_PREVIEW_POINTS            6U
 
 // 正常跟踪时最近点向前搜索窗口，单位：点数。调大：更容易追上索引；调小：更不容易跳到相似回程段。
 #define LQR_SEARCH_RANGE_NORMAL            80U
@@ -84,14 +84,14 @@
 #define LQR_ERR_SLEW_DEG                   10.0f
 
 // 急弯段 err_degree 单周期最大变化量，单位 deg/周期。调大：急弯响应更快；调小：急弯入口更柔，跳轮/颤动更少。
-#define LQR_SHARP_ERR_SLEW_DEG              6.0f
+#define LQR_SHARP_ERR_SLEW_DEG             10.0f
 
 // err_degree 一阶低通系数，范围 0~1。调大：更跟手；过大：噪声和曲率突变更明显。
 // 调小：更平顺；过小：明显滞后，容易切弯。
 #define LQR_FILTER_ALPHA                    0.25f
 
 // 急弯段低通滤波系数。调大：急弯跟手但更容易颤；调小：急弯更顺，但太小会入弯滞后。
-#define LQR_SHARP_FILTER_ALPHA              0.18f
+#define LQR_SHARP_FILTER_ALPHA              0.30f
 
 // 横向误差限幅，单位 mm。调大：大偏差时纠偏更强；过大：离线后可能突然猛打。
 // 调小：极端情况下更稳，但回线能力变弱。
