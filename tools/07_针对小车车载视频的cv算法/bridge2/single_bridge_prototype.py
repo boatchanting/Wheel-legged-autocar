@@ -1266,8 +1266,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             bottom_row=candidate.bottom_row,
             image_width=gray.shape[1],
             image_height=gray.shape[0],
-            extend_to_bottom=yellow_visible
-            or candidate.bottom_width <= max(6, int(round(candidate.max_width * 0.12))),
+            extend_to_bottom=candidate.bottom_width <= max(6, int(round(candidate.max_width * 0.12))),
         )
         right_segment = segment_from_side(
             right_fit if right_visible else None,
@@ -1278,6 +1277,61 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             extend_to_bottom=False,
         )
         pink_fit = plateau_pink_fit if plateau_pink_fit is not None else top_fit
+        fit_left_segment = project_left_segment_from_fit(
+            left_fit if left_visible else None,
+            image_width=gray.shape[1],
+            image_height=gray.shape[0],
+            preferred_y=float(polygon_pink_segment[1]) if polygon_pink_segment is not None else None,
+        )
+
+        use_fit_left_segment = (
+            fit_left_segment is not None
+            and left_fit is not None
+            and (
+                polygon_left_segment is None
+                or left_fit.support_min <= float(polygon_left_segment[1]) + 4.0
+            )
+        )
+
+        polygon_left_length = segment_length(polygon_left_segment)
+        prefer_short_polygon_left = (
+            left_visible
+            and polygon_left_segment is not None
+            and candidate.left_clip_ratio >= 0.65
+            and 8.0 <= polygon_left_length <= 26.0
+            and polygon_left_segment[3] <= candidate.top_row + 18
+        )
+        force_fit_left_on_top_clipped = (
+            fit_left_segment is not None
+            and not pink_visible
+            and candidate.top_row <= 5
+        )
+
+        if prefer_short_polygon_left:
+            left_segment = polygon_left_segment
+        elif force_fit_left_on_top_clipped or use_fit_left_segment:
+            left_segment = fit_left_segment
+        elif left_visible and polygon_left_segment is not None:
+            left_segment = polygon_left_segment
+        used_fit_left_segment = bool(
+            fit_left_segment is not None
+            and left_segment is not None
+            and left_segment == fit_left_segment
+        )
+
+        if left_visible and polygon_left_segment is not None and left_segment is None:
+            left_segment = polygon_left_segment
+        if right_visible and polygon_right_segment is not None:
+            right_segment = polygon_right_segment
+        elif (
+            not right_visible
+            and polygon_right_segment is not None
+            and candidate.top_row >= gray.shape[0] - 15
+            and segment_length(polygon_right_segment) >= 8.0
+        ):
+            right_segment = polygon_right_segment
+            right_visible = True
+
         pink_segment = None
         if pink_visible:
             if left_segment is not None and right_segment is not None:
@@ -1313,81 +1367,17 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                         draw_right=right_visible,
                     )
 
-        yellow_segment = None
-        if yellow_visible:
-            if left_segment is not None and right_segment is not None and yellow_fit is not None:
-                left_bottom = (left_segment[2], left_segment[3])
-                right_bottom = (right_segment[2], right_segment[3])
-                left_hit = intersect_side_with_horizontal(left_fit, yellow_fit) if left_fit is not None else None
-                right_hit = intersect_side_with_horizontal(right_fit, yellow_fit) if right_fit is not None else None
-                if left_hit is not None:
-                    left_bottom = clip_point(left_hit[0], left_hit[1], gray.shape[1], gray.shape[0])
-                if right_hit is not None:
-                    right_bottom = clip_point(right_hit[0], right_hit[1], gray.shape[1], gray.shape[0])
-                yellow_segment = [left_bottom[0], left_bottom[1], right_bottom[0], right_bottom[1]]
-                left_segment[2], left_segment[3] = left_bottom
-                right_segment[2], right_segment[3] = right_bottom
-            else:
-                yellow_segment = segment_from_horizontal(
-                    yellow_fit,
-                    image_width=gray.shape[1],
-                    image_height=gray.shape[0],
-                    left_line=left_fit,
-                    right_line=right_fit,
-                    draw_left=left_visible,
-                    draw_right=right_visible,
-                )
-
-        if not yellow_visible:
-            fit_left_segment = project_left_segment_from_fit(
-                left_fit if left_visible else None,
-                image_width=gray.shape[1],
-                image_height=gray.shape[0],
-                preferred_y=float(polygon_pink_segment[1]) if polygon_pink_segment is not None else None,
+            prefer_polygon_pink_cap = (
+                candidate.top_row <= 20
+                and candidate.left_clip_ratio >= 0.35
+                and polygon_pink_span <= 15.0
             )
-
-            use_fit_left_segment = (
-                fit_left_segment is not None
-                and left_fit is not None
-                and (
-                    polygon_left_segment is None
-                    or left_fit.support_min <= float(polygon_left_segment[1]) + 4.0
-                )
-            )
-
-            prefer_short_polygon_left = (
-                left_visible
-                and polygon_left_segment is not None
-                and candidate.left_clip_ratio >= 0.65
-                and segment_length(polygon_left_segment) >= 10.0
-                and polygon_left_segment[3] <= candidate.top_row + 12
-            )
-
-            if prefer_short_polygon_left:
-                left_segment = polygon_left_segment
-            elif use_fit_left_segment:
-                left_segment = fit_left_segment
-            elif left_visible and polygon_left_segment is not None:
-                left_segment = polygon_left_segment
-
-            if left_visible and polygon_left_segment is not None:
-                if left_segment is None:
-                    left_segment = polygon_left_segment
-            if right_visible and polygon_right_segment is not None:
-                right_segment = polygon_right_segment
-            elif (
-                not right_visible
-                and polygon_right_segment is not None
-                and candidate.top_row >= gray.shape[0] - 15
-                and segment_length(polygon_right_segment) >= 8.0
-            ):
-                right_segment = polygon_right_segment
-                right_visible = True
             use_polygon_pink = (
                 pink_visible
                 and polygon_pink_segment is not None
                 and (
-                    top_fit is None
+                    prefer_polygon_pink_cap
+                    or top_fit is None
                     or abs(top_fit.slope) <= 0.08
                     or polygon_pink_span >= max(12.0, float(top_fit.span) * 0.75)
                 )
@@ -1407,7 +1397,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                         pink_segment[3] - 1,
                     ]
                 if left_segment is not None:
-                    if use_fit_left_segment:
+                    if used_fit_left_segment:
                         if allow_raised_polygon_pink and right_segment is not None:
                             pink_segment = [
                                 left_segment[0],
@@ -1421,6 +1411,18 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                         left_segment[0], left_segment[1] = pink_segment[0], pink_segment[1]
                 if right_segment is not None:
                     right_segment[0], right_segment[1] = pink_segment[2], pink_segment[3]
+
+        yellow_segment = None
+        if yellow_visible:
+            yellow_segment = segment_from_horizontal(
+                yellow_fit,
+                image_width=gray.shape[1],
+                image_height=gray.shape[0],
+                left_line=left_fit,
+                right_line=right_fit,
+                draw_left=False,
+                draw_right=False,
+            )
 
         top_clipped_side_override = (
             not pink_visible
