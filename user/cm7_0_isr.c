@@ -79,67 +79,6 @@ static uint16 g_fallen_standup_grace_ticks = 0U;
 
 #define FALLEN_STANDUP_GRACE_MS (1500U)
 
-static void control_profile_scene_scheduler_1ms(void)
-{
-    static float control_profile_last_target_speed = 0.0f;
-    ControlMode_e requested_mode = CONTROL_MODE_NORMAL;
-    float abs_target = fabsf(target_speed_set);
-    float abs_actual = fabsf(current_actual_speed);
-    float abs_last_target = fabsf(control_profile_last_target_speed);
-    uint8 hold_normal = 0U;
-    uint8 brake_scene = 0U;
-    uint8 accel_scene = 0U;
-
-    if ((g_motor_enable == 0U) ||
-        (g_fallen) ||
-        (jump_flag != 0U) ||
-        (g_is_push_mode != 0U) ||
-        (g_special_action_trigger != 0U) ||
-        (BumpyRoad_Is_Active() != 0U) ||
-        (VisionThreeStageControl_IsActive() != 0U) ||
-        (VisionBridgeTask_IsActive() != 0U) ||
-        (Bridge_Test_Triple_SingleSide_Is_Active()) ||
-        (g_pvc_control_enable != 0U)
-#if GNSS_NAV == 1
-        || (g_gps_special_action_trigger != 0U)
-#endif
-       )
-    {
-        hold_normal = 1U;
-    }
-
-    if (hold_normal == 0U)
-    {
-        if ((g_brake_active != 0U) ||
-            (g_reverse_brake_active != 0U) ||
-            ((target_speed_set * current_actual_speed) < 0.0f && (abs_actual > BRAKE_SPEED_DEADBAND)) ||
-            ((abs_last_target - abs_target) >= BRAKE_TARGET_DECEL_MIN) ||
-            ((abs_actual - abs_target) >= BRAKE_TARGET_DECEL_MIN))
-        {
-            brake_scene = 1U;
-        }
-        else if ((abs_target > ACCEL_FF_SPEED_DEADBAND) &&
-                 (((abs_target - abs_last_target) >= ACCEL_FF_TARGET_STEP_MIN) ||
-                  ((abs_target - abs_actual) >= ACCEL_FF_ERR_MIN)))
-        {
-            accel_scene = 1U;
-        }
-    }
-
-    if (brake_scene != 0U)
-    {
-        requested_mode = CONTROL_MODE_BRAKE;
-    }
-    else if (accel_scene != 0U)
-    {
-        requested_mode = CONTROL_MODE_ACCEL;
-    }
-
-    Control_Profile_RequestMode(requested_mode);
-    Control_Profile_Update1ms();
-    control_profile_last_target_speed = target_speed_set;
-}
-
 #if IMU_REFRESH_TEST_ENABLE
 #define IMU_REFRESH_TEST_TIME_MS (10000U)
 
@@ -486,7 +425,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         } //复现控制
     };//【测试】抬高双腿
 
-    control_profile_scene_scheduler_1ms();
+    Control_Profile_Update1ms();
 
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次，现改为9ms)
