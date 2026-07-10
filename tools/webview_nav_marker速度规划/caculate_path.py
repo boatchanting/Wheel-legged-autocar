@@ -37,9 +37,9 @@ U_TURN_DETECT_MODE = 0
 # 全局物理参数（与 chazhi.py 保持一致）
 # ============================================================
 INTERPOLATE_DIST = 50.0
-PATH_SPEED_MAX_MM_S = 3000.0
+PATH_SPEED_MAX_MM_S = 2000.0
 ENABLE_FINISH_SPRINT = True    # 开启终点冲刺：绕过最后一个桩桶后不减速并提速
-SPRINT_SPEED_MM_S = 4000.0     # 最后的冲刺极速
+SPRINT_SPEED_MM_S = 2000.0     # 最后的冲刺极速
 MAX_ACCEL_MM_S2 = 2000.0
 MAX_DECEL_MM_S2 = 1200.0
 MAX_LATERAL_ACCEL_MM_S2 = 1200.0
@@ -85,7 +85,6 @@ U_TURN_ARC_ANGLE_DEG = 0.0
 #   急刹倒车：直冲越过掉头区线后，用正向速度指令沿掉头后的路径倒车前进
 # ============================================================
 PLAN1_FAST_UTURN_MODE_JUMP = 1
-PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE = 2
 PLAN1_FAST_UTURN_ENABLE = 0
 PLAN1_FAST_UTURN_MODE = PLAN1_FAST_UTURN_MODE_JUMP
 PLAN1_FAST_UTURN_LINE_OVER_MM = 100.0
@@ -93,18 +92,13 @@ PLAN1_FAST_UTURN_MARK_WIDTH_MM = 1000.0
 PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR = 1.25
 
 FAST_UTURN_MODE_NAMES = {
-    PLAN1_FAST_UTURN_MODE_JUMP: "跳轮掉头",
-    PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE: "急刹倒车",
+    PLAN1_FAST_UTURN_MODE_JUMP: "极速差速自旋掉头",
 }
 
 FAST_UTURN_MODE_TOKENS = {
     "PLAN1_FAST_UTURN_MODE_JUMP": PLAN1_FAST_UTURN_MODE_JUMP,
     "PLAN1_FAST_UTURN_JUMP": PLAN1_FAST_UTURN_MODE_JUMP,
     "jump": PLAN1_FAST_UTURN_MODE_JUMP,
-    "PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE": PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE,
-    "PLAN1_FAST_UTURN_BRAKE_REVERSE": PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE,
-    "brake_reverse": PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE,
-    "brake-reverse": PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE,
 }
 
 POINT_TYPE_TOKENS: Dict[str, int] = {
@@ -1219,7 +1213,7 @@ def signed_curvature(points: List[RoutePoint]) -> np.ndarray:
     return curvature
 
 
-def apply_speed_plan(points: List[RoutePoint], reverse_start_idx: Optional[int] = None) -> None:
+def apply_speed_plan(points: List[RoutePoint]) -> None:
     """
     对轨迹点执行离线速度规划并写入 target_speed。
 
@@ -1273,11 +1267,6 @@ def apply_speed_plan(points: List[RoutePoint], reverse_start_idx: Optional[int] 
         planned_speed[i] = min(planned_speed[i], max_exit)
 
     target_speed_cmd = -planned_speed / SPEED_TO_MM_S
-    if reverse_start_idx is not None:
-        reverse_start_idx = max(0, min(int(reverse_start_idx), len(points) - 1))
-        for i in range(reverse_start_idx, len(points)):
-            target_speed_cmd[i] = planned_speed[i] / SPEED_TO_MM_S
-            points[i].target_yaw_deg = normalize_relative_yaw_deg(points[i].target_yaw_deg + 180.0)
 
     for point, speed_cmd in zip(points, target_speed_cmd):
         point.target_speed = float(speed_cmd)
@@ -1391,12 +1380,7 @@ def generate_route_plan(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float,
             action_idx,
         )
         final_action_idx = max(0, action_idx - drop_first_count)
-        reverse_start_idx = (
-            final_action_idx
-            if PLAN1_FAST_UTURN_MODE == PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE
-            else None
-        )
-        apply_speed_plan(final_points, reverse_start_idx=reverse_start_idx)
+        apply_speed_plan(final_points)
         method_name = f"极速掉头-{fast_uturn_mode_name(PLAN1_FAST_UTURN_MODE)}"
         return control_points, final_points, method_name
 
@@ -1634,8 +1618,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--fast-uturn-mode",
-        choices=["jump", "brake_reverse", "brake-reverse"],
-        help="极速掉头模式：jump=跳轮掉头，brake_reverse=急刹后倒车。",
+        choices=["jump"],
+        help="极速掉头模式：jump=极速差速自旋掉头。",
     )
     parser.add_argument(
         "--fast-uturn-over-mm",

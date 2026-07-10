@@ -29,45 +29,22 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #define PLAN1_FAST_UTURN_ENABLE 0
 #endif
 
-#ifndef PLAN1_FAST_UTURN_MODE_JUMP
-#define PLAN1_FAST_UTURN_MODE_JUMP 1
-#endif
-
-#ifndef PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE
-#define PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE 2
-#endif
-
-#ifndef PLAN1_FAST_UTURN_MODE
-#define PLAN1_FAST_UTURN_MODE PLAN1_FAST_UTURN_MODE_JUMP
-#endif
-
 /* 极速掉头运行参数只放在科目一运行模块里，方便试车时局部调整，不污染全局 sys_options.h。 */
 #define PLAN1_FAST_UTURN_INVALID_IDX              0xFFFFU
 #define PLAN1_FAST_UTURN_TRIGGER_DIST_MM          90.0f
-#define PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG        30.0f
+#define PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG        3.0f // 严格收紧接回阈值，确保自旋对准
 #define PLAN1_FAST_UTURN_KICK_STEER_DEG           42.0f
 #define PLAN1_FAST_UTURN_KICK_SPEED_CMD           0.0f
-#define PLAN1_FAST_UTURN_KICK_BRAKE_STRENGTH      0.75f
+#define PLAN1_FAST_UTURN_ALIGN_KP                 1.5f  // 闭环比例控制参数，解决过冲
 #define PLAN1_FAST_UTURN_KICK_MIN_TICKS           4U
 #define PLAN1_FAST_UTURN_KICK_TIMEOUT_TICKS       120U
-#define PLAN1_FAST_UTURN_BRAKE_STRENGTH           1.0f
-#define PLAN1_FAST_UTURN_BRAKE_LOW_SPEED_TH       60.0f
-#define PLAN1_FAST_UTURN_BRAKE_ALIGN_KP           0.65f
-#define PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG      36.0f
-#define PLAN1_FAST_UTURN_BRAKE_TIMEOUT_TICKS      180U
 #define PLAN1_FAST_UTURN_RECOVER_TICKS            30U
-
-#if (PLAN1_FAST_UTURN_MODE != PLAN1_FAST_UTURN_MODE_JUMP) && \
-    (PLAN1_FAST_UTURN_MODE != PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE)
-#error "PLAN1_FAST_UTURN_MODE must be PLAN1_FAST_UTURN_MODE_JUMP or PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE."
-#endif
 
 typedef enum
 {
     PLAN1_FAST_UTURN_STATE_IDLE = 0,
     PLAN1_FAST_UTURN_STATE_APPROACH,
     PLAN1_FAST_UTURN_STATE_KICK_TURN,
-    PLAN1_FAST_UTURN_STATE_BRAKE_TURN,
     PLAN1_FAST_UTURN_STATE_POST_TRACK,
     PLAN1_FAST_UTURN_STATE_DONE
 } Plan1FastUTurnState_e;
@@ -161,7 +138,6 @@ static void NavReplay_FastUTurn_ClearRuntime(void)
     s_fast_uturn_recover_ticks = 0U;
     g_plan1_fast_uturn_state = (uint8)PLAN1_FAST_UTURN_STATE_IDLE;
     g_plan1_fast_uturn_lead = (uint8)PLAN1_FAST_UTURN_LEAD_NONE;
-    Brake_NavHardStop_Reset();
 }
 
 /**
@@ -189,8 +165,7 @@ static void NavReplay_FastUTurn_InitFromRoute(void)
 
 static uint8 NavReplay_FastUTurn_IsActiveAction(void)
 {
-    return (uint8)((g_plan1_fast_uturn_state == (uint8)PLAN1_FAST_UTURN_STATE_KICK_TURN) ||
-                   (g_plan1_fast_uturn_state == (uint8)PLAN1_FAST_UTURN_STATE_BRAKE_TURN));
+    return (uint8)(g_plan1_fast_uturn_state == (uint8)PLAN1_FAST_UTURN_STATE_KICK_TURN);
 }
 
 /**
@@ -249,38 +224,20 @@ static float NavReplay_FastUTurn_GetPostPathYaw(void)
 static void NavReplay_FastUTurn_SelectLead(float path_yaw_deg, uint8 *lead, float *lead_err_deg)
 {
     float front_err = NormalizeAngle(path_yaw_deg - inertial_nav.relative_yaw);
-    float rear_yaw = NormalizeAngle(inertial_nav.relative_yaw + 180.0f);
-    float rear_err = NormalizeAngle(path_yaw_deg - rear_yaw);
-
-    if (fabsf(front_err) <= fabsf(rear_err))
-    {
-        *lead = (uint8)PLAN1_FAST_UTURN_LEAD_FRONT;
-        *lead_err_deg = front_err;
-    }
-    else
-    {
-        *lead = (uint8)PLAN1_FAST_UTURN_LEAD_REAR;
-        *lead_err_deg = rear_err;
-    }
+    *lead = (uint8)PLAN1_FAST_UTURN_LEAD_FRONT;
+    *lead_err_deg = front_err;
 }
 
 /**
  * @brief 判断是否已经能接回后段路径。
- * @note 不要求完全对准；车头或车尾任一端小于 30 度，就交回 LQR 边跑边修。
+ * @note 只判断车头，进入设定阈值即可切回 LQR。
  */
 static uint8 NavReplay_FastUTurn_SelectReadyLead(float path_yaw_deg, uint8 *lead)
 {
-    uint8 best_lead;
-    float best_err;
     float front_err = NormalizeAngle(path_yaw_deg - inertial_nav.relative_yaw);
-    float rear_yaw = NormalizeAngle(inertial_nav.relative_yaw + 180.0f);
-    float rear_err = NormalizeAngle(path_yaw_deg - rear_yaw);
+    *lead = (uint8)PLAN1_FAST_UTURN_LEAD_FRONT;
 
-    NavReplay_FastUTurn_SelectLead(path_yaw_deg, &best_lead, &best_err);
-    *lead = best_lead;
-
-    if ((fabsf(front_err) <= PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG) ||
-        (fabsf(rear_err) <= PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG))
+    if (fabsf(front_err) <= PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG)
     {
         return 1U;
     }
@@ -296,9 +253,9 @@ static float NavReplay_FastUTurn_SpeedForLead(float abs_speed, uint8 lead)
     }
 
 #if LQR_FORWARD_SPEED_IS_NEGATIVE
-    return (lead == (uint8)PLAN1_FAST_UTURN_LEAD_REAR) ? abs_speed : -abs_speed;
+    return -abs_speed;
 #else
-    return (lead == (uint8)PLAN1_FAST_UTURN_LEAD_REAR) ? -abs_speed : abs_speed;
+    return abs_speed;
 #endif
 }
 
@@ -315,7 +272,6 @@ static void NavReplay_FastUTurn_EnterPostTrack(uint8 lead)
     g_target_idx = s_fast_uturn_action_idx;
     g_current_point_type = NAV_POINT_PATH;
     g_special_action_trigger = 0U;
-    Brake_NavHardStop_Reset();
 
     /* 接回路径前清掉旧 LQR 误差和速度滤波，避免动作阶段的大转角拖到绕桩段。 */
     s_prev_err_degree = 0.0f;
@@ -351,12 +307,7 @@ static void NavReplay_FastUTurn_StartAction(void)
     g_special_action_trigger = 0U;
     /* NAV_POINT_JUMP 在这里已经被极速掉头内部消费掉，对外保持普通路径点，避免旧跳跃状态机误接管。 */
     g_current_point_type = NAV_POINT_PATH;
-
-#if PLAN1_FAST_UTURN_MODE == PLAN1_FAST_UTURN_MODE_BRAKE_REVERSE
-    g_plan1_fast_uturn_state = (uint8)PLAN1_FAST_UTURN_STATE_BRAKE_TURN;
-#else
     g_plan1_fast_uturn_state = (uint8)PLAN1_FAST_UTURN_STATE_KICK_TURN;
-#endif
 }
 
 /**
@@ -379,49 +330,22 @@ static uint8 NavReplay_FastUTurn_ProcessAction(void)
         s_fast_uturn_state_ticks++;
     }
 
-    if (g_plan1_fast_uturn_state == (uint8)PLAN1_FAST_UTURN_STATE_KICK_TURN)
-    {
-        NavReplay_FastUTurn_SelectLead(path_yaw, &lead, &lead_err);
-        err_degree = (lead_err >= 0.0f) ? PLAN1_FAST_UTURN_KICK_STEER_DEG : -PLAN1_FAST_UTURN_KICK_STEER_DEG;
-        target_speed_set = PLAN1_FAST_UTURN_KICK_SPEED_CMD;
-        Brake_NavHardStop_UpdateStrength(PLAN1_FAST_UTURN_KICK_BRAKE_STRENGTH);
-
-        if ((s_fast_uturn_state_ticks >= PLAN1_FAST_UTURN_KICK_MIN_TICKS) &&
-            (NavReplay_FastUTurn_SelectReadyLead(path_yaw, &lead) != 0U))
-        {
-            NavReplay_FastUTurn_EnterPostTrack(lead);
-            return 1U;
-        }
-
-        if (s_fast_uturn_state_ticks >= PLAN1_FAST_UTURN_KICK_TIMEOUT_TICKS)
-        {
-            NavReplay_FastUTurn_SelectLead(path_yaw, &lead, &lead_err);
-            NavReplay_FastUTurn_EnterPostTrack(lead);
-            return 1U;
-        }
-
-        s_prev_err_degree = err_degree;
-        s_prev_speed_set = target_speed_set;
-        return 1U;
-    }
-
     NavReplay_FastUTurn_SelectLead(path_yaw, &lead, &lead_err);
-    target_speed_set = NAV_SPEED_STOP;
-    Brake_NavHardStop_UpdateStrength(PLAN1_FAST_UTURN_BRAKE_STRENGTH);
+    
+    // 闭环比例控制：差速自旋
+    err_degree = Float_Constrain(PLAN1_FAST_UTURN_ALIGN_KP * lead_err,
+                                 -PLAN1_FAST_UTURN_KICK_STEER_DEG,
+                                 PLAN1_FAST_UTURN_KICK_STEER_DEG);
+    target_speed_set = PLAN1_FAST_UTURN_KICK_SPEED_CMD;
 
-    /* 急刹过程中同步给转角，让车一边减速一边甩向后段路径，不等完全刹停。 */
-    err_degree = Float_Constrain(PLAN1_FAST_UTURN_BRAKE_ALIGN_KP * lead_err,
-                                 -PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG,
-                                 PLAN1_FAST_UTURN_BRAKE_ALIGN_MAX_DEG);
-
-    if (NavReplay_FastUTurn_SelectReadyLead(path_yaw, &lead) != 0U)
+    if ((s_fast_uturn_state_ticks >= PLAN1_FAST_UTURN_KICK_MIN_TICKS) &&
+        (NavReplay_FastUTurn_SelectReadyLead(path_yaw, &lead) != 0U))
     {
         NavReplay_FastUTurn_EnterPostTrack(lead);
         return 1U;
     }
 
-    if ((s_fast_uturn_state_ticks >= PLAN1_FAST_UTURN_BRAKE_TIMEOUT_TICKS) &&
-        (fabsf(current_actual_speed) <= PLAN1_FAST_UTURN_BRAKE_LOW_SPEED_TH))
+    if (s_fast_uturn_state_ticks >= PLAN1_FAST_UTURN_KICK_TIMEOUT_TICKS)
     {
         NavReplay_FastUTurn_SelectLead(path_yaw, &lead, &lead_err);
         NavReplay_FastUTurn_EnterPostTrack(lead);
@@ -1087,7 +1011,6 @@ void NavReplay_Process(void)
         if (g_plan1_fast_uturn_state != (uint8)PLAN1_FAST_UTURN_STATE_IDLE)
         {
             g_plan1_fast_uturn_state = (uint8)PLAN1_FAST_UTURN_STATE_DONE;
-            Brake_NavHardStop_Reset();
         }
         return;
     }
