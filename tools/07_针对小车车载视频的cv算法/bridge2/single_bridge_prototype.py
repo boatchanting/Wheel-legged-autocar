@@ -906,6 +906,23 @@ def estimate_narrow_top_cap_y(
     return float(y)
 
 
+def estimate_cap_y_from_target_span(
+    left_line: LineFit | None,
+    right_line: LineFit | None,
+    *,
+    target_span: float,
+) -> float | None:
+    if left_line is None or right_line is None:
+        return None
+    convergence = right_line.slope - left_line.slope
+    if convergence <= 0.35:
+        return None
+    y = (target_span - (right_line.intercept - left_line.intercept)) / convergence
+    if not np.isfinite(y):
+        return None
+    return float(y)
+
+
 def collect_left_chain(
     points: np.ndarray,
     start_index: int,
@@ -1028,11 +1045,11 @@ def polygon_guided_segments(
         left_neighbor_index = (left_neighbor_index + left_step) % points.shape[0]
 
     left_segment = None
+    left_chain = collect_left_chain(points, left_top_index, left_neighbor_index, left_step)
     if len(top_chain) <= 2:
-        left_points = collect_left_chain(points, left_top_index, left_neighbor_index, left_step)
+        left_points = left_chain
     else:
         left_points = np.vstack([left_top, points[left_neighbor_index]])
-    left_chain = left_points
     left_fit = fit_x_from_y_points(left_points)
     if left_fit is not None:
         left_segment = project_segment_to_frame(
@@ -1360,7 +1377,39 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         )
         base_left_segment = left_segment.copy() if left_segment is not None else None
         base_right_segment = right_segment.copy() if right_segment is not None else None
-        pink_fit = plateau_pink_fit if plateau_pink_fit is not None else top_fit
+        use_sloped_fit_cap = (
+            pink_visible
+            and left_fit is not None
+            and right_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and not yellow_visible
+            and candidate.left_clip_ratio < 0.1
+            and 10 <= candidate.top_row <= 20
+            and plateau_pink_fit.span <= 6.0
+            and polygon_pink_span <= 10.0
+            and top_fit.slope >= 0.22
+            and right_fit.mean_value >= gray.shape[1] - 15.0
+        )
+        use_negative_sloped_fit_cap = (
+            pink_visible
+            and left_fit is not None
+            and right_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and not yellow_visible
+            and candidate.left_clip_ratio < 0.1
+            and candidate.right_clip_ratio < 0.1
+            and 8 <= candidate.top_row <= 15
+            and candidate.bottom_width >= max(40, int(round(candidate.max_width * 0.75)))
+            and plateau_pink_fit.span <= 6.5
+            and polygon_pink_span <= 6.0
+            and top_fit.span >= 14.0
+            and top_fit.slope <= -0.18
+        )
+        pink_fit = top_fit if (use_sloped_fit_cap or use_negative_sloped_fit_cap) and top_fit is not None else (
+            plateau_pink_fit if plateau_pink_fit is not None else top_fit
+        )
         fit_left_segment = project_left_segment_from_fit(
             left_fit if left_visible else None,
             image_width=gray.shape[1],
@@ -1461,6 +1510,104 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             and top_fit.slope >= 0.05
             and left_fit.mean_value <= 5.0
         )
+        use_prepare_enter_flat_cap = (
+            pink_visible
+            and yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and plateau_pink_fit is not None
+            and 7 <= candidate.top_row <= 12
+            and candidate.max_width <= 55
+            and candidate.bottom_width <= max(6, int(round(candidate.max_width * 0.15)))
+            and plateau_pink_fit.span <= 7.0
+            and polygon_pink_span >= 7.0
+            and top_fit is not None
+            and top_fit.slope >= 0.2
+            and (right_fit.slope - left_fit.slope) >= 1.5
+        )
+        use_late_flat_cap_lift = (
+            pink_visible
+            and not yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and plateau_pink_fit is not None
+            and 18 <= candidate.top_row <= 24
+            and candidate.left_clip_ratio >= 0.3
+            and plateau_pink_fit.span <= 6.0
+            and 11.0 <= polygon_pink_span <= 14.0
+            and left_fit.slope <= -0.8
+            and 0.55 <= right_fit.slope <= 0.95
+        )
+        use_tiny_positive_cap_alignment = (
+            pink_visible
+            and not yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and polygon_left_top is not None
+            and polygon_right_top is not None
+            and candidate.left_clip_ratio >= 0.35
+            and candidate.top_row <= 10
+            and polygon_pink_span <= 4.0
+            and plateau_pink_fit.span <= 7.0
+            and top_fit.slope >= 0.2
+        )
+        use_right_clipped_left_chain_projection = (
+            pink_visible
+            and left_fit is not None
+            and polygon_left_chain is not None
+            and polygon_left_top is not None
+            and left_fit.mean_value >= gray.shape[1] - 15.0
+            and candidate.right_clip_ratio >= 0.35
+            and candidate.bottom_width <= max(4, int(round(candidate.max_width * 0.08)))
+            and candidate.top_row <= 12
+            and polygon_pink_span >= 18.0
+        )
+        use_flat_border_right_cap = (
+            pink_visible
+            and right_fit is not None
+            and polygon_right_segment is not None
+            and polygon_right_top is not None
+            and candidate.top_row >= 17
+            and candidate.left_clip_ratio < 0.1
+            and candidate.right_clip_ratio < 0.1
+            and abs(right_fit.slope) <= 0.22
+            and right_fit.mean_value >= gray.shape[1] - 6.0
+            and 13.0 <= polygon_pink_span <= 15.0
+            and polygon_right_segment[0] <= 82
+        )
+        use_small_top_clipped_polygon_sides = (
+            not pink_visible
+            and yellow_visible
+            and polygon_left_segment is not None
+            and polygon_right_segment is not None
+            and candidate.top_row <= 1
+            and candidate.max_width <= 46
+            and candidate.bottom_width <= max(8, int(round(candidate.max_width * 0.18)))
+            and polygon_pink_span <= 5.0
+            and candidate.left_clip_ratio < 0.1
+            and candidate.right_clip_ratio < 0.1
+        )
+        use_broad_descending_yellow_trim = (
+            yellow_visible
+            and yellow_fit is not None
+            and candidate.top_row <= 14
+            and candidate.max_width >= 70
+            and candidate.bottom_width >= 10
+            and yellow_fit.slope <= -0.16
+            and yellow_fit.border_touch_ratio <= 0.2
+        )
+        use_narrow_bottom_descending_yellow_expand = (
+            yellow_visible
+            and yellow_fit is not None
+            and not pink_visible
+            and candidate.top_row <= 4
+            and candidate.max_width >= 70
+            and candidate.bottom_width <= 4
+            and yellow_fit.slope <= -0.18
+            and yellow_fit.border_touch_ratio <= 0.1
+        )
 
         if prefer_short_polygon_left:
             left_segment = polygon_left_segment
@@ -1540,6 +1687,8 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             )
             use_polygon_pink = (
                 pink_visible
+                and not use_sloped_fit_cap
+                and not use_negative_sloped_fit_cap
                 and polygon_pink_segment is not None
                 and (
                     prefer_polygon_pink_cap
@@ -1736,6 +1885,105 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                 )
                 pink_segment = [pink_left[0], pink_left[1], pink_right[0], pink_right[1]]
 
+            if (
+                use_prepare_enter_flat_cap
+                and fit_left_segment is not None
+                and fit_right_segment is not None
+                and left_fit is not None
+                and right_fit is not None
+                and plateau_pink_fit is not None
+            ):
+                cap_y = estimate_cap_y_from_target_span(
+                    left_fit,
+                    right_fit,
+                    target_span=float(np.clip(float(plateau_pink_fit.span) + 2.0, 8.0, 9.0)),
+                )
+                if cap_y is not None and 5.0 <= cap_y <= 9.5:
+                    left_segment = fit_left_segment.copy()
+                    right_segment = fit_right_segment.copy()
+                    left_top = clip_point(left_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    right_top = clip_point(right_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    left_segment[0], left_segment[1] = left_top
+                    right_segment[0], right_segment[1] = right_top
+                    pink_segment = [left_top[0], left_top[1], right_top[0], right_top[1]]
+
+            if (
+                use_late_flat_cap_lift
+                and fit_left_segment is not None
+                and fit_right_segment is not None
+                and left_fit is not None
+                and right_fit is not None
+            ):
+                cap_y = estimate_cap_y_from_target_span(
+                    left_fit,
+                    right_fit,
+                    target_span=8.0,
+                )
+                if cap_y is not None and 16.0 <= cap_y <= float(candidate.top_row) - 2.0:
+                    left_segment = fit_left_segment.copy()
+                    right_segment = fit_right_segment.copy()
+                    left_top = clip_point(left_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    right_top = clip_point(right_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    left_segment[0], left_segment[1] = left_top
+                    right_segment[0], right_segment[1] = right_top
+                    pink_segment = [left_top[0], left_top[1], right_top[0], right_top[1]]
+
+            if (
+                use_tiny_positive_cap_alignment
+                and fit_left_segment is not None
+                and fit_right_segment is not None
+                and left_fit is not None
+                and right_fit is not None
+                and polygon_left_top is not None
+            ):
+                cap_y = float(polygon_left_top[1])
+                left_segment = fit_left_segment.copy()
+                right_segment = fit_right_segment.copy()
+                left_top = clip_point(left_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                right_top = clip_point(right_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                left_segment[0], left_segment[1] = left_top
+                right_segment[0], right_segment[1] = right_top
+                pink_segment = [left_top[0] + 1, left_top[1], right_top[0] - 1, right_top[1]]
+
+            if (
+                use_right_clipped_left_chain_projection
+                and right_segment is not None
+                and polygon_left_chain is not None
+                and polygon_left_top is not None
+            ):
+                chain_fit = fit_x_from_y_points(polygon_left_chain)
+                if chain_fit is not None:
+                    left_segment = project_segment_to_frame(
+                        polygon_left_top,
+                        chain_fit[0],
+                        chain_fit[1],
+                        side="left",
+                        image_width=gray.shape[1],
+                        image_height=gray.shape[0],
+                    )
+                    if left_segment is not None:
+                        left_top = clip_point(float(polygon_left_top[0]), float(polygon_left_top[1]), gray.shape[1], gray.shape[0])
+                        left_segment[0], left_segment[1] = left_top
+                        pink_segment = [left_top[0], left_top[1], right_segment[0] - 1, left_top[1]]
+
+            if use_flat_border_right_cap and left_segment is not None and right_segment is not None:
+                left_top = clip_point(float(left_segment[0]), float(left_segment[1]) - 1.0, gray.shape[1], gray.shape[0])
+                left_segment[0], left_segment[1] = left_top
+                right_top = clip_point(
+                    float(polygon_right_top[0]) + 1.0,
+                    float(polygon_right_top[1]) - 2.0,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_end = clip_point(
+                    float(polygon_right_segment[2]),
+                    float(polygon_right_segment[3]) - 4.0,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_segment = [right_top[0], right_top[1], right_end[0], right_end[1]]
+                pink_segment = [left_top[0], left_top[1], right_top[0], left_top[1]]
+
             if use_short_clipped_left_cap and left_segment is not None and right_segment is not None:
                 short_count = min(4, polygon_left_chain.shape[0])
                 short_fit = fit_x_from_y_points(polygon_left_chain[:short_count])
@@ -1765,6 +2013,10 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                     )
                     pink_segment = [pink_left[0], pink_left[1], pink_right[0], pink_right[1]]
 
+        if use_small_top_clipped_polygon_sides:
+            left_segment = polygon_left_segment.copy() if polygon_left_segment is not None else left_segment
+            right_segment = polygon_right_segment.copy() if polygon_right_segment is not None else right_segment
+
         yellow_segment = None
         if yellow_visible:
             yellow_segment = segment_from_horizontal(
@@ -1776,6 +2028,28 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                 draw_left=False,
                 draw_right=False,
             )
+            if use_broad_descending_yellow_trim and yellow_segment is not None:
+                left_x = min(gray.shape[1] - 1, yellow_segment[0] + 4)
+                right_x = min(gray.shape[1] - 1, yellow_segment[2] + 1)
+                yellow_left = clip_point(float(left_x), yellow_fit.y_at_x(float(left_x)), gray.shape[1], gray.shape[0])
+                yellow_right = clip_point(float(right_x), yellow_fit.y_at_x(float(right_x)), gray.shape[1], gray.shape[0])
+                yellow_segment = [yellow_left[0], yellow_left[1], yellow_right[0], yellow_right[1]]
+            if use_narrow_bottom_descending_yellow_expand and yellow_segment is not None:
+                left_x = max(0, yellow_segment[0] - 4)
+                right_x = min(gray.shape[1] - 1, yellow_segment[2] + 1)
+                yellow_left = clip_point(
+                    float(left_x),
+                    yellow_fit.y_at_x(float(left_x)) + 0.5,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                yellow_right = clip_point(
+                    float(right_x),
+                    yellow_fit.y_at_x(float(right_x)) + 0.5,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                yellow_segment = [yellow_left[0], yellow_left[1], yellow_right[0], yellow_right[1]]
 
         top_clipped_side_override = (
             not pink_visible
