@@ -115,6 +115,7 @@ class BridgeResult:
     right_line_segment: list[int] | None
     pink_line_segment: list[int] | None
     yellow_line_segment: list[int] | None
+    center_line_segment: list[int] | None  # <-- 新增中线字段
 
 
 def otsu_threshold(image: np.ndarray, search_limit: int = 180) -> int:
@@ -1290,6 +1291,57 @@ def infer_pvc_state(candidate: PvcCandidate | None, image_height: int, yellow_vi
     return True, STATE_ON_PVC
 
 
+def compute_center_line(
+    left_segment: list[int] | None,
+    right_segment: list[int] | None,
+    image_width: int,
+    image_height: int,
+) -> list[int] | None:
+    """根据左右线段计算中线，限定在二者的垂直重叠区域内。"""
+    if left_segment is None or right_segment is None:
+        return None
+
+    # 获取 y 坐标（y0 上端，y1 下端）
+    l_y0, l_y1 = left_segment[1], left_segment[3]
+    r_y0, r_y1 = right_segment[1], right_segment[3]
+
+    # 确保 y0 <= y1
+    if l_y0 > l_y1:
+        l_y0, l_y1 = l_y1, l_y0
+    if r_y0 > r_y1:
+        r_y0, r_y1 = r_y1, r_y0
+
+    top_y = max(l_y0, r_y0)
+    bottom_y = min(l_y1, r_y1)
+
+    if top_y >= bottom_y:
+        return None  # 没有重叠区域
+
+    # 在重叠区域的两端线性插值 x 坐标
+    def interp_x(seg: list[int], y: float) -> float:
+        x0, y0, x1, y1 = seg
+        if y0 == y1:
+            return x0
+        t = (y - y0) / (y1 - y0)
+        return x0 + t * (x1 - x0)
+
+    lx_top = interp_x(left_segment, top_y)
+    rx_top = interp_x(right_segment, top_y)
+    lx_bot = interp_x(left_segment, bottom_y)
+    rx_bot = interp_x(right_segment, bottom_y)
+
+    mid_x_top = (lx_top + rx_top) / 2.0
+    mid_x_bot = (lx_bot + rx_bot) / 2.0
+
+    cx0, cy0 = clip_point(mid_x_top, top_y, image_width, image_height)
+    cx1, cy1 = clip_point(mid_x_bot, bottom_y, image_width, image_height)
+
+    # 如果两点重合则不画
+    if cx0 == cx1 and cy0 == cy1:
+        return None
+    return [cx0, cy0, cx1, cy1]
+
+
 def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Image.Image]:
     image_path = FRAMES_DIR / item["video"] / item["frame"]
     with Image.open(image_path) as image:
@@ -2324,6 +2376,15 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
 
         pvc_found, pvc_state = infer_pvc_state(candidate, gray.shape[0], yellow_visible)
 
+        # ---------- 计算中线 ----------
+        center_line_segment = compute_center_line(
+            left_segment if left_visible else None,
+            right_segment if right_visible else None,
+            gray.shape[1],
+            gray.shape[0],
+        )
+        # ------------------------------
+
         threshold = candidate.threshold
         area = candidate.area
         area_ratio = round(candidate.area_ratio, 4)
@@ -2345,6 +2406,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         right_segment = None
         pink_segment = None
         yellow_segment = None
+        center_line_segment = None  # <-- 无候选时中线置空
         top_fit = None
         plateau_pink_fit = None
         threshold = candidate.threshold if candidate is not None else -1
@@ -2402,6 +2464,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         right_line_segment=right_segment,
         pink_line_segment=pink_segment,
         yellow_line_segment=yellow_segment,
+        center_line_segment=center_line_segment,  # <-- 填入中线
     )
 
     draw_image = render_draw(gray, result)
@@ -2418,6 +2481,7 @@ def render_draw(gray: np.ndarray, result: BridgeResult) -> Image.Image:
         (result.right_line_segment, (0, 150, 255)),
         (result.pink_line_segment, (255, 105, 180)),
         (result.yellow_line_segment, (255, 220, 0)),
+        (result.center_line_segment, (0, 255, 0)),  # 绿色中线
     ]:
         if segment is None:
             continue
@@ -2511,6 +2575,7 @@ def write_summary_csv(path: Path, results: list[BridgeResult]) -> None:
         "right_line_segment",
         "pink_line_segment",
         "yellow_line_segment",
+        "center_line_segment",  # 新增
     ]
     with path.open("w", encoding="utf-8-sig", newline="") as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -2535,12 +2600,15 @@ def write_readme(output_dir: Path) -> None:
             "蓝色 = 右线",
             "粉色 = 上边线",
             "黄色 = 下边线",
+            "绿色 = 中线（由左右线计算得出）",
             "",
             "抑制规则：",
             "黄色贴底则不画。",
             "粉色贴顶则不画。",
             "左线贴左边且近似竖直则不画。",
             "右线贴右边且近似竖直则不画。",
+            "",
+            "中线仅在左右线均可见时计算，取二者垂直重叠区域的中点连线。",
         ]
     )
     (output_dir / "README.txt").write_text(readme, encoding="utf-8")
