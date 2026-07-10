@@ -19,6 +19,11 @@ extern int32 current_duty_lf, current_duty_rf, current_duty_rr, current_duty_lr;
  * @brief 初始化舵机执行器的内部状态
  */
 void servo_executor_init(void);
+void servo_executor_set_profile(float acc_limit_cfg,
+                                float dec_limit_cfg,
+                                float boost_from_speed_cfg,
+                                float boost_from_error_cfg,
+                                float boost_max_cfg);
 
 /**
  * @brief 舵机执行器更新函数 (应在1ms中断中调用)
