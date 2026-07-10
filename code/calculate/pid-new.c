@@ -15,8 +15,8 @@ PID_Param_t pid_turn_gyro = {TURN_GYR_KP, TURN_GYR_KI, TURN_GYR_KD, TURN_GYR_MAX
 PID_Param_t pid_roll = {ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_MECH_ZERO, 0,0,0,0,0};//横滚环初始化参数
 
 
-volatile ControlMode_e g_control_mode_requested = CONTROL_MODE_NORMAL;
-volatile ControlMode_e g_control_mode_applied = CONTROL_MODE_NORMAL;
+volatile ControlMode_e g_control_mode_requested = CONTROL_MODE_NORMAL; //外部调用(只在导航给就行，其他地方别写，放置冲突)给的目标pid场景
+volatile ControlMode_e g_control_mode_applied = CONTROL_MODE_NORMAL;//内部状态，实际应用的pid场景，从外部请求过来后，经过平滑切换，再赋值给这个变量
 ControlProfile_t g_control_profile_active;
 static ControlProfile_t g_control_profile_target;
 
@@ -46,7 +46,7 @@ static const ControlProfile_t g_control_profile_accel = {
     100.0f, 260.0f, 620.0f, 850.0f,
     13.0f, 3600.0f, 1100.0f, 650.0f,
     22.0f, 16.0f, 0.028f, 0.013f, 95.0f
-};
+};// 【优化点】这些参数是ai随便写的，需要调整，以及可以扩展更多的场景
 
 static const ControlProfile_t g_control_profile_brake = {
     -4.8f, SERVO_SPEED_KI, -0.22f, 2300.0f, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
@@ -60,7 +60,7 @@ static const ControlProfile_t g_control_profile_brake = {
     150.0f, 360.0f, 900.0f, 900.0f,
     6.0f, 1800.0f, 450.0f, 900.0f,
     14.0f, 28.0f, 0.018f, 0.015f, 80.0f
-};
+};// 【优化点】这些参数是ai随便写的，需要调整，以及可以扩展更多的场景
 
 volatile float target_speed_set = 0.0f;
 
