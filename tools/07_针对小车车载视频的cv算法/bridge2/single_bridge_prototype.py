@@ -7,6 +7,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 from scipy import ndimage
@@ -489,11 +490,13 @@ def fit_one_side(mask: np.ndarray, side: str) -> LineFit | None:
         border_limit = 1.5
         unclipped_rows = rows[left[rows] > 1]
         prefer = "left"
+        slope_range = (-2.5, 0.25)
     else:
         dependent = right
         border_limit = mask.shape[1] - 2.5
         unclipped_rows = rows[right[rows] < mask.shape[1] - 2]
         prefer = "right"
+        slope_range = (0.15, 2.5)
 
     use_rows = rows
     if unclipped_rows.size >= 6 and float(unclipped_rows.max() - unclipped_rows.min()) >= 10.0:
@@ -503,7 +506,7 @@ def fit_one_side(mask: np.ndarray, side: str) -> LineFit | None:
         use_rows,
         dependent[use_rows],
         model="x_from_y",
-        slope_range=(-2.5, 2.5),
+        slope_range=slope_range,
         residual_threshold=1.35,
         min_inliers=6,
         min_span=10.0,
@@ -628,12 +631,493 @@ def top_anchor_point(mask: np.ndarray, side: str) -> tuple[int, int] | None:
     return x, y
 
 
+def build_annotation_mask(gray: np.ndarray, candidate: PvcCandidate) -> np.ndarray:
+    annotation_mask = candidate.outer_mask.copy()
+    threshold_map = build_threshold_map(gray.shape[1], candidate.threshold)
+    mask = gray > threshold_map[np.newaxis, :]
+    mask = ndimage.binary_closing(mask, structure=np.ones((3, 3), dtype=bool))
+    mask = ndimage.binary_opening(mask, structure=np.ones((2, 2), dtype=bool))
+
+    labels, count = ndimage.label(mask)
+    rows, cols = np.where(candidate.outer_mask)
+    if rows.size == 0:
+        return annotation_mask
+
+    min_x = int(cols.min())
+    max_x = int(cols.max())
+    top_row = int(rows.min())
+    merged_cap = False
+
+    for label in range(1, count + 1):
+        component = labels == label
+        area = int(component.sum())
+        if area < 8 or area > 200:
+            continue
+
+        comp_rows, comp_cols = np.where(component)
+        if comp_rows.size == 0:
+            continue
+
+        comp_top = int(comp_rows.min())
+        comp_bottom = int(comp_rows.max())
+        comp_left = int(comp_cols.min())
+        comp_right = int(comp_cols.max())
+        overlap = max(0, min(max_x + 4, comp_right) - max(min_x - 4, comp_left) + 1)
+
+        if comp_top < top_row and comp_bottom <= top_row + 1 and top_row - comp_bottom <= 10 and overlap >= 5:
+            annotation_mask |= component
+            merged_cap = True
+
+    if merged_cap:
+        hull_mask = convex_hull_mask(annotation_mask)
+        if hull_mask.any():
+            annotation_mask = hull_mask
+    return annotation_mask
+
+
+def approximate_mask_polygon(mask: np.ndarray, epsilon_ratio: float = 0.003) -> np.ndarray | None:
+    contour_mask = (mask.astype(np.uint8) * 255)
+    contours, _ = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None
+
+    contour = max(contours, key=cv2.contourArea)
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter <= 0.0:
+        return None
+
+    points = cv2.approxPolyDP(contour, epsilon_ratio * perimeter, True).reshape(-1, 2).astype(np.float64)
+    if points.shape[0] < 4:
+        return None
+    return points
+
+
+def find_top_chain(points: np.ndarray, y_tolerance: float = 2.0) -> list[int] | None:
+    if points.shape[0] < 2:
+        return None
+
+    eligible = points[:, 1] <= float(points[:, 1].min() + y_tolerance)
+    if int(eligible.sum()) < 2:
+        eligible = points[:, 1] <= float(points[:, 1].min() + 3.0)
+    if int(eligible.sum()) < 2:
+        return None
+
+    count = points.shape[0]
+    best_chain: list[int] | None = None
+    best_span = -1.0
+    run_start: int | None = None
+
+    for offset in range(count * 2):
+        index = offset % count
+        if eligible[index]:
+            if run_start is None:
+                run_start = offset
+            continue
+
+        if run_start is None:
+            continue
+
+        run_length = offset - run_start
+        if 1 < run_length <= count:
+            chain = [value % count for value in range(run_start, offset)]
+            span = float(points[chain, 0].max() - points[chain, 0].min())
+            if span > best_span:
+                best_span = span
+                best_chain = chain
+        run_start = None
+
+    if run_start is not None:
+        run_length = count * 2 - run_start
+        if 1 < run_length <= count:
+            chain = [value % count for value in range(run_start, count * 2)]
+            span = float(points[chain, 0].max() - points[chain, 0].min())
+            if span > best_span:
+                best_chain = chain
+
+    return best_chain
+
+
+def angle_between_vectors(previous: np.ndarray, current: np.ndarray) -> float:
+    previous_norm = float(np.linalg.norm(previous))
+    current_norm = float(np.linalg.norm(current))
+    if previous_norm <= 1e-6 or current_norm <= 1e-6:
+        return 0.0
+
+    cosine = float(np.clip(np.dot(previous, current) / (previous_norm * current_norm), -1.0, 1.0))
+    return float(np.degrees(np.arccos(cosine)))
+
+
+def fit_x_from_y_points(points: np.ndarray) -> tuple[float, float] | None:
+    if points.shape[0] < 2:
+        return None
+
+    ys = points[:, 1].astype(np.float64)
+    xs = points[:, 0].astype(np.float64)
+    slope, intercept = np.polyfit(ys, xs, 1)
+    return float(slope), float(intercept)
+
+
+def project_segment_to_frame(
+    start: np.ndarray,
+    slope: float,
+    intercept: float,
+    *,
+    side: str,
+    image_width: int,
+    image_height: int,
+    tiny_neighbor: np.ndarray | None = None,
+) -> list[int]:
+    start_x = float(start[0])
+    start_y = float(start[1])
+
+    if tiny_neighbor is not None:
+        dx = float(tiny_neighbor[0] - start_x)
+        dy = float(tiny_neighbor[1] - start_y)
+        if side == "right" and start_x >= image_width - 7 and np.hypot(dx, dy) <= 4.5:
+            x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+            x1, y1 = clip_point(tiny_neighbor[0], tiny_neighbor[1], image_width, image_height)
+            return [x0, y0, x1, y1]
+
+    if abs(slope) <= 1e-6:
+        end_x = start_x
+        end_y = float(image_height - 1)
+    else:
+        end_y = float(image_height - 1)
+        end_x = slope * end_y + intercept
+
+    if side == "left":
+        if end_x >= 2.0:
+            x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+            x1, y1 = clip_point(end_x, end_y, image_width, image_height)
+            return [x0, y0, x1, y1]
+
+        border_y = float((0.0 - intercept) / slope) if abs(slope) > 1e-6 else start_y
+        x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+        x1, y1 = clip_point(0.0, border_y, image_width, image_height)
+        return [x0, y0, x1, y1]
+
+    if end_x <= image_width - 3.0:
+        x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+        x1, y1 = clip_point(end_x, end_y, image_width, image_height)
+        return [x0, y0, x1, y1]
+
+    border_x = float(image_width - 1)
+    border_y = float((border_x - intercept) / slope) if abs(slope) > 1e-6 else start_y
+    x0, y0 = clip_point(start_x, start_y, image_width, image_height)
+    x1, y1 = clip_point(border_x, border_y, image_width, image_height)
+    return [x0, y0, x1, y1]
+
+
+def project_left_segment_from_fit(
+    line: LineFit | None,
+    *,
+    image_width: int,
+    image_height: int,
+    preferred_y: float | None = None,
+) -> list[int] | None:
+    if line is None:
+        return None
+
+    start_y = float(line.support_min)
+    if preferred_y is not None and line.support_min - 1.0 <= preferred_y <= line.support_max + 4.0:
+        start_y = float(preferred_y)
+
+    start = np.array([line.x_at_y(start_y), start_y], dtype=np.float64)
+    return project_segment_to_frame(
+        start,
+        line.slope,
+        line.intercept,
+        side="left",
+        image_width=image_width,
+        image_height=image_height,
+    )
+
+
+def project_right_segment_from_fit(
+    line: LineFit | None,
+    *,
+    image_width: int,
+    image_height: int,
+    preferred_y: float | None = None,
+) -> list[int] | None:
+    if line is None:
+        return None
+
+    start_y = float(line.support_min)
+    if preferred_y is not None and line.support_min - 1.0 <= preferred_y <= line.support_max + 4.0:
+        start_y = float(preferred_y)
+
+    start = np.array([line.x_at_y(start_y), start_y], dtype=np.float64)
+    return project_segment_to_frame(
+        start,
+        line.slope,
+        line.intercept,
+        side="right",
+        image_width=image_width,
+        image_height=image_height,
+    )
+
+
+def segment_length(segment: list[int] | None) -> float:
+    if segment is None:
+        return 0.0
+    dx = float(segment[2] - segment[0])
+    dy = float(segment[3] - segment[1])
+    return float(np.hypot(dx, dy))
+
+
+def estimate_narrow_top_cap_y(
+    left_line: LineFit | None,
+    right_line: LineFit | None,
+    *,
+    plateau_pink_fit: LineFit | None,
+    polygon_pink_span: float,
+    candidate_top_row: int,
+    candidate_left_clip_ratio: float,
+    current_cap_y: float,
+    image_width: int,
+) -> float | None:
+    if left_line is None or right_line is None or plateau_pink_fit is None:
+        return None
+    if candidate_top_row < 7 or candidate_top_row > 16:
+        return None
+    if candidate_left_clip_ratio < 0.12:
+        return None
+    if plateau_pink_fit.span > 10.0 or polygon_pink_span > 15.0:
+        return None
+    if right_line.mean_value > image_width - 27.5:
+        return None
+
+    convergence = right_line.slope - left_line.slope
+    if convergence < 1.05:
+        return None
+
+    observed_span = plateau_pink_fit.span
+    if polygon_pink_span > 0.0:
+        observed_span = min(observed_span, polygon_pink_span)
+    target_span = float(np.clip(observed_span, 7.0, 9.0))
+    y = (target_span - (right_line.intercept - left_line.intercept)) / convergence
+    if not np.isfinite(y):
+        return None
+    if y < 0.0 or y > current_cap_y - 2.0:
+        return None
+    if y > min(left_line.support_min, right_line.support_min) + 2.5:
+        return None
+    return float(y)
+
+
+def estimate_cap_y_from_target_span(
+    left_line: LineFit | None,
+    right_line: LineFit | None,
+    *,
+    target_span: float,
+) -> float | None:
+    if left_line is None or right_line is None:
+        return None
+    convergence = right_line.slope - left_line.slope
+    if convergence <= 0.35:
+        return None
+    y = (target_span - (right_line.intercept - left_line.intercept)) / convergence
+    if not np.isfinite(y):
+        return None
+    return float(y)
+
+
+def collect_left_chain(
+    points: np.ndarray,
+    start_index: int,
+    first_side_index: int,
+    step: int,
+) -> np.ndarray:
+    count = points.shape[0]
+    indices = [start_index]
+    next_index = first_side_index % count
+    if points[next_index, 1] < points[start_index, 1]:
+        return points[indices].astype(np.float64)
+
+    indices.append(next_index)
+
+    while len(indices) < 6:
+        candidate_index = (indices[-1] + step) % count
+        if candidate_index in indices:
+            break
+
+        current = points[indices[-1]]
+        candidate = points[candidate_index]
+        vector = candidate - current
+        if vector[1] <= 0.5:
+            if vector[0] <= 0.5:
+                indices[-1] = candidate_index
+                continue
+            break
+        if vector[0] > 1.0:
+            break
+
+        previous = points[indices[-1]] - points[indices[-2]]
+        angle = angle_between_vectors(previous, vector)
+        if angle > 72.0:
+            break
+
+        indices.append(candidate_index)
+
+    return points[indices].astype(np.float64)
+
+
+def collect_right_chain(
+    points: np.ndarray,
+    start_index: int,
+    first_side_index: int,
+    step: int,
+) -> np.ndarray:
+    count = points.shape[0]
+    indices = [start_index]
+    next_index = first_side_index % count
+    if points[next_index, 1] < points[start_index, 1]:
+        return points[indices].astype(np.float64)
+
+    indices.append(next_index)
+    max_x = float(points[:, 0].max())
+
+    while len(indices) < 5:
+        candidate_index = (indices[-1] + step) % count
+        if candidate_index in indices:
+            break
+
+        current = points[indices[-1]]
+        candidate = points[candidate_index]
+        vector = candidate - current
+        if vector[1] <= 0.5:
+            break
+        if vector[0] < -1.0:
+            break
+
+        previous = points[indices[-1]] - points[indices[-2]]
+        angle = angle_between_vectors(previous, vector)
+        if current[0] >= max_x - 1.0 and vector[0] <= 1.0 and vector[1] >= 4.0:
+            break
+        if angle > 65.0:
+            break
+
+        indices.append(candidate_index)
+
+    return points[indices].astype(np.float64)
+
+
+def polygon_guided_segments(
+    mask: np.ndarray,
+    *,
+    image_width: int,
+    image_height: int,
+) -> tuple[list[int] | None, list[int] | None, list[int] | None, dict[str, Any]]:
+    points = approximate_mask_polygon(mask)
+    if points is None:
+        return None, None, None, {}
+
+    top_chain = find_top_chain(points)
+    if top_chain is None:
+        return None, None, None, {}
+
+    start_index = top_chain[0]
+    end_index = top_chain[-1]
+    if points[start_index, 0] <= points[end_index, 0]:
+        left_top_index = start_index
+        right_top_index = end_index
+        left_step = -1
+        right_step = 1
+    else:
+        left_top_index = end_index
+        right_top_index = start_index
+        left_step = 1
+        right_step = -1
+
+    left_top = points[left_top_index]
+    right_top = points[right_top_index]
+    pink_y = float(np.median(points[top_chain, 1]))
+    pink_segment = [
+        clip_point(left_top[0], pink_y, image_width, image_height)[0],
+        clip_point(left_top[0], pink_y, image_width, image_height)[1],
+        clip_point(right_top[0], pink_y, image_width, image_height)[0],
+        clip_point(right_top[0], pink_y, image_width, image_height)[1],
+    ]
+
+    left_neighbor_index = (left_top_index + left_step) % points.shape[0]
+    while left_neighbor_index in top_chain:
+        left_neighbor_index = (left_neighbor_index + left_step) % points.shape[0]
+
+    left_segment = None
+    left_chain = collect_left_chain(points, left_top_index, left_neighbor_index, left_step)
+    if len(top_chain) <= 2:
+        left_points = left_chain
+    else:
+        left_points = np.vstack([left_top, points[left_neighbor_index]])
+    left_fit = fit_x_from_y_points(left_points)
+    if left_fit is not None:
+        left_segment = project_segment_to_frame(
+            left_top,
+            left_fit[0],
+            left_fit[1],
+            side="left",
+            image_width=image_width,
+            image_height=image_height,
+        )
+
+    right_segment = None
+    right_neighbor_index = (right_top_index + right_step) % points.shape[0]
+    while right_neighbor_index in top_chain:
+        right_neighbor_index = (right_neighbor_index + right_step) % points.shape[0]
+
+    right_chain = collect_right_chain(points, right_top_index, right_neighbor_index, right_step)
+    use_short_right_chain = (
+        len(top_chain) <= 2
+        and right_chain.shape[0] >= 2
+        and right_top[1] <= 6.0
+        and float(right_chain[1, 0] - right_chain[0, 0]) >= 8.0
+        and float(right_chain[1, 1] - right_chain[0, 1]) >= 8.0
+    )
+    right_points = right_chain[:2] if use_short_right_chain else right_chain
+    right_fit = fit_x_from_y_points(right_points)
+    if right_fit is not None:
+        tiny_neighbor = right_points[1] if right_points.shape[0] >= 2 else None
+        right_segment = project_segment_to_frame(
+            right_top,
+            right_fit[0],
+            right_fit[1],
+            side="right",
+            image_width=image_width,
+            image_height=image_height,
+            tiny_neighbor=tiny_neighbor,
+        )
+
+    return left_segment, right_segment, pink_segment, {
+        "top_chain_len": float(len(top_chain)),
+        "pink_span": float(abs(right_top[0] - left_top[0])),
+        "left_chain": left_chain,
+        "right_chain": right_chain,
+        "left_top": left_top,
+        "right_top": right_top,
+    }
+
+
 def should_draw_left(line: LineFit | None) -> bool:
     if line is None:
         return False
     if line.inlier_count < 6 or line.span < 10.0:
         return False
     return not (line.border_touch_ratio >= 0.75 and abs(line.slope) <= 0.25 and line.mean_value <= 1.6)
+
+
+def should_draw_left_with_candidate(
+    line: LineFit | None,
+    candidate: PvcCandidate | None,
+) -> bool:
+    if not should_draw_left(line):
+        return False
+    if candidate is None:
+        return False
+
+    if candidate.left_clip_ratio >= 0.75 and abs(line.slope) <= 0.12 and line.mean_value <= 6.0:
+        return False
+    return True
 
 
 def should_draw_right(line: LineFit | None, image_width: int) -> bool:
@@ -646,6 +1130,22 @@ def should_draw_right(line: LineFit | None, image_width: int) -> bool:
         and abs(line.slope) <= 0.25
         and line.mean_value >= image_width - 2.6
     )
+
+
+def should_draw_right_with_candidate(
+    line: LineFit | None,
+    image_width: int,
+    candidate: PvcCandidate | None,
+) -> bool:
+    if not should_draw_right(line, image_width):
+        return False
+    if candidate is None:
+        return False
+
+    # Small right-leaning remnants near the border often produce a fake "right side" line.
+    if candidate.max_width <= 36 and candidate.area_ratio <= 0.19 and line.mean_value >= image_width - 18.0:
+        return False
+    return True
 
 
 def should_draw_pink(line: LineFit | None) -> bool:
@@ -662,6 +1162,41 @@ def should_draw_yellow(line: LineFit | None, image_height: int) -> bool:
     if line.inlier_count < 6 or line.span < 8.0:
         return False
     return not (line.border_touch_ratio >= 0.55 and line.mean_value >= image_height - 2.6)
+
+
+def should_draw_yellow_with_candidate(
+    line: LineFit | None,
+    image_height: int,
+    candidate: PvcCandidate | None,
+) -> bool:
+    if not should_draw_yellow(line, image_height):
+        return False
+    if candidate is None:
+        return False
+
+    has_descending_lower_edge = (
+        line.slope <= -0.08
+        and line.border_touch_ratio <= 0.2
+        and (
+            candidate.top_row <= 5
+            or candidate.max_width <= 52
+            or candidate.top_row >= 10
+            or (
+                candidate.top_row <= 8
+                and candidate.bottom_width <= max(8, int(round(candidate.max_width * 0.14)))
+            )
+        )
+    )
+    if has_descending_lower_edge:
+        return True
+
+    # Broad flat bases usually come from extending the mask to the frame edge rather than a real start edge.
+    min_bottom_width = max(16, int(round(candidate.max_width * 0.28)))
+    return (
+        candidate.bottom_width >= min_bottom_width
+        and line.slope <= -0.02
+        and line.border_touch_ratio <= 0.4
+    )
 
 
 def intersect_side_with_horizontal(side: LineFit, horizontal: LineFit) -> tuple[float, float] | None:
@@ -688,13 +1223,14 @@ def segment_from_side(
     bottom_row: int,
     image_width: int,
     image_height: int,
+    extend_to_bottom: bool = True,
 ) -> list[int] | None:
     if line is None:
         return None
 
     y0 = line.support_min
     y1 = line.support_max
-    if bottom_row - y1 >= 8:
+    if extend_to_bottom and bottom_row - y1 >= 8:
         x_bottom = line.x_at_y(bottom_row)
         if side == "left" and x_bottom > 2.5:
             y1 = float(bottom_row)
@@ -765,19 +1301,56 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
         left_fit, right_fit = fit_side_lines_from_masks(candidate.visible_mask, candidate.outer_mask)
         top_fit, yellow_fit = fit_horizontal_lines(candidate.outer_mask)
         plateau_pink_fit = fit_pink_from_plateau(candidate.outer_mask)
-        left_visible = should_draw_left(left_fit)
-        right_visible = should_draw_right(right_fit, gray.shape[1])
+        annotation_mask = build_annotation_mask(gray, candidate)
+        polygon_left_segment, polygon_right_segment, polygon_pink_segment, polygon_meta = polygon_guided_segments(
+            annotation_mask,
+            image_width=gray.shape[1],
+            image_height=gray.shape[0],
+        )
+        polygon_top_chain_len = int(round(polygon_meta.get("top_chain_len", 0.0)))
+        polygon_pink_span = float(polygon_meta.get("pink_span", 0.0))
+        polygon_left_chain = polygon_meta.get("left_chain")
+        polygon_right_chain = polygon_meta.get("right_chain")
+        polygon_left_top = polygon_meta.get("left_top")
+        polygon_right_top = polygon_meta.get("right_top")
+        left_visible = should_draw_left_with_candidate(left_fit, candidate)
+        right_visible = should_draw_right_with_candidate(right_fit, gray.shape[1], candidate)
+        yellow_visible = should_draw_yellow_with_candidate(yellow_fit, gray.shape[0], candidate)
         if left_visible and right_visible:
             pink_visible = plateau_pink_fit is not None or should_draw_pink(top_fit)
         else:
             pink_visible = should_draw_pink(top_fit)
-        yellow_visible = should_draw_yellow(yellow_fit, gray.shape[0])
+        if pink_visible and candidate.top_row <= 1:
+            pink_visible = False
+        if pink_visible:
+            suppress_descending_cap_pink = (
+                yellow_visible
+                and yellow_fit is not None
+                and candidate.top_row <= 5
+                and yellow_fit.slope <= -0.08
+            )
+            suppress_tiny_cap_pink = (
+                candidate.top_row <= 4
+                and polygon_top_chain_len <= 2
+                and polygon_pink_span <= 8.0
+            )
+            if suppress_descending_cap_pink or suppress_tiny_cap_pink:
+                pink_visible = False
     else:
         left_fit = None
         right_fit = None
         top_fit = None
         plateau_pink_fit = None
         yellow_fit = None
+        polygon_left_segment = None
+        polygon_right_segment = None
+        polygon_pink_segment = None
+        polygon_top_chain_len = 0
+        polygon_pink_span = 0.0
+        polygon_left_chain = None
+        polygon_right_chain = None
+        polygon_left_top = None
+        polygon_right_top = None
         left_visible = False
         right_visible = False
         pink_visible = False
@@ -792,6 +1365,7 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             bottom_row=candidate.bottom_row,
             image_width=gray.shape[1],
             image_height=gray.shape[0],
+            extend_to_bottom=candidate.bottom_width <= max(6, int(round(candidate.max_width * 0.12))),
         )
         right_segment = segment_from_side(
             right_fit if right_visible else None,
@@ -799,8 +1373,380 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
             bottom_row=candidate.bottom_row,
             image_width=gray.shape[1],
             image_height=gray.shape[0],
+            extend_to_bottom=False,
         )
-        pink_fit = plateau_pink_fit if plateau_pink_fit is not None else top_fit
+        base_left_segment = left_segment.copy() if left_segment is not None else None
+        base_right_segment = right_segment.copy() if right_segment is not None else None
+        use_sloped_fit_cap = (
+            pink_visible
+            and left_fit is not None
+            and right_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and not yellow_visible
+            and candidate.left_clip_ratio < 0.1
+            and 10 <= candidate.top_row <= 20
+            and plateau_pink_fit.span <= 6.0
+            and polygon_pink_span <= 10.0
+            and top_fit.slope >= 0.22
+            and right_fit.mean_value >= gray.shape[1] - 15.0
+        )
+        use_negative_sloped_fit_cap = (
+            pink_visible
+            and left_fit is not None
+            and right_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and not yellow_visible
+            and candidate.left_clip_ratio < 0.1
+            and candidate.right_clip_ratio < 0.1
+            and 8 <= candidate.top_row <= 15
+            and candidate.bottom_width >= max(40, int(round(candidate.max_width * 0.75)))
+            and plateau_pink_fit.span <= 6.5
+            and polygon_pink_span <= 6.0
+            and top_fit.span >= 14.0
+            and top_fit.slope <= -0.18
+        )
+        pink_fit = top_fit if (use_sloped_fit_cap or use_negative_sloped_fit_cap) and top_fit is not None else (
+            plateau_pink_fit if plateau_pink_fit is not None else top_fit
+        )
+        fit_left_segment = project_left_segment_from_fit(
+            left_fit if left_visible else None,
+            image_width=gray.shape[1],
+            image_height=gray.shape[0],
+            preferred_y=float(polygon_pink_segment[1]) if polygon_pink_segment is not None else None,
+        )
+        fit_right_segment = project_right_segment_from_fit(
+            right_fit if right_visible else None,
+            image_width=gray.shape[1],
+            image_height=gray.shape[0],
+            preferred_y=float(polygon_pink_segment[3]) if polygon_pink_segment is not None else None,
+        )
+
+        use_fit_left_segment = (
+            fit_left_segment is not None
+            and left_fit is not None
+            and (
+                polygon_left_segment is None
+                or left_fit.support_min <= float(polygon_left_segment[1]) + 4.0
+            )
+        )
+        use_fit_right_segment = (
+            fit_right_segment is not None
+            and right_fit is not None
+            and (
+                polygon_right_segment is None
+                or right_fit.support_min <= float(polygon_right_segment[1]) + 4.0
+            )
+        )
+
+        polygon_left_length = segment_length(polygon_left_segment)
+        polygon_right_length = segment_length(polygon_right_segment)
+        prefer_short_polygon_left = (
+            left_visible
+            and polygon_left_segment is not None
+            and candidate.left_clip_ratio >= 0.65
+            and 8.0 <= polygon_left_length <= 26.0
+            and polygon_left_segment[3] <= candidate.top_row + 18
+        )
+        prefer_short_polygon_right = (
+            right_visible
+            and polygon_right_segment is not None
+            and candidate.right_clip_ratio >= 0.65
+            and 8.0 <= polygon_right_length <= 26.0
+            and polygon_right_segment[3] <= candidate.top_row + 18
+        )
+        force_fit_left_on_top_clipped = (
+            fit_left_segment is not None
+            and not pink_visible
+            and candidate.top_row <= 5
+        )
+        force_fit_left_for_small_negative_cap = (
+            fit_left_segment is not None
+            and left_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and 0.3 <= candidate.left_clip_ratio <= 0.5
+            and candidate.top_row >= 12
+            and top_fit.slope <= -0.28
+            and 6.0 <= polygon_pink_span <= 10.0
+            and plateau_pink_fit.mean_value >= 13.0
+            and polygon_left_segment is not None
+            and left_fit.support_min >= float(polygon_left_segment[1]) + 10.0
+        )
+        use_chain_descending_cap = (
+            pink_visible
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and polygon_left_chain is not None
+            and base_left_segment is not None
+            and candidate.left_clip_ratio < 0.1
+            and candidate.top_row <= 12
+            and top_fit.slope <= -0.22
+            and plateau_pink_fit.slope <= -0.12
+            and polygon_pink_span <= 5.0
+        )
+        use_chain_clipped_descending_cap = (
+            pink_visible
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and polygon_left_chain is not None
+            and candidate.left_clip_ratio >= 0.35
+            and candidate.top_row >= 12
+            and top_fit.slope <= -0.15
+            and plateau_pink_fit.slope <= -0.12
+            and polygon_pink_span >= 16.0
+        )
+        use_short_clipped_left_cap = (
+            pink_visible
+            and left_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and polygon_left_chain is not None
+            and candidate.top_row <= 10
+            and candidate.left_clip_ratio >= 0.5
+            and polygon_pink_span <= 6.0
+            and plateau_pink_fit.span >= 9.0
+            and top_fit.slope >= 0.05
+            and left_fit.mean_value <= 5.0
+        )
+        use_prepare_enter_flat_cap = (
+            pink_visible
+            and yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and plateau_pink_fit is not None
+            and 7 <= candidate.top_row <= 12
+            and candidate.max_width <= 55
+            and candidate.bottom_width <= max(6, int(round(candidate.max_width * 0.15)))
+            and plateau_pink_fit.span <= 7.0
+            and polygon_pink_span >= 7.0
+            and top_fit is not None
+            and top_fit.slope >= 0.2
+            and (right_fit.slope - left_fit.slope) >= 1.5
+        )
+        use_late_flat_cap_lift = (
+            pink_visible
+            and not yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and plateau_pink_fit is not None
+            and 18 <= candidate.top_row <= 24
+            and candidate.left_clip_ratio >= 0.3
+            and plateau_pink_fit.span <= 6.0
+            and 11.0 <= polygon_pink_span <= 14.0
+            and left_fit.slope <= -0.8
+            and 0.55 <= right_fit.slope <= 0.95
+        )
+        use_tiny_positive_cap_alignment = (
+            pink_visible
+            and not yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and polygon_left_top is not None
+            and polygon_right_top is not None
+            and candidate.left_clip_ratio >= 0.35
+            and candidate.top_row <= 10
+            and polygon_pink_span <= 4.0
+            and plateau_pink_fit.span <= 7.0
+            and top_fit.slope >= 0.2
+        )
+        use_right_clipped_left_chain_projection = (
+            pink_visible
+            and left_fit is not None
+            and polygon_left_chain is not None
+            and polygon_left_top is not None
+            and left_fit.mean_value >= gray.shape[1] - 15.0
+            and candidate.right_clip_ratio >= 0.35
+            and candidate.bottom_width <= max(4, int(round(candidate.max_width * 0.08)))
+            and candidate.top_row <= 12
+            and polygon_pink_span >= 18.0
+        )
+        use_flat_border_right_cap = (
+            pink_visible
+            and right_fit is not None
+            and polygon_right_segment is not None
+            and polygon_right_top is not None
+            and candidate.top_row >= 17
+            and candidate.left_clip_ratio < 0.1
+            and candidate.right_clip_ratio < 0.1
+            and abs(right_fit.slope) <= 0.22
+            and right_fit.mean_value >= gray.shape[1] - 6.0
+            and 13.0 <= polygon_pink_span <= 15.0
+            and polygon_right_segment[0] <= 82
+        )
+        use_small_top_clipped_polygon_sides = (
+            not pink_visible
+            and yellow_visible
+            and polygon_left_segment is not None
+            and polygon_right_segment is not None
+            and candidate.top_row <= 1
+            and candidate.max_width <= 46
+            and candidate.bottom_width <= max(8, int(round(candidate.max_width * 0.18)))
+            and polygon_pink_span <= 5.0
+            and candidate.left_clip_ratio < 0.1
+            and candidate.right_clip_ratio < 0.1
+        )
+        use_short_positive_left_cap = (
+            pink_visible
+            and not yellow_visible
+            and fit_right_segment is not None
+            and right_fit is not None
+            and left_fit is not None
+            and polygon_left_chain is not None
+            and polygon_left_top is not None
+            and top_fit is not None
+            and candidate.top_row <= 4
+            and candidate.left_clip_ratio >= 0.4
+            and candidate.right_clip_ratio < 0.1
+            and candidate.bottom_width >= max(36, int(round(candidate.max_width * 0.75)))
+            and polygon_pink_span >= 12.0
+            and left_fit.slope >= -0.02
+            and abs(top_fit.slope) <= 0.05
+        )
+        use_far_right_short_stub = (
+            pink_visible
+            and right_fit is not None
+            and polygon_right_segment is not None
+            and polygon_right_top is not None
+            and candidate.center_x >= gray.shape[1] * 0.62
+            and candidate.max_width <= 50
+            and candidate.bottom_width <= max(6, int(round(candidate.max_width * 0.15)))
+            and candidate.left_clip_ratio < 0.1
+            and candidate.right_clip_ratio < 0.1
+            and abs(right_fit.slope) <= 0.08
+            and polygon_pink_span >= 18.0
+            and 10 <= candidate.top_row <= 24
+        )
+        force_fit_right_for_top_clipped_full_width = (
+            not pink_visible
+            and not yellow_visible
+            and fit_right_segment is not None
+            and right_fit is not None
+            and candidate.top_row <= 1
+            and candidate.left_clip_ratio >= 0.55
+            and candidate.right_clip_ratio < 0.1
+            and candidate.max_width >= 80
+            and candidate.bottom_width >= candidate.max_width - 2
+            and 0.6 <= right_fit.slope <= 0.9
+        )
+        use_left_clipped_full_width_short_left_cap = (
+            pink_visible
+            and not yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and fit_right_segment is not None
+            and polygon_left_chain is not None
+            and polygon_left_top is not None
+            and candidate.left_clip_ratio >= 0.35
+            and candidate.right_clip_ratio < 0.1
+            and 8 <= candidate.top_row <= 15
+            and candidate.bottom_width >= max(40, int(round(candidate.max_width * 0.9)))
+            and polygon_pink_span <= 6.0
+            and left_fit.slope <= -0.6
+            and right_fit.slope >= 0.9
+        )
+        use_low_late_flat_cap = (
+            pink_visible
+            and not yellow_visible
+            and left_fit is not None
+            and right_fit is not None
+            and top_fit is not None
+            and fit_right_segment is not None
+            and polygon_left_top is not None
+            and polygon_right_top is not None
+            and polygon_left_segment is not None
+            and 22 <= candidate.top_row <= 32
+            and candidate.max_width <= 50
+            and candidate.bottom_width >= max(40, candidate.max_width - 7)
+            and polygon_pink_span <= 10.0
+            and top_fit.slope >= 0.22
+            and right_fit.slope >= 0.45
+        )
+        use_far_right_pink_only_cap = (
+            pink_visible
+            and not yellow_visible
+            and left_segment is not None
+            and top_fit is not None
+            and plateau_pink_fit is not None
+            and polygon_right_segment is not None
+            and candidate.top_row >= 30
+            and candidate.center_x >= gray.shape[1] * 0.7
+            and candidate.max_width <= 40
+            and candidate.bottom_width >= max(28, int(round(candidate.max_width * 0.75)))
+            and segment_length(polygon_right_segment) <= 16.0
+            and (right_fit is None or right_fit.inlier_count <= 12 or right_fit.residual >= 0.5)
+        )
+        use_broad_descending_yellow_trim = (
+            yellow_visible
+            and yellow_fit is not None
+            and candidate.top_row <= 14
+            and candidate.max_width >= 70
+            and candidate.bottom_width >= 10
+            and yellow_fit.slope <= -0.16
+            and yellow_fit.border_touch_ratio <= 0.2
+        )
+        use_narrow_bottom_descending_yellow_expand = (
+            yellow_visible
+            and yellow_fit is not None
+            and not pink_visible
+            and candidate.top_row <= 4
+            and candidate.max_width >= 70
+            and candidate.bottom_width <= 4
+            and yellow_fit.slope <= -0.18
+            and yellow_fit.border_touch_ratio <= 0.1
+        )
+        suppress_yellow_on_left_clipped_exit = (
+            yellow_visible
+            and not pink_visible
+            and yellow_fit is not None
+            and candidate.top_row <= 3
+            and candidate.left_clip_ratio >= 0.35
+            and candidate.right_clip_ratio < 0.1
+            and candidate.max_width >= 70
+            and candidate.bottom_width <= int(round(candidate.max_width * 0.5))
+            and yellow_fit.slope <= -0.2
+            and yellow_fit.border_touch_ratio <= 0.2
+        )
+
+        if prefer_short_polygon_left:
+            left_segment = polygon_left_segment
+        elif force_fit_left_for_small_negative_cap or force_fit_left_on_top_clipped or use_fit_left_segment:
+            left_segment = fit_left_segment
+        elif left_visible and polygon_left_segment is not None:
+            left_segment = polygon_left_segment
+        used_fit_left_segment = bool(
+            fit_left_segment is not None
+            and left_segment is not None
+            and left_segment == fit_left_segment
+        )
+        if prefer_short_polygon_right:
+            right_segment = polygon_right_segment
+        elif use_fit_right_segment:
+            right_segment = fit_right_segment
+        elif right_visible and polygon_right_segment is not None:
+            right_segment = polygon_right_segment
+        used_fit_right_segment = bool(
+            fit_right_segment is not None
+            and right_segment is not None
+            and right_segment == fit_right_segment
+        )
+
+        if left_visible and polygon_left_segment is not None and left_segment is None:
+            left_segment = polygon_left_segment
+        if right_segment is None and right_visible and polygon_right_segment is not None:
+            right_segment = polygon_right_segment
+        elif (
+            not right_visible
+            and polygon_right_segment is not None
+            and candidate.top_row >= gray.shape[0] - 15
+            and segment_length(polygon_right_segment) >= 8.0
+        ):
+            right_segment = polygon_right_segment
+            right_visible = True
+
         pink_segment = None
         if pink_visible:
             if left_segment is not None and right_segment is not None:
@@ -836,30 +1782,547 @@ def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Imag
                         draw_right=right_visible,
                     )
 
+            prefer_polygon_pink_cap = (
+                candidate.top_row <= 20
+                and candidate.left_clip_ratio >= 0.35
+                and polygon_pink_span <= 15.0
+            )
+            use_polygon_pink = (
+                pink_visible
+                and not use_sloped_fit_cap
+                and not use_negative_sloped_fit_cap
+                and polygon_pink_segment is not None
+                and (
+                    prefer_polygon_pink_cap
+                    or top_fit is None
+                    or abs(top_fit.slope) <= 0.08
+                    or polygon_pink_span >= max(12.0, float(top_fit.span) * 0.75)
+                )
+            )
+            if use_polygon_pink:
+                pink_segment = polygon_pink_segment
+                allow_raised_polygon_pink = (
+                    left_fit is not None
+                    and left_fit.slope < -0.05
+                    and pink_segment[1] >= 5
+                )
+                if allow_raised_polygon_pink:
+                    pink_segment = [
+                        pink_segment[0],
+                        pink_segment[1] - 1,
+                        pink_segment[2],
+                        pink_segment[3] - 1,
+                    ]
+                if left_segment is not None:
+                    if used_fit_left_segment:
+                        if allow_raised_polygon_pink and right_segment is not None:
+                            pink_segment = [
+                                left_segment[0],
+                                pink_segment[1],
+                                right_segment[0],
+                                pink_segment[1],
+                            ]
+                        else:
+                            pink_segment[0], pink_segment[1] = left_segment[0], left_segment[1]
+                    else:
+                        left_segment[0], left_segment[1] = pink_segment[0], pink_segment[1]
+                if right_segment is not None:
+                    if used_fit_right_segment:
+                        pink_segment[2], pink_segment[3] = right_segment[0], right_segment[1]
+                    else:
+                        right_segment[0], right_segment[1] = pink_segment[2], pink_segment[3]
+
+            current_cap_y = float(pink_segment[1]) if pink_segment is not None else float(candidate.top_row)
+            narrow_cap_y = estimate_narrow_top_cap_y(
+                left_fit,
+                right_fit,
+                plateau_pink_fit=plateau_pink_fit,
+                polygon_pink_span=polygon_pink_span,
+                candidate_top_row=candidate.top_row,
+                candidate_left_clip_ratio=candidate.left_clip_ratio,
+                current_cap_y=current_cap_y,
+                image_width=gray.shape[1],
+            )
+            if narrow_cap_y is not None:
+                if fit_left_segment is not None:
+                    left_segment = fit_left_segment.copy()
+                    used_fit_left_segment = True
+                if fit_right_segment is not None:
+                    right_segment = fit_right_segment.copy()
+                    used_fit_right_segment = True
+                left_top = (
+                    clip_point(left_fit.x_at_y(narrow_cap_y), narrow_cap_y, gray.shape[1], gray.shape[0])
+                    if left_fit is not None
+                    else None
+                )
+                right_top = (
+                    clip_point(right_fit.x_at_y(narrow_cap_y), narrow_cap_y, gray.shape[1], gray.shape[0])
+                    if right_fit is not None
+                    else None
+                )
+                if left_segment is not None and left_top is not None:
+                    left_segment[0], left_segment[1] = left_top
+                if right_segment is not None and right_top is not None:
+                    right_segment[0], right_segment[1] = right_top
+                if left_top is not None and right_top is not None:
+                    pink_segment = [left_top[0], left_top[1], right_top[0], right_top[1]]
+
+            if (
+                right_segment is not None
+                and right_fit is not None
+                and not yellow_visible
+                and candidate.top_row >= 16
+                and abs(right_fit.slope) <= 0.22
+                and right_fit.mean_value >= gray.shape[1] - 6.5
+                and polygon_pink_span >= 14.0
+            ):
+                dx_to_border = gray.shape[1] - 1 - right_segment[0]
+                if 4 <= dx_to_border <= 5:
+                    connector_drop = float(np.clip(dx_to_border * 1.4, 6.0, 9.0))
+                    border_point = clip_point(
+                        gray.shape[1] - 1,
+                        right_segment[1] + connector_drop,
+                        gray.shape[1],
+                        gray.shape[0],
+                    )
+                    right_segment = [right_segment[0], right_segment[1], border_point[0], border_point[1]]
+
+            if use_chain_descending_cap and left_segment is not None and right_segment is not None:
+                anchor_point = polygon_left_chain[min(2, polygon_left_chain.shape[0] - 1)]
+                left_top = clip_point(anchor_point[0], anchor_point[1], gray.shape[1], gray.shape[0])
+                left_end = clip_point(
+                    float(base_left_segment[2]) - 1.0,
+                    float(base_left_segment[3]) + 1.0,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                left_segment = [left_top[0], left_top[1], left_end[0], left_end[1]]
+                pink_right = clip_point(
+                    float(right_segment[0]) - 1.0,
+                    float(right_segment[1]) - 1.0,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                pink_segment = [left_top[0], left_top[1], pink_right[0], pink_right[1]]
+
+            if use_chain_clipped_descending_cap and left_segment is not None and right_segment is not None:
+                left_hit = None
+                if left_fit is not None and pink_fit is not None:
+                    left_hit = intersect_side_with_horizontal(left_fit, pink_fit)
+                if left_hit is None and left_fit is not None and top_fit is not None:
+                    left_hit = intersect_side_with_horizontal(left_fit, top_fit)
+                if left_hit is not None:
+                    left_top = clip_point(left_hit[0], left_hit[1] - 1.0, gray.shape[1], gray.shape[0])
+                    left_end_point = None
+                    for point in polygon_left_chain:
+                        if point[0] <= 2.0 and point[1] >= left_top[1] + 12:
+                            left_end_point = point
+                            break
+                    if left_end_point is None:
+                        for point in polygon_left_chain[::-1]:
+                            if point[1] >= left_top[1] + 10:
+                                left_end_point = point
+                                break
+                    if left_end_point is not None:
+                        left_end = clip_point(
+                            float(left_end_point[0]) - 1.0,
+                            float(left_end_point[1]) + 1.0,
+                            gray.shape[1],
+                            gray.shape[0],
+                        )
+                        left_segment = [left_top[0], left_top[1], left_end[0], left_end[1]]
+                    pink_right = clip_point(
+                        float(right_segment[0]),
+                        float(right_segment[1]) - 1.0,
+                        gray.shape[1],
+                        gray.shape[0],
+                    )
+                    pink_segment = [left_top[0], left_top[1], pink_right[0], pink_right[1]]
+
+            if (
+                force_fit_left_for_small_negative_cap
+                and left_segment is not None
+                and right_segment is not None
+                and left_fit is not None
+                and right_fit is not None
+                and polygon_left_top is not None
+                and polygon_right_top is not None
+            ):
+                left_top_x = float(polygon_left_top[0]) - (1.0 if polygon_pink_span <= 8.0 else 0.0)
+                left_top = clip_point(
+                    left_top_x,
+                    float(polygon_left_top[1]) - 1.0,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                left_border_y = float((0.0 - left_fit.intercept) / left_fit.slope) if abs(left_fit.slope) > 1e-6 else float(gray.shape[0] - 1)
+                left_end = clip_point(0.0, left_border_y, gray.shape[1], gray.shape[0])
+                left_segment = [left_top[0], left_top[1], left_end[0], left_end[1]]
+
+                right_top = clip_point(
+                    float(polygon_right_top[0]) + 1.0,
+                    float(polygon_right_top[1]) - (1.0 if polygon_pink_span <= 8.0 else 0.0),
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_end = clip_point(
+                    right_fit.x_at_y(float(gray.shape[0] - 1)) + 1.0,
+                    float(gray.shape[0] - 1),
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_segment = [right_top[0], right_top[1], right_end[0], right_end[1]]
+
+                pink_left = clip_point(
+                    float(left_top[0]) + 1.0,
+                    float(left_top[1]),
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                pink_right = clip_point(
+                    float(right_top[0]) - 1.0,
+                    float(left_top[1]),
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                pink_segment = [pink_left[0], pink_left[1], pink_right[0], pink_right[1]]
+
+            if (
+                use_prepare_enter_flat_cap
+                and fit_left_segment is not None
+                and fit_right_segment is not None
+                and left_fit is not None
+                and right_fit is not None
+                and plateau_pink_fit is not None
+            ):
+                cap_y = estimate_cap_y_from_target_span(
+                    left_fit,
+                    right_fit,
+                    target_span=float(np.clip(float(plateau_pink_fit.span) + 2.0, 8.0, 9.0)),
+                )
+                if cap_y is not None and 5.0 <= cap_y <= 9.5:
+                    left_segment = fit_left_segment.copy()
+                    right_segment = fit_right_segment.copy()
+                    left_top = clip_point(left_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    right_top = clip_point(right_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    left_segment[0], left_segment[1] = left_top
+                    right_segment[0], right_segment[1] = right_top
+                    pink_segment = [left_top[0], left_top[1], right_top[0], right_top[1]]
+
+            if (
+                use_late_flat_cap_lift
+                and fit_left_segment is not None
+                and fit_right_segment is not None
+                and left_fit is not None
+                and right_fit is not None
+            ):
+                cap_y = estimate_cap_y_from_target_span(
+                    left_fit,
+                    right_fit,
+                    target_span=8.0,
+                )
+                if cap_y is not None and 16.0 <= cap_y <= float(candidate.top_row) - 2.0:
+                    left_segment = fit_left_segment.copy()
+                    right_segment = fit_right_segment.copy()
+                    left_top = clip_point(left_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    right_top = clip_point(right_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                    left_segment[0], left_segment[1] = left_top
+                    right_segment[0], right_segment[1] = right_top
+                    pink_segment = [left_top[0], left_top[1], right_top[0], right_top[1]]
+
+            if (
+                use_tiny_positive_cap_alignment
+                and fit_left_segment is not None
+                and fit_right_segment is not None
+                and left_fit is not None
+                and right_fit is not None
+                and polygon_left_top is not None
+            ):
+                cap_y = float(polygon_left_top[1])
+                left_segment = fit_left_segment.copy()
+                right_segment = fit_right_segment.copy()
+                left_top = clip_point(left_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                right_top = clip_point(right_fit.x_at_y(cap_y), cap_y, gray.shape[1], gray.shape[0])
+                left_segment[0], left_segment[1] = left_top
+                right_segment[0], right_segment[1] = right_top
+                pink_segment = [left_top[0] + 1, left_top[1], right_top[0] - 1, right_top[1]]
+
+            if (
+                use_right_clipped_left_chain_projection
+                and right_segment is not None
+                and polygon_left_chain is not None
+                and polygon_left_top is not None
+            ):
+                chain_fit = fit_x_from_y_points(polygon_left_chain)
+                if chain_fit is not None:
+                    left_segment = project_segment_to_frame(
+                        polygon_left_top,
+                        chain_fit[0],
+                        chain_fit[1],
+                        side="left",
+                        image_width=gray.shape[1],
+                        image_height=gray.shape[0],
+                    )
+                    if left_segment is not None:
+                        left_top = clip_point(float(polygon_left_top[0]), float(polygon_left_top[1]), gray.shape[1], gray.shape[0])
+                        left_segment[0], left_segment[1] = left_top
+                        pink_segment = [left_top[0], left_top[1], right_segment[0] - 1, left_top[1]]
+
+            if (
+                use_short_positive_left_cap
+                and polygon_left_chain is not None
+                and polygon_left_top is not None
+                and fit_right_segment is not None
+                and right_fit is not None
+            ):
+                left_end_point = None
+                for point in polygon_left_chain:
+                    if point[0] <= 1.5 and point[1] >= float(polygon_left_top[1]) + 8.0:
+                        left_end_point = point
+                        break
+                if left_end_point is not None:
+                    cap_y = max(0.0, float(polygon_left_top[1]) - 1.0)
+                    left_top = clip_point(float(polygon_left_top[0]), cap_y, gray.shape[1], gray.shape[0])
+                    left_end = clip_point(0.0, float(left_end_point[1]), gray.shape[1], gray.shape[0])
+                    right_segment = fit_right_segment.copy()
+                    right_top = clip_point(
+                        right_fit.x_at_y(cap_y),
+                        cap_y,
+                        gray.shape[1],
+                        gray.shape[0],
+                    )
+                    left_segment = [left_top[0], left_top[1], left_end[0], left_end[1]]
+                    right_segment[0], right_segment[1] = right_top
+                    pink_segment = [left_top[0], left_top[1], max(left_top[0], right_top[0] - 1), left_top[1]]
+
+            if use_far_right_short_stub and right_segment is not None and polygon_right_segment is not None and polygon_right_top is not None:
+                right_top_shift = 2.0 if candidate.top_row >= 18 else 1.0
+                top_y_shift = 0.0 if candidate.top_row >= 18 else -1.0
+                end_y_shift = -4.0 if candidate.top_row >= 18 else -1.0
+                right_top = clip_point(
+                    float(polygon_right_top[0]) + right_top_shift,
+                    float(polygon_right_top[1]) + top_y_shift,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_end = clip_point(
+                    float(polygon_right_segment[2]),
+                    float(polygon_right_segment[3]) + end_y_shift,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_segment = [right_top[0], right_top[1], right_end[0], right_end[1]]
+                yellow_visible = False
+                if left_segment is not None:
+                    left_top = clip_point(float(left_segment[0]), float(left_segment[1]), gray.shape[1], gray.shape[0])
+                    left_segment[0], left_segment[1] = left_top
+                    pink_segment = [left_top[0], left_top[1], right_top[0], left_top[1]]
+
+            if use_flat_border_right_cap and left_segment is not None and right_segment is not None:
+                left_top = clip_point(float(left_segment[0]), float(left_segment[1]) - 1.0, gray.shape[1], gray.shape[0])
+                left_segment[0], left_segment[1] = left_top
+                right_top = clip_point(
+                    float(polygon_right_top[0]) + 1.0,
+                    float(polygon_right_top[1]) - 2.0,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_end = clip_point(
+                    float(polygon_right_segment[2]),
+                    float(polygon_right_segment[3]) - 4.0,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_segment = [right_top[0], right_top[1], right_end[0], right_end[1]]
+                pink_segment = [left_top[0], left_top[1], right_top[0], left_top[1]]
+
+            if use_short_clipped_left_cap and left_segment is not None and right_segment is not None:
+                short_count = min(4, polygon_left_chain.shape[0])
+                short_fit = fit_x_from_y_points(polygon_left_chain[:short_count])
+                if short_fit is not None and polygon_left_top is not None:
+                    top_y = max(0.0, float(polygon_left_top[1]) - 1.0)
+                    hybrid_x = (
+                        float(polygon_left_top[0]) + float(left_fit.x_at_y(top_y))
+                    ) * 0.5
+                    left_top = clip_point(hybrid_x, top_y, gray.shape[1], gray.shape[0])
+                    border_y = float((1.0 - short_fit[1]) / short_fit[0]) if abs(short_fit[0]) > 1e-6 else top_y
+                    border_y = min(border_y, float(polygon_left_chain[short_count - 1, 1]) + 1.0)
+                    left_end = clip_point(1.0, border_y, gray.shape[1], gray.shape[0])
+                    left_segment = [left_top[0], left_top[1], left_end[0], left_end[1]]
+                    right_top = clip_point(
+                        float(right_segment[0]) + 1.0,
+                        float(right_segment[1]) - 1.0,
+                        gray.shape[1],
+                        gray.shape[0],
+                    )
+                    right_segment[0], right_segment[1] = right_top
+                    pink_left = clip_point(float(left_top[0]) + 1.0, float(left_top[1]), gray.shape[1], gray.shape[0])
+                    pink_right = clip_point(
+                        float(right_top[0]) - 2.0,
+                        float(right_top[1]),
+                        gray.shape[1],
+                        gray.shape[0],
+                    )
+                    pink_segment = [pink_left[0], pink_left[1], pink_right[0], pink_right[1]]
+
+        if force_fit_right_for_top_clipped_full_width and fit_right_segment is not None and right_fit is not None:
+            right_top = clip_point(
+                right_fit.x_at_y(0.0) + 1.0,
+                0.0,
+                gray.shape[1],
+                gray.shape[0],
+            )
+            right_end = clip_point(
+                right_fit.x_at_y(float(candidate.bottom_row)) + 2.0,
+                float(candidate.bottom_row),
+                gray.shape[1],
+                gray.shape[0],
+            )
+            right_segment = [right_top[0], right_top[1], right_end[0], right_end[1]]
+
+        if (
+            use_left_clipped_full_width_short_left_cap
+            and polygon_left_chain is not None
+            and polygon_left_top is not None
+            and fit_right_segment is not None
+            and right_fit is not None
+        ):
+            left_end_point = None
+            for point in polygon_left_chain:
+                if point[0] <= 1.5 and point[1] >= float(polygon_left_top[1]) + 8.0:
+                    left_end_point = point
+                    break
+            if left_end_point is not None:
+                cap_y = estimate_cap_y_from_target_span(left_fit, right_fit, target_span=10.0)
+                if cap_y is None or not (4.0 <= cap_y <= float(candidate.top_row) - 0.5):
+                    cap_y = float(polygon_left_top[1])
+                    if candidate.top_row >= 12 or candidate.left_clip_ratio > 0.45:
+                        cap_y -= 1.0
+                left_top_x = left_fit.x_at_y(float(cap_y)) - 0.5
+                left_top_y = float(cap_y)
+                left_top = clip_point(left_top_x, left_top_y, gray.shape[1], gray.shape[0])
+                left_end = clip_point(0.0, float(left_end_point[1]), gray.shape[1], gray.shape[0])
+                left_segment = [left_top[0], left_top[1], left_end[0], left_end[1]]
+
+                right_segment = fit_right_segment.copy()
+                right_top = clip_point(
+                    right_fit.x_at_y(float(left_top[1])) + 0.5,
+                    float(left_top[1]),
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                right_segment[0], right_segment[1] = right_top
+                pink_left = clip_point(float(left_top[0]) + 1.0, float(left_top[1]), gray.shape[1], gray.shape[0])
+                pink_right = clip_point(float(right_top[0]) - 1.0, float(left_top[1]), gray.shape[1], gray.shape[0])
+                pink_segment = [pink_left[0], pink_left[1], pink_right[0], pink_right[1]]
+
+        if (
+            use_low_late_flat_cap
+            and polygon_left_top is not None
+            and polygon_right_top is not None
+            and polygon_left_segment is not None
+            and fit_right_segment is not None
+            and left_fit is not None
+            and right_fit is not None
+        ):
+            cap_y = float(polygon_right_top[1])
+            if float(polygon_right_top[1]) + 1.5 < float(polygon_left_top[1]):
+                cap_y -= 1.0
+            fit_left_x = left_fit.x_at_y(cap_y)
+            if fit_left_x < float(polygon_left_top[0]) - 6.0:
+                left_top_x = float(polygon_left_top[0])
+            else:
+                left_top_x = min(float(polygon_left_top[0]), fit_left_x)
+            left_top = clip_point(left_top_x, cap_y, gray.shape[1], gray.shape[0])
+            left_end = clip_point(
+                float(polygon_left_segment[2]),
+                float(polygon_left_segment[3]),
+                gray.shape[1],
+                gray.shape[0],
+            )
+            left_segment = [left_top[0], left_top[1], left_end[0], left_end[1]]
+
+            right_top = clip_point(
+                right_fit.x_at_y(cap_y) + 0.5,
+                cap_y,
+                gray.shape[1],
+                gray.shape[0],
+            )
+            right_end = clip_point(
+                right_fit.x_at_y(float(candidate.bottom_row)) + 2.0,
+                float(candidate.bottom_row),
+                gray.shape[1],
+                gray.shape[0],
+            )
+            right_segment = [right_top[0], right_top[1], right_end[0], right_end[1]]
+            pink_left = clip_point(float(left_top[0]) + 1.0, cap_y, gray.shape[1], gray.shape[0])
+            pink_right = clip_point(float(right_top[0]) - 1.0, cap_y, gray.shape[1], gray.shape[0])
+            pink_segment = [pink_left[0], pink_left[1], pink_right[0], pink_right[1]]
+
+        if use_far_right_pink_only_cap and left_segment is not None and top_fit is not None:
+            left_top = clip_point(float(left_segment[0]), float(left_segment[1]), gray.shape[1], gray.shape[0])
+            right_y = top_fit.y_at_x(float(gray.shape[1] - 1)) - 1.0
+            pink_right = clip_point(float(gray.shape[1] - 1), right_y, gray.shape[1], gray.shape[0])
+            pink_segment = [left_top[0], left_top[1], pink_right[0], pink_right[1]]
+            right_segment = None
+            right_visible = False
+
+        if use_small_top_clipped_polygon_sides:
+            left_segment = polygon_left_segment.copy() if polygon_left_segment is not None else left_segment
+            right_segment = polygon_right_segment.copy() if polygon_right_segment is not None else right_segment
+
         yellow_segment = None
         if yellow_visible:
-            if left_segment is not None and right_segment is not None and yellow_fit is not None:
-                left_bottom = (left_segment[2], left_segment[3])
-                right_bottom = (right_segment[2], right_segment[3])
-                left_hit = intersect_side_with_horizontal(left_fit, yellow_fit) if left_fit is not None else None
-                right_hit = intersect_side_with_horizontal(right_fit, yellow_fit) if right_fit is not None else None
-                if left_hit is not None:
-                    left_bottom = clip_point(left_hit[0], left_hit[1], gray.shape[1], gray.shape[0])
-                if right_hit is not None:
-                    right_bottom = clip_point(right_hit[0], right_hit[1], gray.shape[1], gray.shape[0])
-                yellow_segment = [left_bottom[0], left_bottom[1], right_bottom[0], right_bottom[1]]
-                left_segment[2], left_segment[3] = left_bottom
-                right_segment[2], right_segment[3] = right_bottom
-            else:
-                yellow_segment = segment_from_horizontal(
-                    yellow_fit,
-                    image_width=gray.shape[1],
-                    image_height=gray.shape[0],
-                    left_line=left_fit,
-                    right_line=right_fit,
-                    draw_left=left_visible,
-                    draw_right=right_visible,
+            yellow_segment = segment_from_horizontal(
+                yellow_fit,
+                image_width=gray.shape[1],
+                image_height=gray.shape[0],
+                left_line=left_fit,
+                right_line=right_fit,
+                draw_left=False,
+                draw_right=False,
+            )
+            if use_broad_descending_yellow_trim and yellow_segment is not None:
+                left_x = min(gray.shape[1] - 1, yellow_segment[0] + 4)
+                right_x = min(gray.shape[1] - 1, yellow_segment[2] + 1)
+                yellow_left = clip_point(float(left_x), yellow_fit.y_at_x(float(left_x)), gray.shape[1], gray.shape[0])
+                yellow_right = clip_point(float(right_x), yellow_fit.y_at_x(float(right_x)), gray.shape[1], gray.shape[0])
+                yellow_segment = [yellow_left[0], yellow_left[1], yellow_right[0], yellow_right[1]]
+            if use_narrow_bottom_descending_yellow_expand and yellow_segment is not None:
+                left_x = max(0, yellow_segment[0] - 4)
+                right_x = min(gray.shape[1] - 1, yellow_segment[2] + 1)
+                yellow_left = clip_point(
+                    float(left_x),
+                    yellow_fit.y_at_x(float(left_x)) + 0.5,
+                    gray.shape[1],
+                    gray.shape[0],
                 )
+                yellow_right = clip_point(
+                    float(right_x),
+                    yellow_fit.y_at_x(float(right_x)) + 0.5,
+                    gray.shape[1],
+                    gray.shape[0],
+                )
+                yellow_segment = [yellow_left[0], yellow_left[1], yellow_right[0], yellow_right[1]]
+        if suppress_yellow_on_left_clipped_exit:
+            yellow_visible = False
+            yellow_segment = None
+
+        top_clipped_side_override = (
+            not pink_visible
+            and candidate.top_row <= 5
+            and top_fit is not None
+            and top_fit.slope <= -0.2
+        )
+        if top_clipped_side_override:
+            if left_segment is not None and left_fit is not None:
+                left_top = clip_point(left_fit.x_at_y(0.0), 0.0, gray.shape[1], gray.shape[0])
+                left_segment[0], left_segment[1] = left_top
+            if right_segment is not None and right_fit is not None:
+                right_top = clip_point(right_fit.x_at_y(0.0), 0.0, gray.shape[1], gray.shape[0])
+                right_segment[0], right_segment[1] = right_top
+
+        pvc_found, pvc_state = infer_pvc_state(candidate, gray.shape[0], yellow_visible)
 
         threshold = candidate.threshold
         area = candidate.area
