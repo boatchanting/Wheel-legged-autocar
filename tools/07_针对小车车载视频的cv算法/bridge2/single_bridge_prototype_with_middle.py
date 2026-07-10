@@ -1297,46 +1297,47 @@ def compute_center_line(
     image_width: int,
     image_height: int,
 ) -> list[int] | None:
-    """根据左右线段计算中线，限定在二者的垂直重叠区域内。"""
+    """根据左右线段计算中线，直线延伸至二者覆盖的最大纵向范围。"""
     if left_segment is None or right_segment is None:
         return None
 
-    # 获取 y 坐标（y0 上端，y1 下端）
-    l_y0, l_y1 = left_segment[1], left_segment[3]
-    r_y0, r_y1 = right_segment[1], right_segment[3]
+    # 获取左右线段的端点，并确保 y0 <= y1
+    lx0, ly0, lx1, ly1 = left_segment
+    rx0, ry0, rx1, ry1 = right_segment
 
-    # 确保 y0 <= y1
-    if l_y0 > l_y1:
-        l_y0, l_y1 = l_y1, l_y0
-    if r_y0 > r_y1:
-        r_y0, r_y1 = r_y1, r_y0
+    if ly0 > ly1:
+        lx0, lx1 = lx1, lx0
+        ly0, ly1 = ly1, ly0
+    if ry0 > ry1:
+        rx0, rx1 = rx1, rx0
+        ry0, ry1 = ry1, ry0
 
-    top_y = max(l_y0, r_y0)
-    bottom_y = min(l_y1, r_y1)
+    # 左右线段至少需要有高度差，否则无法确定直线方向
+    if abs(ly1 - ly0) < 1e-6 or abs(ry1 - ry0) < 1e-6:
+        return None
 
-    if top_y >= bottom_y:
-        return None  # 没有重叠区域
+    # 计算左右线段的直线方程 x = slope * y + intercept
+    left_slope = (lx1 - lx0) / (ly1 - ly0)
+    left_intercept = lx0 - left_slope * ly0
+    right_slope = (rx1 - rx0) / (ry1 - ry0)
+    right_intercept = rx0 - right_slope * ry0
 
-    # 在重叠区域的两端线性插值 x 坐标
-    def interp_x(seg: list[int], y: float) -> float:
-        x0, y0, x1, y1 = seg
-        if y0 == y1:
-            return x0
-        t = (y - y0) / (y1 - y0)
-        return x0 + t * (x1 - x0)
+    # 中线直线参数：x_mid = mid_slope * y + mid_intercept
+    mid_slope = (left_slope + right_slope) / 2.0
+    mid_intercept = (left_intercept + right_intercept) / 2.0
 
-    lx_top = interp_x(left_segment, top_y)
-    rx_top = interp_x(right_segment, top_y)
-    lx_bot = interp_x(left_segment, bottom_y)
-    rx_bot = interp_x(right_segment, bottom_y)
+    # 绘制范围：从左右线的最上端到最下端
+    top_y = min(ly0, ry0)
+    bottom_y = max(ly1, ry1)
 
-    mid_x_top = (lx_top + rx_top) / 2.0
-    mid_x_bot = (lx_bot + rx_bot) / 2.0
+    # 计算两端中点坐标
+    mid_x_top = mid_slope * top_y + mid_intercept
+    mid_x_bottom = mid_slope * bottom_y + mid_intercept
 
+    # 裁剪到图像边界并取整
     cx0, cy0 = clip_point(mid_x_top, top_y, image_width, image_height)
-    cx1, cy1 = clip_point(mid_x_bot, bottom_y, image_width, image_height)
+    cx1, cy1 = clip_point(mid_x_bottom, bottom_y, image_width, image_height)
 
-    # 如果两点重合则不画
     if cx0 == cx1 and cy0 == cy1:
         return None
     return [cx0, cy0, cx1, cy1]
@@ -2475,6 +2476,10 @@ def render_draw(gray: np.ndarray, result: BridgeResult) -> Image.Image:
     rgb = np.stack([gray, gray, gray], axis=-1).astype(np.uint8)
     image = Image.fromarray(rgb, mode="RGB")
     draw = ImageDraw.Draw(image)
+
+    # 只绘制中线（绿色），其他线段注释掉
+    # if result.center_line_segment is not None:
+    #     draw.line(tuple(result.center_line_segment), fill=(0, 255, 0), width=1)
 
     for segment, color in [
         (result.left_line_segment, (255, 0, 0)),
