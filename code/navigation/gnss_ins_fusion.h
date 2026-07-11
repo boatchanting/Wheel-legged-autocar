@@ -3,6 +3,12 @@
 
 #include "zf_common_headfile.h"
 
+// ==================== 互补滤波异常处理配置 ====================
+#define GPS_JUMP_REJECT_THRES_MM          1500.0f  // 跳变剔除距离阈值 (单位: mm)。若惯导很准，此值可调小；若惯导发散快，此值需调大以接纳恢复的GPS。
+#define GPS_JUMP_RECOVERY_TIMEOUT_FRAMES  50       // 连续剔除超时强制接受帧数 (10Hz, 50帧=5秒)。必须大于常见的多径漂移时间，但又不能大到此时惯导已发散超过跳变阈值。
+#define GPS_FAST_RECOVERY_DURATION_FRAMES 30       // 强制接受后的快速恢复期时长 (10Hz, 30帧=3秒)。
+#define GPS_FAST_RECOVERY_K_POS           0.20f    // 快速恢复期融合权重。
+
 // ==================== 赛道基准角 (发车角) ====================
 // 由手动锁定原点时从 IMU 磁力计读取，记录赛道的绝对地理朝向
 extern float g_track_base_yaw;

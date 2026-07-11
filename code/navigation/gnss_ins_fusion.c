@@ -316,12 +316,14 @@ void Fusion_Gps_Correct(void)
     // 异常剔除与互补融合
     // ========================================================
 
-    // 【补丁 1：防 GPS 闪现跃变】
+    // 【补丁 1：防 GPS 闪现跃变与基于预测的创新(Innovation)滤波】
     g_fuse_state.special_element_flag = 0;
     g_fuse_state.zupt_flag = 0;
 
-    float dx_gps = ground_x_mm - s_last_ground_x;
-    float dy_gps = ground_y_mm - s_last_ground_y;
+    // 不再与 s_last_ground_x 对比，而是与惯导当前推算的真实位置 (fuse_x/y) 进对比
+    // 当 GPS 长时间丢失恢复时，真实 GPS 与惯导盲走位置的误差 (Innovation) 极小，即可瞬间被无缝接纳，避免死锁
+    float dx_gps = ground_x_mm - g_fuse_state.fuse_x;
+    float dy_gps = ground_y_mm - g_fuse_state.fuse_y;
     float delta_gps = sqrtf(dx_gps * dx_gps + dy_gps * dy_gps);
 
 #if TRACK_BASE_YAW_MODE == 2
@@ -331,11 +333,28 @@ void Fusion_Gps_Correct(void)
     }
 #endif
 
-    if (delta_gps > 1500.0f)  // 1.5m = 1500mm
+    static uint8_t s_fast_recovery_frames = 0;
+    static uint8_t s_consecutive_jump = 0;
+    if (delta_gps > GPS_JUMP_REJECT_THRES_MM)  // 默认 1.5m = 1500mm
     {
         g_fuse_state.jump_reject_count++;
-        return;  // 丢弃本帧，靠惯导盲走
+        s_consecutive_jump++;
+        if (s_consecutive_jump >= GPS_JUMP_RECOVERY_TIMEOUT_FRAMES) 
+        {
+            // 连续多次 (5秒) 被剔除，说明此时连惯导推算位置都已经严重发散，必须强制接纳新 GPS 以重新标定
+            s_consecutive_jump = 0; 
+            s_fast_recovery_frames = GPS_FAST_RECOVERY_DURATION_FRAMES; // 开启快速恢复期
+        }
+        else
+        {
+            return; 
+        }
     }
+    else
+    {
+        s_consecutive_jump = 0;
+    }
+
     s_last_ground_x = ground_x_mm;
     s_last_ground_y = ground_y_mm;
 
@@ -345,6 +364,12 @@ void Fusion_Gps_Correct(void)
 
     // 默认融合权重 (每次拉扯 2% 的误差，极度平滑)
     float K_pos = 0.02f;
+    
+    if (s_fast_recovery_frames > 0)
+    {
+        K_pos = GPS_FAST_RECOVERY_K_POS; // 快速恢复期提高权重
+        s_fast_recovery_frames--;
+    }
 
     // --- 战术规则 1：基于卫星数量的分级调度 ---
     if (gnss.satellite_used < 10)
