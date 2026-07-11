@@ -51,6 +51,10 @@ tr.sel{background:#eaf2ff}
     <div id="trajN" class="tag">轨迹:0</div>
     <div id="markN" class="tag">标记:0</div>
     <div id="payload" class="tag">Payload:--</div>
+    <div id="satN" class="tag">卫星:0</div>
+    <div id="kPos" class="tag">K:0.00</div>
+    <div id="zuptTag" class="tag warn" style="display:none">ZUPT</div>
+    <div id="seTag" class="tag err" style="display:none">特殊元素</div>
   </div>
   <div class="right">
     <button id="bFollow" class="active">跟踪视角</button>
@@ -118,9 +122,9 @@ const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#05
 const HOST_CTRL_CLEAR_TRAJECTORY=1;
 const HOST_CTRL_START_GPS_REPLAY=3;
 const HOST_CTRL_STOP_GPS_REPLAY=4;
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0};
+const S={api:false,traj:[],marks:[],jumps:[],lastJumpCount:0,nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',sat:0,kPos:0.0,zupt:0,se:0,rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
-const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStopGps:bStopGps,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,satN:satN,kPos:kPos,zuptTag:zuptTag,seTag:seTag,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStopGps:bStopGps,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -142,11 +146,59 @@ function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale
 function hit(px,py){let best=null,bd=9999;for(const m of S.marks){const p=w2s(m.x,m.y);const d=Math.hypot(px-p.x,py-p.y);if(d<12&&d<bd){best=m;bd=d}}return best}
 function grid(w,h){let sp=1000*V.scale;while(sp<24)sp*=2;while(sp>120)sp*=0.5;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let sx=((c.x%sp)+sp)%sp;for(let x=sx;x<w;x+=sp){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let sy=((c.y%sp)+sp)%sp;for(let y=sy;y<h;y+=sp){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}}
 function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
-function drawTraj(){if(S.traj.length<2)return;ctx.strokeStyle='#2f6fed';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<S.traj.length;i++){const p=w2s(S.traj[i].x,S.traj[i].y);if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y)}ctx.stroke();const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
+function drawTrajPath(fieldX, fieldY, color, width) {
+  if(S.traj.length<2)return;
+  ctx.strokeStyle=color;
+  ctx.lineWidth=width;
+  ctx.beginPath();
+  let first=true;
+  for(let i=0;i<S.traj.length;i++){
+    const x=S.traj[i][fieldX], y=S.traj[i][fieldY];
+    if(x===0 && y===0 && fieldX!=='x') continue; // Simple way to skip 0,0 for sub-trajectories if missing
+    const p=w2s(x,y);
+    if(first){ctx.moveTo(p.x,p.y);first=false;}
+    else ctx.lineTo(p.x,p.y);
+  }
+  ctx.stroke();
+}
+function drawTraj(){
+  drawTrajPath('ins_x','ins_y','rgba(255, 165, 0, 0.6)',1.5);
+  drawTrajPath('ground_x','ground_y','rgba(0, 255, 0, 0.6)',1.5);
+  drawTrajPath('x','y','#2f6fed',2);
+  if(S.traj.length>0){
+    const last=S.traj[S.traj.length-1];
+    const p=w2s(last.x,last.y);
+    ctx.fillStyle='#114da5';
+    ctx.beginPath();
+    ctx.arc(p.x,p.y,5.5,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+function drawJumps(){
+  ctx.strokeStyle='red';
+  ctx.lineWidth=3;
+  for(const j of S.jumps){
+    const p=w2s(j.x,j.y);
+    ctx.beginPath();
+    ctx.moveTo(p.x-6,p.y-6); ctx.lineTo(p.x+6,p.y+6);
+    ctx.moveTo(p.x+6,p.y-6); ctx.lineTo(p.x-6,p.y+6);
+    ctx.stroke();
+  }
+}
 function drawArrow(px,py,yawDeg,color,selected){const rad=yawDeg*Math.PI/180;const len=selected?30:24;const dx=-Math.cos(rad);const dy=Math.sin(rad);const tailX=px-dx*len*0.35;const tailY=py-dy*len*0.35;const tipX=px+dx*len;const tipY=py+dy*len;ctx.strokeStyle=color;ctx.lineWidth=selected?3:2;ctx.beginPath();ctx.moveTo(tailX,tailY);ctx.lineTo(tipX,tipY);ctx.stroke();const head=7;const ang=Math.atan2(tipY-tailY,tipX-tailX);ctx.beginPath();ctx.moveTo(tipX,tipY);ctx.lineTo(tipX-head*Math.cos(ang-Math.PI/7),tipY-head*Math.sin(ang-Math.PI/7));ctx.lineTo(tipX-head*Math.cos(ang+Math.PI/7),tipY-head*Math.sin(ang+Math.PI/7));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
 function drawMarks(){for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=COLORS[m.type]||'#374151';ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();if(m.type!==0)drawArrow(p.x,p.y,m.targetYaw,col,sel);if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
-function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawMarks()}
-function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload}
+function drawLegend(){const items=[{n:'融合(Fuse)',c:'#2f6fed'},{n:'惯导(INS)',c:'rgba(255, 165, 0, 0.8)'},{n:'纯GPS',c:'rgba(0, 255, 0, 0.8)'}];const s=size();const pad=10,ih=22,w=100,h=items.length*ih+10;const x=s.w-w-20,y=s.h-h-20;ctx.fillStyle='rgba(255,255,255,0.85)';ctx.fillRect(x,y,w,h);ctx.strokeStyle='#ccc';ctx.lineWidth=1;ctx.strokeRect(x,y,w,h);for(let i=0;i<items.length;i++){const it=items[i],cy=y+10+i*ih+ih/2;ctx.strokeStyle=it.c;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(x+10,cy);ctx.lineTo(x+30,cy);ctx.stroke();ctx.fillStyle='#333';ctx.font='12px Microsoft YaHei';ctx.fillText(it.n,x+36,cy+4)}}
+function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawJumps();drawMarks();drawLegend()}
+function syncTop(){
+  E.fps.textContent='FPS:'+S.fps;
+  E.trajN.textContent='轨迹:'+S.traj.length;
+  E.markN.textContent='标记:'+S.marks.length;
+  E.payload.textContent='Payload:'+S.payload;
+  E.satN.textContent='卫星:'+S.sat;
+  E.kPos.textContent='K:'+S.kPos.toFixed(3);
+  E.zuptTag.style.display=S.zupt?'block':'none';
+  E.seTag.style.display=S.se?'block':'none';
+}
 function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent='-';E.sy.textContent='-';E.syaw.textContent='-';E.sheading.textContent='-';E.ss.textContent='-';fillType(E.selType,0);E.inpYaw.value='';E.inpHeading.value='';return}const idx=S.marks.findIndex(v=>v.id===m.id);E.si.textContent=String(idx);E.sx.textContent=m.x.toFixed(1);E.sy.textContent=m.y.toFixed(1);E.syaw.textContent=m.targetYaw.toFixed(1);E.sheading.textContent=m.heading.toFixed(1);E.ss.textContent=m.src;fillType(E.selType,m.type);E.inpYaw.value=m.targetYaw.toFixed(1);E.inpHeading.value=m.heading.toFixed(1)}
 function syncRows(){E.rows.innerHTML=S.marks.map((m,i)=>{const opts=TYPES.map(t=>`<option value="${t.value}" ${m.type===t.value?'selected':''}>${t.value}</option>`).join('');return `<tr class="${m.id===S.sel?'sel':''}"><td>${i}</td><td>${m.x.toFixed(0)}</td><td>${m.y.toFixed(0)}</td><td>${m.targetYaw.toFixed(1)}</td><td>${m.heading.toFixed(1)}</td><td><select class="rt" data-id="${m.id}">${opts}</select></td><td><button class="rf" data-id="${m.id}">选中</button><button class="rd" data-id="${m.id}">删</button></td></tr>`}).join('');E.rows.querySelectorAll('.rf').forEach(b=>b.onclick=()=>{S.sel=Number(b.dataset.id);syncMarks();draw()});E.rows.querySelectorAll('.rd').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.id);S.marks=S.marks.filter(v=>v.id!==id);if(S.sel===id)S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()});E.rows.querySelectorAll('.rt').forEach(s=>s.onchange=()=>{const id=Number(s.dataset.id);const m=S.marks.find(v=>v.id===id);if(!m)return;m.type=clampType(s.value);if(S.sel===id)syncSel();draw()})}
 function syncMarks(){syncTop();syncSel();syncRows()}
@@ -154,7 +206,37 @@ function setConn(ok,text,cls){E.st.className='tag '+cls;E.st.textContent=text;if
 function setTxStatus(state,autoReset=true){if(state==='ok'){E.txState.className='tag ok';E.txState.textContent='回传成功'}else if(state==='err'){E.txState.className='tag err';E.txState.textContent='回传失败'}else{E.txState.className='tag warn';E.txState.textContent='尚未回传'}if(autoReset&&state!=='idle'){clearTimeout(txStatusTimer);txStatusTimer=setTimeout(()=>setTxStatus('idle',false),3000)}else if(state==='idle'){clearTimeout(txStatusTimer);txStatusTimer=null}}
 function exportPayload(){return S.marks.map((m,i)=>({index:i,x:m.x,y:m.y,point_type:m.type}))}
 async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pywebview.api)return{success:false,msg:'后端 API 未就绪'};try{return await window.pywebview.api.send_host_control(code)}catch(e){return{success:false,msg:'命令发送异常:'+(e.message||e)}}}
-function feed(frames){if(!Array.isArray(frames)||!frames.length)return;for(const it of frames){const x=Number(it.nav_x),y=Number(it.nav_y),yaw=normalizeYaw(it.relative_yaw||0),hdg=normalizeHeading(it.heading||0);if(Number.isFinite(x)&&Number.isFinite(y)){S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg};S.traj.push({x,y})}const trig=Number(it.mark_trigger)||0;if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',yaw,hdg);S.lastMarkLoop=Number(it.loop)||0}S.lastTrigger=trig;S.payload=it.payload_size||'--'}if(S.traj.length>S.maxTraj)S.traj.splice(0,S.traj.length-S.maxTraj);S.rx+=frames.length;S.lastDataAt=performance.now();if(V.adaptive)fitAll();else if(V.follow)follow();syncTop();draw()}
+function feed(frames){
+  if(!Array.isArray(frames)||!frames.length)return;
+  for(const it of frames){
+    const x=Number(it.fuse_x!==undefined?it.fuse_x:it.nav_x), y=Number(it.fuse_y!==undefined?it.fuse_y:it.nav_y);
+    const ins_x=Number(it.ins_x||0), ins_y=Number(it.ins_y||0);
+    const ground_x=Number(it.ground_x||0), ground_y=Number(it.ground_y||0);
+    const yaw=normalizeYaw(it.relative_yaw||0), hdg=normalizeHeading(it.heading||0);
+    S.sat = Number(it.sat_used||0);
+    S.kPos = Number(it.k_pos||0);
+    S.zupt = Number(it.zupt_flag||0);
+    S.se = Number(it.special_element_flag||0);
+    const jc = Number(it.jump_reject_count||0);
+    if (jc > S.lastJumpCount && S.lastJumpCount !== 0) {
+      S.jumps.push({x, y, count: jc});
+    }
+    S.lastJumpCount = jc;
+
+    if(Number.isFinite(x)&&Number.isFinite(y)){
+      S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg};
+      S.traj.push({x, y, ins_x, ins_y, ground_x, ground_y});
+    }
+    const trig=Number(it.mark_trigger)||0;
+    if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',yaw,hdg);S.lastMarkLoop=Number(it.loop)||0}
+    S.lastTrigger=trig;
+    S.payload=it.payload_size||'--';
+  }
+  if(S.traj.length>S.maxTraj)S.traj.splice(0,S.traj.length-S.maxTraj);
+  S.rx+=frames.length;S.lastDataAt=performance.now();
+  if(V.adaptive)fitAll();else if(V.follow)follow();
+  syncTop();draw();
+}
 async function pollData(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,120);return}try{const d=await window.pywebview.api.get_new_data();if(d&&d.length){setConn(true,'\u5df2\u8fde\u63a5','ok');feed(d)}}catch(_){setConn(false,'\u63a5\u53e3\u5f02\u5e38','err')}setTimeout(pollData,38)}
 let stTick=0;
 async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
@@ -174,7 +256,7 @@ E.bAdd.onclick=()=>{if(!S.last){tip('\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u8f68\
 E.bDel.onclick=()=>{rmSel();tip('\u5df2\u5220\u9664\u9009\u4e2d\u70b9')};
 E.bClrM.onclick=()=>{S.marks=[];S.sel=null;syncMarks();draw();tip('\u5df2\u6e05\u7a7a\u6807\u8bb0\u70b9')};
 E.bClrT.onclick=async()=>{
-S.traj=[];S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
+S.traj=[];S.jumps=[];S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
 if(S.api&&window.pywebview&&window.pywebview.api){try{await window.pywebview.api.clear_history()}catch(_){ }}
 draw();syncTop();tip('\u5df2\u6e05\u7a7a\u8f68\u8ff9');
 const sendResult=await sendHostControl(HOST_CTRL_CLEAR_TRAJECTORY);

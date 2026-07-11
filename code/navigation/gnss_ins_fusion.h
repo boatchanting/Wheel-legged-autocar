@@ -20,6 +20,12 @@ typedef struct {
     float fuse_x;     // 最终输出给纯追踪的平滑 X (mm)
     float fuse_y;     // 最终输出给纯追踪的平滑 Y (mm)
     float fuse_yaw;   // 最终输出给纯追踪的平滑 Yaw (度)
+    
+    // --- 状态监测 (供上位机遥测使用) ---
+    float k_pos;                   // 当前互补滤波权重
+    uint8_t jump_reject_count;     // 跃变剔除计数器
+    uint8_t zupt_flag;             // 零速挂起标志
+    uint8_t special_element_flag;  // 特殊元素屏蔽标志
 } FusionState_t;
 
 extern FusionState_t g_fuse_state;

@@ -48,6 +48,11 @@ void Fusion_Init(void)
     g_fuse_state.fuse_y   = 0.0f;
     g_fuse_state.fuse_yaw = 0.0f;
 
+    g_fuse_state.k_pos = 0.0f;
+    g_fuse_state.jump_reject_count = 0;
+    g_fuse_state.zupt_flag = 0;
+    g_fuse_state.special_element_flag = 0;
+
     g_track_base_yaw = 0.0f;
 
     s_last_ground_x = 0.0f;
@@ -91,6 +96,11 @@ void Fusion_Manual_Lock_Origin(void)
     g_fuse_state.fuse_x = 0.0f;
     g_fuse_state.fuse_y = 0.0f;
     g_fuse_state.fuse_yaw = 0.0f;
+
+    g_fuse_state.k_pos = 0.0f;
+    g_fuse_state.jump_reject_count = 0;
+    g_fuse_state.zupt_flag = 0;
+    g_fuse_state.special_element_flag = 0;
 
     // 4. 重置内部状态
     s_last_ground_x = 0.0f;
@@ -177,11 +187,15 @@ void Fusion_Gps_Correct(void)
     // ========================================================
 
     // 【补丁 1：防 GPS 闪现跃变】
+    g_fuse_state.special_element_flag = 0;
+    g_fuse_state.zupt_flag = 0;
+
     float dx_gps = ground_x_mm - s_last_ground_x;
     float dy_gps = ground_y_mm - s_last_ground_y;
     float delta_gps = sqrtf(dx_gps * dx_gps + dy_gps * dy_gps);
     if (delta_gps > 1500.0f)  // 1.5m = 1500mm
     {
+        g_fuse_state.jump_reject_count++;
         return;  // 丢弃本帧，靠惯导盲走
     }
     s_last_ground_x = ground_x_mm;
@@ -216,6 +230,7 @@ void Fusion_Gps_Correct(void)
             current_element == NAV_POINT_BUMP)
         {
             K_pos = 0.0f;
+            g_fuse_state.special_element_flag = 1;
         }
     }
 
@@ -228,6 +243,7 @@ void Fusion_Gps_Correct(void)
     if (fabsf(wheel_speed) < 10.0f && fabsf(gyro_z_deg_s) < 2.0f)
     {
         K_pos = 0.0f;
+        g_fuse_state.zupt_flag = 1;
     }
 
     // 打滑信任权重转移：打滑时惯导失真，被迫放大 GPS 权重
@@ -239,6 +255,7 @@ void Fusion_Gps_Correct(void)
     // ====================================================
     // 执行融合更新 (Offset 弹性更新，禁止硬覆盖)
     // ====================================================
+    g_fuse_state.k_pos = K_pos;
     float err_x = ground_x_mm - g_fuse_state.fuse_x;
     float err_y = ground_y_mm - g_fuse_state.fuse_y;
     g_fuse_state.offset_x += K_pos * err_x;

@@ -421,6 +421,12 @@ void wifi_protocol_send_data(void)
     write_float_value(gnss_trans.ground_x * 1000.0f);
     write_float_value(gnss_trans.ground_y * 1000.0f);
 
+    // H. Status monitoring for fusion 
+    write_float_value(g_fuse_state.k_pos);
+    write_u8(g_fuse_state.jump_reject_count);
+    write_u8(g_fuse_state.zupt_flag);
+    write_u8(g_fuse_state.special_element_flag);
+
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;
 

@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import math
 import os
 import socket
@@ -32,6 +32,8 @@ HOST_ACK_TIMEOUT_SEC = 1.5
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
 PAYLOAD_SIZE_V3 = 96
+PAYLOAD_SIZE_V4 = 132
+PAYLOAD_SIZE_V5 = 139
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -306,6 +308,37 @@ def _decode_payload(payload_bytes):
         data["gps_y"] = data["nav_y"]
         data["gps_valid"] = int(bool(data.get("state", 0)))
         data["gps_origin_set"] = data["gps_valid"]
+
+    if size >= PAYLOAD_SIZE_V4:
+        fuse_x, fuse_y, fuse_yaw, offset_x, offset_y, ins_x, ins_y, ground_x, ground_y = struct.unpack_from("<fffffffff", payload_bytes, PAYLOAD_SIZE_V3)
+        data["fuse_x"] = fuse_x
+        data["fuse_y"] = fuse_y
+        data["fuse_yaw"] = fuse_yaw
+        data["offset_x"] = offset_x
+        data["offset_y"] = offset_y
+        data["ins_x"] = ins_x
+        data["ins_y"] = ins_y
+        data["ground_x"] = ground_x
+        data["ground_y"] = ground_y
+    else:
+        data["fuse_x"] = data.get("gps_x", 0.0)
+        data["fuse_y"] = data.get("gps_y", 0.0)
+        data["ins_x"] = data.get("nav_x", 0.0)
+        data["ins_y"] = data.get("nav_y", 0.0)
+        data["ground_x"] = data.get("gps_x", 0.0)
+        data["ground_y"] = data.get("gps_y", 0.0)
+
+    if size >= PAYLOAD_SIZE_V5:
+        k_pos, jump_reject_count, zupt_flag, special_element_flag = struct.unpack_from("<fBBB", payload_bytes, PAYLOAD_SIZE_V4)
+        data["k_pos"] = k_pos
+        data["jump_reject_count"] = jump_reject_count
+        data["zupt_flag"] = zupt_flag
+        data["special_element_flag"] = special_element_flag
+    else:
+        data["k_pos"] = 0.0
+        data["jump_reject_count"] = 0
+        data["zupt_flag"] = 0
+        data["special_element_flag"] = 0
 
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
