@@ -4,6 +4,7 @@
 #include "nav_ram.h"                // nav_ram_data, NavPointType_e
 #include "../calculate/ekf.h"       // imu_data.gyro_z, euler_angle.pitch, heading
 #include "../config/sys_options.h"  // IMU_CATEGORY, CURRENT_NAV_PLAN
+#include <math.h>
 
 // 获取当前寻迹目标索引 (定义在 plan1_gnss.c 或 plan2_*.c 中)
 extern uint16 g_target_idx;
@@ -22,6 +23,14 @@ float g_track_base_yaw = 0.0f;  // 发车基准角 (度)，由手动锁定时写
 static float s_last_ground_x = 0.0f;  // 上一帧 GPS 地面坐标 (mm)
 static float s_last_ground_y = 0.0f;
 static uint8_t s_origin_initialized = 0; // 原点锁定后是否已完成融合初始化
+
+#if TRACK_BASE_YAW_MODE == 2
+#define LS_SAMPLES 50
+static float ls_gps_x[LS_SAMPLES];
+static float ls_gps_y[LS_SAMPLES];
+static float ls_ins_x[LS_SAMPLES];
+static float ls_ins_y[LS_SAMPLES];
+#endif
 
 // ==================== 内部辅助函数 ====================
 
@@ -58,6 +67,48 @@ void Fusion_Init(void)
     s_last_ground_x = 0.0f;
     s_last_ground_y = 0.0f;
     s_origin_initialized = 0;
+    
+    g_fuse_state.heading_calculating = 0;
+    g_fuse_state.heading_sample_count = 0;
+    g_fuse_state.heading_sum_cos = 0.0f;
+    g_fuse_state.heading_sum_sin = 0.0f;
+}
+
+void Fusion_Start_Heading_Sampling(void)
+{
+#if TRACK_BASE_YAW_MODE == 1
+    g_fuse_state.heading_sum_cos = 0.0f;
+    g_fuse_state.heading_sum_sin = 0.0f;
+    g_fuse_state.heading_sample_count = 0;
+#elif TRACK_BASE_YAW_MODE == 2
+    g_fuse_state.heading_calculating = 1;
+    g_fuse_state.heading_sample_count = 0;
+#endif
+}
+
+void Fusion_Update_Heading_Sampling(void)
+{
+#if TRACK_BASE_YAW_MODE == 1
+    #if IMU_CATEGORY == 3
+        float yaw = heading;
+    #else
+        float yaw = gnss.direction;
+    #endif
+    g_fuse_state.heading_sum_cos += cosf(yaw * DEG_TO_RAD);
+    g_fuse_state.heading_sum_sin += sinf(yaw * DEG_TO_RAD);
+    g_fuse_state.heading_sample_count++;
+#endif
+}
+
+void Fusion_Stop_Heading_Sampling(void)
+{
+#if TRACK_BASE_YAW_MODE == 1
+    if (g_fuse_state.heading_sample_count > 0)
+    {
+        g_track_base_yaw = atan2f(g_fuse_state.heading_sum_sin, g_fuse_state.heading_sum_cos) * RAD_TO_DEG;
+        g_track_base_yaw = _normalize_angle_180(g_track_base_yaw);
+    }
+#endif
 }
 
 void Fusion_Manual_Lock_Origin(void)
@@ -77,10 +128,21 @@ void Fusion_Manual_Lock_Origin(void)
 
     // 2. 记录此时车头的绝对地理方向 (赛道基准角)
     //    单天线无 THS，使用 IMU 磁力计绝对航向
+#if TRACK_BASE_YAW_MODE == 1
+    g_fuse_state.heading_calculating = 1;
+    g_fuse_state.heading_sample_count = 0;
+    g_fuse_state.heading_sum_cos = 0.0f;
+    g_fuse_state.heading_sum_sin = 0.0f;
+#elif TRACK_BASE_YAW_MODE == 2
+    g_fuse_state.heading_calculating = 1;
+    g_fuse_state.heading_sample_count = 0;
+    g_track_base_yaw = 0.0f;
+#else
 #if IMU_CATEGORY == 3
     g_track_base_yaw = heading;  // IMU963RA 磁力计航向 (度)
 #else
     g_track_base_yaw = gnss.direction;  // 退化为 RMC 航向
+#endif
 #endif
 
     // 3. 惯导状态彻底清零
@@ -154,6 +216,74 @@ void Fusion_Gps_Correct(void)
     float delta_E = gnss_trans.x;  // 东向位移
     float delta_N = gnss_trans.y;  // 北向位移
 
+#if TRACK_BASE_YAW_MODE == 2
+    static uint8_t just_finished_heading = 0;
+    
+    if (g_fuse_state.heading_calculating == 1)
+    {
+        if (g_fuse_state.heading_sample_count < LS_SAMPLES)
+        {
+            ls_gps_x[g_fuse_state.heading_sample_count] = delta_E * 1000.0f;
+            ls_gps_y[g_fuse_state.heading_sample_count] = delta_N * 1000.0f;
+            ls_ins_x[g_fuse_state.heading_sample_count] = g_fuse_state.ins_x;
+            ls_ins_y[g_fuse_state.heading_sample_count] = g_fuse_state.ins_y;
+            g_fuse_state.heading_sample_count++;
+            
+            g_fuse_state.k_pos = 0.0f;
+            return; // 屏蔽后续更新
+        }
+        else
+        {
+            float sum_gps_x = 0, sum_gps_y = 0;
+            float sum_ins_x = 0, sum_ins_y = 0;
+            for (int i = 0; i < LS_SAMPLES; i++) {
+                sum_gps_x += ls_gps_x[i];
+                sum_gps_y += ls_gps_y[i];
+                sum_ins_x += ls_ins_x[i];
+                sum_ins_y += ls_ins_y[i];
+            }
+            float mean_gps_x = sum_gps_x / LS_SAMPLES;
+            float mean_gps_y = sum_gps_y / LS_SAMPLES;
+            float mean_ins_x = sum_ins_x / LS_SAMPLES;
+            float mean_ins_y = sum_ins_y / LS_SAMPLES;
+            
+            float gps_num = 0, gps_den = 0;
+            float ins_num = 0, ins_den = 0;
+            for (int i = 0; i < LS_SAMPLES; i++) {
+                gps_num += (ls_gps_x[i] - mean_gps_x) * (ls_gps_y[i] - mean_gps_y);
+                gps_den += (ls_gps_x[i] - mean_gps_x) * (ls_gps_x[i] - mean_gps_x);
+                ins_num += (ls_ins_x[i] - mean_ins_x) * (ls_ins_y[i] - mean_ins_y);
+                ins_den += (ls_ins_x[i] - mean_ins_x) * (ls_ins_x[i] - mean_ins_x);
+            }
+            
+            float gps_angle_rad, ins_angle_rad;
+            if (gps_den < 1e-3f) {
+                gps_angle_rad = (ls_gps_y[LS_SAMPLES-1] >= ls_gps_y[0]) ? (M_PI/2.0f) : (-M_PI/2.0f);
+            } else {
+                gps_angle_rad = atanf(gps_num / gps_den);
+                if (ls_gps_x[LS_SAMPLES-1] < ls_gps_x[0]) {
+                    gps_angle_rad += (gps_angle_rad > 0) ? -M_PI : M_PI;
+                }
+            }
+            
+            if (ins_den < 1e-3f) {
+                ins_angle_rad = (ls_ins_y[LS_SAMPLES-1] >= ls_ins_y[0]) ? (M_PI/2.0f) : (-M_PI/2.0f);
+            } else {
+                ins_angle_rad = atanf(ins_num / ins_den);
+                if (ls_ins_x[LS_SAMPLES-1] < ls_ins_x[0]) {
+                    ins_angle_rad += (ins_angle_rad > 0) ? -M_PI : M_PI;
+                }
+            }
+            
+            float rad = ins_angle_rad - gps_angle_rad - ((float)M_PI / 2.0f);
+            g_track_base_yaw = _normalize_angle_180(rad * RAD_TO_DEG);
+            
+            g_fuse_state.heading_calculating = 0;
+            just_finished_heading = 1;
+        }
+    }
+#endif
+
     // ========================================================
     // 坐标系旋转：地球系(东/北) -> 赛道本地系 (X向后，Y向右)
     // g_track_base_yaw: 0度=正北，顺时针为正
@@ -193,6 +323,14 @@ void Fusion_Gps_Correct(void)
     float dx_gps = ground_x_mm - s_last_ground_x;
     float dy_gps = ground_y_mm - s_last_ground_y;
     float delta_gps = sqrtf(dx_gps * dx_gps + dy_gps * dy_gps);
+
+#if TRACK_BASE_YAW_MODE == 2
+    if (just_finished_heading) {
+        just_finished_heading = 0;
+        delta_gps = 0.0f; // Force accept this frame as valid after heading calculation
+    }
+#endif
+
     if (delta_gps > 1500.0f)  // 1.5m = 1500mm
     {
         g_fuse_state.jump_reject_count++;

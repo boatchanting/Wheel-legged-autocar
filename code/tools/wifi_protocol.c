@@ -147,7 +147,7 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
     {
         const uint8_t accepted = g_motor_enable;
         // Reuse menu action path so host command and key action stay identical.
-        Menu_TriggerStartAction();
+        Menu_RequestLocalStartAction();
         if (accepted)
         {
             ack_status = WIFI_HOST_ACK_ACCEPTED;

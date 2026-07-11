@@ -1,5 +1,5 @@
 #include "menu.h"
-
+#include "../navigation/gnss_ins_fusion.h"
 
 // ==================== 全局变量定义 ====================
 MenuState_t current_state = MENU_STATE_MAIN; 
@@ -62,7 +62,7 @@ void Menu_TriggerStartAction(void)
 }
 
 // ==================== 辅助函数 ====================
-static void Menu_RequestLocalStartAction(void)
+void Menu_RequestLocalStartAction(void)
 {
     if (menu_local_start_pending)
     {
@@ -71,6 +71,7 @@ static void Menu_RequestLocalStartAction(void)
 
     menu_local_start_delay_ticks = MENU_LOCAL_START_DELAY_TICKS;
     menu_local_start_pending = 1;
+    Fusion_Start_Heading_Sampling();
 }
 
 static void Menu_UpdateLocalStartAction(void)
@@ -79,6 +80,8 @@ static void Menu_UpdateLocalStartAction(void)
     {
         return;
     }
+
+    Fusion_Update_Heading_Sampling();
 
     if (menu_local_start_delay_ticks > 0)
     {
@@ -90,6 +93,7 @@ static void Menu_UpdateLocalStartAction(void)
         return;
     }
 
+    Fusion_Stop_Heading_Sampling();
     menu_local_start_pending = 0;
     Menu_TriggerStartAction();
 }

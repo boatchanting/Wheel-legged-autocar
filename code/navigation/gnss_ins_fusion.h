@@ -25,6 +25,13 @@ typedef struct {
     float k_pos;                   // 当前互补滤波权重
     uint8_t jump_reject_count;     // 跃变剔除计数器
     uint8_t zupt_flag;             // 零速挂起标志
+    
+    // --- 发车角初始化状态 ---
+    uint8_t heading_calculating;   // 1: 发车角计算中 (Mode2屏蔽GPS，Mode1采样中)
+    uint16_t heading_sample_count; // Mode1: 采样帧数; Mode2: 已收到有效GPS帧数
+    float heading_sum_cos;         // Mode1: cos(yaw)累加
+    float heading_sum_sin;         // Mode1: sin(yaw)累加
+    
     uint8_t special_element_flag;  // 特殊元素屏蔽标志
 } FusionState_t;
 
