@@ -1000,10 +1000,20 @@ def generate_fast_uturn_control_points(layout: FastUTurnLayout) -> Tuple[List[Tu
         target_speed=0.0,
         point_type=0,
     )
-    swing_sign = _fast_uturn_swing_sign(layout)
+    # 反转 swing_sign，使掉头后从内侧切入最近的间隙，而不是向外侧绕大弯
+    swing_sign = -_fast_uturn_swing_sign(layout)
     apex_pts = generate_slalom_apex_points(action_anchor, layout.cones, swing_sign)
 
+    post_action_control = [layout.action_point]
     if apex_pts:
+        # 为了防止 B样条在掉头点到第一个桩桶因为角度过锐而产生回环过冲，
+        # 在起点和第一个顶点间插入线性约束点，强制 B样条在此处退化为直线
+        first_apex = apex_pts[0]
+        gap_dx = first_apex[0] - layout.action_point[0]
+        gap_dy = first_apex[1] - layout.action_point[1]
+        post_action_control.append((layout.action_point[0] + gap_dx * 0.33, layout.action_point[1] + gap_dy * 0.33))
+        post_action_control.append((layout.action_point[0] + gap_dx * 0.66, layout.action_point[1] + gap_dy * 0.66))
+        
         last_pt = apex_pts[-1]
     else:
         last_pt = layout.action_point
@@ -1014,7 +1024,7 @@ def generate_fast_uturn_control_points(layout: FastUTurnLayout) -> Tuple[List[Tu
     apex_pts.append((last_pt[0] + gap_x * 0.66, last_pt[1] + gap_y * 0.66))
     apex_pts.append((layout.end_point.x, layout.end_point.y))
 
-    post_action_control = [layout.action_point] + apex_pts
+    post_action_control.extend(apex_pts)
     straight_control = [
         (layout.start.x, layout.start.y),
         layout.line_center,

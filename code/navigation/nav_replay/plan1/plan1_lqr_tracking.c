@@ -32,13 +32,15 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 /* 极速掉头运行参数只放在科目一运行模块里，方便试车时局部调整，不污染全局 sys_options.h。 */
 #define PLAN1_FAST_UTURN_INVALID_IDX              0xFFFFU
 #define PLAN1_FAST_UTURN_TRIGGER_DIST_MM          90.0f
-#define PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG        3.0f // 严格收紧接回阈值，确保自旋对准
+#define PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG        1.0f // 严格收紧接回阈值，确保自旋对准
 #define PLAN1_FAST_UTURN_KICK_STEER_DEG           42.0f
+#define PLAN1_FAST_UTURN_KICK_MIN_STEER           25.0f // 自旋最小目标差速，防止P控制死区卡死
 #define PLAN1_FAST_UTURN_KICK_SPEED_CMD           0.0f
-#define PLAN1_FAST_UTURN_ALIGN_KP                 1.5f  // 闭环比例控制参数，解决过冲
+#define PLAN1_FAST_UTURN_ALIGN_KP                 2.5f  // 闭环比例控制参数，解决过冲
 #define PLAN1_FAST_UTURN_KICK_MIN_TICKS           4U
 #define PLAN1_FAST_UTURN_KICK_TIMEOUT_TICKS       120U
 #define PLAN1_FAST_UTURN_RECOVER_TICKS            30U
+#define PLAN1_FAST_UTURN_POST_MIN_KICK_SPEED      1500.0f // 掉头后强制起步最小速度，打破零速度陷阱
 
 typedef enum
 {
@@ -212,7 +214,10 @@ static float NavReplay_FastUTurn_GetPostPathYaw(void)
         return inertial_nav.relative_yaw;
     }
 
-    return NavReplay_FastUTurn_GetPathYawAtIndex(s_fast_uturn_action_idx);
+    // 读取真正的出弯直线切线：由于掉头点(action_idx)处于V字形折点，
+    // 其切线角度是由进弯和出弯两点平均而来，比真实的绕桩直线往内侧偏移。
+    // 往后读取5个点（约5cm），可以获取纯正的出弯直线方向，避免向内过早切入撞桩。
+    return NavReplay_FastUTurn_GetPathYawAtIndex(s_fast_uturn_action_idx + 5U);
 }
 
 /**
@@ -320,6 +325,8 @@ static uint8 NavReplay_FastUTurn_ProcessAction(void)
     uint8 lead;
     float lead_err;
 
+    float spin_cmd;
+
     if (!NavReplay_FastUTurn_IsActiveAction())
     {
         return 0U;
@@ -333,7 +340,17 @@ static uint8 NavReplay_FastUTurn_ProcessAction(void)
     NavReplay_FastUTurn_SelectLead(path_yaw, &lead, &lead_err);
     
     // 闭环比例控制：差速自旋
-    err_degree = Float_Constrain(PLAN1_FAST_UTURN_ALIGN_KP * lead_err,
+    spin_cmd = PLAN1_FAST_UTURN_ALIGN_KP * lead_err;
+    if ((spin_cmd > 0.0f) && (spin_cmd < PLAN1_FAST_UTURN_KICK_MIN_STEER))
+    {
+        spin_cmd = PLAN1_FAST_UTURN_KICK_MIN_STEER;
+    }
+    else if ((spin_cmd < 0.0f) && (spin_cmd > -PLAN1_FAST_UTURN_KICK_MIN_STEER))
+    {
+        spin_cmd = -PLAN1_FAST_UTURN_KICK_MIN_STEER;
+    }
+
+    err_degree = Float_Constrain(spin_cmd,
                                  -PLAN1_FAST_UTURN_KICK_STEER_DEG,
                                  PLAN1_FAST_UTURN_KICK_STEER_DEG);
     target_speed_set = PLAN1_FAST_UTURN_KICK_SPEED_CMD;
@@ -374,6 +391,17 @@ static void NavReplay_FastUTurn_ApplyLeadReference(LqrReference_t *ref)
 
     path_yaw = NavReplay_FastUTurn_GetPathYawAtIndex(ref->idx);
     abs_speed = fabsf(ref->target_speed);
+    
+    // 强制起步速度激发：掉头完毕后即使路径点规划速度为0，也强制给一个较高的初始速度，打破零速度陷阱
+    if ((g_plan1_fast_uturn_state == (uint8)PLAN1_FAST_UTURN_STATE_POST_TRACK) &&
+        (s_fast_uturn_recover_ticks > 0U))
+    {
+        if (abs_speed < PLAN1_FAST_UTURN_POST_MIN_KICK_SPEED)
+        {
+            abs_speed = PLAN1_FAST_UTURN_POST_MIN_KICK_SPEED;
+        }
+    }
+
     ref->target_speed = NavReplay_FastUTurn_SpeedForLead(abs_speed, g_plan1_fast_uturn_lead);
 
     if (g_plan1_fast_uturn_lead == (uint8)PLAN1_FAST_UTURN_LEAD_REAR)
