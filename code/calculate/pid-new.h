@@ -242,6 +242,7 @@ extern volatile float turn_gyro_loop_out; // 转向角速度环输出（PWM）
 extern volatile float final_motor_pwm;  // 最终输出到电机的PWM值
 
 extern volatile float target_speed_set;
+extern volatile uint8 profile_switch_beep_request; // 复刻模式下PID切换蜂鸣请求，ISR中消费后清零
 extern volatile ControlMode_e g_control_mode_requested;
 extern volatile ControlMode_e g_control_mode_applied;
 extern ControlProfile_t g_control_profile_active;

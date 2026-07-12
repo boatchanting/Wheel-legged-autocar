@@ -62,6 +62,8 @@ static const ControlProfile_t g_control_profile_brake = {
     14.0f, 28.0f, 0.018f, 0.015f, 80.0f
 };// 【优化点】这些参数是ai随便写的，需要调整，以及可以扩展更多的场景
 
+volatile uint8 profile_switch_beep_request = 0U; // 复刻模式下PID切换蜂鸣请求
+
 volatile float target_speed_set = 0.0f;
 
 //状态与调试变量
@@ -985,6 +987,10 @@ static void Control_Profile_ApplyToControllers(const ControlProfile_t *profile)
 
 void Control_Profile_RequestMode(ControlMode_e mode)
 {
+    if (g_control_mode_requested != mode)
+    {
+        profile_switch_beep_request = 1U;
+    }
     g_control_mode_requested = mode;
     g_control_profile_target = *Control_Profile_GetPreset(mode);
 }

@@ -74,6 +74,7 @@ uint32_t loop_counter = 0;
 static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
+static uint16 profile_switch_beep_ticks = 0U;      // 复刻PID切换蜂鸣剩余时间，1ms 递减
 static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
@@ -427,6 +428,25 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     Control_Profile_Update1ms();//pid参数调度更新
 
+    // 复刻模式下PID切换蜂鸣提示
+    if (profile_switch_beep_request != 0U)
+    {
+        profile_switch_beep_request = 0U;
+        if (g_replay_state == REPLAY_RUNNING)
+        {
+            profile_switch_beep_ticks = 50U; // 蜂鸣50ms
+            gpio_set_level(BUZZER_PIN, GPIO_HIGH);
+        }
+    }
+    if (profile_switch_beep_ticks > 0U)
+    {
+        profile_switch_beep_ticks--;
+        if (profile_switch_beep_ticks == 0U)
+        {
+            gpio_set_level(BUZZER_PIN, GPIO_LOW);
+        }
+    }
+
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次，现改为9ms)
     // ==========================================================
@@ -494,17 +514,22 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed,euler_angle.pitch);
             {
                 float brake_pwm_now = Brake_Feedforward_GetPwm();
-                float brake_back_sit_component = duty_adjustment * BRAKE_SERVO_BACK_SIT_SIGN;
-                float brake_anti_back_sit_component = duty_adjustment * (-BRAKE_SERVO_BACK_SIT_SIGN);
+                
+                // 修复：强刹时刹车前馈产生的反作用力矩方向与当前运动方向有关。
+                // 前进刹车时(brake_pwm_now > 0)，车身有前栽趋势，需要给后坐方向的舵机支撑。
+                // 倒车刹车时(brake_pwm_now < 0)，车身有后坐趋势，需要给前倾方向(反后坐)的舵机支撑。
+                float required_duty_dir = (brake_pwm_now > 0.0f) ? BRAKE_SERVO_BACK_SIT_SIGN : -BRAKE_SERVO_BACK_SIT_SIGN;
 
-                // 强刹时优先保护车身姿态：不削弱电机反向刹车 duty，而是给一点反后坐支撑。
-                // 如果只是把后坐方向压到 0，强刹时仍可能因制动力矩后坐；这里改为至少保留一个反后坐方向的舵机支撑量。
+                float brake_reaction_component = duty_adjustment * (-required_duty_dir);
+                float brake_anti_reaction_component = duty_adjustment * required_duty_dir;
+
+                // 强刹时优先保护车身姿态：提供对抗制动力矩的舵机支撑量，防止前栽或后坐蹭地。
                 if (fabsf(brake_pwm_now) >= BRAKE_SERVO_PROTECT_PWM_TH)
                 {
-                    if ((brake_back_sit_component > BRAKE_SERVO_BACK_SIT_LIMIT) ||
-                        (brake_anti_back_sit_component < BRAKE_SERVO_ANTI_BACK_SIT_DUTY))
+                    if ((brake_reaction_component > BRAKE_SERVO_BACK_SIT_LIMIT) ||
+                        (brake_anti_reaction_component < BRAKE_SERVO_ANTI_BACK_SIT_DUTY))
                     {
-                        duty_adjustment = -BRAKE_SERVO_BACK_SIT_SIGN * BRAKE_SERVO_ANTI_BACK_SIT_DUTY;
+                        duty_adjustment = required_duty_dir * BRAKE_SERVO_ANTI_BACK_SIT_DUTY;
                         pid_servo_speed.error_integral = 0.0f;
                     }
                 }

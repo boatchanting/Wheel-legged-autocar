@@ -237,36 +237,80 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
 {
     float abs_raw = fabsf(raw_speed);
     float abs_prev = fabsf(s_prev_speed_set);
+    float abs_actual = fabsf(current_actual_speed);
     float diff = raw_speed - s_prev_speed_set;
     float step_limit;
 
+    ControlMode_e target_mode = CONTROL_MODE_NORMAL;
+    static ControlMode_e s_current_req_mode = CONTROL_MODE_NORMAL;
+    static uint16 s_mode_cooldown = 0;
+
+    // --- 1. 基于实际车速决定目标 PID 模式 ---
+    if ((raw_speed * current_actual_speed) < 0.0f)
+    {
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else if (abs_raw > (abs_actual + NAV_SPEED_SLEW_EPS))
+    {
+        target_mode = CONTROL_MODE_ACCEL;
+    }
+    else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_actual)
+    {
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else
+    {
+        target_mode = CONTROL_MODE_NORMAL;
+    }
+
+    // --- 2. 带有紧急豁免的 PID 切换冷却机制 ---
+    if (target_mode == CONTROL_MODE_BRAKE && s_current_req_mode != CONTROL_MODE_BRAKE)
+    {
+        // 紧急情况：需要刹车，无视冷却立即切换
+        s_current_req_mode = CONTROL_MODE_BRAKE;
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+        s_mode_cooldown = 30; // 切换后进入 300ms 冷却
+    }
+    else if (target_mode != s_current_req_mode && s_mode_cooldown == 0)
+    {
+        // 正常切换：冷却完毕允许切换
+        s_current_req_mode = target_mode;
+        Control_Profile_RequestMode(target_mode);
+        s_mode_cooldown = 30; // 重置 300ms 冷却
+    }
+    else if (s_mode_cooldown > 0)
+    {
+        s_mode_cooldown--;
+        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状态
+    }
+    else
+    {
+        Control_Profile_RequestMode(target_mode); // 平稳保持
+    }
+
+    // --- 3. 速度曲线斜率生成 (基于前馈目标，保证目标平滑) ---
     // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
     if (((raw_speed * s_prev_speed_set) >= 0.0f) &&
         (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS)))
     {
-        Control_Profile_RequestMode(CONTROL_MODE_ACCEL);
         return raw_speed;
     }
 
     if ((raw_speed * s_prev_speed_set) < 0.0f)
     {
         step_limit = NAV_SPEED_SLEW_DOWN_CROSS_ZERO;
-        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
     }
     else if (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS))
     {
         step_limit = (abs_prev < NAV_SPEED_SLEW_LOW_SPEED_TH) ? NAV_SPEED_SLEW_UP_LOW : NAV_SPEED_SLEW_UP_NORMAL;
-        Control_Profile_RequestMode(CONTROL_MODE_ACCEL);
     }
     else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_prev)
     {
         step_limit = (abs_prev > NAV_SPEED_SLEW_FAST_DECEL_TH) ? NAV_SPEED_SLEW_DOWN_FAST : NAV_SPEED_SLEW_DOWN_NORMAL;
-        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
     }
     else
     {
         step_limit = NAV_SPEED_SLEW_UP_NORMAL;
-        Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
     }
 
     return s_prev_speed_set + Float_Constrain(diff, -step_limit, step_limit);

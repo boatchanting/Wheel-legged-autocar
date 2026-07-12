@@ -37,12 +37,12 @@ U_TURN_DETECT_MODE = 0
 # 全局物理参数（与 chazhi.py 保持一致）
 # ============================================================
 INTERPOLATE_DIST = 50.0
-PATH_SPEED_MAX_MM_S = 3000.0
+PATH_SPEED_MAX_MM_S = 5000.0
 ENABLE_FINISH_SPRINT = True    # 开启终点冲刺：绕过最后一个桩桶后不减速并提速
-SPRINT_SPEED_MM_S = 4000.0     # 最后的冲刺极速
+SPRINT_SPEED_MM_S = 3000.0     # 最后的冲刺极速
 MAX_ACCEL_MM_S2 = 2000.0
-MAX_DECEL_MM_S2 = 1200.0
-MAX_LATERAL_ACCEL_MM_S2 = 1200.0
+MAX_DECEL_MM_S2 = 2000.0
+MAX_LATERAL_ACCEL_MM_S2 = 1500.0
 SPEED_TO_MM_S = 4.936
 CURVATURE_EPS = 1e-6
 FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -52,7 +52,7 @@ FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 # ============================================================
 CAR_HALF_WIDTH_MM = 135.0      # 车身半宽
 CONE_RADIUS_MM = 140.0         # 桩桶物理半径
-SAFE_MARGIN_MM = 200.0          # 绕桩防撞安全余量（考虑平衡车侧倾和打滑冗余）
+SAFE_MARGIN_MM = 500.0          # 绕桩防撞安全余量（考虑平衡车侧倾和打滑冗余）
 CONE_OFFSET_MM = CAR_HALF_WIDTH_MM + CONE_RADIUS_MM + SAFE_MARGIN_MM  # 桩桶横向偏置距离
 U_TURN_RADIUS_MM = 1500.0      # 掉头弯的期望回转半径（U_TURN_RADIUS_MODE=0 时生效）
 
