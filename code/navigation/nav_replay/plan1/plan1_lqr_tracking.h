@@ -98,7 +98,7 @@
 #define LQR_LATERAL_ERR_LIMIT_MM          350.0f
 
 // 速度变化死区，单位为速度指令。调大：小速度波动会被忽略；调小：更严格跟随路径表速度。
-#define NAV_SPEED_SLEW_EPS                  1.0f
+#define NAV_SPEED_SLEW_EPS                  50.0f
 
 // 低速/正常加速分界。低于该值用 NAV_SPEED_SLEW_UP_LOW，高于该值用 NAV_SPEED_SLEW_UP_NORMAL。
 #define NAV_SPEED_SLEW_LOW_SPEED_TH        80.0f
@@ -113,10 +113,10 @@
 #define NAV_SPEED_SLEW_UP_NORMAL           45.0f
 
 // 正常减速步长。调大：弯前收速更快；调小：减速更柔但可能进弯偏快。
-#define NAV_SPEED_SLEW_DOWN_NORMAL         65.0f
+#define NAV_SPEED_SLEW_DOWN_NORMAL         400.0f
 
 // 高速减速步长。调大：高速进弯收得更狠；过大：体感像急刹。
-#define NAV_SPEED_SLEW_DOWN_FAST           95.0f
+#define NAV_SPEED_SLEW_DOWN_FAST           800.0f
 
 // 跨零或停车时的速度步长。调大：停车更干脆；调小：停车更缓。
 #define NAV_SPEED_SLEW_DOWN_CROSS_ZERO    120.0f

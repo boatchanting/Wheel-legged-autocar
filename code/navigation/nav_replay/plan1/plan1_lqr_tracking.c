@@ -6,6 +6,8 @@
 
 extern volatile float target_speed_set;
 extern volatile float err_degree;
+extern float current_actual_speed;
+#include "../../../calculate/pid-new.h"
 
 /* 回放对外状态变量：名称保持和其他 Plan1 方案一致，便于上层任务无感切换。 */
 NavReplayState_e g_replay_state = REPLAY_IDLE;
@@ -208,9 +210,60 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
 {
     float abs_raw = fabsf(raw_speed);
     float abs_prev = fabsf(s_prev_speed_set);
+    float abs_actual = fabsf(current_actual_speed);
     float diff = raw_speed - s_prev_speed_set;
     float step_limit;
 
+    ControlMode_e target_mode = CONTROL_MODE_NORMAL;
+    static ControlMode_e s_current_req_mode = CONTROL_MODE_NORMAL;
+    static uint16 s_mode_cooldown = 0;
+
+    // --- 1. 基于实际车速决定目标 PID 模式 ---
+    float actual_speed_clamped = (abs_actual < 50.0f) ? 0.0f : current_actual_speed;
+    if ((raw_speed * actual_speed_clamped) < 0.0f)
+    {
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else if (abs_raw > (abs_actual + NAV_SPEED_SLEW_EPS))
+    {
+        target_mode = CONTROL_MODE_ACCEL;
+    }
+    else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_actual)
+    {
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else
+    {
+        target_mode = CONTROL_MODE_NORMAL;
+    }
+
+    // --- 2. 带有紧急豁免的 PID 切换冷却机制 ---
+    if (target_mode == CONTROL_MODE_BRAKE && s_current_req_mode != CONTROL_MODE_BRAKE)
+    {
+        // 紧急情况：需要刹车，无视冷却立即切换
+        s_current_req_mode = CONTROL_MODE_BRAKE;
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+        s_mode_cooldown = 30; // 切换后进入 300ms 冷却
+    }
+    else if (target_mode != s_current_req_mode && s_mode_cooldown == 0)
+    {
+        // 正常切换：冷却完毕允许切换
+        s_current_req_mode = target_mode;
+        Control_Profile_RequestMode(target_mode);
+        s_mode_cooldown = 30; // 重置 300ms 冷却
+    }
+    else if (s_mode_cooldown > 0)
+    {
+        s_mode_cooldown--;
+        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状态
+    }
+    else
+    {
+        Control_Profile_RequestMode(target_mode); // 平稳保持
+    }
+
+    // --- 3. 速度曲线斜率生成 (基于前馈目标，保证目标平滑) ---
+    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
     if (((raw_speed * s_prev_speed_set) >= 0.0f) &&
         (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS)))
     {

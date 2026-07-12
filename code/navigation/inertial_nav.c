@@ -51,32 +51,54 @@ void InertialNav_Update(float curr_yaw,
     rel_yaw_deg -= 180.0f;
     
     float curr_yaw_rad = DEG2RAD(rel_yaw_deg);
-    float actual_yaw_rate = (curr_yaw_rad - last_yaw_rad) / NAV_DT; // 算得的角速度
+    float diff_rad = curr_yaw_rad - last_yaw_rad;
+    if (diff_rad > 3.14159265f) diff_rad -= 2.0f * 3.14159265f;
+    else if (diff_rad < -3.14159265f) diff_rad += 2.0f * 3.14159265f;
+    float actual_yaw_rate = diff_rad / NAV_DT; // 算得的真实角速度
     last_yaw_rad = curr_yaw_rad;
 
     // 理论角速度 (基于轮速差): ω = (Vr - Vl) / L
     float theoretical_yaw_rate = (v_R_mm - v_L_mm) / WHEEL_BASE_MM;
 
-    // 比较偏差
-    if (fabsf(v_wheel_avg) > 100.0f && fabsf(theoretical_yaw_rate - actual_yaw_rate) > YAW_RATE_DIFF_THRES) {
-        inertial_nav.slip_flag = 1; // 发生横向打滑或空转
-    } else {
-        inertial_nav.slip_flag = 0;
-    }
+    // 缓存调试信息供 WiFi 发送
+    inertial_nav.current_speed_L = v_L_mm;
+    inertial_nav.current_speed_R = v_R_mm;
+    inertial_nav.theoretical_yaw_rate = theoretical_yaw_rate;
+    inertial_nav.actual_yaw_rate = actual_yaw_rate;
 
-    // 静止修正
-    if (fabsf(v_wheel_avg) < 5.0f) {
+    // 1. 理论向心加速度 (单位: mm/s^2)
+    // 根据运动学，向心加速度 a_c = v_x * omega
+    float centripetal_accel = v_wheel_avg * actual_yaw_rate;
+
+    // 2. 异常的侧向滑动加速度
+    float anomaly_lat_accel = acc_lat_left - centripetal_accel;
+
+    // 3. 动态侧滑阈值 (基础阈值 + 随速度动态放开的容错)
+    float lat_slip_thres = 500.0f + fabsf(v_wheel_avg) * 0.2f;
+
+    // --- 综合打滑判断 ---
+    // 1. 静止判断 (物理速度极小，无异常横移，无异常旋转)
+    if (fabsf(v_wheel_avg) < 5.0f && fabsf(anomaly_lat_accel) < 300.0f && fabsf(actual_yaw_rate) < 0.1f) {
+        inertial_nav.slip_flag = 2; // 真实静止
         inertial_nav.vx_body = 0;
+    } 
+    // 2. 原地自转判断 (线速度趋于0，但有较大的旋转角速度)
+    else if (fabsf(v_wheel_avg) < 50.0f && fabsf(actual_yaw_rate) > 0.3f) {
+        inertial_nav.slip_flag = 3; // 真实原地自转
+        acc_lon_forward = 0; // 自转时不应该有明显的纵向加速度
     }
-    //自转修正
-    if (fabsf(speed_L + speed_R) < 5.0f) {
-        acc_lat_left = 0;
-        acc_lon_forward = 0;
+    // 3. 动态阈值打滑判断 (基于纯径向侧滑)
+    else {
+        if (fabsf(anomaly_lat_accel) > lat_slip_thres) {
+            inertial_nav.slip_flag = 1; // 发生横向径向侧滑
+        } else {
+            inertial_nav.slip_flag = 0; // 正常抓地
+        }
     }
 
     // --- 3. 纵向速度融合 ---
     // 如果没有明显打滑，信任轮速多一点；如果打滑，减小轮速权重
-    float alpha = inertial_nav.slip_flag ? 0.3f : NAV_ALPHA_VEL;
+    float alpha = (inertial_nav.slip_flag == 1) ? 0.3f : NAV_ALPHA_VEL;
     float v_pred = inertial_nav.vx_body + acc_lon_forward * NAV_DT;
     inertial_nav.vx_body = alpha * v_wheel_avg + (1.0f - alpha) * v_pred;
 

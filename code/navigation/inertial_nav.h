@@ -52,6 +52,12 @@ typedef struct {
     float vx_body; // 纵向速度 (前进方向为正)
     float vy_body; // 横向速度 (向左侧滑为正)
     uint8_t slip_flag;      // 打滑标志位
+    
+    // [调试信息] 用于上位机日志分析打滑阈值
+    float current_speed_L;
+    float current_speed_R;
+    float theoretical_yaw_rate;
+    float actual_yaw_rate;
 } InertialNav_t;
 
 // --- 全局变量声明 ---
