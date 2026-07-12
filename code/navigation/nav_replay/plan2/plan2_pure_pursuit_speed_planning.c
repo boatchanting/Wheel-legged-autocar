@@ -141,6 +141,7 @@ void NavReplay_Start(void)
 
 #if CURRENT_NAV_PLAN == 1 || CURRENT_NAV_PLAN == 2
     NavReplay_ResetProcessState();
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
 #endif
 
 #if CURRENT_NAV_PLAN == 3
@@ -172,6 +173,7 @@ void NavReplay_Stop(void)
 
 #if CURRENT_NAV_PLAN == 1 || CURRENT_NAV_PLAN == 2
     NavReplay_ResetProcessState();
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
 #endif
 
 #if CURRENT_NAV_PLAN == 3
@@ -241,18 +243,22 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     if ((raw_speed * s_prev_speed_set) < 0.0f)
     {
         step_limit = NAV_SPEED_SLEW_DOWN_CROSS_ZERO;
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
     }
     else if (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS))
     {
         step_limit = (abs_prev < NAV_SPEED_SLEW_LOW_SPEED_TH) ? NAV_SPEED_SLEW_UP_LOW : NAV_SPEED_SLEW_UP_NORMAL;
+        Control_Profile_RequestMode(CONTROL_MODE_ACCEL);
     }
     else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_prev)
     {
         step_limit = (abs_prev > NAV_SPEED_SLEW_FAST_DECEL_TH) ? NAV_SPEED_SLEW_DOWN_FAST : NAV_SPEED_SLEW_DOWN_NORMAL;
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
     }
     else
     {
         step_limit = NAV_SPEED_SLEW_UP_NORMAL;
+        Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
     }
 
     return s_prev_speed_set + Float_Constrain(diff, -step_limit, step_limit);
@@ -274,6 +280,7 @@ static uint8 NavReplay_HandleStartHeadingAlignment(void)
 
     err_degree = heading_cmd;
     target_speed_set = NAV_SPEED_STOP;
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
 
     if (fabsf(heading_err) <= NAV_START_HEADING_TOLERANCE)
     {
