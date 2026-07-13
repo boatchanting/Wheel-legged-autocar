@@ -199,7 +199,7 @@ void Fusion_Ins_Update(void)
     // 实时输出融合坐标 (喂给控制层)
     g_fuse_state.fuse_x   = g_fuse_state.ins_x   + g_fuse_state.offset_x;
     g_fuse_state.fuse_y   = g_fuse_state.ins_y   + g_fuse_state.offset_y;
-    g_fuse_state.fuse_yaw = g_fuse_state.ins_yaw  + g_fuse_state.offset_yaw;
+    g_fuse_state.fuse_yaw = g_fuse_state.ins_yaw  + 0.0f;
 }
 
 void Fusion_Gps_Correct(void)
