@@ -1,0 +1,116 @@
+#ifndef BRIDGE_DETECTION_H
+#define BRIDGE_DETECTION_H
+
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* The current camera data is 94x60. Keep a little horizontal headroom while
+ * retaining a bounded, caller-owned workspace for the embedded port. */
+#define BRIDGE_DETECTION_MAX_WIDTH   96
+#define BRIDGE_DETECTION_MAX_HEIGHT  60
+#define BRIDGE_DETECTION_MAX_PIXELS  (BRIDGE_DETECTION_MAX_WIDTH * BRIDGE_DETECTION_MAX_HEIGHT)
+
+typedef enum {
+    BRIDGE_DETECTION_STATE_NONE = 0,
+    BRIDGE_DETECTION_STATE_PREPARE_ENTER = 1,
+    BRIDGE_DETECTION_STATE_ON_BRIDGE = 2,
+    BRIDGE_DETECTION_STATE_PREPARE_EXIT = 3
+} BridgeDetectionState;
+
+typedef struct {
+    float min_valid_score;
+    float min_edge_contrast;
+} BridgeDetectionConfig;
+
+typedef struct {
+    uint8_t valid;
+    float slope;       /* x = slope * y + intercept */
+    float intercept;
+    float support_min_y;
+    float support_max_y;
+    int inlier_count;
+    float span;
+    float residual;
+    float border_touch_ratio;
+    float mean_x;
+} BridgeDetectionSideLine;
+
+typedef struct {
+    uint8_t valid;
+    int x0;
+    int y0;
+    int x1;
+    int y1;
+} BridgeDetectionSegment;
+
+typedef struct {
+    uint8_t candidate_found;
+    uint8_t bridge_found;
+    BridgeDetectionState state;
+
+    int threshold;
+    float candidate_score;
+    int area;
+    float area_ratio;
+    int top_row;
+    int start_row;
+    int bottom_row;
+    int max_width;
+    int bottom_width;
+    float center_x;
+    float edge_contrast;
+    float left_clip_ratio;
+    float right_clip_ratio;
+    float dual_clip_ratio;
+    float border_monotonic;
+
+    uint8_t left_line_visible;
+    uint8_t right_line_visible;
+    uint8_t top_line_visible;
+    uint8_t entry_line_visible;
+    BridgeDetectionSideLine left_line;
+    BridgeDetectionSideLine right_line;
+    BridgeDetectionSegment left_segment;
+    BridgeDetectionSegment right_segment;
+    BridgeDetectionSegment center_segment;
+
+    /* Control-facing geometry at bottom_row. Positive error means target is
+     * to the right of the image center. Valid when center_segment.valid=1. */
+    float control_center_x;
+    float lateral_error_px;
+    float heading_dx_per_dy;
+} BridgeDetectionResult;
+
+typedef struct {
+    uint8_t gray[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t work0[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t work1[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t work2[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t work3[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t work4[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t best_visible[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t best_outer[BRIDGE_DETECTION_MAX_PIXELS];
+    uint16_t queue[BRIDGE_DETECTION_MAX_PIXELS];
+} BridgeDetectionScratch;
+
+void bridge_detection_default_config(BridgeDetectionConfig *config);
+void bridge_detection_result_clear(BridgeDetectionResult *result);
+const char *bridge_detection_state_name(BridgeDetectionState state);
+
+int bridge_detection_detect_gray(
+    const uint8_t *gray,
+    int width,
+    int height,
+    int stride,
+    const BridgeDetectionConfig *config,
+    BridgeDetectionScratch *scratch,
+    BridgeDetectionResult *result);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
