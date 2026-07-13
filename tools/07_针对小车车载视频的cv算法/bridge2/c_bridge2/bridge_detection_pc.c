@@ -254,6 +254,7 @@ int main(int argc, char **argv)
     frame_count = list_frames(options.pgm_dir, names, options.max_frames);
     if (!frame_count) { fprintf(stderr, "no PGM frames in %s\n", options.pgm_dir); return 4; }
     bridge_detection_default_config(&config);
+    printf("core memory: scratch=%zu bytes, result=%zu bytes\n", sizeof(*scratch), sizeof(BridgeDetectionResult));
     for (i = 0; i < frame_count; ++i) {
         char path[B2_PC_PATH_MAX];
         int width, height, status;

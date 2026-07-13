@@ -7,6 +7,7 @@
 #define BD_MAX_LINE_POINTS BRIDGE_DETECTION_MAX_WIDTH
 #define BD_MAX_HULL_POINTS (BRIDGE_DETECTION_MAX_WIDTH * 4)
 #define BD_LINE_SAMPLE_COUNT 24
+#define BD_CACHE_MAGIC 0x42444745u
 
 typedef struct {
     int threshold;
@@ -74,6 +75,34 @@ static uint32_t valid_last_word_mask(int width)
 
 static int words_for_width(int width) { return (width + 31) >> 5; }
 
+static int cache_matches(const BridgeDetectionScratch *scratch, const uint8_t *gray,
+                         int width, int height, int stride, const BridgeDetectionConfig *config)
+{
+    int y;
+    if (scratch->cache_magic != BD_CACHE_MAGIC || scratch->cache_width != width || scratch->cache_height != height ||
+        scratch->cache_min_valid_score != config->min_valid_score ||
+        scratch->cache_min_edge_contrast != config->min_edge_contrast) return 0;
+    for (y = 0; y < height; ++y) {
+        if (memcmp(scratch->previous_gray + y * width, gray + y * stride, (size_t)width) != 0) return 0;
+    }
+    return 1;
+}
+
+static void cache_store(BridgeDetectionScratch *scratch, const uint8_t *gray,
+                        int width, int height, int stride, const BridgeDetectionConfig *config,
+                        const BridgeDetectionResult *result, int status)
+{
+    int y;
+    for (y = 0; y < height; ++y) memcpy(scratch->previous_gray + y * width, gray + y * stride, (size_t)width);
+    scratch->cached_result = *result;
+    scratch->cache_width = (uint16_t)width;
+    scratch->cache_height = (uint16_t)height;
+    scratch->cache_min_valid_score = config->min_valid_score;
+    scratch->cache_min_edge_contrast = config->min_edge_contrast;
+    scratch->cache_status = status;
+    scratch->cache_magic = BD_CACHE_MAGIC;
+}
+
 static void bitmap_clear(BridgeDetectionBitmap *bitmap)
 {
     memset(bitmap, 0, sizeof(*bitmap));
@@ -89,16 +118,6 @@ static int bitmap_get(const BridgeDetectionBitmap *bitmap, int x, int y)
     return (int)((bitmap->row[y][x >> 5] >> (x & 31)) & 1u);
 }
 
-static void bitmap_set(BridgeDetectionBitmap *bitmap, int x, int y)
-{
-    bitmap->row[y][x >> 5] |= 1u << (x & 31);
-}
-
-static void bitmap_clear_pixel(BridgeDetectionBitmap *bitmap, int x, int y)
-{
-    bitmap->row[y][x >> 5] &= ~(1u << (x & 31));
-}
-
 static void bitmap_set_range(BridgeDetectionBitmap *bitmap, int y, int left, int right)
 {
     int first_word = left >> 5;
@@ -112,6 +131,22 @@ static void bitmap_set_range(BridgeDetectionBitmap *bitmap, int y, int left, int
         bitmap->row[y][first_word] |= first_mask;
         for (word = first_word + 1; word < last_word; ++word) bitmap->row[y][word] = 0xFFFFFFFFu;
         bitmap->row[y][last_word] |= last_mask;
+    }
+}
+
+static void bitmap_clear_range(BridgeDetectionBitmap *bitmap, int y, int left, int right)
+{
+    int first_word = left >> 5;
+    int last_word = right >> 5;
+    uint32_t first_mask = 0xFFFFFFFFu << (left & 31);
+    uint32_t last_mask = (right & 31) == 31 ? 0xFFFFFFFFu : ((1u << ((right & 31) + 1)) - 1u);
+    if (first_word == last_word) {
+        bitmap->row[y][first_word] &= ~(first_mask & last_mask);
+    } else {
+        int word;
+        bitmap->row[y][first_word] &= ~first_mask;
+        for (word = first_word + 1; word < last_word; ++word) bitmap->row[y][word] = 0u;
+        bitmap->row[y][last_word] &= ~last_mask;
     }
 }
 
@@ -324,74 +359,62 @@ static void threshold_mask(const uint8_t *gray, BridgeDetectionBitmap *mask,
     bitmap_clear(mask);
     for (y = 0; y < height; ++y) {
         const uint8_t *row = gray + y * stride;
-        for (x = 0; x < width; ++x) {
-            int local = threshold;
-            if (x < 19) local -= 10;
-            if (x >= 76) local -= 10;
-            if (x >= 83 && x < 89) local -= 10;
-            if (row[x] > local) mask->row[y][x >> 5] |= 1u << (x & 31);
-        }
+#define BD_THRESHOLD_RANGE(begin_, end_, value_) do { \
+    int bd_end = (end_) < width ? (end_) : width; \
+    for (x = (begin_); x < bd_end; ++x) if (row[x] > (value_)) mask->row[y][x >> 5] |= 1u << (x & 31); \
+} while (0)
+        BD_THRESHOLD_RANGE(0, 19, threshold - 10);
+        if (width > 19) BD_THRESHOLD_RANGE(19, 76, threshold);
+        if (width > 76) BD_THRESHOLD_RANGE(76, 83, threshold - 10);
+        if (width > 83) BD_THRESHOLD_RANGE(83, 89, threshold - 20);
+        if (width > 89) BD_THRESHOLD_RANGE(89, width, threshold - 10);
+#undef BD_THRESHOLD_RANGE
     }
+}
+
+static int component_seed_span(BridgeDetectionBitmap *global_mask, BridgeDetectionBitmap *component,
+                               uint16_t *queue, int *tail, int x, int y, int width, int *span_length)
+{
+    int left = x, right = x;
+    while (left > 0 && bitmap_get(global_mask, left - 1, y)) --left;
+    while (right + 1 < width && bitmap_get(global_mask, right + 1, y)) ++right;
+    bitmap_clear_range(global_mask, y, left, right);
+    bitmap_set_range(component, y, left, right);
+    queue[(*tail)++] = (uint16_t)(y * width + left);
+    *span_length = right - left + 1;
+    return right;
 }
 
 static int extract_component(BridgeDetectionBitmap *global_mask, BridgeDetectionBitmap *component,
                              uint16_t *queue, int start, int width, int height)
 {
-    int head = 0, tail = 0;
+    int head = 0, tail = 0, area = 0;
     int sx = start % width, sy = start / width;
+    int span_length;
     bitmap_clear(component);
-    bitmap_clear_pixel(global_mask, sx, sy);
-    bitmap_set(component, sx, sy);
-    queue[tail++] = (uint16_t)start;
+    component_seed_span(global_mask, component, queue, &tail, sx, sy, width, &span_length);
+    area += span_length;
     while (head < tail) {
         int index = queue[head++];
-        int x = index % width, y = index / width;
-#define BD_VISIT(nx_, ny_) do { \
-    int bd_x = (nx_), bd_y = (ny_); \
-    if (bitmap_get(global_mask, bd_x, bd_y)) { \
-        bitmap_clear_pixel(global_mask, bd_x, bd_y); \
-        bitmap_set(component, bd_x, bd_y); \
-        queue[tail++] = (uint16_t)(bd_y * width + bd_x); \
-    } \
-} while (0)
-        if (x > 0) BD_VISIT(x - 1, y);
-        if (x + 1 < width) BD_VISIT(x + 1, y);
-        if (y > 0) BD_VISIT(x, y - 1);
-        if (y + 1 < height) BD_VISIT(x, y + 1);
-#undef BD_VISIT
+        int left = index % width, y = index / width, right = left;
+        int adjacent_index;
+        while (right + 1 < width && bitmap_get(component, right + 1, y)) ++right;
+        for (adjacent_index = 0; adjacent_index < 2; ++adjacent_index) {
+            int adjacent_y = adjacent_index == 0 ? y - 1 : y + 1;
+            int x = left;
+            if (adjacent_y < 0 || adjacent_y >= height) continue;
+            while (x <= right) {
+                if (bitmap_get(global_mask, x, adjacent_y)) {
+                    int span_right = component_seed_span(global_mask, component, queue, &tail, x, adjacent_y, width, &span_length);
+                    area += span_length;
+                    x = span_right + 1;
+                } else {
+                    ++x;
+                }
+            }
+        }
     }
-    return tail;
-}
-
-static void fill_holes_4(const BridgeDetectionBitmap *src, BridgeDetectionBitmap *dst,
-                         BridgeDetectionBitmap *visited, uint16_t *queue, int width, int height)
-{
-    int head = 0, tail = 0, x, y, word;
-    int words = words_for_width(width);
-    uint32_t last_mask = valid_last_word_mask(width);
-    bitmap_clear(visited);
-#define BD_PUSH_BG(px_, py_) do { \
-    int bd_x = (px_), bd_y = (py_); \
-    if (!bitmap_get(src, bd_x, bd_y) && !bitmap_get(visited, bd_x, bd_y)) { \
-        bitmap_set(visited, bd_x, bd_y); queue[tail++] = (uint16_t)(bd_y * width + bd_x); \
-    } \
-} while (0)
-    for (x = 0; x < width; ++x) { BD_PUSH_BG(x, 0); BD_PUSH_BG(x, height - 1); }
-    for (y = 1; y + 1 < height; ++y) { BD_PUSH_BG(0, y); BD_PUSH_BG(width - 1, y); }
-    while (head < tail) {
-        int index = queue[head++];
-        x = index % width; y = index / width;
-        if (x > 0) BD_PUSH_BG(x - 1, y);
-        if (x + 1 < width) BD_PUSH_BG(x + 1, y);
-        if (y > 0) BD_PUSH_BG(x, y - 1);
-        if (y + 1 < height) BD_PUSH_BG(x, y + 1);
-    }
-#undef BD_PUSH_BG
-    bitmap_clear(dst);
-    for (y = 0; y < height; ++y) {
-        for (word = 0; word < words; ++word) dst->row[y][word] = src->row[y][word] | ~visited->row[y][word];
-        dst->row[y][words - 1] &= last_mask;
-    }
+    return area;
 }
 
 static long cross_point(PointI o, PointI a, PointI b)
@@ -491,13 +514,13 @@ static int evaluate_component(const uint8_t *gray, int stride, const BridgeDetec
     float center_sum = 0.0f, weight_sum = 0.0f, inside_sum = 0.0f, outside_sum = 0.0f;
     float center_x, edge_contrast, score;
     BridgeDetectionBitmap *visible = &scratch->work4;
-    BridgeDetectionBitmap *filled = &scratch->work3;
     BridgeDetectionBitmap *outer = &scratch->work2;
     bitmap_copy(visible, component);
     close3_open2(visible, &scratch->work1, width, height);
-    fill_holes_4(visible, filled, &scratch->work1, scratch->queue, width, height);
-    if (!convex_hull_mask(filled, outer, width, height, left, right, widths, &area)) {
-        bitmap_copy(outer, filled);
+    /* Filling interior holes is redundant before a convex hull: it cannot
+     * add an extreme point or change the hull boundary. */
+    if (!convex_hull_mask(visible, outer, width, height, left, right, widths, &area)) {
+        bitmap_copy(outer, visible);
         extract_row_borders(outer, width, height, left, right, widths);
         area = 0;
         for (y = 0; y < height; ++y) area += widths[y];
@@ -733,8 +756,8 @@ static LineFit fit_top_plateau(const BridgeDetectionBitmap *mask, int width, int
         }
         if (best_start >= 0 && best_end - best_start + 1 >= 6) {
             float independent[BRIDGE_DETECTION_MAX_WIDTH], dependent[BRIDGE_DETECTION_MAX_WIDTH];
-            int count = best_end - best_start + 1, i;
-            for (i = 0; i < count; ++i) { int col = cols[best_start + i]; independent[i] = (float)col; dependent[i] = (float)top[col]; }
+            int count = best_end - best_start + 1, j;
+            for (j = 0; j < count; ++j) { int col = cols[best_start + j]; independent[j] = (float)col; dependent[j] = (float)top[col]; }
             {
                 LineFit fit = fit_line_fast(independent, dependent, count, -0.32f, 0.32f, 0.9f, 4, 6.0f, 1.5f, PREF_TOP);
                 if (fit.valid) return fit;
@@ -859,6 +882,10 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     if (gray == NULL || scratch == NULL || width <= 0 || height <= 0 || stride < width ||
         width > BRIDGE_DETECTION_MAX_WIDTH || height > BRIDGE_DETECTION_MAX_HEIGHT || width * height > 65535) return -2;
     if (config == NULL) { bridge_detection_default_config(&default_config); config = &default_config; }
+    if (cache_matches(scratch, gray, width, height, stride, config)) {
+        *result = scratch->cached_result;
+        return scratch->cache_status;
+    }
     words = words_for_width(width);
     threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
     memset(&best, 0, sizeof(best));
@@ -884,7 +911,10 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
             }
         }
     }
-    if (!have_best) return 0;
+    if (!have_best) {
+        cache_store(scratch, gray, width, height, stride, config, result, 0);
+        return 0;
+    }
     result->candidate_found = 1; result->threshold = best.threshold; result->candidate_score = best.score;
     result->area = best.area; result->area_ratio = best.area_ratio; result->top_row = best.top_row; result->start_row = best.start_row;
     result->bottom_row = best.bottom_row; result->max_width = best.max_width; result->bottom_width = best.bottom_width;
@@ -931,5 +961,6 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
             result->heading_dx_per_dy = dy ? (float)(result->center_segment.x1 - result->center_segment.x0) / dy : 0.0f;
         }
     }
+    cache_store(scratch, gray, width, height, stride, config, result, 1);
     return 1;
 }

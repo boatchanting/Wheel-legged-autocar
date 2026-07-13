@@ -44,3 +44,13 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File `
 脚本会把 PNG 临时转换成 PGM、使用本机 Visual Studio 编译、运行纯 C 检测器、记录仅检测函数的平均/最小/最大/P50/P95/P99 帧耗时，并与 Python 的 `summary.csv` 对比。
 
 Python 中为画线观感服务的逐场景端点平移/延长规则没有进入核心模块；C 输出的是拟合模型直接生成的控制几何。对比报告因此把检测、状态和线可见性作为一致性门槛，把线段端点像素差单独列为诊断项。
+
+## 性能优化结果
+
+- PC 568 帧平均：约 `0.097 ms/帧`（包含完全相同连续帧的严格缓存）。
+- 独立新帧平均：约 `0.31 ms/帧`。
+- `BridgeDetectionScratch`：约 `21.8 KB`。
+- IAR Cortex-M7 `-Ohz`：约 `10.4 KB` CODE。
+- 核心无 `double`、通用数学函数、`qsort`、`malloc/free`。
+
+详细瓶颈、复杂度、Cortex-M7 说明和方案取舍见 `PERFORMANCE_REPORT.md`。

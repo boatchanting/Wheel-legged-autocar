@@ -93,11 +93,18 @@ typedef struct {
     BridgeDetectionBitmap work0;
     BridgeDetectionBitmap work1;
     BridgeDetectionBitmap work2;
-    BridgeDetectionBitmap work3;
     BridgeDetectionBitmap work4;
     BridgeDetectionBitmap best_visible;
     BridgeDetectionBitmap best_outer;
     uint16_t queue[BRIDGE_DETECTION_MAX_PIXELS];
+    uint8_t previous_gray[BRIDGE_DETECTION_MAX_PIXELS];
+    BridgeDetectionResult cached_result;
+    uint32_t cache_magic;
+    uint16_t cache_width;
+    uint16_t cache_height;
+    float cache_min_valid_score;
+    float cache_min_edge_contrast;
+    int cache_status;
 } BridgeDetectionScratch;
 
 void bridge_detection_default_config(BridgeDetectionConfig *config);
