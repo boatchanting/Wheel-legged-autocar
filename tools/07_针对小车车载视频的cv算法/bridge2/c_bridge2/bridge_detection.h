@@ -12,6 +12,7 @@ extern "C" {
 #define BRIDGE_DETECTION_MAX_WIDTH   96
 #define BRIDGE_DETECTION_MAX_HEIGHT  60
 #define BRIDGE_DETECTION_MAX_PIXELS  (BRIDGE_DETECTION_MAX_WIDTH * BRIDGE_DETECTION_MAX_HEIGHT)
+#define BRIDGE_DETECTION_WORDS_PER_ROW ((BRIDGE_DETECTION_MAX_WIDTH + 31) / 32)
 
 typedef enum {
     BRIDGE_DETECTION_STATE_NONE = 0,
@@ -85,14 +86,17 @@ typedef struct {
 } BridgeDetectionResult;
 
 typedef struct {
-    uint8_t gray[BRIDGE_DETECTION_MAX_PIXELS];
-    uint8_t work0[BRIDGE_DETECTION_MAX_PIXELS];
-    uint8_t work1[BRIDGE_DETECTION_MAX_PIXELS];
-    uint8_t work2[BRIDGE_DETECTION_MAX_PIXELS];
-    uint8_t work3[BRIDGE_DETECTION_MAX_PIXELS];
-    uint8_t work4[BRIDGE_DETECTION_MAX_PIXELS];
-    uint8_t best_visible[BRIDGE_DETECTION_MAX_PIXELS];
-    uint8_t best_outer[BRIDGE_DETECTION_MAX_PIXELS];
+    uint32_t row[BRIDGE_DETECTION_MAX_HEIGHT][BRIDGE_DETECTION_WORDS_PER_ROW];
+} BridgeDetectionBitmap;
+
+typedef struct {
+    BridgeDetectionBitmap work0;
+    BridgeDetectionBitmap work1;
+    BridgeDetectionBitmap work2;
+    BridgeDetectionBitmap work3;
+    BridgeDetectionBitmap work4;
+    BridgeDetectionBitmap best_visible;
+    BridgeDetectionBitmap best_outer;
     uint16_t queue[BRIDGE_DETECTION_MAX_PIXELS];
 } BridgeDetectionScratch;
 
