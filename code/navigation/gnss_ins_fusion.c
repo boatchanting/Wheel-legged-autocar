@@ -312,6 +312,10 @@ void Fusion_Gps_Correct(void)
     float ground_x_mm = ground_x * 1000.0f;
     float ground_y_mm = ground_y * 1000.0f;
 
+    // 记录最终投影的原始 GPS 坐标，供上位机绿线显示
+    gnss_trans.ground_x = ground_x;
+    gnss_trans.ground_y = ground_y;
+
     // ========================================================
     // 异常剔除与互补融合
     // ========================================================
