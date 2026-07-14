@@ -246,7 +246,8 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     static uint16 s_mode_cooldown = 0;
 
     // --- 1. 基于实际车速决定目标 PID 模式 ---
-    if ((raw_speed * current_actual_speed) < 0.0f)
+    float actual_speed_clamped = (abs_actual < 50.0f) ? 0.0f : current_actual_speed;
+    if ((raw_speed * actual_speed_clamped) < 0.0f)
     {
         target_mode = CONTROL_MODE_BRAKE;
     }
