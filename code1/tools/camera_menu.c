@@ -159,6 +159,7 @@ void CameraMenu_Update(void)
     bridge = (const bridge_vision_output_t *)bridge_vision_get_output();
     bumpy = (const bumpy_vision_output_t *)bumpy_vision_get_output();
 
+#if CAMERA_MENU_IMAGE_RENDER_ENABLE
     ips200_show_gray_image(CAMERA_MENU_IMAGE_X,
                            CAMERA_MENU_IMAGE_Y,
                            (const uint8 *)compressed_image_copy[0],
@@ -167,6 +168,7 @@ void CameraMenu_Update(void)
                            CAMERA_MENU_IMAGE_DIS_W,
                            CAMERA_MENU_IMAGE_DIS_H,
                            0U);
+#endif
 
     ips200_show_string(40, y + 0U * CAMERA_MENU_TEXT_Y_STEP, CameraMenu_TargetToString(active_target));
     ips200_show_uint(152, y + 0U * CAMERA_MENU_TEXT_Y_STEP,
