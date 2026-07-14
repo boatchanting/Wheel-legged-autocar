@@ -9,6 +9,8 @@
 #define BD_LINE_SAMPLE_COUNT 24
 #define BD_CACHE_MAGIC 0x42444745u
 #define BD_TEMPORAL_MAX_STREAK 3
+#define BD_QUEUE_X_BITS 7
+#define BD_QUEUE_X_MASK ((1u << BD_QUEUE_X_BITS) - 1u)
 
 typedef struct {
     int threshold;
@@ -66,6 +68,20 @@ static int ctz32(uint32_t value)
         31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
     };
     return table[((value & (0u - value)) * 0x077CB531u) >> 27];
+}
+
+static int msb32(uint32_t value)
+{
+    static const uint8_t table[32] = {
+        0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30,
+        8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31
+    };
+    value |= value >> 1;
+    value |= value >> 2;
+    value |= value >> 4;
+    value |= value >> 8;
+    value |= value >> 16;
+    return table[(value * 0x07C4ACDDu) >> 27];
 }
 
 static uint32_t valid_last_word_mask(int width)
@@ -397,7 +413,10 @@ static int component_seed_span(BridgeDetectionBitmap *global_mask, BridgeDetecti
     while (right + 1 < width && bitmap_get(global_mask, right + 1, y)) ++right;
     bitmap_clear_range(global_mask, y, left, right);
     bitmap_set_range(component, y, left, right);
-    queue[(*tail)++] = (uint16_t)(y * width + left);
+    /* Queue entries are span starts.  Packing x/y removes the expensive
+     * divide/modulo pair from every breadth-first span dequeue.  X needs
+     * seven bits for the fixed <=96-pixel input width. */
+    queue[(*tail)++] = (uint16_t)(((uint16_t)y << BD_QUEUE_X_BITS) | (uint16_t)left);
     *span_length = right - left + 1;
     return right;
 }
@@ -412,8 +431,10 @@ static int extract_component(BridgeDetectionBitmap *global_mask, BridgeDetection
     component_seed_span(global_mask, component, queue, &tail, sx, sy, width, &span_length);
     area += span_length;
     while (head < tail) {
-        int index = queue[head++];
-        int left = index % width, y = index / width, right = left;
+        uint16_t packed = queue[head++];
+        int left = (int)(packed & BD_QUEUE_X_MASK);
+        int y = (int)(packed >> BD_QUEUE_X_BITS);
+        int right = left;
         int adjacent_index;
         while (right + 1 < width && bitmap_get(component, right + 1, y)) ++right;
         for (adjacent_index = 0; adjacent_index < 2; ++adjacent_index) {
@@ -449,11 +470,7 @@ static int extract_row_borders(const BridgeDetectionBitmap *mask, int width, int
             uint32_t bits = mask->row[y][word];
             if (!bits) continue;
             if (first < 0) first = (word << 5) + ctz32(bits);
-            {
-                int bit = 31;
-                while (((bits >> bit) & 1u) == 0u) --bit;
-                last = (word << 5) + bit;
-            }
+            last = (word << 5) + msb32(bits);
         }
         if (last >= width) last = width - 1;
         left[y] = first; right[y] = last;
@@ -468,13 +485,37 @@ static int convex_hull_mask(const BridgeDetectionBitmap *src, BridgeDetectionBit
 {
     PointI points[BRIDGE_DETECTION_MAX_WIDTH * 2];
     PointI hull[BD_MAX_HULL_POINTS];
+    int column_top[BRIDGE_DETECTION_MAX_WIDTH];
+    int column_bottom[BRIDGE_DETECTION_MAX_WIDTH];
     int point_count = 0, hull_count = 0, lower_count, x, y, i, reverse_first = 1;
     int area = 0;
+
+    /* The old implementation searched every column from both ends, i.e.
+     * 2*width*height bitmap tests.  A single forward row scan obtains the
+     * exact same per-column extrema and is considerably cheaper on M7. */
     for (x = 0; x < width; ++x) {
-        int top = -1, bottom = -1;
-        for (y = 0; y < height; ++y) if (bitmap_get(src, x, y)) { top = y; break; }
-        if (top < 0) continue;
-        for (y = height - 1; y >= top; --y) if (bitmap_get(src, x, y)) { bottom = y; break; }
+        column_top[x] = height;
+        column_bottom[x] = -1;
+    }
+    for (y = 0; y < height; ++y) {
+        int word;
+        int words = words_for_width(width);
+        for (word = 0; word < words; ++word) {
+            uint32_t bits = src->row[y][word];
+            while (bits != 0u) {
+                int bit_x = (word << 5) + ctz32(bits);
+                if (bit_x < width) {
+                    if (column_top[bit_x] == height) column_top[bit_x] = y;
+                    column_bottom[bit_x] = y;
+                }
+                bits &= bits - 1u;
+            }
+        }
+    }
+    for (x = 0; x < width; ++x) {
+        int top = column_top[x];
+        int bottom = column_bottom[x];
+        if (bottom < 0) continue;
         points[point_count].x = x; points[point_count++].y = top;
         if (bottom != top) { points[point_count].x = x; points[point_count++].y = bottom; }
     }
