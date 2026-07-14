@@ -481,12 +481,13 @@ static int extract_row_borders(const BridgeDetectionBitmap *mask, int width, int
 }
 
 static int convex_hull_mask(const BridgeDetectionBitmap *src, BridgeDetectionBitmap *dst,
-                            int width, int height, int *left, int *right, int *widths, int *area_out)
+                            int width, int height, int *left, int *right, int *widths, int *area_out,
+                            BridgeDetectionScratch *scratch)
 {
     PointI points[BRIDGE_DETECTION_MAX_WIDTH * 2];
     PointI hull[BD_MAX_HULL_POINTS];
-    int column_top[BRIDGE_DETECTION_MAX_WIDTH];
-    int column_bottom[BRIDGE_DETECTION_MAX_WIDTH];
+    int16_t *column_top = scratch->column_top;
+    int16_t *column_bottom = scratch->column_bottom;
     int point_count = 0, hull_count = 0, lower_count, x, y, i, reverse_first = 1;
     int area = 0;
 
@@ -577,7 +578,7 @@ static int evaluate_component(const uint8_t *gray, int stride, const BridgeDetec
     close3_open2(visible, &scratch->work1, width, height);
     /* Filling interior holes is redundant before a convex hull: it cannot
      * add an extreme point or change the hull boundary. */
-    if (!convex_hull_mask(visible, outer, width, height, left, right, widths, &area)) {
+    if (!convex_hull_mask(visible, outer, width, height, left, right, widths, &area, scratch)) {
         bitmap_copy(outer, visible);
         extract_row_borders(outer, width, height, left, right, widths);
         area = 0;

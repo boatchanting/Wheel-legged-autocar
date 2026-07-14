@@ -90,6 +90,8 @@ typedef struct {
     BridgeDetectionBitmap best_visible;
     BridgeDetectionBitmap best_outer;
     uint16_t queue[BRIDGE_DETECTION_MAX_PIXELS];
+    int16_t column_top[BRIDGE_DETECTION_MAX_WIDTH];
+    int16_t column_bottom[BRIDGE_DETECTION_MAX_WIDTH];
     uint8_t previous_gray[BRIDGE_DETECTION_MAX_PIXELS];
     BridgeDetectionResult cached_result;
     uint32_t cache_magic;
