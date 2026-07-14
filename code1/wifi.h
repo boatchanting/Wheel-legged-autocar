@@ -156,6 +156,7 @@ void draw_cross_on_image(int x, int y, int size, uint8 color);
 // 【修改注释】将 PVC 指标（BoundingBox，质心十字等）渲染在压缩后的备份图像(compressed_image_copy)上。
 // 请在调用 compress_image_to_target 以及 pvc_vision_process_camera_frame 之后，WIFI发送之前调用。
 void render_pvc_vision_to_image(void);
+void render_bridge_vision_to_image(void);
 void render_bumpy_vision_to_image(void);
 
 #endif // __CODE1_WIFI_H__

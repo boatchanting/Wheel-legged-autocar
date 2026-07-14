@@ -156,6 +156,7 @@ int main(void)
             if(VisionIpc_Core1_ShouldRunBridgeLine())
             {
                 bridge_vision_process_camera_frame(compressed_image_copy[0]);
+                render_bridge_vision_to_image();
             }
             if(VisionIpc_Core1_ShouldRunBumpy())
             {

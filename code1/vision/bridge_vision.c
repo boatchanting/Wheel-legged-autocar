@@ -104,6 +104,10 @@ static void bridge_vision_export_result(const BridgeDetectionResult *detected,
         /* For the small slopes of a 94x60 image, atan(s) is accurately
          * approximated by s.  This avoids a costly libm call. */
         frame->yaw_error_deg = detected->heading_dx_per_dy * 57.29578f;
+        frame->center_x0 = bridge_vision_clamp_u8(detected->center_segment.x0);
+        frame->center_y0 = bridge_vision_clamp_u8(detected->center_segment.y0);
+        frame->center_x1 = bridge_vision_clamp_u8(detected->center_segment.x1);
+        frame->center_y1 = bridge_vision_clamp_u8(detected->center_segment.y1);
         frame->line_x_bottom = (float)detected->center_segment.x1;
         frame->line_x_lookahead = (float)detected->center_segment.x0;
     }

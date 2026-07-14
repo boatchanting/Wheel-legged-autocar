@@ -557,9 +557,8 @@ void render_pvc_vision_to_image(void)
     }
 }
 
-#if 0
-/* Legacy line-vision overlay removed: bridge_vision deliberately has no
- * image-rendering path in the real-time algorithm. */
+/* Debug rendering is kept outside bridge_vision so it never affects detector
+ * input.  Call it only after bridge_vision_process_camera_frame(). */
 static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
 {
     int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
@@ -591,6 +590,39 @@ static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
     }
 }
 
+void render_bridge_vision_to_image(void)
+{
+    const volatile bridge_vision_output_t *bridge_out = bridge_vision_get_output();
+    bridge_vision_frame_result_t result;
+
+    if ((bridge_out->bridge_stable_detected != 0U) ||
+        (bridge_out->stable_detected != 0U))
+    {
+        result = bridge_out->stable;
+    }
+    else
+    {
+        result = bridge_out->raw;
+    }
+
+    /* Render the detector's actual centre segment, not an extrapolated line.
+     * This is the exact geometry used to calculate lateral_error_px. */
+    if (result.geometry_valid != 0U)
+    {
+        draw_line_on_image((int)result.center_x0,
+                           (int)result.center_y0,
+                           (int)result.center_x1,
+                           (int)result.center_y1,
+                           0U);
+        draw_cross_on_image((int)result.center_x1,
+                            (int)result.center_y1,
+                            2,
+                            0U);
+    }
+}
+
+#if 0
+/* Removed legacy line-vision renderer retained only as disabled history. */
 void render_line_vision_to_image(void)
 {
     const volatile line_vision_output_t *line_out = &g_line_vision_output;

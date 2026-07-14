@@ -38,6 +38,10 @@ typedef struct
     float lateral_error_px;
     float yaw_error_deg;
     float center_x;
+    uint8 center_x0;
+    uint8 center_y0;
+    uint8 center_x1;
+    uint8 center_y1;
     float line_x_bottom;
     float line_x_lookahead;
     float candidate_score;
