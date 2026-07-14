@@ -11,6 +11,9 @@ import webview
 HOST_IP = "192.168.137.1"
 HOST_PORT = 8086
 
+# 打滑检测标记绘制开关：1=启用，0=禁用
+ENABLE_SLIP_MARKERS = 1
+
 FRAME_HEAD1 = 0x5A
 FRAME_HEAD2 = 0xA5
 FRAME_TAIL = 0xED
@@ -513,6 +516,7 @@ class Api:
                 "server_error": server_error,
                 "host_ip": listen_ip,
                 "host_port": HOST_PORT,
+                "enable_slip_markers": ENABLE_SLIP_MARKERS,
             }
 
     def clear_history(self):
