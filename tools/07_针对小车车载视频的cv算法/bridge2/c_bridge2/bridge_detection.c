@@ -8,6 +8,7 @@
 #define BD_MAX_HULL_POINTS (BRIDGE_DETECTION_MAX_WIDTH * 4)
 #define BD_LINE_SAMPLE_COUNT 24
 #define BD_CACHE_MAGIC 0x42444745u
+#define BD_TEMPORAL_MAX_STREAK 3
 
 typedef struct {
     int threshold;
@@ -101,6 +102,22 @@ static void cache_store(BridgeDetectionScratch *scratch, const uint8_t *gray,
     scratch->cache_min_edge_contrast = config->min_edge_contrast;
     scratch->cache_status = status;
     scratch->cache_magic = BD_CACHE_MAGIC;
+}
+
+static int temporal_input_is_small_change(const BridgeDetectionScratch *scratch,
+                                          const uint8_t *gray, int width, int height, int stride)
+{
+    int changed = 0, x, y;
+    for (y = 0; y < height; ++y) {
+        const uint8_t *current = gray + y * stride;
+        const uint8_t *previous = scratch->previous_gray + y * width;
+        for (x = 0; x < width; ++x) {
+            int delta = (int)current[x] - (int)previous[x];
+            if (delta < 0) delta = -delta;
+            if (delta > 8 && ++changed > 96) return 0;
+        }
+    }
+    return 1;
 }
 
 static void bitmap_clear(BridgeDetectionBitmap *bitmap)
@@ -868,26 +885,12 @@ const char *bridge_detection_state_name(BridgeDetectionState state)
     }
 }
 
-int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int stride,
-                                 const BridgeDetectionConfig *config_in, BridgeDetectionScratch *scratch,
-                                 BridgeDetectionResult *result)
+static int find_best_candidate(const uint8_t *gray, int width, int height, int stride,
+                               const int *thresholds, int threshold_count,
+                               BridgeDetectionScratch *scratch, Candidate *best_out)
 {
-    BridgeDetectionConfig default_config;
-    const BridgeDetectionConfig *config = config_in;
+    int t, y, word, words = words_for_width(width), have_best = 0;
     Candidate best;
-    int thresholds[11], threshold_count, t, y, word, words, have_best = 0;
-    LineFit visible_left, visible_right, outer_left, outer_right, left, right, top, plateau, entry;
-    if (result == NULL) return -1;
-    bridge_detection_result_clear(result);
-    if (gray == NULL || scratch == NULL || width <= 0 || height <= 0 || stride < width ||
-        width > BRIDGE_DETECTION_MAX_WIDTH || height > BRIDGE_DETECTION_MAX_HEIGHT || width * height > 65535) return -2;
-    if (config == NULL) { bridge_detection_default_config(&default_config); config = &default_config; }
-    if (cache_matches(scratch, gray, width, height, stride, config)) {
-        *result = scratch->cached_result;
-        return scratch->cache_status;
-    }
-    words = words_for_width(width);
-    threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
     memset(&best, 0, sizeof(best));
     for (t = 0; t < threshold_count; ++t) {
         threshold_mask(gray, &scratch->work0, width, height, stride, thresholds[t]);
@@ -911,7 +914,90 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
             }
         }
     }
+    if (have_best) *best_out = best;
+    return have_best;
+}
+
+static int temporal_candidate_is_stable(const Candidate *candidate,
+                                        const BridgeDetectionResult *previous,
+                                        const BridgeDetectionConfig *config)
+{
+    int area_limit;
+    if (!previous->candidate_found || previous->state != BRIDGE_DETECTION_STATE_ON_BRIDGE) return 0;
+    if (candidate->score < config->min_valid_score || candidate->edge_contrast < config->min_edge_contrast) return 0;
+    if (absf_fast(candidate->center_x - previous->center_x) > 1.0f) return 0;
+    area_limit = previous->area / 100 + 1;
+    if (candidate->area > previous->area + area_limit || candidate->area + area_limit < previous->area) return 0;
+    if (candidate->top_row > previous->top_row + 1 || candidate->top_row + 1 < previous->top_row ||
+        candidate->bottom_row > previous->bottom_row + 1 || candidate->bottom_row + 1 < previous->bottom_row ||
+        candidate->max_width > previous->max_width + 2 || candidate->max_width + 2 < previous->max_width ||
+        candidate->bottom_width > previous->bottom_width + 2 || candidate->bottom_width + 2 < previous->bottom_width) return 0;
+    if (candidate->left_clip_ratio > 0.55f || candidate->right_clip_ratio > 0.55f) return 0;
+    return 1;
+}
+
+static int build_temporal_thresholds(const int *all_thresholds, int count, int previous_threshold, int *out)
+{
+    int lower = -1, upper = -1, i, out_count = 0;
+    out[out_count++] = previous_threshold;
+    for (i = 0; i < count; ++i) {
+        if (all_thresholds[i] < previous_threshold) lower = all_thresholds[i];
+        if (all_thresholds[i] > previous_threshold) { upper = all_thresholds[i]; break; }
+    }
+    if (lower >= 0) out[out_count++] = lower;
+    if (upper >= 0) out[out_count++] = upper;
+    return out_count;
+}
+
+int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int stride,
+                                 const BridgeDetectionConfig *config_in, BridgeDetectionScratch *scratch,
+                                 BridgeDetectionResult *result)
+{
+    BridgeDetectionConfig default_config;
+    const BridgeDetectionConfig *config = config_in;
+    Candidate best;
+    int thresholds[11], threshold_count, have_best = 0;
+    int temporal_used = 0;
+    LineFit visible_left, visible_right, outer_left, outer_right, left, right, top, plateau, entry;
+    if (result == NULL) return -1;
+    bridge_detection_result_clear(result);
+    memset(&best, 0, sizeof(best));
+    if (gray == NULL || scratch == NULL || width <= 0 || height <= 0 || stride < width ||
+        width > BRIDGE_DETECTION_MAX_WIDTH || height > BRIDGE_DETECTION_MAX_HEIGHT || width * height > 65535) return -2;
+    if (scratch->cache_magic != BD_CACHE_MAGIC) {
+        scratch->exact_cache_hits = 0;
+        scratch->temporal_fast_hits = 0;
+        scratch->full_detection_calls = 0;
+        scratch->temporal_streak = 0;
+    }
+    if (config == NULL) { bridge_detection_default_config(&default_config); config = &default_config; }
+    if (cache_matches(scratch, gray, width, height, stride, config)) {
+        ++scratch->exact_cache_hits;
+        *result = scratch->cached_result;
+        return scratch->cache_status;
+    }
+    threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
+    if (scratch->cache_magic == BD_CACHE_MAGIC && scratch->cached_result.candidate_found &&
+        scratch->temporal_streak < BD_TEMPORAL_MAX_STREAK &&
+        temporal_input_is_small_change(scratch, gray, width, height, stride)) {
+        int previous_threshold = scratch->cached_result.threshold;
+        int temporal_thresholds[3];
+        int temporal_threshold_count = build_temporal_thresholds(thresholds, threshold_count,
+                                                                  previous_threshold, temporal_thresholds);
+        Candidate temporal_candidate;
+        if (find_best_candidate(gray, width, height, stride, temporal_thresholds, temporal_threshold_count, scratch, &temporal_candidate) &&
+            temporal_candidate_is_stable(&temporal_candidate, &scratch->cached_result, config)) {
+            best = temporal_candidate;
+            have_best = 1;
+            temporal_used = 1;
+        }
+    }
     if (!have_best) {
+        ++scratch->full_detection_calls;
+        have_best = find_best_candidate(gray, width, height, stride, thresholds, threshold_count, scratch, &best);
+    }
+    if (!have_best) {
+        scratch->temporal_streak = 0;
         cache_store(scratch, gray, width, height, stride, config, result, 0);
         return 0;
     }
@@ -960,6 +1046,12 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
             result->lateral_error_px = result->control_center_x - (width - 1) * 0.5f;
             result->heading_dx_per_dy = dy ? (float)(result->center_segment.x1 - result->center_segment.x0) / dy : 0.0f;
         }
+    }
+    if (temporal_used) {
+        ++scratch->temporal_fast_hits;
+        ++scratch->temporal_streak;
+    } else {
+        scratch->temporal_streak = 0;
     }
     cache_store(scratch, gray, width, height, stride, config, result, 1);
     return 1;

@@ -105,6 +105,10 @@ typedef struct {
     float cache_min_valid_score;
     float cache_min_edge_contrast;
     int cache_status;
+    uint32_t exact_cache_hits;
+    uint32_t temporal_fast_hits;
+    uint32_t full_detection_calls;
+    uint8_t temporal_streak;
 } BridgeDetectionScratch;
 
 void bridge_detection_default_config(BridgeDetectionConfig *config);

@@ -49,8 +49,9 @@ Python 中为画线观感服务的逐场景端点平移/延长规则没有进入
 
 - PC 568 帧平均：约 `0.097 ms/帧`（包含完全相同连续帧的严格缓存）。
 - 独立新帧平均：约 `0.31 ms/帧`。
-- `BridgeDetectionScratch`：约 `21.8 KB`。
+- `BridgeDetectionScratch`：约 `21.9 KB`。
 - IAR Cortex-M7 `-Ohz`：约 `10.4 KB` CODE。
 - 核心无 `double`、通用数学函数、`qsort`、`malloc/free`。
+- 对完全重复帧使用逐字节缓存；对小噪声稳定帧使用最多 3 阈值的时序路径，并每 3 帧强制全量校正。
 
 详细瓶颈、复杂度、Cortex-M7 说明和方案取舍见 `PERFORMANCE_REPORT.md`。

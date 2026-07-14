@@ -276,6 +276,10 @@ int main(int argc, char **argv)
     }
     if (!write_csv(options.output_csv, rows, processed)) { fprintf(stderr, "cannot write %s\n", options.output_csv); return 5; }
     if (!write_timing_json(options.timing_json, rows, processed)) { fprintf(stderr, "cannot write %s\n", options.timing_json); return 6; }
+    printf("temporal stats: exact_cache=%lu temporal_fast=%lu full=%lu\n",
+           (unsigned long)scratch->exact_cache_hits,
+           (unsigned long)scratch->temporal_fast_hits,
+           (unsigned long)scratch->full_detection_calls);
     printf("frames processed: %d\noutput: %s\n", processed, options.output_csv);
     free(scratch); free(rows); free(names);
     return 0;
