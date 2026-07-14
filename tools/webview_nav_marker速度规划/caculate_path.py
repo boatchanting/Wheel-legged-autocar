@@ -78,6 +78,29 @@ U_TURN_ARC_CONTROL_POINTS = 16
 #   = 0.0 : 启用"自动相切模式"，算法自动计算最优劣弧，出弯方向刚好瞄准首个桩桶
 U_TURN_ARC_ANGLE_DEG = 0.0
 
+# ============================================================
+# 科目一极速掉头模式
+#   关闭：保持旧版路径拓扑完全不变
+#   跳轮：直冲越过掉头区线后，从动作点接入掉头后的绕桩路径
+#   急刹倒车：直冲越过掉头区线后，用正向速度指令沿掉头后的路径倒车前进
+# ============================================================
+PLAN1_FAST_UTURN_MODE_JUMP = 1
+PLAN1_FAST_UTURN_ENABLE = 0
+PLAN1_FAST_UTURN_MODE = PLAN1_FAST_UTURN_MODE_JUMP
+PLAN1_FAST_UTURN_LINE_OVER_MM = 100.0
+PLAN1_FAST_UTURN_MARK_WIDTH_MM = 1000.0
+PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR = 1.25
+
+FAST_UTURN_MODE_NAMES = {
+    PLAN1_FAST_UTURN_MODE_JUMP: "极速差速自旋掉头",
+}
+
+FAST_UTURN_MODE_TOKENS = {
+    "PLAN1_FAST_UTURN_MODE_JUMP": PLAN1_FAST_UTURN_MODE_JUMP,
+    "PLAN1_FAST_UTURN_JUMP": PLAN1_FAST_UTURN_MODE_JUMP,
+    "jump": PLAN1_FAST_UTURN_MODE_JUMP,
+}
+
 POINT_TYPE_TOKENS: Dict[str, int] = {
     "NAV_POINT_PATH": 0,
     "NAV_POINT_CIRCLE": 1,
@@ -105,6 +128,21 @@ class RoutePoint:
     target_speed: float
     point_type: int
     curvature: float = 0.0
+
+
+@dataclass
+class FastUTurnLayout:
+    start: RoutePoint
+    u_turn: RoutePoint
+    line_a: RoutePoint
+    line_b: RoutePoint
+    cones: List[RoutePoint]
+    end_point: RoutePoint
+    line_center: Tuple[float, float]
+    approach_unit: Tuple[float, float]
+    lateral_unit: Tuple[float, float]
+    action_point: Tuple[float, float]
+    action_lateral_offset: float
 
 
 # ============================================================
@@ -139,6 +177,108 @@ def parse_point_type(token: str) -> int:
     if token in POINT_TYPE_TOKENS:
         return POINT_TYPE_TOKENS[token]
     return int(token)
+
+
+def _parse_c_defines(text: str) -> Dict[str, str]:
+    defines: Dict[str, str] = {}
+    pattern = re.compile(r"^\s*#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+([^\s/]+)", re.MULTILINE)
+    for match in pattern.finditer(text):
+        defines[match.group(1)] = match.group(2).strip()
+    return defines
+
+
+def _clean_define_token(token: str) -> str:
+    token = token.strip()
+    while token.startswith("(") and token.endswith(")") and len(token) >= 2:
+        token = token[1:-1].strip()
+    return re.sub(r"[uUlLfF]+$", "", token)
+
+
+def _resolve_define_token(defines: Dict[str, str], token: str, seen: Optional[set[str]] = None) -> str:
+    token = _clean_define_token(token)
+    if seen is None:
+        seen = set()
+    if token in defines and token not in seen:
+        seen.add(token)
+        return _resolve_define_token(defines, defines[token], seen)
+    return token
+
+
+def _define_int(defines: Dict[str, str], name: str, default: int) -> int:
+    if name not in defines:
+        return default
+    token = _resolve_define_token(defines, defines[name])
+    if token in FAST_UTURN_MODE_TOKENS:
+        return FAST_UTURN_MODE_TOKENS[token]
+    return int(float(_clean_define_token(token)))
+
+
+def _define_float(defines: Dict[str, str], name: str, default: float) -> float:
+    if name not in defines:
+        return default
+    token = _resolve_define_token(defines, defines[name])
+    return float(_clean_define_token(token))
+
+
+def fast_uturn_mode_name(mode: int) -> str:
+    return FAST_UTURN_MODE_NAMES.get(mode, f"未知模式({mode})")
+
+
+def load_plan1_fast_uturn_options(config_path: Path) -> Dict[str, float]:
+    path = Path(config_path)
+    defaults = {
+        "enable": int(PLAN1_FAST_UTURN_ENABLE),
+        "mode": int(PLAN1_FAST_UTURN_MODE),
+        "line_over_mm": float(PLAN1_FAST_UTURN_LINE_OVER_MM),
+        "mark_width_mm": float(PLAN1_FAST_UTURN_MARK_WIDTH_MM),
+        "line_width_factor": float(PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR),
+    }
+    if not path.exists():
+        return defaults
+
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    defines = _parse_c_defines(text)
+    return {
+        "enable": _define_int(defines, "PLAN1_FAST_UTURN_ENABLE", int(defaults["enable"])),
+        "mode": _define_int(defines, "PLAN1_FAST_UTURN_MODE", int(defaults["mode"])),
+        "line_over_mm": _define_float(
+            defines,
+            "PLAN1_FAST_UTURN_LINE_OVER_MM",
+            float(defaults["line_over_mm"]),
+        ),
+        "mark_width_mm": _define_float(
+            defines,
+            "PLAN1_FAST_UTURN_MARK_WIDTH_MM",
+            float(defaults["mark_width_mm"]),
+        ),
+        "line_width_factor": _define_float(
+            defines,
+            "PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR",
+            float(defaults["line_width_factor"]),
+        ),
+    }
+
+
+def apply_plan1_fast_uturn_options(options: Dict[str, float]) -> None:
+    global PLAN1_FAST_UTURN_ENABLE, PLAN1_FAST_UTURN_MODE, PLAN1_FAST_UTURN_LINE_OVER_MM
+    global PLAN1_FAST_UTURN_MARK_WIDTH_MM, PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR
+
+    PLAN1_FAST_UTURN_ENABLE = 1 if int(options.get("enable", PLAN1_FAST_UTURN_ENABLE)) else 0
+    PLAN1_FAST_UTURN_MODE = int(options.get("mode", PLAN1_FAST_UTURN_MODE))
+    PLAN1_FAST_UTURN_LINE_OVER_MM = float(options.get("line_over_mm", PLAN1_FAST_UTURN_LINE_OVER_MM))
+    PLAN1_FAST_UTURN_MARK_WIDTH_MM = float(options.get("mark_width_mm", PLAN1_FAST_UTURN_MARK_WIDTH_MM))
+    PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR = float(
+        options.get("line_width_factor", PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR)
+    )
+
+    if PLAN1_FAST_UTURN_MODE not in FAST_UTURN_MODE_NAMES:
+        raise ValueError(f"PLAN1_FAST_UTURN_MODE 非法: {PLAN1_FAST_UTURN_MODE}")
+    if PLAN1_FAST_UTURN_LINE_OVER_MM < 0.0:
+        raise ValueError("PLAN1_FAST_UTURN_LINE_OVER_MM 不能为负数")
+    if PLAN1_FAST_UTURN_MARK_WIDTH_MM <= 0.0:
+        raise ValueError("PLAN1_FAST_UTURN_MARK_WIDTH_MM 必须大于 0")
+    if PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR <= 0.0:
+        raise ValueError("PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR 必须大于 0")
 
 
 def infer_missing_angles(points: List[RoutePoint]) -> None:
@@ -372,6 +512,103 @@ def classify_points(raw_points: List[RoutePoint]) -> Tuple[RoutePoint, RoutePoin
 
     end_point = raw_points[-1]
     return start, u_turn, cones, end_point
+
+
+def classify_fast_uturn_points(raw_points: List[RoutePoint]) -> FastUTurnLayout:
+    """
+    科目一极速掉头点位拓扑：
+    起点/原点、掉头区线 A 点、掉头区线 B 点、桩桶点若干、终点。
+    """
+    if len(raw_points) < 3:
+        raise ValueError("极速掉头至少需要 4 个点：起点 + 掉头区线 A 点 + 掉头区线 B 点 + 终点")
+
+    start = raw_points[0]
+    u_turn = raw_points[1]
+    cones = raw_points[2:-1]
+    end_point = raw_points[-1]
+
+    center_x = u_turn.x
+    center_y = u_turn.y
+
+    approach_dx = center_x - start.x
+    approach_dy = center_y - start.y
+    approach_len = math.hypot(approach_dx, approach_dy)
+
+    if approach_len < 1e-6:
+        ref = cones[0] if cones else end_point
+        approach_dx = ref.x - center_x
+        approach_dy = ref.y - center_y
+        approach_len = math.hypot(approach_dx, approach_dy)
+        if approach_len < 1e-6:
+            approach_dx, approach_dy = 1.0, 0.0
+            approach_len = 1.0
+
+    approach_dx /= approach_len
+    approach_dy /= approach_len
+
+    lateral_x = -approach_dy
+    lateral_y = approach_dx
+    line_length = PLAN1_FAST_UTURN_MARK_WIDTH_MM * PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR
+    half_line = line_length * 0.5
+
+    line_a = RoutePoint(
+        x=center_x - lateral_x * half_line,
+        y=center_y - lateral_y * half_line,
+        target_yaw_deg=None,
+        heading_deg=None,
+        target_speed=0.0,
+        point_type=0,
+    )
+    line_b = RoutePoint(
+        x=center_x + lateral_x * half_line,
+        y=center_y + lateral_y * half_line,
+        target_yaw_deg=None,
+        heading_deg=None,
+        target_speed=0.0,
+        point_type=0,
+    )
+
+    guide_point = cones[0] if cones else end_point
+    projected_offset = (
+        (guide_point.x - center_x) * lateral_x
+        + (guide_point.y - center_y) * lateral_y
+    )
+    candidates = [
+        -half_line,
+        -half_line * 0.5,
+        0.0,
+        half_line * 0.5,
+        half_line,
+        max(-half_line, min(half_line, projected_offset)),
+    ]
+
+    best_offset = 0.0
+    best_score = float("inf")
+    for offset in candidates:
+        action_x = center_x + lateral_x * offset + approach_dx * PLAN1_FAST_UTURN_LINE_OVER_MM
+        action_y = center_y + lateral_y * offset + approach_dy * PLAN1_FAST_UTURN_LINE_OVER_MM
+        guide_dist = math.hypot(guide_point.x - action_x, guide_point.y - action_y)
+        score = guide_dist + abs(offset) * 0.05
+        if score < best_score:
+            best_score = score
+            best_offset = offset
+
+    action_x = center_x + lateral_x * best_offset + approach_dx * PLAN1_FAST_UTURN_LINE_OVER_MM
+    action_y = center_y + lateral_y * best_offset + approach_dy * PLAN1_FAST_UTURN_LINE_OVER_MM
+
+    return FastUTurnLayout(
+        start=start,
+        u_turn=u_turn,
+        line_a=line_a,
+        line_b=line_b,
+        cones=cones,
+        end_point=end_point,
+        line_center=(center_x, center_y),
+        approach_unit=(approach_dx, approach_dy),
+        lateral_unit=(lateral_x, lateral_y),
+        action_point=(action_x, action_y),
+        action_lateral_offset=best_offset,
+    )
 
 
 def compute_base_direction(u_turn: RoutePoint, cones: List[RoutePoint]) -> Tuple[float, float]:
@@ -722,6 +959,128 @@ def generate_control_points(
     return all_control, apex_pts
 
 
+def _resample_segment(
+    x0: float,
+    y0: float,
+    x1: float,
+    y1: float,
+    target_dist: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    dist = math.hypot(x1 - x0, y1 - y0)
+    if dist < 1e-6:
+        return np.array([x0], dtype=float), np.array([y0], dtype=float)
+
+    count = max(int(math.ceil(dist / max(target_dist, 1.0))), 1)
+    t_vals = np.linspace(0.0, 1.0, count + 1)
+    return x0 + (x1 - x0) * t_vals, y0 + (y1 - y0) * t_vals
+
+
+def _fast_uturn_swing_sign(layout: FastUTurnLayout) -> float:
+    if not layout.cones:
+        return 1.0
+
+    entry_dx = layout.action_point[0] - layout.start.x
+    entry_dy = layout.action_point[1] - layout.start.y
+    cone_dx = layout.cones[0].x - layout.action_point[0]
+    cone_dy = layout.cones[0].y - layout.action_point[1]
+    cross = entry_dx * cone_dy - entry_dy * cone_dx
+    return -1.0 if cross > 0.0 else 1.0
+
+
+def generate_fast_uturn_control_points(layout: FastUTurnLayout) -> Tuple[List[Tuple[float, float]], List[Tuple[float, float]]]:
+    """
+    构造极速掉头控制点。
+    动作点之前保持严格直线，动作点之后的绕桩/终点段再做样条平滑。
+    """
+    action_anchor = RoutePoint(
+        x=layout.action_point[0],
+        y=layout.action_point[1],
+        target_yaw_deg=None,
+        heading_deg=None,
+        target_speed=0.0,
+        point_type=0,
+    )
+    # 反转 swing_sign，使掉头后从内侧切入最近的间隙，而不是向外侧绕大弯
+    swing_sign = -_fast_uturn_swing_sign(layout)
+    apex_pts = generate_slalom_apex_points(action_anchor, layout.cones, swing_sign)
+
+    post_action_control = [layout.action_point]
+    if apex_pts:
+        # 为了防止 B样条在掉头点到第一个桩桶因为角度过锐而产生回环过冲，
+        # 在起点和第一个顶点间插入线性约束点，强制 B样条在此处退化为直线
+        first_apex = apex_pts[0]
+        gap_dx = first_apex[0] - layout.action_point[0]
+        gap_dy = first_apex[1] - layout.action_point[1]
+        post_action_control.append((layout.action_point[0] + gap_dx * 0.33, layout.action_point[1] + gap_dy * 0.33))
+        post_action_control.append((layout.action_point[0] + gap_dx * 0.66, layout.action_point[1] + gap_dy * 0.66))
+        
+        last_pt = apex_pts[-1]
+    else:
+        last_pt = layout.action_point
+
+    gap_x = layout.end_point.x - last_pt[0]
+    gap_y = layout.end_point.y - last_pt[1]
+    apex_pts.append((last_pt[0] + gap_x * 0.33, last_pt[1] + gap_y * 0.33))
+    apex_pts.append((last_pt[0] + gap_x * 0.66, last_pt[1] + gap_y * 0.66))
+    apex_pts.append((layout.end_point.x, layout.end_point.y))
+
+    post_action_control.extend(apex_pts)
+    straight_control = [
+        (layout.start.x, layout.start.y),
+        layout.line_center,
+        layout.action_point,
+    ]
+    return straight_control + apex_pts, post_action_control
+
+
+def generate_fast_uturn_calculated_path(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray, int, int]:
+    """
+    使用第一个业务打点作为掉头点，自动生成掉头区线并生成极速掉头路径。
+    返回的 action_idx 是越过掉头区线后的动作点索引。
+    """
+    input_points, drop_first_count = prepare_input_points(raw_points)
+    layout = classify_fast_uturn_points(input_points)
+
+    print(f"[分类] 起点: ({layout.start.x:.1f}, {layout.start.y:.1f})")
+    print(
+        f"[分类] 掉头区线: A({layout.line_a.x:.1f}, {layout.line_a.y:.1f}) "
+        f"B({layout.line_b.x:.1f}, {layout.line_b.y:.1f})"
+    )
+    print(f"[分类] 过线动作点: ({layout.action_point[0]:.1f}, {layout.action_point[1]:.1f})")
+    print(f"[分类] 桩桶数量: {len(layout.cones)}")
+    for i, c in enumerate(layout.cones):
+        print(f"  桩桶 {i + 1}: ({c.x:.1f}, {c.y:.1f})")
+
+    visual_control, post_action_control = generate_fast_uturn_control_points(layout)
+
+    straight_x, straight_y = _resample_segment(
+        layout.start.x,
+        layout.start.y,
+        layout.action_point[0],
+        layout.action_point[1],
+        INTERPOLATE_DIST,
+    )
+    action_idx = len(straight_x) - 1
+
+    if len(post_action_control) >= 2:
+        post_x_fine, post_y_fine = bspline_smooth(post_action_control)
+        post_x, post_y = resample_path(post_x_fine, post_y_fine, INTERPOLATE_DIST)
+    else:
+        post_x = np.array([layout.action_point[0]], dtype=float)
+        post_y = np.array([layout.action_point[1]], dtype=float)
+
+    if len(post_x) > 1:
+        x_resampled = np.concatenate([straight_x, post_x[1:]])
+        y_resampled = np.concatenate([straight_y, post_y[1:]])
+    else:
+        x_resampled = straight_x
+        y_resampled = straight_y
+
+    print(f"[控制点] 总数: {len(visual_control)}")
+    print(f"[轨迹] 重采样后点数: {len(x_resampled)}")
+    return visual_control, x_resampled, y_resampled, drop_first_count, action_idx
+
+
 def bspline_smooth(control_points: List[Tuple[float, float]]) -> Tuple[np.ndarray, np.ndarray]:
     """
     使用三次 B 样条对控制点进行平滑拟合，并等距重采样。
@@ -918,6 +1277,7 @@ def apply_speed_plan(points: List[RoutePoint]) -> None:
         planned_speed[i] = min(planned_speed[i], max_exit)
 
     target_speed_cmd = -planned_speed / SPEED_TO_MM_S
+
     for point, speed_cmd in zip(points, target_speed_cmd):
         point.target_speed = float(speed_cmd)
 
@@ -971,6 +1331,75 @@ def build_final_points(
     ]
 
 
+def build_fast_uturn_final_points(
+    raw_points: List[RoutePoint],
+    sel_x: np.ndarray,
+    sel_y: np.ndarray,
+    drop_first_count: int,
+    action_idx: int,
+) -> List[RoutePoint]:
+    final_x = np.array(sel_x, dtype=float)
+    final_y = np.array(sel_y, dtype=float)
+    final_type = np.zeros(len(final_x), dtype=int)
+    final_heading = np.zeros(len(final_x), dtype=float)
+    final_yaw = tangent_yaws(final_x, final_y)
+
+    input_points, _ = prepare_input_points(raw_points)
+    if len(input_points) >= 3:
+        # 第一个业务点是掉头点，只用于自动生成掉头区线；后续业务点仍按桩桶/终点回填。
+        mark_candidates = input_points[2:]
+    else:
+        mark_candidates = []
+
+    for idx, original in enumerate(mark_candidates):
+        is_end_point = (idx == len(mark_candidates) - 1)
+        if original.point_type != 0 or is_end_point:
+            dists_sq = (final_x - original.x) ** 2 + (final_y - original.y) ** 2
+            closest_idx = int(np.argmin(dists_sq))
+            final_type[closest_idx] = original.point_type
+            final_heading[closest_idx] = float(original.heading_deg or 0.0)
+            if original.point_type != 0:
+                final_yaw[closest_idx] = float(original.target_yaw_deg or final_yaw[closest_idx])
+
+    action_idx = max(0, min(int(action_idx), len(final_x) - 1))
+    final_type[action_idx] = POINT_TYPE_TOKENS["NAV_POINT_JUMP"]
+
+    return [
+        RoutePoint(
+            x=float(final_x[i]),
+            y=float(final_y[i]),
+            target_yaw_deg=normalize_relative_yaw_deg(float(final_yaw[i])),
+            heading_deg=normalize_heading_deg(float(final_heading[i])),
+            target_speed=0.0,
+            point_type=int(final_type[i]),
+        )
+        for i in range(drop_first_count, len(final_x))
+    ]
+
+
+def generate_route_plan(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float, float]], List[RoutePoint], str]:
+    if PLAN1_FAST_UTURN_ENABLE:
+        control_points, x_resampled, y_resampled, drop_first_count, action_idx = generate_fast_uturn_calculated_path(
+            raw_points
+        )
+        final_points = build_fast_uturn_final_points(
+            raw_points,
+            x_resampled,
+            y_resampled,
+            drop_first_count,
+            action_idx,
+        )
+        final_action_idx = max(0, action_idx - drop_first_count)
+        apply_speed_plan(final_points)
+        method_name = f"极速掉头-{fast_uturn_mode_name(PLAN1_FAST_UTURN_MODE)}"
+        return control_points, final_points, method_name
+
+    control_points, x_resampled, y_resampled, drop_first_count = generate_calculated_path(raw_points)
+    final_points = build_final_points(raw_points, x_resampled, y_resampled, drop_first_count)
+    apply_speed_plan(final_points)
+    return control_points, final_points, "AutoPath B-Spline"
+
+
 def generate_header(
     points: List[RoutePoint],
     method_name: str,
@@ -1020,6 +1449,29 @@ def generate_header(
 # ============================================================
 # 可视化
 # ============================================================
+
+def preview_cone_points(raw_points: List[RoutePoint]) -> List[RoutePoint]:
+    if PLAN1_FAST_UTURN_ENABLE:
+        input_points, _ = prepare_input_points(raw_points)
+        return input_points[2:] if len(input_points) >= 3 else []
+
+    if len(raw_points) < 3:
+        return []
+
+    u_turn_idx = 1 if U_TURN_DETECT_MODE == 0 else None
+    if u_turn_idx is not None:
+        return raw_points[u_turn_idx + 1:]
+
+    start = raw_points[0]
+    max_dist = -1.0
+    max_idx = 1
+    for i in range(1, len(raw_points)):
+        d = math.sqrt((raw_points[i].x - start.x) ** 2 + (raw_points[i].y - start.y) ** 2)
+        if d > max_dist:
+            max_dist = d
+            max_idx = i
+    return raw_points[max_idx + 1:]
+
 
 def plot_result(
     raw_points: List[RoutePoint],
@@ -1074,30 +1526,12 @@ def plot_result(
                     fontsize=8, color="red", fontweight="bold")
 
     # 绘制桩桶安全区域（可视化防撞余量）
-    cones = [p for p in raw_points if p.point_type == 0 and p != raw_points[0]]
-    # 掉头点之后的普通点视为桩桶
-    if len(raw_points) >= 3:
-        u_turn_idx = 1 if U_TURN_DETECT_MODE == 0 else None
-        if u_turn_idx is not None:
-            cone_points = raw_points[u_turn_idx + 1:]
-        else:
-            # 找最远点
-            start = raw_points[0]
-            max_dist = -1.0
-            max_idx = 1
-            for i in range(1, len(raw_points)):
-                d = math.sqrt((raw_points[i].x - start.x) ** 2 + (raw_points[i].y - start.y) ** 2)
-                if d > max_dist:
-                    max_dist = d
-                    max_idx = i
-            cone_points = raw_points[max_idx + 1:]
-
-        for cp in cone_points:
-            circle = plt.Circle(
-                (cp.x, cp.y), CONE_RADIUS_MM + SAFE_MARGIN_MM,
-                color="orange", alpha=0.2, linestyle="--", linewidth=1
-            )
-            ax.add_patch(circle)
+    for cp in preview_cone_points(raw_points):
+        circle = plt.Circle(
+            (cp.x, cp.y), CONE_RADIUS_MM + SAFE_MARGIN_MM,
+            color="orange", alpha=0.2, linestyle="--", linewidth=1
+        )
+        ax.add_patch(circle)
 
     ax.set_xlabel("X (mm)")
     ax.set_ylabel("Y (mm)")
@@ -1181,6 +1615,37 @@ def parse_args() -> argparse.Namespace:
         choices=["0", "1"],
         help="掉头点识别模式：0=第1个点，1=最远点（覆盖脚本内 U_TURN_DETECT_MODE）",
     )
+    fast_group = parser.add_mutually_exclusive_group()
+    fast_group.add_argument(
+        "--fast-uturn",
+        action="store_true",
+        help="启用科目一极速掉头路径拓扑（第一个业务点为掉头点，程序自动生成掉头区线）。",
+    )
+    fast_group.add_argument(
+        "--no-fast-uturn",
+        action="store_true",
+        help="关闭科目一极速掉头路径拓扑。",
+    )
+    parser.add_argument(
+        "--fast-uturn-mode",
+        choices=["jump"],
+        help="极速掉头模式：jump=极速差速自旋掉头。",
+    )
+    parser.add_argument(
+        "--fast-uturn-over-mm",
+        type=float,
+        help="极速掉头动作点越过掉头区线中心的距离，单位 mm。",
+    )
+    parser.add_argument(
+        "--fast-uturn-mark-width-mm",
+        type=float,
+        help="极速掉头自动生成掉头线时使用的打点宽度，单位 mm。",
+    )
+    parser.add_argument(
+        "--fast-uturn-line-width-factor",
+        type=float,
+        help="极速掉头自动掉头线长度系数，线长=打点宽度*该系数。",
+    )
     return parser.parse_args()
 
 
@@ -1202,16 +1667,46 @@ def main() -> int:
 
     @return 0 成功，非 0 失败
     """
-    global U_TURN_DETECT_MODE
+    global U_TURN_DETECT_MODE, PLAN1_FAST_UTURN_ENABLE, PLAN1_FAST_UTURN_MODE, PLAN1_FAST_UTURN_LINE_OVER_MM
+    global PLAN1_FAST_UTURN_MARK_WIDTH_MM, PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR
 
     args = parse_args()
+
+    script_dir = Path(__file__).resolve().parent
+    project_root = script_dir.parent.parent
+    config_path = project_root / "code" / "config" / "sys_options.h"
+    apply_plan1_fast_uturn_options(load_plan1_fast_uturn_options(config_path))
 
     # 覆盖掉头点识别模式
     if args.u_turn_mode is not None:
         U_TURN_DETECT_MODE = int(args.u_turn_mode)
 
-    script_dir = Path(__file__).resolve().parent
-    project_root = script_dir.parent.parent
+    if args.fast_uturn:
+        PLAN1_FAST_UTURN_ENABLE = 1
+    elif args.no_fast_uturn:
+        PLAN1_FAST_UTURN_ENABLE = 0
+
+    if args.fast_uturn_mode is not None:
+        PLAN1_FAST_UTURN_MODE = FAST_UTURN_MODE_TOKENS[args.fast_uturn_mode]
+
+    if args.fast_uturn_over_mm is not None:
+        PLAN1_FAST_UTURN_LINE_OVER_MM = float(args.fast_uturn_over_mm)
+
+    if args.fast_uturn_mark_width_mm is not None:
+        PLAN1_FAST_UTURN_MARK_WIDTH_MM = float(args.fast_uturn_mark_width_mm)
+
+    if args.fast_uturn_line_width_factor is not None:
+        PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR = float(args.fast_uturn_line_width_factor)
+
+    apply_plan1_fast_uturn_options(
+        {
+            "enable": PLAN1_FAST_UTURN_ENABLE,
+            "mode": PLAN1_FAST_UTURN_MODE,
+            "line_over_mm": PLAN1_FAST_UTURN_LINE_OVER_MM,
+            "mark_width_mm": PLAN1_FAST_UTURN_MARK_WIDTH_MM,
+            "line_width_factor": PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR,
+        }
+    )
 
     # 确定输入文件
     if args.input:
@@ -1245,21 +1740,21 @@ def main() -> int:
     radius_mode = "固定" if U_TURN_RADIUS_MODE == 0 else "自动(距离/2)"
     print(f"[参数] 掉头半径: {U_TURN_RADIUS_MM}mm (模式: {radius_mode})")
     print(f"[参数] 掉头模式: {U_TURN_DETECT_MODE}")
+    print(f"[参数] 极速掉头: {'开启' if PLAN1_FAST_UTURN_ENABLE else '关闭'}")
+    if PLAN1_FAST_UTURN_ENABLE:
+        print(f"[参数] 极速掉头方式: {fast_uturn_mode_name(PLAN1_FAST_UTURN_MODE)}")
+        print(f"[参数] 掉头区过线距离: {PLAN1_FAST_UTURN_LINE_OVER_MM:.1f}mm")
+        print(f"[参数] 极速掉头打点宽度: {PLAN1_FAST_UTURN_MARK_WIDTH_MM:.1f}mm")
+        print(f"[参数] 掉头线长度系数: {PLAN1_FAST_UTURN_LINE_WIDTH_FACTOR:.2f}")
     print()
 
     # 核心解算
-    control_points, x_resampled, y_resampled, drop_first_count = generate_calculated_path(raw_points)
-
-    # 构建最终点序列
-    final_points = build_final_points(raw_points, x_resampled, y_resampled, drop_first_count)
-
-    # 离线速度规划
-    apply_speed_plan(final_points)
+    control_points, final_points, method_name = generate_route_plan(raw_points)
 
     # 生成头文件
     generate_header(
         final_points,
-        "AutoPath B-Spline",
+        method_name,
         str(output_path),
         start_heading_valid,
         start_heading_deg,

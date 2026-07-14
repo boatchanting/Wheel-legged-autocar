@@ -323,6 +323,14 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     else if (g_fallen_standup_grace_ticks > 0U)
     {
         g_fallen_standup_grace_ticks--;
+        
+        // 【新增安全优化】提前结束起立免死金牌期
+        // 如果赛车已经成功起立（倾角误差小于 30 度），则取消免死金牌
+        // 这样可以防止起立后马上又摔倒，但因为还在免死金牌期内导致轮胎狂转
+        if (fabsf(euler_angle.pitch - ANG_MECH_ZERO) < 30.0f)
+        {
+            g_fallen_standup_grace_ticks = 0U;
+        }
     }
 
     // 颠簸路段状态机（1ms调度）：
