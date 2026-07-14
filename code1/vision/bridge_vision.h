@@ -13,6 +13,7 @@ extern "C" {
 #define BRIDGE_VISION_IMAGE_H                 (60U)
 #define BRIDGE_VISION_CONFIRM_FRAMES          (1U)
 #define BRIDGE_VISION_LOST_HOLD_FRAMES        (5U)
+#define BRIDGE_VISION_PROFILE_TIMER           (TC_TIME2_CH1)
 
 /* The detector score is calibrated around 350.  IPC confidence remains a
  * normalized 0.0 .. 1.0 value so Core 0 keeps its existing wire format. */

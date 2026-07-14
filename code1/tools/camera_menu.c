@@ -19,12 +19,19 @@
 
 static uint8 g_camera_menu_inited = 0U;
 static uint32 g_camera_menu_refresh_counter = 0U;
+#if CAMERA_MENU_DEBUG_LOG_ENABLE
 static uint32 g_camera_menu_log_counter = 0U;
+#endif
 
 static uint32 CameraMenu_MaxFrameId(uint32 a, uint32 b, uint32 c)
 {
     uint32 max_value = (a > b) ? a : b;
     return (max_value > c) ? max_value : c;
+}
+
+static uint32 CameraMenu_ProfileMinOrZero(const volatile runtime_profiler_t *profiler)
+{
+    return (profiler->count == 0U) ? 0U : profiler->min_us;
 }
 
 static const char *CameraMenu_TargetToString(uint8 active_target)
@@ -58,21 +65,21 @@ static void CameraMenu_DrawStaticLayout(void)
     ips200_show_string(120, y + 2U * CAMERA_MENU_TEXT_Y_STEP, "C:");
     ips200_show_string(0, y + 3U * CAMERA_MENU_TEXT_Y_STEP, "PVC F:");
     ips200_show_string(120, y + 3U * CAMERA_MENU_TEXT_Y_STEP, "L:");
-    ips200_show_string(0, y + 4U * CAMERA_MENU_TEXT_Y_STEP, "LIN D/S:");
+    ips200_show_string(0, y + 4U * CAMERA_MENU_TEXT_Y_STEP, "BRG D/S:");
     ips200_show_string(120, y + 4U * CAMERA_MENU_TEXT_Y_STEP, "C:");
-    ips200_show_string(0, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "LIN E:");
+    ips200_show_string(0, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "BRG E:");
     ips200_show_string(120, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "Y:");
     ips200_show_string(0, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "BMP D/S:");
     ips200_show_string(120, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "P:");
     ips200_show_string(0, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "BMP E:");
     ips200_show_string(120, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "S:");
-    ips200_show_string(0, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "Cost P:");
-    ips200_show_string(82, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "L:");
-    ips200_show_string(160, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "B:");
-    ips200_show_string(0, y + 9U * CAMERA_MENU_TEXT_Y_STEP, "Dt   P:");
-    ips200_show_string(82, y + 9U * CAMERA_MENU_TEXT_Y_STEP, "L:");
-    ips200_show_string(160, y + 9U * CAMERA_MENU_TEXT_Y_STEP, "B:");
-    ips200_show_string(0, y + 10U * CAMERA_MENU_TEXT_Y_STEP, "Img: 94x60 -> 188x120");
+    ips200_show_string(0, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "B L:");
+    ips200_show_string(78, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "A:");
+    ips200_show_string(150, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "X:");
+    ips200_show_string(0, y + 9U * CAMERA_MENU_TEXT_Y_STEP, "B m:");
+    ips200_show_string(78, y + 9U * CAMERA_MENU_TEXT_Y_STEP, "N:");
+    ips200_show_string(158, y + 9U * CAMERA_MENU_TEXT_Y_STEP, "Dt:");
+    ips200_show_string(0, y + 10U * CAMERA_MENU_TEXT_Y_STEP, "B us: L last A avg X max m min");
 }
 
 static void CameraMenu_PrintDebug(const pvc_vision_output_t *pvc,
@@ -87,7 +94,9 @@ static void CameraMenu_PrintDebug(const pvc_vision_output_t *pvc,
     {
         return;
     }
+#if CAMERA_MENU_DEBUG_LOG_ENABLE
     g_camera_menu_log_counter = 0U;
+#endif
 
     printf("[CAM1] task=%u mask=%u frame=%lu pvc=%u/%u conf=%.3f line=%u/%u conf=%.3f bumpy=%u/%u phase=%u err=%d\r\n",
            (unsigned int)active_target,
@@ -120,7 +129,9 @@ void CameraMenu_Init(void)
     CameraMenu_DrawStaticLayout();
     g_camera_menu_inited = 1U;
     g_camera_menu_refresh_counter = 0U;
+#if CAMERA_MENU_DEBUG_LOG_ENABLE
     g_camera_menu_log_counter = 0U;
+#endif
 }
 
 void CameraMenu_Update(void)
@@ -180,13 +191,14 @@ void CameraMenu_Update(void)
     ips200_show_int(48, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.steer_error_px_x100, 6);
     ips200_show_uint(138, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.local_s_mm, 5);
 
-    ips200_show_uint(54, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_pvc_vision_cost_profiler.last_us, 5);
-    ips200_show_uint(98, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.last_us, 5);
-    ips200_show_uint(176, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.last_us, 5);
+    ips200_show_uint(30, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.last_us, 5);
+    ips200_show_uint(100, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.avg_us, 5);
+    ips200_show_uint(172, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.max_us, 5);
 
-    ips200_show_uint(54, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_pvc_vision_frame_profiler.last_us, 5);
-    ips200_show_uint(98, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_frame_profiler.last_us, 5);
-    ips200_show_uint(176, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_frame_profiler.last_us, 5);
+    ips200_show_uint(30, y + 9U * CAMERA_MENU_TEXT_Y_STEP,
+                     CameraMenu_ProfileMinOrZero(&g_bridge_vision_cost_profiler), 5);
+    ips200_show_uint(100, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.count, 6);
+    ips200_show_uint(190, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_frame_profiler.last_us, 5);
 
     CameraMenu_PrintDebug(pvc, bridge, bumpy, active_target, enable_mask);
 }

@@ -12,6 +12,7 @@ volatile uint8 g_bridge_vision_output_write_busy = 0U;
 static BridgeDetectionScratch g_bridge_detection_scratch;
 static BridgeDetectionConfig g_bridge_detection_config;
 static bridge_vision_output_t g_bridge_output_shadow;
+static uint32 g_bridge_last_frame_time_us = 0U;
 
 static float bridge_vision_clamp_unit(float value)
 {
@@ -175,8 +176,11 @@ void bridge_vision_init(void)
 {
     bridge_detection_default_config(&g_bridge_detection_config);
     bridge_vision_reset_filter();
+    timer_init(BRIDGE_VISION_PROFILE_TIMER, TIMER_US);
+    timer_start(BRIDGE_VISION_PROFILE_TIMER);
     RUNTIME_PROFILE_RESET(&g_bridge_vision_cost_profiler);
     RUNTIME_PROFILE_RESET(&g_bridge_vision_frame_profiler);
+    g_bridge_last_frame_time_us = timer_get(BRIDGE_VISION_PROFILE_TIMER);
 }
 
 void bridge_vision_reset_filter(void)
@@ -199,11 +203,17 @@ void bridge_vision_process_camera_frame(const uint8 *gray)
 {
     BridgeDetectionResult detected;
     bridge_vision_frame_result_t raw;
+    const uint32 now_us = timer_get(BRIDGE_VISION_PROFILE_TIMER);
 
     if (gray == NULL)
     {
         return;
     }
+
+    runtime_profiler_update(&g_bridge_vision_frame_profiler,
+                            (uint32)(now_us - g_bridge_last_frame_time_us));
+    g_bridge_last_frame_time_us = now_us;
+    RUNTIME_PROFILE_BEGIN(g_bridge_vision_cost_profiler, BRIDGE_VISION_PROFILE_TIMER);
 
     bridge_detection_result_clear(&detected);
     (void)bridge_detection_detect_gray(gray,
@@ -215,4 +225,5 @@ void bridge_vision_process_camera_frame(const uint8 *gray)
                                        &detected);
     bridge_vision_export_result(&detected, &raw);
     bridge_vision_update_filter(&raw);
+    RUNTIME_PROFILE_END(&g_bridge_vision_cost_profiler, BRIDGE_VISION_PROFILE_TIMER);
 }
