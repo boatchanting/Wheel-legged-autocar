@@ -144,53 +144,54 @@ static void vision_ipc_core1_fill_pvc(vision_ipc_packet_t *packet,
  * @brief 将视觉检测结果提取并填充到 IPC 数据包中
  * 
  * @param packet 将要发送给 0 核的数据包
- * @param line_output 当前最新的直线检测输出结果
+ * @param bridge_output 当前最新的单边桥检测输出结果
  */
-static void vision_ipc_core1_fill_line(vision_ipc_packet_t *packet,
-                                       const volatile line_vision_output_t *line_output)
+static void vision_ipc_core1_fill_bridge(vision_ipc_packet_t *packet,
+                                         const volatile bridge_vision_output_t *bridge_output)
 {
-    line_vision_output_t line;
-    const line_vision_frame_result_t *ctrl;
+    bridge_vision_output_t bridge;
+    const bridge_vision_frame_result_t *ctrl;
 
     /* 如果没有有效数据，直接退出 */
-    if ((line_output == NULL) || (line_output->frame_id == 0U))
+    if ((bridge_output == NULL) || (bridge_output->frame_id == 0U))
     {
         return;
     }
 
     /* 拷贝数据，防止并发修改 */
-    line = *line_output;
-    ctrl = (line.stable_detected || line.bridge_stable_detected) ? &line.stable : &line.raw;
+    bridge = *bridge_output;
+    ctrl = (bridge.stable_detected || bridge.bridge_stable_detected) ? &bridge.stable : &bridge.raw;
 
     packet->valid_mask = (uint16)(packet->valid_mask | VISION_VALID_BRIDGE | VISION_VALID_PROFILE);
-    packet->frame_id = vision_max_u32(packet->frame_id, line.frame_id);
-    packet->frame_dt_us = (uint16)g_line_vision_frame_profiler.last_us;
-    packet->cost_us = (uint16)g_line_vision_cost_profiler.last_us;
+    packet->frame_id = vision_max_u32(packet->frame_id, bridge.frame_id);
+    packet->frame_dt_us = (uint16)g_bridge_vision_frame_profiler.last_us;
+    packet->cost_us = (uint16)g_bridge_vision_cost_profiler.last_us;
 
-    packet->line_detected = line.raw_detected;
-    packet->line_stable_detected = line.stable_detected;
+    packet->line_detected = bridge.raw_detected;
+    packet->line_stable_detected = bridge.stable_detected;
     packet->line_confidence_u16 = vision_confidence_to_u16(ctrl->confidence);
     packet->line_lateral_px_x100 = vision_float_to_i16_x100(ctrl->lateral_error_px);
     packet->line_yaw_error_deg_x100 = vision_float_to_i16_x100(ctrl->yaw_error_deg);
     packet->line_x_bottom_x100 = vision_float_to_i16_x100(ctrl->line_x_bottom);
     packet->line_x_lookahead_x100 = vision_float_to_i16_x100(ctrl->line_x_lookahead);
-    packet->line_points_used = ctrl->points_used;
-    packet->line_y_span = ctrl->y_span;
-    packet->line_rmse_px_x100 = (uint16)(ctrl->fit_rmse * 100.0f);
-    packet->line_roi_white_ratio_u16 = vision_confidence_to_u16(ctrl->roi_white_ratio);
-    packet->line_speed_hint = (int16)ctrl->target_speed_hint;
+    packet->line_points_used = (uint8)(ctrl->left_line_visible + ctrl->right_line_visible);
+    packet->line_y_span = (ctrl->bbox_ymax >= ctrl->bbox_ymin) ?
+                          (uint8)(ctrl->bbox_ymax - ctrl->bbox_ymin + 1U) : 0U;
+    packet->line_rmse_px_x100 = 0U;
+    packet->line_roi_white_ratio_u16 = 0U;
+    packet->line_speed_hint = 0;
 
-    packet->line_bridge_detected = line.bridge_raw_detected;
-    packet->line_bridge_stable_detected = line.bridge_stable_detected;
+    packet->line_bridge_detected = bridge.bridge_raw_detected;
+    packet->line_bridge_stable_detected = bridge.bridge_stable_detected;
     packet->line_bridge_confidence_u16 = vision_confidence_to_u16(ctrl->bridge_confidence);
-    packet->line_bridge_component_count = ctrl->bridge_component_count;
-    packet->line_bridge_bbox_xmin = ctrl->bridge_bbox_xmin;
-    packet->line_bridge_bbox_ymin = ctrl->bridge_bbox_ymin;
-    packet->line_bridge_bbox_xmax = ctrl->bridge_bbox_xmax;
-    packet->line_bridge_bbox_ymax = ctrl->bridge_bbox_ymax;
+    packet->line_bridge_component_count = ctrl->bridge_detected ? 1U : 0U;
+    packet->line_bridge_bbox_xmin = ctrl->bbox_xmin;
+    packet->line_bridge_bbox_ymin = ctrl->bbox_ymin;
+    packet->line_bridge_bbox_xmax = ctrl->bbox_xmax;
+    packet->line_bridge_bbox_ymax = ctrl->bbox_ymax;
 
-    packet->bridge_detected = line.bridge_stable_detected;
-    packet->bridge_count = ctrl->bridge_component_count;
+    packet->bridge_detected = bridge.bridge_stable_detected;
+    packet->bridge_count = ctrl->bridge_detected ? 1U : 0U;
     packet->bridge_side = 0;
     packet->bridge_exit_seen = 0U;
     packet->bridge_center_err = packet->line_lateral_px_x100;
@@ -306,9 +307,9 @@ void VisionIpc_Core1_Update_2ms(void)
     {
         pvc_frame_id = pvc_vision_get_output()->frame_id;
     }
-    if ((g_core1_line_enabled != 0U) && (g_line_vision_output_write_busy == 0U))
+    if ((g_core1_line_enabled != 0U) && (g_bridge_vision_output_write_busy == 0U))
     {
-        line_frame_id = line_vision_get_output()->frame_id;
+        line_frame_id = bridge_vision_get_output()->frame_id;
     }
     if ((g_core1_bumpy_enabled != 0U) && (g_bumpy_vision_output_write_busy == 0U))
     {
@@ -523,9 +524,9 @@ void VisionIpc_Core1_PublishCurrent(void)
     {
         vision_ipc_core1_fill_pvc(&packet, pvc_vision_get_output());
     }
-    if ((g_core1_line_enabled != 0U) && (g_line_vision_output_write_busy == 0U))
+    if ((g_core1_line_enabled != 0U) && (g_bridge_vision_output_write_busy == 0U))
     {
-        vision_ipc_core1_fill_line(&packet, line_vision_get_output());
+        vision_ipc_core1_fill_bridge(&packet, bridge_vision_get_output());
     }
     if ((g_core1_bumpy_enabled != 0U) && (g_bumpy_vision_output_write_busy == 0U))
     {

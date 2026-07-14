@@ -557,6 +557,9 @@ void render_pvc_vision_to_image(void)
     }
 }
 
+#if 0
+/* Legacy line-vision overlay removed: bridge_vision deliberately has no
+ * image-rendering path in the real-time algorithm. */
 static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
 {
     int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
@@ -685,6 +688,8 @@ void render_line_vision_to_image(void)
 #endif
     }
 }
+
+#endif
 
 void render_bumpy_vision_to_image(void)
 {
