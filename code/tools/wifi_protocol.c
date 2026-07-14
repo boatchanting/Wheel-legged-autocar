@@ -3,6 +3,7 @@
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
 #include "../navigation/nav_replay/nav_replay.h"
+#include "../navigation/fusion_nav.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -412,8 +413,16 @@ void wifi_protocol_send_data(void)
     write_u8(robot_ctrl.point_type);
 
     // E. projected GNSS XY for pure GPS marker/replay (unit: mm)
+    // 纯惯导线 (ins)
+    write_float_value(g_fuse_state.ins_x);
+    write_float_value(g_fuse_state.ins_y);
+    // GPS 地面真值 (gps)
     write_float_value(gnss_trans.x * 1000.0f);
     write_float_value(gnss_trans.y * 1000.0f);
+    // 融合输出 (fusion)
+    write_float_value(g_fuse_state.fuse_x);
+    write_float_value(g_fuse_state.fuse_y);
+
     write_u8(gnss_trans.is_valid);
     write_u8(gnss_trans.is_origin_set);
 

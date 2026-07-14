@@ -44,6 +44,7 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
+#include "../navigation/fusion_nav.h" // 互补滤波融合
 
 // 声明外部函数
 
@@ -392,6 +393,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             filtered_gyro_z * 0.0174532925f
             );
             #endif
+            
+            // 惯导更新后，运行 100Hz 互补滤波融合
+            Fusion_Ins_Update();
         }
         else
         {
@@ -414,6 +418,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             gnss_flag = 0;//将标志位清零
             gnss_data_parse();           //开始解析数据
             Gnss_Transform_Update();//gnss转换为高斯克吕格投影
+            
+            // GPS更新后，运行 10Hz 纠偏
+            Fusion_Gps_Correct();
         } // GNSS更新
     }
     #endif

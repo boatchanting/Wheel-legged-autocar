@@ -2,6 +2,8 @@
 #include "../../../common.h"
 #include "../../gps_nav_replay_route_table.h"
 #include "../../gnss_transform.h"
+#include "../../fusion_nav.h"
+#include "../../../calculate/ekf.h"
 #if (CURRENT_NAV_PLAN == 1) && (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
 extern volatile float target_speed_set; extern volatile float err_degree;
 
@@ -85,37 +87,17 @@ static float GpsCalcBearingDegFromNorth(float from_x, float from_y, float to_x, 
 
 static float GpsNavCurrentXmm(void)
 {
-    return gnss_trans.x * 1000.0f;
+    return g_fuse_state.fuse_x;
 }
 
 static float GpsNavCurrentYmm(void)
 {
-    return gnss_trans.y * 1000.0f;
+    return g_fuse_state.fuse_y;
 }
 
 static float GpsNav_GetCurrentHeadingDeg(void)
 {
-    float current_absolute_heading = 0.0f;
-
-    if (g_gyro_yaw_initialized == 0U)
-    {
-        float initial_heading = 0.0f;
-#if IMU_CATEGORY == 3
-        initial_heading = 226.0f;//heading
-#else
-        initial_heading = gnss.direction;
-#endif
-        g_yaw_offset_deg = initial_heading - euler_angle.yaw;
-        g_gyro_yaw_initialized = 1U;
-        
-        current_absolute_heading = initial_heading;
-    }
-    else
-    {
-        current_absolute_heading = euler_angle.yaw + g_yaw_offset_deg;
-    }
-
-    return GpsNormalizeCourse360(current_absolute_heading + GPS_NAV_HEADING_OFFSET_DEG);
+    return GpsNormalizeCourse360(g_fuse_state.fuse_yaw + GPS_NAV_HEADING_OFFSET_DEG);
 }
 
 uint16 GpsNavReplay_LoadStaticRouteToRam(void)
@@ -163,6 +145,14 @@ void GpsNavReplay_Start(void)
     err_degree = 0.0f;
     
     g_gyro_yaw_initialized = 0U;
+
+    // 起步时记录绝对航向并重置融合状态
+#if ENABLE_DYNAMIC_HEADING
+    g_track_base_yaw = g_startup_avg_heading; // 使用上电静置2秒期间的抗干扰均值作为发车基准航向
+#else
+    g_track_base_yaw = FIXED_BASE_YAW; // 使用预设好的固定朝向
+#endif
+    Fusion_Set_Origin();
 
 #if DEBUG_LOG_ENABLE
     printf("[GPS-NAV] Replay START. Points: %d\r\n", nav_ram_data.point_count);

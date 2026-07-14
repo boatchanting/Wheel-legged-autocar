@@ -218,6 +218,33 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
     // 2. 开启全局中断 (没有这一步，中断函数永远不会执行)
     interrupt_global_enable(0); 
 
+    // -------------------------------------------------------------------
+    // 开启 2 秒的初始化静置和航向均值采集 (不受电机干扰的最佳时机)
+    // -------------------------------------------------------------------
+#if DEBUG_DISPLAY_CORE0
+    ips200_show_string(0, disp_y, "Sampling Base Heading...");
+    disp_y += 16;
+#endif
+
+    float sum_sin = 0.0f;
+    float sum_cos = 0.0f;
+    for (int i = 0; i < 200; i++) {
+        system_delay_ms(10); // 累计 2000ms，此时中断已开，数据正常更新
+#if IMU_CATEGORY == 3
+        float h_rad = heading * (3.14159265f / 180.0f);
+#else
+        float h_rad = gnss.direction * (3.14159265f / 180.0f);
+#endif
+        sum_sin += sinf(h_rad);
+        sum_cos += cosf(h_rad);
+    }
+    
+    float avg_rad = atan2f(sum_sin, sum_cos);
+    float avg_deg = avg_rad * (180.0f / 3.14159265f);
+    if (avg_deg < 0.0f) avg_deg += 360.0f;
+    
+    g_startup_avg_heading = avg_deg; // 保存均值到全局变量，供发车时使用
+
 #if DEBUG_DISPLAY_CORE0    
     // 延时一会儿让人看清启动信息，然后清屏准备显示数据
     system_delay_ms(1000); 

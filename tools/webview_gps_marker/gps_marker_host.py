@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import math
 import os
 import socket
@@ -31,7 +31,7 @@ HOST_ACK_TIMEOUT_SEC = 1.5
 
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
-PAYLOAD_SIZE_V3 = 96
+PAYLOAD_SIZE_V3 = 112  # 86 + (6 * 4) + 2 = 112
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -292,15 +292,19 @@ def _decode_payload(payload_bytes):
         data["point_type"] = 0
 
     if size >= PAYLOAD_SIZE_V3:
-        gps_x, gps_y, gps_valid, gps_origin_set = struct.unpack_from("<ffBB", payload_bytes, PAYLOAD_SIZE_V2)
+        ins_x, ins_y, gps_x, gps_y, fuse_x, fuse_y, gps_valid, gps_origin_set = struct.unpack_from("<ffffffBB", payload_bytes, PAYLOAD_SIZE_V2)
+        data["ins_x"] = ins_x
+        data["ins_y"] = ins_y
         data["gps_x"] = gps_x
         data["gps_y"] = gps_y
+        data["fuse_x"] = fuse_x
+        data["fuse_y"] = fuse_y
         data["gps_valid"] = gps_valid
         data["gps_origin_set"] = gps_origin_set
         if gps_valid and gps_origin_set:
-            # Keep frontend compatibility: remap displayed trajectory to projected GPS XY.
-            data["nav_x"] = gps_x
-            data["nav_y"] = gps_y
+            # Keep frontend compatibility
+            data["nav_x"] = fuse_x
+            data["nav_y"] = fuse_y
     else:
         data["gps_x"] = data["nav_x"]
         data["gps_y"] = data["nav_y"]
