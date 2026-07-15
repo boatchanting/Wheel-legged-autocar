@@ -1,5 +1,5 @@
 #include "menu.h"
-
+#include "tools/sbus.h"
 
 // ==================== 全局变量定义 ====================
 MenuState_t current_state = MENU_STATE_MAIN; 
@@ -45,6 +45,13 @@ void Menu_TriggerRecordAction(void)
     gpio_toggle_level(P19_0);       // 指示灯切换
     if (g_motor_enable && g_yaw_initialized)
     {
+        // 倒地打点逻辑：如果处于倒地状态，直接起立并给一个0.5m/s的初速度和直线方向
+        if (g_fallen) {
+            g_fallen = false;
+            robot_ctrl.target_speed = 100.0f; // 0.5m/s 向前
+            robot_ctrl.target_angle = 0.0f;   // 直线前进
+        }
+
         g_nav_start_recording = 1;  // 开始录制，会在 main 中调用惯导系统初始化和点记录初始化
         g_nav_recording = 1;
     }
