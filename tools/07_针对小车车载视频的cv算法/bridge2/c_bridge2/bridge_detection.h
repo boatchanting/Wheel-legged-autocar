@@ -131,6 +131,28 @@ int bridge_detection_detect_gray(
     BridgeDetectionScratch *scratch,
     BridgeDetectionResult *result);
 
+#ifdef BRIDGE_DETECTION_PC_PROFILE //pc端测试用
+typedef struct {
+    uint64_t ticks_per_second;
+    uint64_t frames;
+    uint64_t cache_check_ticks;
+    uint64_t threshold_select_ticks;
+    uint64_t threshold_mask_ticks;
+    uint64_t global_morph_ticks;
+    uint64_t component_ticks;
+    uint64_t candidate_eval_ticks;
+    uint64_t local_morph_ticks;
+    uint64_t convex_hull_ticks;
+    uint64_t final_geometry_ticks;
+    uint64_t cache_store_ticks;
+    uint32_t component_calls;
+    uint32_t candidate_eval_calls;
+    uint32_t full_search_calls;
+} BridgeDetectionPcProfile;
+void bridge_detection_pc_profile_reset(void);
+void bridge_detection_pc_profile_get(BridgeDetectionPcProfile *out);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

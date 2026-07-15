@@ -3,6 +3,10 @@
 #include <stddef.h>
 #include <string.h>
 
+#ifdef BRIDGE_DETECTION_PC_PROFILE
+#include <windows.h>
+#endif
+
 #define BD_MIN_COMPONENT_AREA 24
 #define BD_MAX_LINE_POINTS BRIDGE_DETECTION_MAX_WIDTH
 #define BD_MAX_HULL_POINTS (BRIDGE_DETECTION_MAX_WIDTH * 4)
@@ -46,6 +50,21 @@ typedef struct {
 typedef struct { int x; int y; } PointI;
 
 enum { PREF_TOP, PREF_BOTTOM, PREF_LEFT, PREF_RIGHT };
+
+#ifdef BRIDGE_DETECTION_PC_PROFILE
+static BridgeDetectionPcProfile g_bd_pc_profile;
+static uint64_t bd_profile_now(void) { LARGE_INTEGER value; QueryPerformanceCounter(&value); return (uint64_t)value.QuadPart; }
+static void bd_profile_add(uint64_t *total, uint64_t start) { *total += bd_profile_now() - start; }
+void bridge_detection_pc_profile_reset(void) { LARGE_INTEGER frequency; memset(&g_bd_pc_profile, 0, sizeof(g_bd_pc_profile)); QueryPerformanceFrequency(&frequency); g_bd_pc_profile.ticks_per_second = (uint64_t)frequency.QuadPart; }
+void bridge_detection_pc_profile_get(BridgeDetectionPcProfile *out) { if (out != NULL) *out = g_bd_pc_profile; }
+#define BD_PROFILE_BEGIN() bd_profile_now()
+#define BD_PROFILE_ADD(field_, start_) bd_profile_add(&g_bd_pc_profile.field_, (start_))
+#define BD_PROFILE_INC(field_) (++g_bd_pc_profile.field_)
+#else
+#define BD_PROFILE_BEGIN() ((uint64_t)0)
+#define BD_PROFILE_ADD(field_, start_) do { (void)(start_); } while (0)
+#define BD_PROFILE_INC(field_) do { } while (0)
+#endif
 
 static float absf_fast(float value) { return value < 0.0f ? -value : value; }
 
@@ -576,16 +595,22 @@ static int evaluate_component(const uint8_t *gray, int stride, const BridgeDetec
     float center_x, edge_contrast, score;
     BridgeDetectionBitmap *visible = &scratch->work4;
     BridgeDetectionBitmap *outer = &scratch->work2;
+    uint64_t phase_start;
+    BD_PROFILE_INC(candidate_eval_calls);
+    phase_start = BD_PROFILE_BEGIN();
     bitmap_copy(visible, component);
     close3_open2(visible, &scratch->work1, width, height);
+    BD_PROFILE_ADD(local_morph_ticks, phase_start);
     /* Filling interior holes is redundant before a convex hull: it cannot
      * add an extreme point or change the hull boundary. */
+    phase_start = BD_PROFILE_BEGIN();
     if (!convex_hull_mask(visible, outer, width, height, left, right, widths, &area, scratch)) {
         bitmap_copy(outer, visible);
         extract_row_borders(outer, width, height, left, right, widths);
         area = 0;
         for (y = 0; y < height; ++y) area += widths[y];
     }
+    BD_PROFILE_ADD(convex_hull_ticks, phase_start);
     for (y = 0; y < height; ++y) if (widths[y] > 0) {
         valid_rows[valid_count++] = y;
         if (widths[y] > max_width) max_width = widths[y];
@@ -938,8 +963,12 @@ static int find_best_candidate(const uint8_t *gray, int width, int height, int s
     Candidate best;
     memset(&best, 0, sizeof(best));
     for (t = 0; t < threshold_count; ++t) {
+        uint64_t phase_start = BD_PROFILE_BEGIN();
         threshold_mask(gray, &scratch->work0, width, height, stride, thresholds[t]);
+        BD_PROFILE_ADD(threshold_mask_ticks, phase_start);
+        phase_start = BD_PROFILE_BEGIN();
         close3_open2(&scratch->work0, &scratch->work1, width, height);
+        BD_PROFILE_ADD(global_morph_ticks, phase_start);
         for (y = 0; y < height; ++y) for (word = 0; word < words; ++word) {
             uint32_t bits;
             while ((bits = scratch->work0.row[y][word]) != 0u) {
@@ -948,9 +977,17 @@ static int find_best_candidate(const uint8_t *gray, int width, int height, int s
                 Candidate candidate;
                 if (x >= width) { scratch->work0.row[y][word] = 0; break; }
                 start = y * width + x;
+                phase_start = BD_PROFILE_BEGIN();
                 component_area = extract_component(&scratch->work0, &scratch->work2, scratch->queue, start, width, height);
+                BD_PROFILE_ADD(component_ticks, phase_start);
+                BD_PROFILE_INC(component_calls);
                 if (component_area < BD_MIN_COMPONENT_AREA) continue;
-                if (!evaluate_component(gray, stride, &scratch->work2, thresholds[t], width, height, scratch, &candidate)) continue;
+                phase_start = BD_PROFILE_BEGIN();
+                if (!evaluate_component(gray, stride, &scratch->work2, thresholds[t], width, height, scratch, &candidate)) {
+                    BD_PROFILE_ADD(candidate_eval_ticks, phase_start);
+                    continue;
+                }
+                BD_PROFILE_ADD(candidate_eval_ticks, phase_start);
                 if (!have_best || candidate.score > best.score) {
                     best = candidate; have_best = 1;
                     bitmap_copy(&scratch->best_visible, &scratch->work4);
@@ -1003,6 +1040,7 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     Candidate best;
     int thresholds[11], threshold_count, have_best = 0;
     int temporal_used = 0;
+    uint64_t phase_start;
     LineFit visible_left, visible_right, outer_left, outer_right, left, right, top, plateau, entry;
     if (result == NULL) return -1;
     bridge_detection_result_clear(result);
@@ -1016,17 +1054,23 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
         scratch->temporal_streak = 0;
     }
     if (config == NULL) { bridge_detection_default_config(&default_config); config = &default_config; }
+    BD_PROFILE_INC(frames);
+    phase_start = BD_PROFILE_BEGIN();
     if (cache_matches(scratch, gray, width, height, stride, config)) {
+        BD_PROFILE_ADD(cache_check_ticks, phase_start);
         ++scratch->exact_cache_hits;
         *result = scratch->cached_result;
         return scratch->cache_status;
     }
+    BD_PROFILE_ADD(cache_check_ticks, phase_start);
+    phase_start = BD_PROFILE_BEGIN();
     if (config->fixed_threshold >= 0) {
         thresholds[0] = clamp_int(config->fixed_threshold, 0, 255);
         threshold_count = 1;
     } else {
         threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
     }
+    BD_PROFILE_ADD(threshold_select_ticks, phase_start);
     if ((config->fixed_threshold < 0) &&
         scratch->cache_magic == BD_CACHE_MAGIC && scratch->cached_result.candidate_found &&
         scratch->temporal_streak < BD_TEMPORAL_MAX_STREAK &&
@@ -1045,11 +1089,14 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     }
     if (!have_best) {
         ++scratch->full_detection_calls;
+        BD_PROFILE_INC(full_search_calls);
         have_best = find_best_candidate(gray, width, height, stride, thresholds, threshold_count, scratch, &best);
     }
     if (!have_best) {
         scratch->temporal_streak = 0;
+        phase_start = BD_PROFILE_BEGIN();
         cache_store(scratch, gray, width, height, stride, config, result, 0);
+        BD_PROFILE_ADD(cache_store_ticks, phase_start);
         return 0;
     }
     result->candidate_found = 1; result->threshold = best.threshold; result->candidate_score = best.score;
@@ -1057,6 +1104,7 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     result->bottom_row = best.bottom_row; result->max_width = best.max_width; result->bottom_width = best.bottom_width;
     result->center_x = best.center_x; result->edge_contrast = best.edge_contrast; result->left_clip_ratio = best.left_clip_ratio;
     result->right_clip_ratio = best.right_clip_ratio; result->dual_clip_ratio = best.dual_clip_ratio; result->border_monotonic = best.border_monotonic;
+    phase_start = BD_PROFILE_BEGIN();
     visible_left = fit_one_side(&scratch->best_visible, width, height, 0);
     visible_right = fit_one_side(&scratch->best_visible, width, height, 1);
     outer_left = fit_one_side(&scratch->best_outer, width, height, 0);
@@ -1098,12 +1146,15 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
             result->heading_dx_per_dy = dy ? (float)(result->center_segment.x1 - result->center_segment.x0) / dy : 0.0f;
         }
     }
+    BD_PROFILE_ADD(final_geometry_ticks, phase_start);
     if (temporal_used) {
         ++scratch->temporal_fast_hits;
         ++scratch->temporal_streak;
     } else {
         scratch->temporal_streak = 0;
     }
+    phase_start = BD_PROFILE_BEGIN();
     cache_store(scratch, gray, width, height, stride, config, result, 1);
+    BD_PROFILE_ADD(cache_store_ticks, phase_start);
     return 1;
 }
