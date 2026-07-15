@@ -9,7 +9,6 @@
  */
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_ipc_core0.h"
-#include "vision/vision_pvc_control.h"
 #include "plan/bridge.h"
 #include "tools/sbus.h"
 
@@ -123,11 +122,34 @@ static float vision_bridge_distance_from(float x_mm, float y_mm)
  * 
  * @note 公式：误差 = 横向偏差 * 横向比例 + 角度偏差 * 角度比例
  */
-static float vision_bridge_calc_line_err_degree(const volatile vision_ipc_packet_t *packet)
+static float vision_bridge_calc_geometry_err_degree(const volatile vision_ipc_packet_t *packet)
 {
-    /* 把放大了 100 倍的整数还原成浮点数 */
-    const float lateral_px = (float)packet->line_lateral_px_x100 * 0.01f;
-    const float yaw_deg = (float)packet->line_yaw_error_deg_x100 * 0.01f;
+    float bottom_x;
+    float top_x;
+    float forward_px;
+    float lateral_px;
+    float yaw_deg;
+
+    if ((packet == NULL) || (packet->bridge_geometry_valid == 0U))
+    {
+        return 0.0f;
+    }
+
+    if (packet->bridge_center_line_y0 >= packet->bridge_center_line_y1)
+    {
+        bottom_x = (float)packet->bridge_center_line_x0;
+        top_x = (float)packet->bridge_center_line_x1;
+        forward_px = (float)(packet->bridge_center_line_y0 - packet->bridge_center_line_y1);
+    }
+    else
+    {
+        bottom_x = (float)packet->bridge_center_line_x1;
+        top_x = (float)packet->bridge_center_line_x0;
+        forward_px = (float)(packet->bridge_center_line_y1 - packet->bridge_center_line_y0);
+    }
+
+    lateral_px = bottom_x - VISION_BRIDGE_TASK_IMAGE_CENTER_X;
+    yaw_deg = (forward_px > 0.0f) ? atan2f(top_x - bottom_x, forward_px) * 57.2957795f : 0.0f;
     /* 算综合误差 */
     const float err = VISION_BRIDGE_TASK_LINE_SIGN *
                       (lateral_px * VISION_BRIDGE_TASK_K_LAT_DEG_PER_PX +
@@ -246,13 +268,14 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
 
     if (packet != NULL)
     {
-        status.line_stable = packet->line_stable_detected;
-        status.bridge_stable = packet->line_bridge_stable_detected;
-        status.line_confidence_u16 = packet->line_confidence_u16;
-        status.bridge_confidence_u16 = packet->line_bridge_confidence_u16;
-        status.line_roi_white_ratio_u16 = packet->line_roi_white_ratio_u16;
-        status.line_lateral_px_x100 = packet->line_lateral_px_x100;
-        status.line_yaw_error_deg_x100 = packet->line_yaw_error_deg_x100;
+        status.bridge_stable = packet->bridge_stable_detected;
+        status.geometry_stable = packet->bridge_geometry_stable_detected;
+        status.geometry_valid = packet->bridge_geometry_valid;
+        status.bridge_state = packet->bridge_state;
+        status.center_line_x0 = packet->bridge_center_line_x0;
+        status.center_line_y0 = packet->bridge_center_line_y0;
+        status.center_line_x1 = packet->bridge_center_line_x1;
+        status.center_line_y1 = packet->bridge_center_line_y1;
     }
 
     g_bridge_vision_task_status = status;
@@ -290,9 +313,8 @@ static void vision_bridge_apply_nav_correction(void)
  */
 static void vision_bridge_cleanup(uint8 stop_car)
 {
-    /* 告诉 1 核：不用再找 PVC 和直线了 */
-    VisionPvcControl_SetEnable(0U);
-    VisionIpc_Core0_SetBridgeLineEnable(0U);
+    /* 告诉 1 核停止单边桥检测。 */
+    VisionIpc_Core0_SetBridgeEnable(0U);
     
     /* 恢复正常姿态 */
     vision_bridge_apply_normal_posture();
@@ -355,12 +377,12 @@ uint8 VisionBridgeTask_IsActive(void)
 
 /**
  * @brief 进入任务的准备阶段
- * @note  把当前位置设为起点，并告诉 1 核：“开始找 PVC 入口！”
+ * @note  把当前位置设为起点，并告诉 1 核开始单边桥检测。
  */
 static void vision_bridge_enter_task(void)
 {
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
-    s_bridge_task.state = VISION_BRIDGE_TASK_ENTER_PVC; /* 第一步：进 PVC */
+    s_bridge_task.state = VISION_BRIDGE_TASK_ALIGN;
     s_bridge_task.start_x_mm = inertial_nav.x;
     s_bridge_task.start_y_mm = inertial_nav.y;
     s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
@@ -370,9 +392,7 @@ static void vision_bridge_enter_task(void)
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
     
-    /* 告诉 1 核找 PVC */
-    VisionIpc_Core0_SetTask(VISION_TARGET_PVC_ENTRY, VISION_MASK_PVC_ENTRY);
-    VisionPvcControl_SetEnable(1U);
+    VisionIpc_Core0_SetBridgeEnable(1U);
 }
 
 /* --- 核心状态机 --- */
@@ -432,88 +452,38 @@ void VisionBridgeTask_Update_2ms(void)
     /* 看看现在走到哪一步了 */
     switch (s_bridge_task.state)
     {
-        /* --- 阶段 1：通过 PVC 入口接近桥梁 --- */
-        case VISION_BRIDGE_TASK_ENTER_PVC:
-            /* 直接抄 PVC 控制模块算好的指令 */
-            err_cmd = g_vision_pvc_control_status.err_degree_cmd;
-            speed_cmd = g_vision_pvc_control_status.speed_cmd;
-
-            /* 如果 PVC 模块说“我已经走到头了（ARRIVED）” */
-            if ((g_vision_pvc_control_status.state == VISION_PVC_CTRL_ARRIVED) &&
-                (vision_bridge_abs_f((float)g_vision_pvc_control_status.steer_error_px_x100 * 0.01f) <=
-                 VISION_BRIDGE_TASK_ENTER_CENTER_ERR_PX))
-            {
-                s_bridge_task.align_ok_ticks++;
-            }
-            else
-            {
-                s_bridge_task.align_ok_ticks = 0U;
-            }
-
-            /*  如果已经对齐了，或者超时了，就退出 PVC 模式 */
-            if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ENTER_CENTER_HOLD_TICKS) ||
-                (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ENTER_TIMEOUT_TICKS))
-            {
-                VisionPvcControl_SetEnable(0U); /* 不看 PVC 了 */
-                VisionIpc_Core0_SetBridgeLineEnable(1U); /* 让 1 核改看直线和桥 */
-                
-                target_speed_set = 0.0f; /* 停车 */
-                err_degree = 0.0f;       /* 方向盘回正 */
-                
-                /* 把现在的位置设为新的起点 */
-                s_bridge_task.start_x_mm = inertial_nav.x;
-                s_bridge_task.start_y_mm = inertial_nav.y;
-                s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
-                s_bridge_task.exit_lost_ticks = 0U;
-                s_bridge_task.bridge_hold_ticks = 0U;
-                vision_bridge_set_state(VISION_BRIDGE_TASK_ALIGN);
-            }
-            break;
-
-        /* --- 阶段 2：在桥头对齐方向 --- */
         case VISION_BRIDGE_TASK_ALIGN:
-            speed_cmd = VISION_BRIDGE_TASK_ALIGN_SPEED_SET; /* 停车对齐 */
-            target_speed_set = speed_cmd;
-
-            /* 惊喜！如果在对齐的时候直接看到桥了，那还等什么，直接上！ */
-            if (packet->line_bridge_stable_detected)
+            speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
+            if (packet->bridge_geometry_stable_detected)
             {
-                s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
-                err_cmd = vision_bridge_calc_yaw_hold_err(); /* 锁死方向 */
-                err_degree = err_cmd;
-                target_speed_set = -120.0f; /* 抬高腿瞬间保持向前速度，避免原地抬腿时后坐 */
-                vision_bridge_apply_high_posture(); /* 抬高底盘，防侧翻 */
-                vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
-                break;
-            }
-
-            /* 如果看到的是直线，就根据直线来修方向盘 */
-            if (packet->line_stable_detected)
-            {
-                //err_cmd = vision_bridge_calc_line_err_degree(packet);//【优化点】这里巡线修的不好，暂时注释了
-                vision_bridge_calc_yaw_hold_err();//锁死方向
-                err_degree = err_cmd;
-                /* 如果误差很小，说明对准了 */
-                if ((vision_bridge_abs_f(err_cmd) <= VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG) &&
-                    (vision_bridge_abs_f((float)packet->line_yaw_error_deg_x100 * 0.01f) <=
-                     VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG))
+                err_cmd = vision_bridge_calc_geometry_err_degree(packet);
+                if (vision_bridge_abs_f(err_cmd) <= VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG)
                 {
-                    s_bridge_task.align_ok_ticks++; /* 对准次数 +1 */
+                    s_bridge_task.align_ok_ticks++;
                 }
                 else
                 {
-                    s_bridge_task.align_ok_ticks = 0U; /* 没对准，重新数 */
+                    s_bridge_task.align_ok_ticks = 0U;
                 }
             }
             else
             {
-                /* 啥也看不见，那就保持原来的方向别动 */
                 err_cmd = vision_bridge_calc_yaw_hold_err();
-                err_degree = err_cmd;
                 s_bridge_task.align_ok_ticks = 0U;
             }
 
-            /* 如果对准了好几次，或者实在是对不准超时了，只能硬着头皮上了 */
+            err_degree = err_cmd;
+            target_speed_set = speed_cmd;
+
+            if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
+                (packet->bridge_stable_detected != 0U))
+            {
+                s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
+                vision_bridge_apply_high_posture();
+                vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
+                break;
+            }
+
             if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ALIGN_OK_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS))
             {
@@ -528,7 +498,8 @@ void VisionBridgeTask_Update_2ms(void)
         /* --- 阶段 3：在桥上跑 --- */
         case VISION_BRIDGE_TASK_RUN:
             /* 看到桥梁黑块了，刷新“防抖”倒计时 */
-            if (packet->line_bridge_stable_detected)
+            if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
+                (packet->bridge_stable_detected != 0U))
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
             }
@@ -541,7 +512,9 @@ void VisionBridgeTask_Update_2ms(void)
             if (s_bridge_task.bridge_hold_ticks > 0U)
             {
                 vision_bridge_apply_high_posture(); /* 保持高底盘 */
-                err_cmd = vision_bridge_calc_yaw_hold_err(); /* 盲跑，锁死方向 */
+                err_cmd = packet->bridge_geometry_stable_detected ?
+                          vision_bridge_calc_geometry_err_degree(packet) :
+                          vision_bridge_calc_yaw_hold_err();
                 speed_cmd = VISION_BRIDGE_TASK_BRIDGE_SPEED_SET; /* 桥上速度 */
             }
             else
@@ -549,10 +522,9 @@ void VisionBridgeTask_Update_2ms(void)
                 /* 如果归零了，说明可能快下桥了或者在桥的平缓段 */
                 vision_bridge_apply_normal_posture(); /* 降下底盘 */
                 /* 如果能看到地上的线，就跟着线跑 */
-                if (packet->line_stable_detected)
+                if (packet->bridge_geometry_stable_detected)
                 {
-                    //err_cmd = vision_bridge_calc_line_err_degree(packet);//【优化点】这里巡线修的不好，暂时注释了
-                    vision_bridge_calc_yaw_hold_err();//锁死方向
+                    err_cmd = vision_bridge_calc_geometry_err_degree(packet);
                     speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
                 }
                 else
@@ -570,11 +542,9 @@ void VisionBridgeTask_Update_2ms(void)
             if (traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM)
             {
                 /* 怎么判断下桥？线看不见 + 桥看不见 + 倒计时归零 + 画面里的白赛道不多 */
-                const uint8 no_visual = (uint8)((packet->line_stable_detected == 0U) &&
-                                                (packet->line_bridge_stable_detected == 0U) &&
-                                                (s_bridge_task.bridge_hold_ticks == 0U) &&
-                                                (packet->line_roi_white_ratio_u16 <=
-                                                 VISION_BRIDGE_TASK_EXIT_WHITE_RATIO_U16));
+                const uint8 no_visual = (uint8)((packet->bridge_geometry_stable_detected == 0U) &&
+                                                (packet->bridge_stable_detected == 0U) &&
+                                                (s_bridge_task.bridge_hold_ticks == 0U));
                 if (no_visual)
                 {
                     s_bridge_task.exit_lost_ticks++; /* 疑似下桥次数 +1 */

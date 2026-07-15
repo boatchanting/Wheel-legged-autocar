@@ -40,9 +40,9 @@ void VisionIpc_Core0_SetTask(uint8 active_target, uint16 enable_mask);
 void VisionIpc_Core0_SetPvcEnable(uint8 enable);
 
 /**
- * @brief 快捷指令：让 1 核开启或关闭桥梁/直线检测
+ * @brief 快捷指令：让 1 核开启或关闭单边桥检测
  */
-void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable);
+void VisionIpc_Core0_SetBridgeEnable(uint8 enable);
 void VisionIpc_Core0_SetBumpyEnable(uint8 enable);
 
 /**

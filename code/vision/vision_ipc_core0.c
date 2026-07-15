@@ -109,9 +109,9 @@ void VisionIpc_Core0_SetPvcEnable(uint8 enable)
 }
 
 /**
- * @brief 快捷指令：开启或关闭桥梁/直线检测
+ * @brief 快捷指令：开启或关闭单边桥检测
  */
-void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
+void VisionIpc_Core0_SetBridgeEnable(uint8 enable)
 {
     if (enable)
     {
@@ -119,8 +119,8 @@ void VisionIpc_Core0_SetBridgeLineEnable(uint8 enable)
     }
     else
     {
-        /* 桥梁任务关闭后，默认退回到找 PVC（可以根据实际项目流程修改） */
-        VisionIpc_Core0_SetTask(VISION_TARGET_PVC_ENTRY, VISION_MASK_PVC_ENTRY);
+        /* 单边桥任务关闭后不启动其他视觉模块。 */
+        VisionIpc_Core0_SetTask(VISION_TARGET_NONE, 0U);
     }
 }
 

@@ -24,7 +24,6 @@ extern "C" {
 
 /* --- 2. 状态机超时与计时参数 --- */
 /* (注意：这些 TICKS 都是基于 2ms 中断的，所以 1000 TICKS = 2 秒) */
-#define VISION_BRIDGE_TASK_ENTER_TIMEOUT_TICKS       (2500U)     /* 找桥（接近区）超时：5秒还没对齐，就强行下一步 */
 #define VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS       (1500U)     /* 对齐超时：3秒还没对齐好，强行上桥 */
 #define VISION_BRIDGE_TASK_ALIGN_OK_TICKS            (60U)       /* 连续对齐好的帧数：大约 0.12秒 都稳定，认为对齐成功 */
 #define VISION_BRIDGE_TASK_RUN_MIN_MM                (1000.0f)   /* 上桥后，至少跑 1 米才允许判定下桥（防误判） */
@@ -36,9 +35,7 @@ extern "C" {
 /* --- 3. 角度与偏差阈值 --- */
 #define VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG         (3.0f)      /* 对齐时，车头偏角误差允许的范围（小于 4 度算对齐） */
 #define VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG         (1.5f)      /* 对齐时，综合误差（方向盘该打多少）允许的范围 */
-#define VISION_BRIDGE_TASK_ENTER_CENTER_ERR_PX       (3.0f)
-#define VISION_BRIDGE_TASK_ENTER_CENTER_HOLD_TICKS   (240U)
-#define VISION_BRIDGE_TASK_EXIT_WHITE_RATIO_U16      (180U)      /* 下桥时，画面里白色至少占 18% 才认为前面是白赛道 */
+#define VISION_BRIDGE_TASK_IMAGE_CENTER_X            (46.5f)
 
 /* --- 4. 控制增益参数（PID 参数） --- */
 #define VISION_BRIDGE_TASK_LINE_SIGN                 (-1.0f)     /* 转向符号，如果车子往反方向修偏，改成 1.0f */
@@ -63,10 +60,9 @@ extern "C" {
 typedef enum
 {
     VISION_BRIDGE_TASK_IDLE = 0,         /* 空闲：还没开始过桥 */
-    VISION_BRIDGE_TASK_ENTER_PVC,        /* 阶段 1：正在通过 PVC 入口接近桥梁 */
-    VISION_BRIDGE_TASK_ALIGN,            /* 阶段 2：在桥头停车，对齐方向 */
-    VISION_BRIDGE_TASK_RUN,              /* 阶段 3：上桥，在桥上跑 */
-    VISION_BRIDGE_TASK_EXIT,             /* 阶段 4：下桥缓冲阶段 */
+    VISION_BRIDGE_TASK_ALIGN,            /* 接近桥头并根据中心线对齐 */
+    VISION_BRIDGE_TASK_RUN,              /* 上桥，在桥上跑 */
+    VISION_BRIDGE_TASK_EXIT,             /* 下桥缓冲阶段 */
     VISION_BRIDGE_TASK_FINISH,           /* 完成：成功过桥，把控制权还给主程序 */
     VISION_BRIDGE_TASK_FAILSAFE,         /* 故障：出了问题，紧急放弃 */
 } vision_bridge_task_state_e;
@@ -83,13 +79,14 @@ typedef struct
     float traveled_mm;                   /* 从上桥到现在跑了多远 */
     float err_degree_cmd;                /* 当前给方向盘下发的指令 */
     float speed_cmd;                     /* 当前给电机下发的速度指令 */
-    uint8 line_stable;                   /* 1 核是否稳定看到了引导线 */
-    uint8 bridge_stable;                 /* 1 核是否稳定看到了桥梁黑块 */
-    uint16 line_confidence_u16;          /* 引导线的可信度打分 */
-    uint16 bridge_confidence_u16;        /* 桥梁黑块的可信度打分 */
-    uint16 line_roi_white_ratio_u16;     /* 画面中白色的比例 */
-    int16 line_lateral_px_x100;          /* 偏离引导线的距离（放大100倍） */
-    int16 line_yaw_error_deg_x100;       /* 偏离引导线的角度（放大100倍） */
+    uint8 bridge_stable;                 /* 1 核是否稳定检测到桥 */
+    uint8 geometry_stable;               /* 1 核是否稳定得到可控的桥中心线 */
+    uint8 geometry_valid;                /* 当前 IPC 中心线坐标是否有效 */
+    uint8 bridge_state;                  /* BridgeDetectionState */
+    int16 center_line_x0;
+    int16 center_line_y0;
+    int16 center_line_x1;
+    int16 center_line_y1;
     uint16 exit_lost_ticks;              /* 下桥时，连续看不到桥的计时 */
     uint16 bridge_hold_ticks;            /* 看见黑块后的保持倒计时 */
 } vision_bridge_task_status_t;

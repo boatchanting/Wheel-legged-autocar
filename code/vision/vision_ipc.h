@@ -47,6 +47,11 @@ typedef enum
 #define VISION_VALID_GRASS              (1U << 5)
 #define VISION_VALID_PROFILE            (1U << 6)
 
+#define VISION_BRIDGE_STATE_NONE          (0U)
+#define VISION_BRIDGE_STATE_PREPARE_ENTER (1U)
+#define VISION_BRIDGE_STATE_ON_BRIDGE     (2U)
+#define VISION_BRIDGE_STATE_PREPARE_EXIT  (3U)
+
 typedef struct
 {
     uint16 magic;
@@ -116,7 +121,36 @@ typedef struct
     uint8 pvc_candidate_count;
 
     /* bridge begin */
+    /* Single-bridge result. Coordinates are in the 94x60 camera image;
+     * -1 denotes an unavailable endpoint. */
+    uint8 bridge_detected;
+    uint8 bridge_stable_detected;
+    uint8 bridge_geometry_detected;
+    uint8 bridge_geometry_stable_detected;
+    uint8 bridge_state;
+    uint8 bridge_geometry_valid;
+    uint16 bridge_reserved0;
 
+    int16 bridge_left_line_x0;
+    int16 bridge_left_line_y0;
+    int16 bridge_left_line_x1;
+    int16 bridge_left_line_y1;
+    int16 bridge_right_line_x0;
+    int16 bridge_right_line_y0;
+    int16 bridge_right_line_x1;
+    int16 bridge_right_line_y1;
+    int16 bridge_down_line_x0;
+    int16 bridge_down_line_y0;
+    int16 bridge_down_line_x1;
+    int16 bridge_down_line_y1;
+    int16 bridge_up_line_x0;
+    int16 bridge_up_line_y0;
+    int16 bridge_up_line_x1;
+    int16 bridge_up_line_y1;
+    int16 bridge_center_line_x0;
+    int16 bridge_center_line_y0;
+    int16 bridge_center_line_x1;
+    int16 bridge_center_line_y1;
 
     /* bridge end */
 

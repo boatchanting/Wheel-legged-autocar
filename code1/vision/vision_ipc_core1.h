@@ -54,16 +54,16 @@ uint8 VisionIpc_Core1_ShouldRunPvc(void);
 uint8 VisionIpc_Core1_TakePvcResetRequest(void);
 
 /**
- * @brief 检查当前是否需要运行 直线/桥梁 检测
+ * @brief 检查当前是否需要运行单边桥检测
  * @return 1: 开启, 0: 关闭
  */
-uint8 VisionIpc_Core1_ShouldRunBridgeLine(void);
+uint8 VisionIpc_Core1_ShouldRunBridge(void);
 
 /**
- * @brief 检查是否需要重置 直线/桥梁 检测状态，读取后自动清除请求
+ * @brief 检查是否需要重置单边桥检测状态，读取后自动清除请求
  * @return 1: 需要重置, 0: 不需要
  */
-uint8 VisionIpc_Core1_TakeLineResetRequest(void);
+uint8 VisionIpc_Core1_TakeBridgeResetRequest(void);
 uint8 VisionIpc_Core1_ShouldRunBumpy(void);
 uint8 VisionIpc_Core1_TakeBumpyResetRequest(void);
 
