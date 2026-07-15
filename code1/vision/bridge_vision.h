@@ -13,6 +13,10 @@ extern "C" {
 #define BRIDGE_VISION_IMAGE_H                 (60U)
 #define BRIDGE_VISION_CONFIRM_FRAMES          (1U)
 #define BRIDGE_VISION_LOST_HOLD_FRAMES        (5U)
+
+/* Vehicle deployment setting: use exactly one threshold per frame.  Set to
+ * -1 to return to the detector's adaptive multi-threshold mode. */
+#define BRIDGE_VISION_FIXED_THRESHOLD          (225)
 #define BRIDGE_VISION_PROFILE_TIMER           (TC_TIME2_CH1)
 
 /* The detector score is calibrated around 350.  IPC confidence remains a

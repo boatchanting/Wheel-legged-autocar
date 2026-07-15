@@ -175,6 +175,7 @@ static void bridge_vision_update_filter(const bridge_vision_frame_result_t *raw)
 void bridge_vision_init(void)
 {
     bridge_detection_default_config(&g_bridge_detection_config);
+    g_bridge_detection_config.fixed_threshold = BRIDGE_VISION_FIXED_THRESHOLD;
     bridge_vision_reset_filter();
     timer_init(BRIDGE_VISION_PROFILE_TIMER, TIMER_US);
     timer_start(BRIDGE_VISION_PROFILE_TIMER);
