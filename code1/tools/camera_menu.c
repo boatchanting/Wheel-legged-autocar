@@ -66,9 +66,9 @@ static void CameraMenu_DrawStaticLayout(void)
     ips200_show_string(0, y + 3U * CAMERA_MENU_TEXT_Y_STEP, "PVC F:");
     ips200_show_string(120, y + 3U * CAMERA_MENU_TEXT_Y_STEP, "L:");
     ips200_show_string(0, y + 4U * CAMERA_MENU_TEXT_Y_STEP, "BRG D/S:");
-    ips200_show_string(120, y + 4U * CAMERA_MENU_TEXT_Y_STEP, "C:");
-    ips200_show_string(0, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "BRG E:");
-    ips200_show_string(120, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "Y:");
+    ips200_show_string(120, y + 4U * CAMERA_MENU_TEXT_Y_STEP, "St:");
+    ips200_show_string(0, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "BRG G:");
+    ips200_show_string(120, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "CX:");
     ips200_show_string(0, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "BMP D/S:");
     ips200_show_string(120, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "P:");
     ips200_show_string(0, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "BMP E:");
@@ -98,7 +98,7 @@ static void CameraMenu_PrintDebug(const pvc_vision_output_t *pvc,
     g_camera_menu_log_counter = 0U;
 #endif
 
-    printf("[CAM1] task=%u mask=%u frame=%lu pvc=%u/%u conf=%.3f line=%u/%u conf=%.3f bumpy=%u/%u phase=%u err=%d\r\n",
+    printf("[CAM1] task=%u mask=%u frame=%lu pvc=%u/%u conf=%.3f line=%u/%u state=%u geo=%u bumpy=%u/%u phase=%u err=%d\r\n",
            (unsigned int)active_target,
            (unsigned int)enable_mask,
            (unsigned long)CameraMenu_MaxFrameId(pvc->frame_id, bridge->frame_id, bumpy->frame_id),
@@ -107,7 +107,8 @@ static void CameraMenu_PrintDebug(const pvc_vision_output_t *pvc,
            (double)pvc->stable.confidence,
            (unsigned int)bridge->bridge_raw_detected,
            (unsigned int)bridge->bridge_stable_detected,
-           (double)bridge->stable.bridge_confidence,
+           (unsigned int)bridge->stable.state,
+           (unsigned int)bridge->stable.geometry_valid,
            (unsigned int)bumpy->raw_detected,
            (unsigned int)bumpy->stable_detected,
            (unsigned int)bumpy->stable.phase,
@@ -183,9 +184,9 @@ void CameraMenu_Update(void)
 
     ips200_show_uint(72, y + 4U * CAMERA_MENU_TEXT_Y_STEP, bridge->bridge_raw_detected, 1);
     ips200_show_uint(96, y + 4U * CAMERA_MENU_TEXT_Y_STEP, bridge->bridge_stable_detected, 1);
-    ips200_show_float(138, y + 4U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.bridge_confidence, 1, 3);
-    ips200_show_float(48, y + 5U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.lateral_error_px, 3, 1);
-    ips200_show_float(138, y + 5U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.yaw_error_deg, 3, 1);
+    ips200_show_uint(138, y + 4U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.state, 1);
+    ips200_show_uint(48, y + 5U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.geometry_valid, 1);
+    ips200_show_int(138, y + 5U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.center_line_x1, 4);
 
     ips200_show_uint(72, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->raw_detected, 1);
     ips200_show_uint(96, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable_detected, 1);
