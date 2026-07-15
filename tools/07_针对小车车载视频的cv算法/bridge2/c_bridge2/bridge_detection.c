@@ -98,7 +98,8 @@ static int cache_matches(const BridgeDetectionScratch *scratch, const uint8_t *g
     int y;
     if (scratch->cache_magic != BD_CACHE_MAGIC || scratch->cache_width != width || scratch->cache_height != height ||
         scratch->cache_min_valid_score != config->min_valid_score ||
-        scratch->cache_min_edge_contrast != config->min_edge_contrast) return 0;
+        scratch->cache_min_edge_contrast != config->min_edge_contrast ||
+        scratch->cache_fixed_threshold != config->fixed_threshold) return 0;
     for (y = 0; y < height; ++y) {
         if (memcmp(scratch->previous_gray + y * width, gray + y * stride, (size_t)width) != 0) return 0;
     }
@@ -116,6 +117,7 @@ static void cache_store(BridgeDetectionScratch *scratch, const uint8_t *gray,
     scratch->cache_height = (uint16_t)height;
     scratch->cache_min_valid_score = config->min_valid_score;
     scratch->cache_min_edge_contrast = config->min_edge_contrast;
+    scratch->cache_fixed_threshold = config->fixed_threshold;
     scratch->cache_status = status;
     scratch->cache_magic = BD_CACHE_MAGIC;
 }
@@ -495,8 +497,8 @@ static int convex_hull_mask(const BridgeDetectionBitmap *src, BridgeDetectionBit
      * 2*width*height bitmap tests.  A single forward row scan obtains the
      * exact same per-column extrema and is considerably cheaper on M7. */
     for (x = 0; x < width; ++x) {
-        column_top[x] = height;
-        column_bottom[x] = -1;
+        column_top[x] = (int16_t)height;
+        column_bottom[x] = (int16_t)-1;
     }
     for (y = 0; y < height; ++y) {
         int word;
@@ -506,8 +508,8 @@ static int convex_hull_mask(const BridgeDetectionBitmap *src, BridgeDetectionBit
             while (bits != 0u) {
                 int bit_x = (word << 5) + ctz32(bits);
                 if (bit_x < width) {
-                    if (column_top[bit_x] == height) column_top[bit_x] = y;
-                    column_bottom[bit_x] = y;
+                    if (column_top[bit_x] == height) column_top[bit_x] = (int16_t)y;
+                    column_bottom[bit_x] = (int16_t)y;
                 }
                 bits &= bits - 1u;
             }
@@ -908,6 +910,7 @@ void bridge_detection_default_config(BridgeDetectionConfig *config)
     if (config == NULL) return;
     config->min_valid_score = 350.0f;
     config->min_edge_contrast = 20.0f;
+    config->fixed_threshold = -1;
 }
 
 void bridge_detection_result_clear(BridgeDetectionResult *result)
@@ -1018,8 +1021,14 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
         *result = scratch->cached_result;
         return scratch->cache_status;
     }
-    threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
-    if (scratch->cache_magic == BD_CACHE_MAGIC && scratch->cached_result.candidate_found &&
+    if (config->fixed_threshold >= 0) {
+        thresholds[0] = clamp_int(config->fixed_threshold, 0, 255);
+        threshold_count = 1;
+    } else {
+        threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
+    }
+    if ((config->fixed_threshold < 0) &&
+        scratch->cache_magic == BD_CACHE_MAGIC && scratch->cached_result.candidate_found &&
         scratch->temporal_streak < BD_TEMPORAL_MAX_STREAK &&
         temporal_input_is_small_change(scratch, gray, width, height, stride)) {
         int previous_threshold = scratch->cached_result.threshold;

@@ -22,6 +22,7 @@ typedef enum {
 typedef struct {
     float min_valid_score;
     float min_edge_contrast;
+    int fixed_threshold;
 } BridgeDetectionConfig;
 
 typedef struct {
@@ -99,6 +100,7 @@ typedef struct {
     uint16_t cache_height;
     float cache_min_valid_score;
     float cache_min_edge_contrast;
+    int cache_fixed_threshold;
     int cache_status;
     uint32_t exact_cache_hits;
     uint32_t temporal_fast_hits;
