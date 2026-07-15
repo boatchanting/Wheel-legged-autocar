@@ -73,6 +73,8 @@ typedef struct {
     BridgeDetectionSideLine right_line;
     BridgeDetectionSegment left_segment;
     BridgeDetectionSegment right_segment;
+    BridgeDetectionSegment top_segment;
+    BridgeDetectionSegment entry_segment;
     BridgeDetectionSegment center_segment;
     float control_center_x;
     float lateral_error_px;

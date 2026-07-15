@@ -77,6 +77,8 @@ typedef struct {
     BridgeDetectionSideLine right_line;
     BridgeDetectionSegment left_segment;
     BridgeDetectionSegment right_segment;
+    BridgeDetectionSegment top_segment;
+    BridgeDetectionSegment entry_segment;
     BridgeDetectionSegment center_segment;
 
     /* Control-facing geometry at bottom_row. Positive error means target is

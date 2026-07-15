@@ -14,43 +14,51 @@ static BridgeDetectionConfig g_bridge_detection_config;
 static bridge_vision_output_t g_bridge_output_shadow;
 static uint32 g_bridge_last_frame_time_us = 0U;
 
-static float bridge_vision_clamp_unit(float value)
+static void bridge_vision_set_segment_invalid(int16 *x0, int16 *y0, int16 *x1, int16 *y1)
 {
-    if (value < 0.0f) return 0.0f;
-    if (value > 1.0f) return 1.0f;
-    return value;
+    *x0 = BRIDGE_VISION_COORD_INVALID;
+    *y0 = BRIDGE_VISION_COORD_INVALID;
+    *x1 = BRIDGE_VISION_COORD_INVALID;
+    *y1 = BRIDGE_VISION_COORD_INVALID;
 }
 
-static uint8 bridge_vision_clamp_u8(int value)
+static void bridge_vision_set_segment(int16 *dst_x0,
+                                      int16 *dst_y0,
+                                      int16 *dst_x1,
+                                      int16 *dst_y1,
+                                      const BridgeDetectionSegment *segment)
 {
-    if (value < 0) return 0U;
-    if (value > 255) return 255U;
-    return (uint8)value;
-}
+    if ((segment == NULL) || (segment->valid == 0U))
+    {
+        bridge_vision_set_segment_invalid(dst_x0, dst_y0, dst_x1, dst_y1);
+        return;
+    }
 
-static uint16 bridge_vision_clamp_u16(int value)
-{
-    if (value < 0) return 0U;
-    if (value > 65535) return 65535U;
-    return (uint16)value;
+    *dst_x0 = (int16)segment->x0;
+    *dst_y0 = (int16)segment->y0;
+    *dst_x1 = (int16)segment->x1;
+    *dst_y1 = (int16)segment->y1;
 }
 
 static void bridge_vision_clear_frame(bridge_vision_frame_result_t *frame)
 {
     memset(frame, 0, sizeof(*frame));
-    frame->bbox_xmin = 0xFFU;
-    frame->bbox_ymin = 0xFFU;
-    frame->bbox_xmax = 0xFFU;
-    frame->bbox_ymax = 0xFFU;
+
+    bridge_vision_set_segment_invalid(&frame->left_line_x0, &frame->left_line_y0,
+                                      &frame->left_line_x1, &frame->left_line_y1);
+    bridge_vision_set_segment_invalid(&frame->right_line_x0, &frame->right_line_y0,
+                                      &frame->right_line_x1, &frame->right_line_y1);
+    bridge_vision_set_segment_invalid(&frame->down_line_x0, &frame->down_line_y0,
+                                      &frame->down_line_x1, &frame->down_line_y1);
+    bridge_vision_set_segment_invalid(&frame->up_line_x0, &frame->up_line_y0,
+                                      &frame->up_line_x1, &frame->up_line_y1);
+    bridge_vision_set_segment_invalid(&frame->center_line_x0, &frame->center_line_y0,
+                                      &frame->center_line_x1, &frame->center_line_y1);
 }
 
 static void bridge_vision_export_result(const BridgeDetectionResult *detected,
                                         bridge_vision_frame_result_t *frame)
 {
-    int xmin = BRIDGE_VISION_IMAGE_W - 1;
-    int xmax = 0;
-    int ymin = detected->top_row;
-    int ymax = detected->bottom_row;
     int geometry_valid;
 
     bridge_vision_clear_frame(frame);
@@ -61,38 +69,32 @@ static void bridge_vision_export_result(const BridgeDetectionResult *detected,
 
     frame->bridge_detected = detected->bridge_found;
     frame->state = (uint8)detected->state;
-    frame->area = bridge_vision_clamp_u16(detected->area);
-    frame->candidate_score = detected->candidate_score;
-    frame->edge_contrast = detected->edge_contrast;
-    frame->center_x = detected->center_x;
-    frame->left_line_visible = detected->left_line_visible;
-    frame->right_line_visible = detected->right_line_visible;
-    frame->top_line_visible = detected->top_line_visible;
-    frame->entry_line_visible = detected->entry_line_visible;
-    frame->bridge_confidence = bridge_vision_clamp_unit(
-        detected->candidate_score / BRIDGE_VISION_SCORE_FULL_SCALE);
 
-    if (detected->left_segment.valid)
-    {
-        if (detected->left_segment.x0 < xmin) xmin = detected->left_segment.x0;
-        if (detected->left_segment.x1 < xmin) xmin = detected->left_segment.x1;
-        if (detected->left_segment.x0 > xmax) xmax = detected->left_segment.x0;
-        if (detected->left_segment.x1 > xmax) xmax = detected->left_segment.x1;
-    }
-    if (detected->right_segment.valid)
-    {
-        if (detected->right_segment.x0 < xmin) xmin = detected->right_segment.x0;
-        if (detected->right_segment.x1 < xmin) xmin = detected->right_segment.x1;
-        if (detected->right_segment.x0 > xmax) xmax = detected->right_segment.x0;
-        if (detected->right_segment.x1 > xmax) xmax = detected->right_segment.x1;
-    }
-    if ((xmin <= xmax) && (ymin >= 0) && (ymax >= ymin))
-    {
-        frame->bbox_xmin = bridge_vision_clamp_u8(xmin);
-        frame->bbox_xmax = bridge_vision_clamp_u8(xmax);
-        frame->bbox_ymin = bridge_vision_clamp_u8(ymin);
-        frame->bbox_ymax = bridge_vision_clamp_u8(ymax);
-    }
+    bridge_vision_set_segment(&frame->left_line_x0,
+                              &frame->left_line_y0,
+                              &frame->left_line_x1,
+                              &frame->left_line_y1,
+                              &detected->left_segment);
+    bridge_vision_set_segment(&frame->right_line_x0,
+                              &frame->right_line_y0,
+                              &frame->right_line_x1,
+                              &frame->right_line_y1,
+                              &detected->right_segment);
+    bridge_vision_set_segment(&frame->down_line_x0,
+                              &frame->down_line_y0,
+                              &frame->down_line_x1,
+                              &frame->down_line_y1,
+                              &detected->entry_segment);
+    bridge_vision_set_segment(&frame->up_line_x0,
+                              &frame->up_line_y0,
+                              &frame->up_line_x1,
+                              &frame->up_line_y1,
+                              &detected->top_segment);
+    bridge_vision_set_segment(&frame->center_line_x0,
+                              &frame->center_line_y0,
+                              &frame->center_line_x1,
+                              &frame->center_line_y1,
+                              &detected->center_segment);
 
     geometry_valid = (detected->bridge_found != 0U) &&
                      (detected->center_segment.valid != 0U);
@@ -100,17 +102,6 @@ static void bridge_vision_export_result(const BridgeDetectionResult *detected,
     if (geometry_valid)
     {
         frame->detected = 1U;
-        frame->confidence = frame->bridge_confidence;
-        frame->lateral_error_px = detected->lateral_error_px;
-        /* For the small slopes of a 94x60 image, atan(s) is accurately
-         * approximated by s.  This avoids a costly libm call. */
-        frame->yaw_error_deg = detected->heading_dx_per_dy * 57.29578f;
-        frame->center_x0 = bridge_vision_clamp_u8(detected->center_segment.x0);
-        frame->center_y0 = bridge_vision_clamp_u8(detected->center_segment.y0);
-        frame->center_x1 = bridge_vision_clamp_u8(detected->center_segment.x1);
-        frame->center_y1 = bridge_vision_clamp_u8(detected->center_segment.y1);
-        frame->line_x_bottom = (float)detected->center_segment.x1;
-        frame->line_x_lookahead = (float)detected->center_segment.x0;
     }
 }
 

@@ -1019,6 +1019,28 @@ static BridgeDetectionSegment center_segment(BridgeDetectionSegment left, Bridge
     return out;
 }
 
+static BridgeDetectionSegment horizontal_segment(LineFit line, int visible, int width, int height)
+{
+    BridgeDetectionSegment segment;
+    float x0, x1, y0, y1;
+
+    memset(&segment, 0, sizeof(segment));
+    if (!visible || !line.valid) return segment;
+
+    x0 = line.support_min;
+    x1 = line.support_max;
+    y0 = line.slope * x0 + line.intercept;
+    y1 = line.slope * x1 + line.intercept;
+
+    segment.valid = 1;
+    segment.x0 = clamp_int(round_positive(x0), 0, width - 1);
+    segment.y0 = clamp_int(round_positive(y0), 0, height - 1);
+    segment.x1 = clamp_int(round_positive(x1), 0, width - 1);
+    segment.y1 = clamp_int(round_positive(y1), 0, height - 1);
+    if (segment.x0 == segment.x1 && segment.y0 == segment.y1) segment.valid = 0;
+    return segment;
+}
+
 void bridge_detection_default_config(BridgeDetectionConfig *config)
 {
     if (config == NULL) return;
@@ -1130,7 +1152,7 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     int thresholds[11], threshold_count, have_best = 0;
     int temporal_used = 0;
     uint64_t phase_start;
-    LineFit visible_left, visible_right, outer_left, outer_right, left, right, top, plateau, entry;
+    LineFit visible_left, visible_right, outer_left, outer_right, left, right, top, plateau, entry, top_selected;
     if (result == NULL) return -1;
     bridge_detection_result_clear(result);
     memset(&best, 0, sizeof(best));
@@ -1204,6 +1226,7 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     top = fit_horizontal_cached(scratch, width, height, 0);
     plateau = fit_top_plateau_cached(scratch, width, height);
     entry = fit_horizontal_cached(scratch, width, height, 1);
+    top_selected = plateau.valid ? plateau : top;
     export_side_line(left, &result->left_line); export_side_line(right, &result->right_line);
     result->left_line_visible = (uint8_t)should_show_left(left, &best);
     result->right_line_visible = (uint8_t)should_show_right(right, width, &best);
@@ -1228,6 +1251,8 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     if (result->bridge_found) {
         result->left_segment = side_segment(left, result->left_line_visible, 0, best.bottom_row, width, height);
         result->right_segment = side_segment(right, result->right_line_visible, 1, best.bottom_row, width, height);
+        result->top_segment = horizontal_segment(top_selected, result->top_line_visible, width, height);
+        result->entry_segment = horizontal_segment(entry, result->entry_line_visible, width, height);
         result->center_segment = center_segment(result->left_segment, result->right_segment, width, height);
         if (result->center_segment.valid) {
             int dy = result->center_segment.y1 - result->center_segment.y0;
