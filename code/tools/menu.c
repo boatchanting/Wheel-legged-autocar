@@ -1,5 +1,7 @@
 #include "menu.h"
 #include "tools/sbus.h"
+#include "calculate/ekf.h" // For g_initial_yaw
+#include "calculate/matrix.h" // For euler_angle
 
 // ==================== 全局变量定义 ====================
 MenuState_t current_state = MENU_STATE_MAIN; 
@@ -49,7 +51,9 @@ void Menu_TriggerRecordAction(void)
         if (g_fallen) {
             g_fallen = false;
             robot_ctrl.target_speed = 100.0f; // 0.5m/s 向前
-            robot_ctrl.target_angle = 0.0f;   // 直线前进
+            // err_degree = -target_angle + g_initial_yaw - euler_angle.yaw;
+            // 为使误差为0(保持当前车头朝向)，需设置 target_angle = g_initial_yaw - euler_angle.yaw
+            robot_ctrl.target_angle = g_initial_yaw - euler_angle.yaw; 
         }
 
         g_nav_start_recording = 1;  // 开始录制，会在 main 中调用惯导系统初始化和点记录初始化
