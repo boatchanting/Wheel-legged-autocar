@@ -323,6 +323,14 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     else if (g_fallen_standup_grace_ticks > 0U)
     {
         g_fallen_standup_grace_ticks--;
+        
+        // 【新增安全优化】提前结束起立免死金牌期
+        // 如果赛车已经成功起立（倾角误差小于 30 度），则取消免死金牌
+        // 这样可以防止起立后马上又摔倒，但因为还在免死金牌期内导致轮胎狂转
+        if (fabsf(euler_angle.pitch - ANG_MECH_ZERO) < 30.0f)
+        {
+            g_fallen_standup_grace_ticks = 0U;
+        }
     }
 
     // 颠簸路段状态机（1ms调度）：
@@ -347,7 +355,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
                 9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
                 (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data      // 右轮速
+                (float)motor_value.receive_right_speed_data,     // 右轮速
+                filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
             #endif
             #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
@@ -356,7 +365,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
                 9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),              // 纵向加速度 (前+)
                 (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data      // 右轮速
+                (float)motor_value.receive_right_speed_data,     // 右轮速
+                filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
             #endif
             #if IMU_CATEGORY == 3 &&CAR_SELECT == 0//imu963ra 如果小车不同再对小车加&&加以区分
@@ -366,7 +376,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
                 9806.65*((float)imu_data.grav_x-(float)imu_data.acc_x/4098), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
                 (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data      // 右轮速
+                (float)motor_value.receive_right_speed_data,     // 右轮速
+                filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
             
             #endif
@@ -377,7 +388,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
             9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
             (float)motor_value.receive_left_speed_data,
-            (float)motor_value.receive_right_speed_data
+            (float)motor_value.receive_right_speed_data,
+            filtered_gyro_z * 0.0174532925f
             );
             #endif
         }

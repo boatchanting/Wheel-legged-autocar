@@ -51,7 +51,15 @@ typedef struct {
     // [内部状态] 车身坐标系下的速度 (单位: mm/s)
     float vx_body; // 纵向速度 (前进方向为正)
     float vy_body; // 横向速度 (向左侧滑为正)
-    uint8_t slip_flag;      // 打滑标志位
+    float slip_angle; // 侧滑角 (度)
+    uint8_t slip_flag;      // 打滑标志位 (0:正常, 1:侧滑, 2:静止, 3:原地自转)
+    uint16_t slip_timer_ms; // 侧滑判定状态机计时器
+    
+    // [调试信息] 用于上位机日志分析打滑阈值
+    float current_speed_L;
+    float current_speed_R;
+    float theoretical_yaw_rate;
+    float actual_yaw_rate;
 } InertialNav_t;
 
 // --- 全局变量声明 ---
@@ -61,6 +69,6 @@ extern InertialNav_t inertial_nav;
 void InertialNav_Init(void);//初始化惯性导航系统
 void InertialNav_Update(float curr_yaw,
                         float acc_lat_left, float acc_lon_forward, 
-                        float speed_L, float speed_R);
+                        float speed_L, float speed_R, float gyro_z_rad_s);
 
 #endif // _INERTIAL_NAV_H_

@@ -33,11 +33,13 @@ def run_git(cmd: list[str]) -> str:
         return subprocess.check_output(["git", *cmd], text=True).strip()
 
 
-def parse_commits(from_tag: str, to_tag: str, include_merge: bool, include_format: bool) -> OrderedDict[str, list[str]]:
+def parse_commits(from_tag: str, to_tag: str, include_merge: bool, include_format: bool) -> tuple[OrderedDict[str, list[str]], int]:
     log = run_git(["log", "--pretty=format:%H%x09%s", f"{from_tag}..{to_tag}"])
     groups: OrderedDict[str, list[str]] = OrderedDict()
+    total_count = 0  # 初始化总计数器
+    
     if not log:
-        return groups
+        return groups, total_count
 
     for line in log.splitlines():
         _sha, subject = line.split("\t", 1)
@@ -56,24 +58,25 @@ def parse_commits(from_tag: str, to_tag: str, include_merge: bool, include_forma
         if category not in groups:
             groups[category] = []
         groups[category].append(message)
+        total_count += 1  # 每增加一条有效记录，总计数加1
 
-    return groups
+    return groups, total_count
 
 
-def format_output(groups: OrderedDict[str, list[str]], markdown: bool, from_tag: str, to_tag: str) -> str:
+def format_output(groups: OrderedDict[str, list[str]], total_count: int, markdown: bool, from_tag: str, to_tag: str) -> str:
     if markdown:
-        out = [f"## Changelog ({from_tag} -> {to_tag})", ""]
+        out = [f"## Changelog ({from_tag} -> {to_tag}, 共 {total_count} 条提交)", ""]
         for category, items in groups.items():
-            out.append(f"### {category}")
+            out.append(f"### {category} ({len(items)})")
             out.extend([f"- {item}" for item in items])
             out.append("")
         if len(out) == 2:
             out.append("- 无有效变更")
         return "\n".join(out).rstrip() + "\n"
 
-    out = [f"Changelog ({from_tag} -> {to_tag})"]
+    out = [f"Changelog ({from_tag} -> {to_tag}, 共 {total_count} 条提交)"]
     for category, items in groups.items():
-        out.append(f"\n[{category}]")
+        out.append(f"\n[{category}] ({len(items)})")
         out.extend([f"- {item}" for item in items])
     if len(out) == 1:
         out.append("\n- 无有效变更")
@@ -96,8 +99,8 @@ def main() -> int:
         print("Error: from_tag 或 to_tag 不存在", file=sys.stderr)
         return 2
 
-    groups = parse_commits(args.from_tag, args.to_tag, args.include_merge, args.include_format)
-    print(format_output(groups, args.markdown, args.from_tag, args.to_tag), end="")
+    groups, total_count = parse_commits(args.from_tag, args.to_tag, args.include_merge, args.include_format)
+    print(format_output(groups, total_count, args.markdown, args.from_tag, args.to_tag), end="")
     return 0
 
 

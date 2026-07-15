@@ -65,7 +65,7 @@ tr.sel{background:#eaf2ff}
 <div class="main">
   <div class="card canvas-card">
     <canvas id="cv"></canvas>
-    <div class="hint">拖拽平移 | 滚轮缩放 | 双击加点 | 拖动点可位移<br/>特殊点显示目标偏航箭头，下位机 mark_trigger=1 自动打点</div>
+    <div class="hint">拖拽平移 | 滚轮缩放 | 双击加点 | 拖动点可位移<br/>特殊点显示目标偏航箭头，下位机 mark_trigger=1 自动打点<br/><b>打滑图例：</b><span style="color:#ef4444;font-weight:bold">X</span> (横向打滑) | <span style="color:#3b82f6;font-weight:bold">■</span> (静止修正) | <span style="color:#eab308;font-weight:bold">▲</span> (自转修正)</div>
   </div>
   <div class="card side">
     <div class="box">
@@ -86,6 +86,8 @@ tr.sel{background:#eaf2ff}
         <button id="bClrM">清空标记</button>
         <button id="bClrT">清空轨迹</button>
         <button id="bStartCar">开始发车</button>
+        <button id="bStartLog" class="primary">开启传日志</button>
+        <button id="bStopLog" class="danger">关闭传日志</button>
         <div id="txState" class="tag warn">尚未回传</div>
       </div>
     </div>
@@ -117,11 +119,13 @@ const TYPES=[{value:0,label:'0 PATH'},{value:1,label:'1 CIRCLE'},{value:2,label:
 const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#059669'};
 const HOST_CTRL_CLEAR_TRAJECTORY=1;
 const HOST_CTRL_START_CAR=2;
+const HOST_CTRL_START_LOG=5;
+const HOST_CTRL_STOP_LOG=6;
 // 在 S 中加入 vx_body 变量
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0};
+const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,enableSlipMarkers:1};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 // 在 E 元素绑定中加入 vxBody 节点映射
-const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStartLog:bStartLog,bStopLog:bStopLog,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -143,10 +147,11 @@ function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale
 function hit(px,py){let best=null,bd=9999;for(const m of S.marks){const p=w2s(m.x,m.y);const d=Math.hypot(px-p.x,py-p.y);if(d<12&&d<bd){best=m;bd=d}}return best}
 function grid(w,h){let sp=1000*V.scale;while(sp<24)sp*=2;while(sp>120)sp*=0.5;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let sx=((c.x%sp)+sp)%sp;for(let x=sx;x<w;x+=sp){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let sy=((c.y%sp)+sp)%sp;for(let y=sy;y<h;y+=sp){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}}
 function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
-function drawTraj(){if(S.traj.length<2)return;ctx.strokeStyle='#2f6fed';ctx.lineWidth=2;ctx.beginPath();for(let i=0;i<S.traj.length;i++){const p=w2s(S.traj[i].x,S.traj[i].y);if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y)}ctx.stroke();const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
+function drawTraj(){if(S.traj.length<2)return;ctx.lineWidth=2;for(let i=1;i<S.traj.length;i++){const p1=w2s(S.traj[i-1].x,S.traj[i-1].y);const p2=w2s(S.traj[i].x,S.traj[i].y);const mode=S.traj[i].pid_mode||0;let col='#2f6fed';if(mode===1)col='#ef4444';else if(mode===2)col='#eab308';ctx.strokeStyle=col;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();}const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
 function drawArrow(px,py,yawDeg,color,selected){const rad=yawDeg*Math.PI/180;const len=selected?30:24;const dx=-Math.cos(rad);const dy=Math.sin(rad);const tailX=px-dx*len*0.35;const tailY=py-dy*len*0.35;const tipX=px+dx*len;const tipY=py+dy*len;ctx.strokeStyle=color;ctx.lineWidth=selected?3:2;ctx.beginPath();ctx.moveTo(tailX,tailY);ctx.lineTo(tipX,tipY);ctx.stroke();const head=7;const ang=Math.atan2(tipY-tailY,tipX-tailX);ctx.beginPath();ctx.moveTo(tipX,tipY);ctx.lineTo(tipX-head*Math.cos(ang-Math.PI/7),tipY-head*Math.sin(ang-Math.PI/7));ctx.lineTo(tipX-head*Math.cos(ang+Math.PI/7),tipY-head*Math.sin(ang+Math.PI/7));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
 function drawMarks(){for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=COLORS[m.type]||'#374151';ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();if(m.type!==0)drawArrow(p.x,p.y,m.targetYaw,col,sel);if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
-function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawMarks()}
+function drawSlips(){if(!S.enableSlipMarkers)return;for(let i=0;i<S.traj.length;i++){const p=S.traj[i];if(!p.slip_flag)continue;const pt=w2s(p.x,p.y);ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 14px Microsoft YaHei';if(p.slip_flag===1){ctx.fillStyle='#ef4444';ctx.fillText('X',pt.x,pt.y)}else if(p.slip_flag===2){ctx.fillStyle='#3b82f6';ctx.fillText('■',pt.x,pt.y)}else if(p.slip_flag===3){ctx.fillStyle='#eab308';ctx.fillText('▲',pt.x,pt.y-2)}}}
+function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawSlips();drawMarks()}
 // 渲染 vxBody 内容
 function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
 function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent='-';E.sy.textContent='-';E.syaw.textContent='-';E.sheading.textContent='-';E.ss.textContent='-';fillType(E.selType,0);E.inpYaw.value='';E.inpHeading.value='';return}const idx=S.marks.findIndex(v=>v.id===m.id);E.si.textContent=String(idx);E.sx.textContent=m.x.toFixed(1);E.sy.textContent=m.y.toFixed(1);E.syaw.textContent=m.targetYaw.toFixed(1);E.sheading.textContent=m.heading.toFixed(1);E.ss.textContent=m.src;fillType(E.selType,m.type);E.inpYaw.value=m.targetYaw.toFixed(1);E.inpHeading.value=m.heading.toFixed(1)}
@@ -161,10 +166,10 @@ async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pyweb
 function feed(frames){
   if(!Array.isArray(frames)||!frames.length)return;
   for(const it of frames){
-    const x=Number(it.nav_x),y=Number(it.nav_y),yaw=normalizeYaw(it.relative_yaw||0),hdg=normalizeHeading(it.heading||0);
+    const x=Number(it.nav_x),y=Number(it.nav_y),yaw=normalizeYaw(it.relative_yaw||0),hdg=normalizeHeading(it.heading||0),pid_mode=Number(it.pid_mode||0),slip_flag=Number(it.slip_flag||0);
     if(Number.isFinite(x)&&Number.isFinite(y)){
-      S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg};
-      S.traj.push({x,y})
+      S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg,pid_mode:pid_mode,slip_flag:slip_flag};
+      S.traj.push({x,y,pid_mode,slip_flag})
     }
     const trig=Number(it.mark_trigger)||0;
     if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',yaw,hdg);S.lastMarkLoop=Number(it.loop)||0}
@@ -180,7 +185,7 @@ function feed(frames){
 
 async function pollData(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,120);return}try{const d=await window.pywebview.api.get_new_data();if(d&&d.length){setConn(true,'\u5df2\u8fde\u63a5','ok');feed(d)}}catch(_){setConn(false,'\u63a5\u53e3\u5f02\u5e38','err')}setTimeout(pollData,38)}
 let stTick=0;
-async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
+async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');if(s&&s.enable_slip_markers!==undefined)S.enableSlipMarkers=s.enable_slip_markers;stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
 function updateSelectedYaw(){const m=getSel();if(!m)return;const raw=Number(E.inpYaw.value);if(!Number.isFinite(raw))return;m.targetYaw=normalizeYaw(raw);syncSel();syncRows();draw()}
 function updateSelectedHeading(){const m=getSel();if(!m)return;const raw=Number(E.inpHeading.value);if(!Number.isFinite(raw))return;m.heading=normalizeHeading(raw);syncSel();syncRows();draw()}
 function initCanvas(){const c=E.cv;c.onmousedown=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;const m=hit(x,y);S.mx=x;S.my=y;if(m){S.sel=m.id;S.dragId=m.id;c.style.cursor='move'}else{S.pan=true;c.style.cursor='grabbing'}syncMarks();draw()};c.onmousemove=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;if(S.dragId!=null){const m=S.marks.find(v=>v.id===S.dragId);if(m){const p=s2w(x,y);m.x=p.x;m.y=p.y;syncSel();syncRows();draw()}return}if(S.pan){const dx=x-S.mx,dy=y-S.my;V.ox+=dx;V.oy+=dy;S.mx=x;S.my=y;V.follow=false;E.bFollow.classList.remove('active');draw()}};const stop=()=>{S.dragId=null;S.pan=false;c.style.cursor='grab'};c.onmouseup=stop;c.onmouseleave=stop;c.onwheel=(ev)=>{ev.preventDefault();const r=c.getBoundingClientRect(),sx=ev.clientX-r.left,sy=ev.clientY-r.top;const p=s2w(sx,sy);V.scale*=ev.deltaY>0?0.9:1.1;V.scale=Math.max(0.0015,Math.min(2.5,V.scale));const s=size();V.ox=sx-s.w*0.5-p.x*V.scale;V.oy=sy-s.h*0.5+p.y*V.scale;V.follow=false;E.bFollow.classList.remove('active');draw()};c.ondblclick=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top,p=s2w(x,y);const yaw=S.last?S.last.targetYaw:0;const heading=S.last?S.last.heading:0;addMark(p.x,p.y,Number(E.selType.value||0),'manual',yaw,heading);tip('\u5df2\u65b0\u589e\u6807\u8bb0\u70b9')}}
@@ -207,6 +212,16 @@ E.bStartCar.onclick=async()=>{
 const sendResult=await sendHostControl(HOST_CTRL_START_CAR);
 setTxStatus(sendResult.success?'ok':'err');
 tip(sendResult&&sendResult.msg?sendResult.msg:'\u5f00\u59cb\u53d1\u8f66\u547d\u4ee4\u5df2\u53d1\u9001')
+};
+E.bStartLog.onclick=async()=>{
+const sendResult=await sendHostControl(HOST_CTRL_START_LOG);
+setTxStatus(sendResult.success?'ok':'err');
+tip(sendResult&&sendResult.msg?sendResult.msg:'\u5f00\u542f\u4f20\u65e5\u5fd7\u547d\u4ee4\u5df2\u53d1\u9001')
+};
+E.bStopLog.onclick=async()=>{
+const sendResult=await sendHostControl(HOST_CTRL_STOP_LOG);
+setTxStatus(sendResult.success?'ok':'err');
+tip(sendResult&&sendResult.msg?sendResult.msg:'\u5173\u95ed\u4f20\u65e5\u5fd7\u547d\u4ee4\u5df2\u53d1\u9001')
 };
 E.bExport.onclick=async()=>{const p=exportPayload();if(!p.length){tip('\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u6807\u8bb0\u70b9');return}if(!S.api||!window.pywebview||!window.pywebview.api){tip('\u540e\u7aef API \u672a\u5c31\u7eea');return}try{const r=await window.pywebview.api.export_mark_points_csv(p);tip(r&&r.msg?r.msg:'\u5bfc\u51fa\u5b8c\u6210')}catch(e){tip('\u5bfc\u51fa\u5931\u8d25:'+(e.message||e))}}
 }

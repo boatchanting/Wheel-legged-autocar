@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import math
 import os
 import socket
@@ -10,6 +10,9 @@ import webview
 
 HOST_IP = "192.168.137.1"
 HOST_PORT = 8086
+
+# 打滑检测标记绘制开关：1=启用，0=禁用
+ENABLE_SLIP_MARKERS = 1
 
 FRAME_HEAD1 = 0x5A
 FRAME_HEAD2 = 0xA5
@@ -282,9 +285,63 @@ def _decode_payload(payload_bytes):
         data["mark_trigger"] = 0
         data["point_type"] = 0
 
+    baseline = 96 if size >= 96 else 86
+
+    if size >= baseline + 1:
+        data["pid_mode"] = payload_bytes[baseline]
+    else:
+        data["pid_mode"] = 0
+
+    if size >= baseline + 2:
+        data["slip_flag"] = payload_bytes[baseline + 1]
+    else:
+        data["slip_flag"] = 0
+
+    if size >= baseline + 22:
+        debug_floats = struct.unpack('<fffff', payload_bytes[baseline + 2 : baseline + 22])
+        data["target_speed"] = debug_floats[0]
+        data["speed_L"] = debug_floats[1]
+        data["speed_R"] = debug_floats[2]
+        data["theoretical_yaw_rate"] = debug_floats[3]
+        data["actual_yaw_rate"] = debug_floats[4]
+        data["has_debug"] = True
+    else:
+        data["has_debug"] = False
+
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
     return data
+
+
+debug_log_file = None
+
+def _handle_debug_logging(data):
+    global debug_log_file
+    if data.get("has_debug"):
+        if debug_log_file is None:
+            filename = time.strftime("slip_debug_log_%Y%m%d_%H%M%S.txt")
+            try:
+                debug_log_file = open(filename, "w", encoding="utf-8")
+                debug_log_file.write("Time,TargetSpeed,SpeedL,SpeedR,TheoYawRate,ActualYawRate,SlipFlag\n")
+                print(f"[DEBUG LOG] 开始写入调试日志: {filename}")
+            except Exception as e:
+                print(f"[DEBUG LOG] 打开日志失败: {e}")
+                return
+        
+        try:
+            line = f"{data['time_str']},{data['target_speed']:.2f},{data['speed_L']:.2f},{data['speed_R']:.2f},{data['theoretical_yaw_rate']:.4f},{data['actual_yaw_rate']:.4f},{data['slip_flag']}\n"
+            debug_log_file.write(line)
+            debug_log_file.flush()
+        except Exception as e:
+            print(f"[DEBUG LOG] 写入日志失败: {e}")
+    else:
+        if debug_log_file is not None:
+            try:
+                debug_log_file.close()
+            except:
+                pass
+            debug_log_file = None
+            print("[DEBUG LOG] 退出复刻，结束日志写入。")
 
 
 def _push_data(data):
@@ -350,6 +407,7 @@ def _parse_frame_stream(raw_buffer):
 
         data = _decode_payload(payload)
         if data is not None:
+            _handle_debug_logging(data)
             _push_data(data)
 
         del raw_buffer[:frame_len]
@@ -458,6 +516,7 @@ class Api:
                 "server_error": server_error,
                 "host_ip": listen_ip,
                 "host_port": HOST_PORT,
+                "enable_slip_markers": ENABLE_SLIP_MARKERS,
             }
 
     def clear_history(self):

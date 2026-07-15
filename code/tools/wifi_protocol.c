@@ -1,6 +1,8 @@
 #include "wifi_protocol.h"
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
+#include "../calculate/pid-new.h"
+#include "../navigation/nav_replay/nav_replay.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -8,6 +10,7 @@
 static uint8_t tx_buf[WIFI_TX_BUFFER_SIZE];
 static uint16_t tx_idx = 0;
 
+uint8_t g_manual_log_enabled = 0;
 #define WIFI_RX_READ_CHUNK   128U
 #define WIFI_RX_STREAM_SIZE  512U
 #define WIFI_FRAME_MIN_SIZE  6U
@@ -188,6 +191,20 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
 #if DEBUG_LOG_ENABLE
         printf("[WIFI] Host cmd STOP_GPS_REPLAY accepted.\r\n");
 #endif
+        break;
+    }
+
+    case WIFI_HOST_CTRL_START_LOG:
+    {
+        g_manual_log_enabled = 1;
+        ack_status = WIFI_HOST_ACK_ACCEPTED;
+        break;
+    }
+
+    case WIFI_HOST_CTRL_STOP_LOG:
+    {
+        g_manual_log_enabled = 0;
+        ack_status = WIFI_HOST_ACK_ACCEPTED;
         break;
     }
 
@@ -399,6 +416,23 @@ void wifi_protocol_send_data(void)
     write_float_value(gnss_trans.y * 1000.0f);
     write_u8(gnss_trans.is_valid);
     write_u8(gnss_trans.is_origin_set);
+
+    // F. PID Control Mode
+    write_u8((uint8_t)g_control_mode_applied);
+    
+    // G. Slip Flag
+    write_u8((uint8_t)inertial_nav.slip_flag);
+
+    // H. Debug logging values (20 bytes)
+    extern NavReplayState_e g_replay_state;
+    if (g_replay_state == REPLAY_RUNNING || g_manual_log_enabled) {
+        float t_speed = (float)target_speed_set;
+        write_u32_or_float(&t_speed);
+        write_u32_or_float(&inertial_nav.current_speed_L);
+        write_u32_or_float(&inertial_nav.current_speed_R);
+        write_u32_or_float(&inertial_nav.theoretical_yaw_rate);
+        write_u32_or_float(&inertial_nav.actual_yaw_rate);
+    }
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;
