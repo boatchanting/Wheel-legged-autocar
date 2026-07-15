@@ -501,6 +501,53 @@ static int extract_row_borders(const BridgeDetectionBitmap *mask, int width, int
     return count;
 }
 
+/* Build the reporting metadata once, after the best candidate has been
+ * selected.  The former reporting path scanned these two bitmaps separately
+ * in every side/top/entry fit. */
+static void cache_best_geometry(BridgeDetectionScratch *scratch, int width, int height)
+{
+    int y, x, word;
+    int words = words_for_width(width);
+    for (y = 0; y < height; ++y) {
+        int visible_left = -1, visible_right = -1, outer_left = -1, outer_right = -1;
+        for (word = 0; word < words; ++word) {
+            uint32_t visible_bits = scratch->best_visible.row[y][word];
+            uint32_t outer_bits = scratch->best_outer.row[y][word];
+            if (visible_bits != 0u) {
+                if (visible_left < 0) visible_left = (word << 5) + ctz32(visible_bits);
+                visible_right = (word << 5) + msb32(visible_bits);
+            }
+            if (outer_bits != 0u) {
+                if (outer_left < 0) outer_left = (word << 5) + ctz32(outer_bits);
+                outer_right = (word << 5) + msb32(outer_bits);
+            }
+        }
+        if (visible_right >= width) visible_right = width - 1;
+        if (outer_right >= width) outer_right = width - 1;
+        scratch->best_visible_left[y] = (int8_t)visible_left;
+        scratch->best_visible_right[y] = (int8_t)visible_right;
+        scratch->best_outer_left[y] = (int8_t)outer_left;
+        scratch->best_outer_right[y] = (int8_t)outer_right;
+    }
+    for (x = 0; x < width; ++x) {
+        scratch->best_outer_top[x] = -1;
+        scratch->best_outer_bottom[x] = -1;
+    }
+    for (y = 0; y < height; ++y) {
+        for (word = 0; word < words; ++word) {
+            uint32_t bits = scratch->best_outer.row[y][word];
+            while (bits != 0u) {
+                x = (word << 5) + ctz32(bits);
+                if (x < width) {
+                    if (scratch->best_outer_top[x] < 0) scratch->best_outer_top[x] = (int8_t)y;
+                    scratch->best_outer_bottom[x] = (int8_t)y;
+                }
+                bits &= bits - 1u;
+            }
+        }
+    }
+}
+
 static int convex_hull_mask(const BridgeDetectionBitmap *src, BridgeDetectionBitmap *dst,
                             int width, int height, int *left, int *right, int *widths, int *area_out,
                             BridgeDetectionScratch *scratch)
@@ -711,8 +758,48 @@ static int build_sample_indices(int count, int *sample)
     return sample_count;
 }
 
+/* Fast path for an already clean boundary.  If every point is close enough
+ * to the all-point least-squares line, the endpoint hypothesis used by the
+ * legacy RANSAC is guaranteed to classify every point as an inlier too.  The
+ * final legacy fit therefore reduces to this same all-point fit.  A strict
+ * half-threshold certificate leaves margin for finite-precision arithmetic;
+ * noisy or partly occluded boundaries always fall through to the original
+ * robust RANSAC below. */
+static int fit_line_certified_all_inliers(const float *independent, const float *dependent, int count,
+                                          float slope_min, float slope_max, float residual_threshold,
+                                          int min_inliers, float min_span, float border_limit, int prefer,
+                                          LineFit *out)
+{
+    uint8_t all_inliers[BD_MAX_LINE_POINTS];
+    float slope, intercept, support_min = 1.0e30f, support_max = -1.0e30f;
+    float sum_dep = 0.0f, sum_res = 0.0f;
+    float certificate_limit = residual_threshold * 0.45f;
+    int i, border_count = 0;
+    if (count < min_inliers) return 0;
+    for (i = 0; i < count; ++i) all_inliers[i] = 1u;
+    linear_fit(independent, dependent, all_inliers, count, &slope, &intercept);
+    if (slope < slope_min || slope > slope_max) return 0;
+    for (i = 0; i < count; ++i) {
+        float residual = absf_fast(dependent[i] - (slope * independent[i] + intercept));
+        if (residual > certificate_limit) return 0;
+        if (independent[i] < support_min) support_min = independent[i];
+        if (independent[i] > support_max) support_max = independent[i];
+        sum_dep += dependent[i];
+        sum_res += residual;
+        if ((prefer == PREF_LEFT || prefer == PREF_TOP) ? dependent[i] <= border_limit : dependent[i] >= border_limit) ++border_count;
+    }
+    if (support_max - support_min < min_span) return 0;
+    memset(out, 0, sizeof(*out));
+    out->valid = 1; out->slope = slope; out->intercept = intercept;
+    out->support_min = support_min; out->support_max = support_max;
+    out->inlier_count = count; out->span = support_max - support_min;
+    out->residual = sum_res / count; out->border_touch_ratio = (float)border_count / count;
+    out->mean_value = sum_dep / count;
+    return 1;
+}
+
 static LineFit fit_line_fast(const float *independent, const float *dependent, int count,
-                             float slope_min, float slope_max, float residual_threshold,
+                              float slope_min, float slope_max, float residual_threshold,
                              int min_inliers, float min_span, float border_limit, int prefer)
 {
     LineFit result;
@@ -722,6 +809,9 @@ static LineFit fit_line_fast(const float *independent, const float *dependent, i
     float best_score = -1.0e30f, slope = 0.0f, intercept = 0.0f;
     memset(&result, 0, sizeof(result));
     if (count < min_inliers) return result;
+    if (fit_line_certified_all_inliers(independent, dependent, count,
+                                       slope_min, slope_max, residual_threshold,
+                                       min_inliers, min_span, border_limit, prefer, &result)) return result;
     sample_count = build_sample_indices(count, sample);
     for (ai = 0; ai < sample_count - 1; ++ai) for (aj = ai + 1; aj < sample_count; ++aj) {
         int p0 = sample[ai], p1 = sample[aj], n = 0;
@@ -776,15 +866,16 @@ static LineFit fit_line_fast(const float *independent, const float *dependent, i
     return result;
 }
 
-static LineFit fit_one_side(const BridgeDetectionBitmap *mask, int width, int height, int side_right)
+static LineFit fit_one_side_cached(const BridgeDetectionScratch *scratch, int width, int height,
+                                   int side_right, int outer)
 {
-    int left[BRIDGE_DETECTION_MAX_HEIGHT], right[BRIDGE_DETECTION_MAX_HEIGHT], widths[BRIDGE_DETECTION_MAX_HEIGHT];
     int rows[BRIDGE_DETECTION_MAX_HEIGHT], unclipped[BRIDGE_DETECTION_MAX_HEIGHT];
     float independent[BRIDGE_DETECTION_MAX_HEIGHT], dependent[BRIDGE_DETECTION_MAX_HEIGHT];
     int row_count = 0, unclipped_count = 0, y, count, use_unclipped;
     LineFit none;
-    extract_row_borders(mask, width, height, left, right, widths);
-    for (y = 0; y < height; ++y) if (widths[y] > 0) {
+    const int8_t *left = outer ? scratch->best_outer_left : scratch->best_visible_left;
+    const int8_t *right = outer ? scratch->best_outer_right : scratch->best_visible_right;
+    for (y = 0; y < height; ++y) if (left[y] >= 0) {
         rows[row_count++] = y;
         if ((!side_right && left[y] > 1) || (side_right && right[y] < width - 2)) unclipped[unclipped_count++] = y;
     }
@@ -803,29 +894,27 @@ static float score_side_fit(LineFit line)
            absf_fast(line.slope) * 10.0f + absf_fast(line.slope) * line.span * 3.0f;
 }
 
-static LineFit fit_horizontal(const BridgeDetectionBitmap *mask, int width, int height, int bottom)
+static LineFit fit_horizontal_cached(const BridgeDetectionScratch *scratch, int width, int height, int bottom)
 {
     float independent[BRIDGE_DETECTION_MAX_WIDTH], dependent[BRIDGE_DETECTION_MAX_WIDTH];
     int x, count = 0;
+    const int8_t *values = bottom ? scratch->best_outer_bottom : scratch->best_outer_top;
+    (void)height;
     for (x = 0; x < width; ++x) {
-        int y, found = -1;
-        if (!bottom) { for (y = 0; y < height; ++y) if (bitmap_get(mask, x, y)) { found = y; break; } }
-        else { for (y = height - 1; y >= 0; --y) if (bitmap_get(mask, x, y)) { found = y; break; } }
-        if (found >= 0) { independent[count] = (float)x; dependent[count] = (float)found; ++count; }
+        if (values[x] >= 0) { independent[count] = (float)x; dependent[count] = (float)values[x]; ++count; }
     }
     return fit_line_fast(independent, dependent, count, -0.32f, 0.32f, 1.2f, 6, 8.0f,
                          bottom ? height - 2.5f : 1.5f, bottom ? PREF_BOTTOM : PREF_TOP);
 }
 
-static LineFit fit_top_plateau(const BridgeDetectionBitmap *mask, int width, int height)
+static LineFit fit_top_plateau_cached(const BridgeDetectionScratch *scratch, int width, int height)
 {
     int top[BRIDGE_DETECTION_MAX_WIDTH], cols[BRIDGE_DETECTION_MAX_WIDTH];
-    int col_count = 0, min_top = height, x, y, tolerance;
+    int col_count = 0, min_top = height, x, tolerance;
     LineFit none;
     memset(&none, 0, sizeof(none));
     for (x = 0; x < width; ++x) {
-        top[x] = -1;
-        for (y = 0; y < height; ++y) if (bitmap_get(mask, x, y)) { top[x] = y; break; }
+        top[x] = scratch->best_outer_top[x];
         if (top[x] >= 0) { cols[col_count++] = x; if (top[x] < min_top) min_top = top[x]; }
     }
     if (col_count < 6) return none;
@@ -1105,15 +1194,16 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     result->center_x = best.center_x; result->edge_contrast = best.edge_contrast; result->left_clip_ratio = best.left_clip_ratio;
     result->right_clip_ratio = best.right_clip_ratio; result->dual_clip_ratio = best.dual_clip_ratio; result->border_monotonic = best.border_monotonic;
     phase_start = BD_PROFILE_BEGIN();
-    visible_left = fit_one_side(&scratch->best_visible, width, height, 0);
-    visible_right = fit_one_side(&scratch->best_visible, width, height, 1);
-    outer_left = fit_one_side(&scratch->best_outer, width, height, 0);
-    outer_right = fit_one_side(&scratch->best_outer, width, height, 1);
+    cache_best_geometry(scratch, width, height);
+    visible_left = fit_one_side_cached(scratch, width, height, 0, 0);
+    visible_right = fit_one_side_cached(scratch, width, height, 1, 0);
+    outer_left = fit_one_side_cached(scratch, width, height, 0, 1);
+    outer_right = fit_one_side_cached(scratch, width, height, 1, 1);
     left = score_side_fit(visible_left) >= score_side_fit(outer_left) ? visible_left : outer_left;
     right = score_side_fit(visible_right) >= score_side_fit(outer_right) ? visible_right : outer_right;
-    top = fit_horizontal(&scratch->best_outer, width, height, 0);
-    plateau = fit_top_plateau(&scratch->best_outer, width, height);
-    entry = fit_horizontal(&scratch->best_outer, width, height, 1);
+    top = fit_horizontal_cached(scratch, width, height, 0);
+    plateau = fit_top_plateau_cached(scratch, width, height);
+    entry = fit_horizontal_cached(scratch, width, height, 1);
     export_side_line(left, &result->left_line); export_side_line(right, &result->right_line);
     result->left_line_visible = (uint8_t)should_show_left(left, &best);
     result->right_line_visible = (uint8_t)should_show_right(right, width, &best);

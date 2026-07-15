@@ -103,6 +103,16 @@ typedef struct {
      * routine through an already deep M7 call chain. */
     int16_t column_top[BRIDGE_DETECTION_MAX_WIDTH];
     int16_t column_bottom[BRIDGE_DETECTION_MAX_WIDTH];
+    /* Geometry of the selected candidate.  The final reporting stage used to
+     * rescan best_visible/best_outer five times.  Keep compact row/column
+     * extrema instead: -1 is the invalid sentinel and all valid coordinates
+     * fit in int8_t for the <=96x60 camera image. */
+    int8_t best_visible_left[BRIDGE_DETECTION_MAX_HEIGHT];
+    int8_t best_visible_right[BRIDGE_DETECTION_MAX_HEIGHT];
+    int8_t best_outer_left[BRIDGE_DETECTION_MAX_HEIGHT];
+    int8_t best_outer_right[BRIDGE_DETECTION_MAX_HEIGHT];
+    int8_t best_outer_top[BRIDGE_DETECTION_MAX_WIDTH];
+    int8_t best_outer_bottom[BRIDGE_DETECTION_MAX_WIDTH];
     uint8_t previous_gray[BRIDGE_DETECTION_MAX_PIXELS];
     BridgeDetectionResult cached_result;
     uint32_t cache_magic;
