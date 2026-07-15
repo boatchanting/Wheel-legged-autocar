@@ -17,7 +17,7 @@ STATE_CODE = {
     "在PVC上": 2,
     "准备退出": 3,
 }
-FRAME_RE = re.compile(r"frame_(\d+)")
+FRAME_RE = re.compile(r"frame_?(\d+)")
 
 
 def load_rows(path: Path) -> dict[int, dict[str, str]]:
