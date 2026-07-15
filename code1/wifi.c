@@ -605,17 +605,56 @@ void render_bridge_vision_to_image(void)
         result = bridge_out->raw;
     }
 
-    /* Render the detector's actual centre segment, not an extrapolated line.
-     * This is the exact geometry used to calculate lateral_error_px. */
+    if ((result.left_line_x0 >= 0) && (result.left_line_y0 >= 0) &&
+        (result.left_line_x1 >= 0) && (result.left_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.left_line_x0,
+                           (int)result.left_line_y0,
+                           (int)result.left_line_x1,
+                           (int)result.left_line_y1,
+                           0U);
+    }
+
+    if ((result.right_line_x0 >= 0) && (result.right_line_y0 >= 0) &&
+        (result.right_line_x1 >= 0) && (result.right_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.right_line_x0,
+                           (int)result.right_line_y0,
+                           (int)result.right_line_x1,
+                           (int)result.right_line_y1,
+                           0U);
+    }
+
+    if ((result.up_line_x0 >= 0) && (result.up_line_y0 >= 0) &&
+        (result.up_line_x1 >= 0) && (result.up_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.up_line_x0,
+                           (int)result.up_line_y0,
+                           (int)result.up_line_x1,
+                           (int)result.up_line_y1,
+                           0U);
+    }
+
+    if ((result.down_line_x0 >= 0) && (result.down_line_y0 >= 0) &&
+        (result.down_line_x1 >= 0) && (result.down_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.down_line_x0,
+                           (int)result.down_line_y0,
+                           (int)result.down_line_x1,
+                           (int)result.down_line_y1,
+                           0U);
+    }
+
+    /* 中线是控制真正使用的几何输出，最后单独强调画出来。 */
     if (result.geometry_valid != 0U)
     {
-        draw_line_on_image((int)result.center_x0,
-                           (int)result.center_y0,
-                           (int)result.center_x1,
-                           (int)result.center_y1,
+        draw_line_on_image((int)result.center_line_x0,
+                           (int)result.center_line_y0,
+                           (int)result.center_line_x1,
+                           (int)result.center_line_y1,
                            0U);
-        draw_cross_on_image((int)result.center_x1,
-                            (int)result.center_y1,
+        draw_cross_on_image((int)result.center_line_x1,
+                            (int)result.center_line_y1,
                             2,
                             0U);
     }
