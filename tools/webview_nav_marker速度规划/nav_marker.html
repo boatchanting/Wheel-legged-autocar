@@ -55,6 +55,7 @@ tr.sel{background:#eaf2ff}
   </div>
   <div class="right">
     <button id="bFollow" class="active">跟踪视角</button>
+    <button id="bRealDistance" class="active">真实距离：开</button>
     <button id="bAdaptive">自适应视角</button>
     <button id="bFit">适配全图</button>
     <button id="bReset">重置视图</button>
@@ -114,6 +115,7 @@ tr.sel{background:#eaf2ff}
   </div>
 </div>
 <div id="toast" class="toast"></div>
+<script src="nav_marker_grid_scale.js"></script>
 <script>
 const TYPES=[{value:0,label:'0 PATH'},{value:1,label:'1 CIRCLE'},{value:2,label:'2 SLOPE'},{value:3,label:'3 JUMP'},{value:4,label:'4 BRIDGE'},{value:5,label:'5 BUMP'}];
 const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#059669'};
@@ -122,10 +124,10 @@ const HOST_CTRL_START_CAR=2;
 const HOST_CTRL_START_LOG=5;
 const HOST_CTRL_STOP_LOG=6;
 // 在 S 中加入 vx_body 变量
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,enableSlipMarkers:1};
+const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,enableSlipMarkers:1,showRealDistance:true};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 // 在 E 元素绑定中加入 vxBody 节点映射
-const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStartLog:bStartLog,bStopLog:bStopLog,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStartLog:bStartLog,bStopLog:bStopLog,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -145,7 +147,7 @@ function rmSel(){if(S.sel==null)return;const n=S.marks.length;S.marks=S.marks.fi
 function fitAll(){const pts=[];for(const p of S.traj)pts.push({x:p.x,y:p.y});for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
 function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale}
 function hit(px,py){let best=null,bd=9999;for(const m of S.marks){const p=w2s(m.x,m.y);const d=Math.hypot(px-p.x,py-p.y);if(d<12&&d<bd){best=m;bd=d}}return best}
-function grid(w,h){let sp=1000*V.scale;while(sp<24)sp*=2;while(sp>120)sp*=0.5;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let sx=((c.x%sp)+sp)%sp;for(let x=sx;x<w;x+=sp){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let sy=((c.y%sp)+sp)%sp;for(let y=sy;y<h;y+=sp){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}}
+function grid(w,h){const stepMm=1000;const sp=stepMm*V.scale;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let xIndex=Math.ceil(-c.x/sp),x=c.x+xIndex*sp;for(;x<w;x+=sp,xIndex++){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let yIndex=Math.floor(c.y/sp),y=c.y-yIndex*sp;for(;y<h;y+=sp,yIndex--){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}const labelY=Math.min(h-5,Math.max(14,c.y+14));const labelX=Math.min(w-5,Math.max(5,c.x+5));ctx.fillStyle='#6183a8';ctx.font='11px Microsoft YaHei';xIndex=Math.ceil(-c.x/sp);for(x=c.x+xIndex*sp;x<w;x+=sp,xIndex++){if(NavMarkerGridScale.shouldShowDistanceLabel(S.showRealDistance,xIndex))ctx.fillText(NavMarkerGridScale.formatGridCoordinate(xIndex*stepMm),x+3,labelY)}yIndex=Math.floor(c.y/sp);for(y=c.y-yIndex*sp;y<h;y+=sp,yIndex--){if(NavMarkerGridScale.shouldShowDistanceLabel(S.showRealDistance,yIndex))ctx.fillText(NavMarkerGridScale.formatGridCoordinate(yIndex*stepMm),labelX,y-4)}}
 function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
 function drawTraj(){if(S.traj.length<2)return;ctx.lineWidth=2;for(let i=1;i<S.traj.length;i++){const p1=w2s(S.traj[i-1].x,S.traj[i-1].y);const p2=w2s(S.traj[i].x,S.traj[i].y);const mode=S.traj[i].pid_mode||0;let col='#2f6fed';if(mode===1)col='#ef4444';else if(mode===2)col='#eab308';ctx.strokeStyle=col;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();}const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
 function drawArrow(px,py,yawDeg,color,selected){const rad=yawDeg*Math.PI/180;const len=selected?30:24;const dx=-Math.cos(rad);const dy=Math.sin(rad);const tailX=px-dx*len*0.35;const tailY=py-dy*len*0.35;const tipX=px+dx*len;const tipY=py+dy*len;ctx.strokeStyle=color;ctx.lineWidth=selected?3:2;ctx.beginPath();ctx.moveTo(tailX,tailY);ctx.lineTo(tipX,tipY);ctx.stroke();const head=7;const ang=Math.atan2(tipY-tailY,tipX-tailX);ctx.beginPath();ctx.moveTo(tipX,tipY);ctx.lineTo(tipX-head*Math.cos(ang-Math.PI/7),tipY-head*Math.sin(ang-Math.PI/7));ctx.lineTo(tipX-head*Math.cos(ang+Math.PI/7),tipY-head*Math.sin(ang+Math.PI/7));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
@@ -195,6 +197,7 @@ E.selType.onchange=()=>{const m=getSel();if(!m)return;m.type=clampType(E.selType
 E.inpYaw.onchange=updateSelectedYaw;
 E.inpHeading.onchange=updateSelectedHeading;
 E.bFollow.onclick=()=>{V.follow=!V.follow;E.bFollow.classList.toggle('active',V.follow);if(V.follow){follow();draw()}};
+E.bRealDistance.onclick=()=>{S.showRealDistance=!S.showRealDistance;E.bRealDistance.classList.toggle('active',S.showRealDistance);E.bRealDistance.textContent='真实距离：'+(S.showRealDistance?'开':'关');draw()};
 E.bAdaptive.onclick=()=>{V.adaptive=!V.adaptive;E.bAdaptive.classList.toggle('active',V.adaptive);if(V.adaptive){fitAll();draw()}};
 E.bFit.onclick=()=>{fitAll();draw()};
 E.bReset.onclick=()=>{V.scale=0.035;V.ox=0;V.oy=0;draw()};
