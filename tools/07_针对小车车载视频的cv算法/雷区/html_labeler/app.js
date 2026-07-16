@@ -159,6 +159,14 @@ function cloneSegment(segment) {
   };
 }
 
+function getJsonNameFromImageName(name) {
+  const dotIndex = name.lastIndexOf(".");
+  if (dotIndex <= 0) {
+    return `${name}.json`;
+  }
+  return `${name.slice(0, dotIndex)}.json`;
+}
+
 function createEmptyEditState() {
   return {
     clearedTypes: new Set(),
@@ -551,6 +559,27 @@ async function writeBlobToOutput(name, blob) {
   await writable.close();
 }
 
+async function writeTextToOutput(name, text) {
+  if (!state.outputDirHandle) {
+    throw new Error("NO_OUTPUT_DIR");
+  }
+  const fileHandle = await state.outputDirHandle.getFileHandle(name, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(text);
+  await writable.close();
+}
+
+function buildAnnotationJsonPayload(entry, editState) {
+  return {
+    image_name: entry.name,
+    image_relative_path: entry.relativePath,
+    image_width: state.currentFrame?.baseImageData.width ?? null,
+    image_height: state.currentFrame?.baseImageData.height ?? null,
+    inner_segments: editState.segments.inner.map(cloneSegment),
+    outer_segments: editState.segments.outer.map(cloneSegment),
+  };
+}
+
 async function saveCurrentFrame(options = {}) {
   if (state.busy) {
     return false;
@@ -574,6 +603,8 @@ async function saveCurrentFrame(options = {}) {
       }
       const blob = await getFileBlob(entry.drawEntry);
       await writeBlobToOutput(entry.name, blob);
+      const payload = buildAnnotationJsonPayload(entry, editState);
+      await writeTextToOutput(getJsonNameFromImageName(entry.name), `${JSON.stringify(payload, null, 2)}\n`);
       editState.clearedTypes = new Set();
       for (const type of TYPE_ORDER) {
         editState.segments[type] = [];
@@ -595,6 +626,8 @@ async function saveCurrentFrame(options = {}) {
     exportCanvas.getContext("2d").putImageData(composed, 0, 0);
     const blob = await new Promise((resolve) => exportCanvas.toBlob(resolve, "image/png"));
     await writeBlobToOutput(entry.name, blob);
+    const payload = buildAnnotationJsonPayload(entry, editState);
+    await writeTextToOutput(getJsonNameFromImageName(entry.name), `${JSON.stringify(payload, null, 2)}\n`);
     editState.savedVersion = buildVersionKey(editState);
     renderCurrentFrame();
     return true;
