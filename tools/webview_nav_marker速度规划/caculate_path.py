@@ -42,7 +42,9 @@ ENABLE_FINISH_SPRINT = True    # 开启终点冲刺：绕过最后一个桩桶�
 SPRINT_SPEED_MM_S = 3000.0     # 最后的冲刺极速
 MAX_ACCEL_MM_S2 = 1500.0
 MAX_DECEL_MM_S2 = 1500.0
-MAX_LATERAL_ACCEL_MM_S2 = 1500.0
+MAX_LATERAL_ACCEL_MM_S2 = 3500.0
+MAX_PATH_YAW_RATE_RAD_S = 2.8
+MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0
 SPEED_TO_MM_S = 4.936
 CURVATURE_EPS = 1e-6
 FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -52,24 +54,15 @@ FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 # ============================================================
 CAR_HALF_WIDTH_MM = 135.0      # 车身半宽
 CONE_RADIUS_MM = 140.0         # 桩桶物理半径
-BALANCE_LEG_SWEEP_MARGIN_MM = 85.0
-BALANCE_LEAN_SWAY_MARGIN_MM = 65.0
-LOCALIZATION_ERROR_MARGIN_MM = 80.0
-SAFE_MARGIN_MM = 200.0
-DYNAMIC_SWEEP_HALF_WIDTH_MM = (
-    CAR_HALF_WIDTH_MM + BALANCE_LEG_SWEEP_MARGIN_MM + BALANCE_LEAN_SWAY_MARGIN_MM
-)
+EXTRA_SAFETY_MARGIN_MM = 200.0
 CONE_FORBIDDEN_RADIUS_MM = (
     CONE_RADIUS_MM
-    + DYNAMIC_SWEEP_HALF_WIDTH_MM
-    + LOCALIZATION_ERROR_MARGIN_MM
-    + SAFE_MARGIN_MM
+    + CAR_HALF_WIDTH_MM
+    + EXTRA_SAFETY_MARGIN_MM
 )
-CORRIDOR_CLEARANCE_MM = 120.0
-CONE_OFFSET_MM = CONE_FORBIDDEN_RADIUS_MM + CORRIDOR_CLEARANCE_MM
 MIN_CONE_CHANNEL_GAP_MM = 150.0
 
-MAX_PATH_CURVATURE_PER_MM = 0.0115
+MAX_PATH_CURVATURE_PER_MM = 0.0215
 MAX_CURVATURE_RATE_PER_MM2 = 8.0e-6
 PATH_DENSE_SAMPLE_MM = 10.0
 PATH_TANGENT_EPS_MM = 1.0e-3
@@ -911,8 +904,8 @@ def generate_slalom_apex_points(
         normal_y = dx
         
         cone_x, cone_y = pts[i]
-        offset_x = cone_x + normal_x * CONE_OFFSET_MM * current_sign
-        offset_y = cone_y + normal_y * CONE_OFFSET_MM * current_sign
+        offset_x = cone_x + normal_x * cone_forbidden_radius_mm() * current_sign
+        offset_y = cone_y + normal_y * cone_forbidden_radius_mm() * current_sign
         apex_points.append((offset_x, offset_y))
         
         current_sign *= -1.0  # 下一个桩桶方向反转
@@ -1439,7 +1432,7 @@ def generate_constrained_slalom_path(
     last_error: Optional[Exception] = None
     for first_side in (1.0, -1.0):
         for extra_clearance in CONSTRAINED_CLEARANCE_STEPS_MM:
-            offset_mm = cone_forbidden_radius_mm() + CORRIDOR_CLEARANCE_MM + extra_clearance
+            offset_mm = cone_forbidden_radius_mm() + extra_clearance
             for guard_scale in (0.0, 0.18, 0.28, 0.40):
                 waypoints = _build_slalom_corridor_waypoints(
                     start,
@@ -1577,6 +1570,26 @@ def signed_curvature(points: List[RoutePoint]) -> np.ndarray:
     return curvature
 
 
+def curvature_rate_per_mm2(s_vals: np.ndarray, curvature: np.ndarray) -> np.ndarray:
+    """Estimate |dκ/ds| at every path point in 1/mm²."""
+    rate = np.zeros(len(curvature), dtype=float)
+    if len(curvature) < 2:
+        return rate
+
+    ds = np.diff(s_vals)
+    valid = ds > PATH_TANGENT_EPS_MM
+    rate[1:][valid] = np.abs(np.diff(curvature)[valid] / ds[valid])
+    rate[0] = rate[1]
+    return rate
+
+
+def yaw_accel_speed_limit_mm_s(curvature_rate_per_mm2: float) -> float:
+    """Return the speed cap that keeps v²|dκ/ds| within the yaw-accel budget."""
+    if curvature_rate_per_mm2 <= CURVATURE_EPS:
+        return PATH_SPEED_MAX_MM_S
+    return math.sqrt(MAX_PATH_YAW_ACCEL_RAD_S2 / curvature_rate_per_mm2)
+
+
 def apply_speed_plan(points: List[RoutePoint]) -> None:
     """
     对轨迹点执行离线速度规划并写入 target_speed。
@@ -1588,13 +1601,17 @@ def apply_speed_plan(points: List[RoutePoint]) -> None:
 
     s_vals = cumulative_arc_length(points)
     curvature = signed_curvature(points)
+    curvature_rate = curvature_rate_per_mm2(s_vals, curvature)
     speed_limit = np.full(len(points), PATH_SPEED_MAX_MM_S, dtype=float)
 
     for i, kappa in enumerate(curvature):
         curve_limit = PATH_SPEED_MAX_MM_S
+        yaw_rate_limit = PATH_SPEED_MAX_MM_S
+        yaw_accel_limit = yaw_accel_speed_limit_mm_s(float(curvature_rate[i]))
         if abs(kappa) > CURVATURE_EPS:
             curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / max(abs(kappa), CURVATURE_EPS))
-        speed_limit[i] = min(PATH_SPEED_MAX_MM_S, curve_limit)
+            yaw_rate_limit = MAX_PATH_YAW_RATE_RAD_S / abs(kappa)
+        speed_limit[i] = min(PATH_SPEED_MAX_MM_S, curve_limit, yaw_rate_limit, yaw_accel_limit)
         points[i].curvature = float(kappa)
 
     speed_limit[-1] = 0.0
@@ -1886,7 +1903,7 @@ def plot_result(
     # 绘制桩桶安全区域（可视化防撞余量）
     for cp in preview_cone_points(raw_points):
         circle = plt.Circle(
-            (cp.x, cp.y), CONE_RADIUS_MM + SAFE_MARGIN_MM,
+            (cp.x, cp.y), cone_forbidden_radius_mm(),
             color="orange", alpha=0.2, linestyle="--", linewidth=1
         )
         ax.add_patch(circle)
@@ -2093,8 +2110,8 @@ def main() -> int:
     print(f"[输入] 原始点数: {len(raw_points)}")
     print(f"[参数] 车身半宽: {CAR_HALF_WIDTH_MM}mm")
     print(f"[参数] 桩桶半径: {CONE_RADIUS_MM}mm")
-    print(f"[参数] 安全余量: {SAFE_MARGIN_MM}mm")
-    print(f"[参数] 桩桶偏置: {CONE_OFFSET_MM}mm")
+    print(f"[参数] 额外安全余量: {EXTRA_SAFETY_MARGIN_MM}mm")
+    print(f"[参数] 桩桶禁入半径: {cone_forbidden_radius_mm()}mm")
     radius_mode = "固定" if U_TURN_RADIUS_MODE == 0 else "自动(距离/2)"
     print(f"[参数] 掉头半径: {U_TURN_RADIUS_MM}mm (模式: {radius_mode})")
     print(f"[参数] 掉头模式: {U_TURN_DETECT_MODE}")
