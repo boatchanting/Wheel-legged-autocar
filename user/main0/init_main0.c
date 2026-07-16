@@ -1,4 +1,5 @@
 #include "main0/init_main0.h"
+#include "navigation/fusion_nav.h"
 
 #pragma location = 0x28026024
 __root __no_init uint8 mt9v03x_dma_reserved_for_core1[0x5820];

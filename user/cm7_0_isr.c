@@ -44,7 +44,7 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
-#include "../navigation/fusion_nav.h" // 互补滤波融合
+#include "navigation/fusion_nav.h" // 互补滤波融合
 
 // 声明外部函数
 
