@@ -163,6 +163,7 @@ void Remote_Control_Process(void)
     // CH6 消抖逻辑：5次连续采样确认状态变化
     static uint8 ch6_debounce_count = 0;
     static uint8 ch6_last_valid_state = 0; // 0=电机使能, 1=电机关
+    static uint8 ch6_emergency_lock = 0;   // 急停锁存：0=正常, 1=CH6已关闭过，锁死电机使能，仅重新上电可恢复
     uint8 ch6_current_raw = (ch6_off > RC_SW_THRESHOLD) ? 1 : 0;
     
     if (ch6_current_raw != ch6_last_valid_state)
@@ -181,6 +182,7 @@ void Remote_Control_Process(void)
     
     if (ch6_last_valid_state == 1) 
     {
+        ch6_emergency_lock = 1;  // CH6关闭过，永久锁死，只有重新上电才能恢复
         robot_ctrl.brake_active = 0;
         robot_ctrl.reverse_brake_active = 0;
         g_brake_active = 0;
@@ -192,19 +194,50 @@ void Remote_Control_Process(void)
     }
     else 
     {
+        // 急停锁存：即使CH6再次打开，只要曾经关过就保持失能
+        if (ch6_emergency_lock != 0)
+        {
+            robot_ctrl.brake_active = 0;
+            robot_ctrl.reverse_brake_active = 0;
+            g_brake_active = 0;
+            g_reverse_brake_active = 0;
+            robot_ctrl.motor_enable = 0;
+            return;
+        }
         robot_ctrl.motor_enable = 1;
     }
 
     // CH4 三态开关用于主动控制起立/倒下：
     // LOW: 主动倒下；MID: 保持当前状态；HIGH: 主动起立。
+    // CH4 消抖逻辑：5次连续采样确认状态变化，与CH6一致
+    static uint8 ch4_debounce_count = 0;
+    static uint8 ch4_last_valid_state = 1; // 0=LOW(倒下), 1=MID(保持), 2=HIGH(起立)
+    uint8 ch4_current_raw;
     if (ch4_mode < RC_SW_MID_LOW)
-    {
-        g_fallen = true;
-    }
+        ch4_current_raw = 0;
     else if (ch4_mode > RC_SW_MID_HIGH)
+        ch4_current_raw = 2;
+    else
+        ch4_current_raw = 1;
+
+    if (ch4_current_raw != ch4_last_valid_state)
     {
-        g_fallen = false;
+        ch4_debounce_count++;
+        if (ch4_debounce_count >= 5)
+        {
+            ch4_last_valid_state = ch4_current_raw;
+            ch4_debounce_count = 0;
+        }
     }
+    else
+    {
+        ch4_debounce_count = 0;
+    }
+
+    if (ch4_last_valid_state == 0)
+        g_fallen = true;
+    else if (ch4_last_valid_state == 2)
+        g_fallen = false;
 
     // --------------------------------------------------------
     // Step 4: 处理转向 (CH1)
