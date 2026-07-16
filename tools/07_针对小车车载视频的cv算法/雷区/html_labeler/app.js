@@ -572,7 +572,6 @@ async function writeTextToOutput(name, text) {
 function buildAnnotationJsonPayload(entry, editState) {
   return {
     image_name: entry.name,
-    image_relative_path: entry.relativePath,
     image_width: state.currentFrame?.baseImageData.width ?? null,
     image_height: state.currentFrame?.baseImageData.height ?? null,
     inner_segments: editState.segments.inner.map(cloneSegment),
