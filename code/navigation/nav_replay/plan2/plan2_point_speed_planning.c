@@ -192,13 +192,13 @@ static uint8 ShouldTriggerSpecialAction(float dist_to_point, float speed_abs, fl
                    (yaw_ok != 0U));
 }
 
-// 单周期速度斜率限制；普通巡航仍然平滑，但雷区停车阶段会直接绕过它给 0。
+// 单周期速度斜率限制；普通巡航仍然平滑，但雷区停车阶段会直接绕过它给 0�?
 static float SpeedSlew(float raw_speed)
 {
     float diff = raw_speed - s_prev_speed_cmd;
     float step_limit = NAV_POINT_SPEED_ACCEL_STEP;
 
-    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
+    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平�?
     if (((raw_speed * s_prev_speed_cmd) >= 0.0f) &&
         (fabsf(raw_speed) > fabsf(s_prev_speed_cmd)))
     {
@@ -252,7 +252,7 @@ static float CalcSpinTotalAngle(float current_yaw, float exit_yaw, float spin_si
     return total_angle;
 }
 
-// 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组。
+// 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组�?
 static void ConfigureSpinPlanForPoint(uint16 point_idx)
 {
     uint16 next_idx = (uint16)(point_idx + 1U);
@@ -321,7 +321,7 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
     Minefield_SetSpinPlan(best_total_angle, best_exit_yaw, best_spin_sign);
 }
 
-// 在“正向朝向目标点”和“反向朝向目标点”之间自动选择转向误差更小的一侧。
+// 在“正向朝向目标点”和“反向朝向目标点”之间自动选择转向误差更小的一侧�?
 static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, float *speed_sign)
 {
     float err_forward = NormalizeAngle(point_yaw_deg - inertial_nav.relative_yaw);
@@ -329,7 +329,7 @@ static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, flo
     float err_reverse = NormalizeAngle(reverse_yaw - inertial_nav.relative_yaw);
 
 #if NAV_PLAN2_ALLOW_REVERSE_TO_NEXT_POINT
-    // 允许倒车时，自动比较车头/车尾朝向目标点所需的转角，选更快的一侧。
+    // 允许倒车时，自动比较车头/车尾朝向目标点所需的转角，选更快的一侧�?
     if ((fabsf(err_reverse) + NAV_POINT_REVERSE_SELECT_BIAS_DEG) < fabsf(err_forward))
     {
         *selected_err_deg = err_reverse;
@@ -343,7 +343,7 @@ static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, flo
     }
 }
 
-// 按“离停车边界还剩多少距离”实时规划允许速度上限。
+// 按“离停车边界还剩多少距离”实时规划允许速度上限�?
 static float PlanDistanceSpeedAbs(float dist_mm, float stop_radius_mm)
 {
     float remain = dist_mm - stop_radius_mm;
@@ -381,8 +381,8 @@ static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float y
     return speed_abs;
 }
 
-// 统一处理雷区点“提前刹停 -> 中心停车 -> 触发旋转/特殊动作”流程。
-// 返回 0 表示未接管；返回 1 表示本周期已接管导航输出；返回 2 表示本周期已触发特殊动作。
+// 统一处理雷区点“提前刹�?-> 中心停车 -> 触发旋转/特殊动作”流程�?
+// 返回 0 表示未接管；返回 1 表示本周期已接管导航输出；返�?2 表示本周期已触发特殊动作�?
 static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
                                               uint8 point_type,
                                               float dist_to_point,
@@ -458,7 +458,7 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     return 1U;
 }
 
-// 最后点是通过结束点，不做精确停车稳定判定。
+// 最后点是通过结束点，不做精确停车稳定判定�?
 static uint8 ShouldFinishAtLastPoint(uint16 point_idx, float dist_to_point)
 {
     const NavRamPoint_t *finish_point = &nav_ram_data.points[point_idx];

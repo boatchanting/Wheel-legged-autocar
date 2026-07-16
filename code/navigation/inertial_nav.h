@@ -71,4 +71,6 @@ void InertialNav_Update(float curr_yaw,
                         float acc_lat_left, float acc_lon_forward, 
                         float speed_L, float speed_R, float gyro_z_rad_s);
 
+#include "nav_pose_fusion.h"
+
 #endif // _INERTIAL_NAV_H_

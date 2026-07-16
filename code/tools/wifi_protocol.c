@@ -3,6 +3,7 @@
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
 #include "../navigation/nav_replay/nav_replay.h"
+#include "../navigation/nav_pose_fusion.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -366,6 +367,12 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&inertial_nav.y);
     write_u32_or_float(&inertial_nav.vx_body);
     write_u32_or_float(&inertial_nav.vy_body);
+
+    // B2. fused nav
+    write_u32_or_float(&nav_pose_fusion.fused_x_mm);
+    write_u32_or_float(&nav_pose_fusion.fused_y_mm);
+    write_u32_or_float(&nav_pose_fusion.fused_vx_body);
+    write_u32_or_float(&nav_pose_fusion.gps_weight);
 
     // C. GNSS fields
     write_u16(gnss.time.year);

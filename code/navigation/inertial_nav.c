@@ -1,5 +1,6 @@
 #include "inertial_nav.h"
 #include "../config/sys_options.h"
+#include "nav_pose_fusion.h"
 
 // --- 宏定义 ---
 #ifndef M_PI
@@ -178,4 +179,7 @@ void InertialNav_Update(float curr_yaw,
     // 如果 vx_world 是正（前进），则 dx 应为负
     inertial_nav.x += vx_world * NAV_DT; 
     inertial_nav.y += vy_world * NAV_DT; 
+    
+    // 更新互补滤波 (10ms)
+    NavPoseFusion_Update(NAV_DT);
 }

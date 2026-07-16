@@ -1172,6 +1172,9 @@
                 <name>$PROJ_DIR$\..\..\code\navigation\inertial_nav.c</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_pose_fusion.c</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\inertial_nav.h</name>
             </file>
             <file>

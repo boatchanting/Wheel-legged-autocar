@@ -1142,6 +1142,9 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\line_vision.c</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_pose_fusion.c</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\line_vision.h</name>
             </file>
             <file>

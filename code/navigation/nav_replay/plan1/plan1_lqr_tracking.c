@@ -9,7 +9,7 @@ extern volatile float err_degree;
 extern float current_actual_speed;
 #include "../../../calculate/pid-new.h"
 
-/* 回放对外状态变量：名称保持和其他 Plan1 方案一致，便于上层任务无感切换。 */
+/* 回放对外状态变量：名称保持和其�?Plan1 方案一致，便于上层任务无感切换�?*/
 NavReplayState_e g_replay_state = REPLAY_IDLE;
 uint16 g_target_idx = 0;
 uint8 g_current_point_type = NAV_POINT_PATH;
@@ -31,14 +31,14 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #define PLAN1_FAST_UTURN_ENABLE 0
 #endif
 
-/* 极速掉头运行参数只放在科目一运行模块里，方便试车时局部调整，不污染全局 sys_options.h。 */
+/* 极速掉头运行参数只放在科目一运行模块里，方便试车时局部调整，不污染全局 sys_options.h�?*/
 #define PLAN1_FAST_UTURN_INVALID_IDX              0xFFFFU
 #define PLAN1_FAST_UTURN_TRIGGER_DIST_MM          90.0f
 #define PLAN1_FAST_UTURN_ENTRY_YAW_TOL_DEG        1.0f // 严格收紧接回阈值，确保自旋对准
 #define PLAN1_FAST_UTURN_KICK_STEER_DEG           42.0f
 #define PLAN1_FAST_UTURN_KICK_MIN_STEER           25.0f // 自旋最小目标差速，防止P控制死区卡死
 #define PLAN1_FAST_UTURN_KICK_SPEED_CMD           0.0f
-#define PLAN1_FAST_UTURN_ALIGN_KP                 2.5f  // 闭环比例控制参数，解决过冲
+#define PLAN1_FAST_UTURN_ALIGN_KP                 2.5f  // 闭环比例控制参数，解决过�?
 #define PLAN1_FAST_UTURN_KICK_MIN_TICKS           4U
 #define PLAN1_FAST_UTURN_KICK_TIMEOUT_TICKS       120U
 #define PLAN1_FAST_UTURN_RECOVER_TICKS            30U
@@ -61,13 +61,13 @@ typedef enum
 } Plan1FastUTurnLead_e;
 
 /*
- * LQR 本周期参考量：
+ * LQR 本周期参考量�?
  *   x/y          ：车身当前位置投影到最近路径线段后的参考点
  *   yaw_deg      ：从预览点读取的路径切线航向 target_yaw_deg
  *   curvature    ：从预览点读取的离线路径曲率
- *   target_speed ：从最近点读取的离线速度规划值
+ *   target_speed ：从最近点读取的离线速度规划�?
  *   point_type   ：最近点类型，保留给上层特殊动作逻辑
- *   idx          ：预览参考点索引，主要用于调试观察
+ *   idx          ：预览参考点索引，主要用于调试观�?
  */
 typedef struct
 {
@@ -99,10 +99,10 @@ static uint8 s_start_heading_stable_count = 0;
 static void NavReplay_ResetProcessState(void);
 
 /**
- * @brief 角度归一化到 [-180, 180] deg。
- * @param angle 原始角度，单位 deg。
- * @return 归一化后的角度，单位 deg。
- * @note 用于航向误差 e_psi，避免 179/-179 度跨界时突然跳变。
+ * @brief 角度归一化到 [-180, 180] deg�?
+ * @param angle 原始角度，单�?deg�?
+ * @return 归一化后的角度，单位 deg�?
+ * @note 用于航向误差 e_psi，避�?179/-179 度跨界时突然跳变�?
  */
 static float NormalizeAngle(float angle)
 {
@@ -112,9 +112,9 @@ static float NormalizeAngle(float angle)
 }
 
 /**
- * @brief 计算两点欧氏距离。
- * @return 距离，单位 mm。
- * @note 只在终点到达判断等低频位置使用，平方距离搜索用 CalcDistanceSq()。
+ * @brief 计算两点欧氏距离�?
+ * @return 距离，单�?mm�?
+ * @note 只在终点到达判断等低频位置使用，平方距离搜索�?CalcDistanceSq()�?
  */
 static float CalcDistance(float x1, float y1, float x2, float y2)
 {
@@ -122,9 +122,9 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
 }
 
 /**
- * @brief 计算两点距离平方。
- * @return 距离平方，单位 mm^2。
- * @note 最近点搜索大量调用，用平方距离避免频繁开方。
+ * @brief 计算两点距离平方�?
+ * @return 距离平方，单�?mm^2�?
+ * @note 最近点搜索大量调用，用平方距离避免频繁开方�?
  */
 static float CalcDistanceSq(float x1, float y1, float x2, float y2)
 {
@@ -165,8 +165,8 @@ static float NavReplay_LerpBySpeed(float low_value, float high_value, float spee
 }
 
 /**
- * @brief 清空极速掉头运行态。
- * @note 不改惯导坐标和 yaw 零点，只清动作状态，避免“地图跳了但车没动”的问题。
+ * @brief 清空极速掉头运行态�?
+ * @note 不改惯导坐标�?yaw 零点，只清动作状态，避免“地图跳了但车没动”的问题�?
  */
 static void NavReplay_FastUTurn_ClearRuntime(void)
 {
@@ -178,8 +178,8 @@ static void NavReplay_FastUTurn_ClearRuntime(void)
 }
 
 /**
- * @brief 从当前路径表里查找极速掉头动作点。
- * @note 离线路径生成脚本会把过线动作点标成 NAV_POINT_JUMP；找不到该点就保持普通 LQR。
+ * @brief 从当前路径表里查找极速掉头动作点�?
+ * @note 离线路径生成脚本会把过线动作点标�?NAV_POINT_JUMP；找不到该点就保持普�?LQR�?
  */
 static void NavReplay_FastUTurn_InitFromRoute(void)
 {
@@ -206,9 +206,9 @@ static uint8 NavReplay_FastUTurn_IsActiveAction(void)
 }
 
 /**
- * @brief 读取指定索引附近路径的车上航向方向。
- * @note 路径表 target_yaw_deg 才是车上 LQR 使用的航向基准，不能直接用 atan2(dy, dx)，否则坐标系会差 180 度。
- *       如果离线急刹倒车路径已经把 yaw 加过 180 度，这里按速度符号还原成真实路径切线。
+ * @brief 读取指定索引附近路径的车上航向方向�?
+ * @note 路径�?target_yaw_deg 才是车上 LQR 使用的航向基准，不能直接�?atan2(dy, dx)，否则坐标系会差 180 度�?
+ *       如果离线急刹倒车路径已经�?yaw 加过 180 度，这里按速度符号还原成真实路径切线�?
  */
 static float NavReplay_FastUTurn_GetPathYawAtIndex(uint16 start_idx)
 {
@@ -249,17 +249,17 @@ static float NavReplay_FastUTurn_GetPostPathYaw(void)
         return inertial_nav.relative_yaw;
     }
 
-    // 读取真正的出弯直线切线：由于掉头点(action_idx)处于V字形折点，
-    // 其切线角度是由进弯和出弯两点平均而来，比真实的绕桩直线往内侧偏移。
-    // 往后读取5个点（约5cm），可以获取纯正的出弯直线方向，避免向内过早切入撞桩。
+    // 读取真正的出弯直线切线：由于掉头�?action_idx)处于V字形折点�?
+    // 其切线角度是由进弯和出弯两点平均而来，比真实的绕桩直线往内侧偏移�?
+    // 往后读�?个点（约5cm），可以获取纯正的出弯直线方向，避免向内过早切入撞桩�?
     return NavReplay_FastUTurn_GetPathYawAtIndex(s_fast_uturn_action_idx + 5U);
 }
 
 /**
- * @brief 选车头还是车尾接入后段路径。
- * @param path_yaw_deg 后段路径物理切线方向。
- * @param lead 输出：车头超前或车尾超前。
- * @param lead_err_deg 输出：所选车头/车尾到目标方向的角度误差。
+ * @brief 选车头还是车尾接入后段路径�?
+ * @param path_yaw_deg 后段路径物理切线方向�?
+ * @param lead 输出：车头超前或车尾超前�?
+ * @param lead_err_deg 输出：所选车�?车尾到目标方向的角度误差�?
  */
 static void NavReplay_FastUTurn_SelectLead(float path_yaw_deg, uint8 *lead, float *lead_err_deg)
 {
@@ -269,8 +269,8 @@ static void NavReplay_FastUTurn_SelectLead(float path_yaw_deg, uint8 *lead, floa
 }
 
 /**
- * @brief 判断是否已经能接回后段路径。
- * @note 只判断车头，进入设定阈值即可切回 LQR。
+ * @brief 判断是否已经能接回后段路径�?
+ * @note 只判断车头，进入设定阈值即可切�?LQR�?
  */
 static uint8 NavReplay_FastUTurn_SelectReadyLead(float path_yaw_deg, uint8 *lead)
 {
@@ -300,8 +300,8 @@ static float NavReplay_FastUTurn_SpeedForLead(float abs_speed, uint8 lead)
 }
 
 /**
- * @brief 进入后段路径跟踪。
- * @note 只设置接入方式和索引恢复窗口，不改地图、不改惯导 yaw 基准。
+ * @brief 进入后段路径跟踪�?
+ * @note 只设置接入方式和索引恢复窗口，不改地图、不改惯�?yaw 基准�?
  */
 static void NavReplay_FastUTurn_EnterPostTrack(uint8 lead)
 {
@@ -313,7 +313,7 @@ static void NavReplay_FastUTurn_EnterPostTrack(uint8 lead)
     g_current_point_type = NAV_POINT_PATH;
     g_special_action_trigger = 0U;
 
-    /* 接回路径前清掉旧 LQR 误差和速度滤波，避免动作阶段的大转角拖到绕桩段。 */
+    /* 接回路径前清掉旧 LQR 误差和速度滤波，避免动作阶段的大转角拖到绕桩段�?*/
     s_prev_err_degree = 0.0f;
     s_prev_speed_set = 0.0f;
     target_speed_set = NAV_SPEED_STOP;
@@ -334,7 +334,7 @@ static uint8 NavReplay_FastUTurn_ShouldTrigger(uint16 base_idx)
         return 1U;
     }
 
-    dist_to_action = CalcDistance(inertial_nav.x, inertial_nav.y,
+    dist_to_action = CalcDistance(nav_pose_fusion.fused_x_mm, nav_pose_fusion.fused_y_mm,
                                   nav_ram_data.points[s_fast_uturn_action_idx].x,
                                   nav_ram_data.points[s_fast_uturn_action_idx].y);
     return (uint8)(dist_to_action <= PLAN1_FAST_UTURN_TRIGGER_DIST_MM);
@@ -345,14 +345,14 @@ static void NavReplay_FastUTurn_StartAction(void)
     s_fast_uturn_state_ticks = 0U;
     g_plan1_fast_uturn_lead = (uint8)PLAN1_FAST_UTURN_LEAD_NONE;
     g_special_action_trigger = 0U;
-    /* NAV_POINT_JUMP 在这里已经被极速掉头内部消费掉，对外保持普通路径点，避免旧跳跃状态机误接管。 */
+    /* NAV_POINT_JUMP 在这里已经被极速掉头内部消费掉，对外保持普通路径点，避免旧跳跃状态机误接管�?*/
     g_current_point_type = NAV_POINT_PATH;
     g_plan1_fast_uturn_state = (uint8)PLAN1_FAST_UTURN_STATE_KICK_TURN;
 }
 
 /**
- * @brief 极速掉头动作阶段接管输出。
- * @return 1：本周期已接管，主 LQR 不再输出；0：已经接回路径，可继续主 LQR。
+ * @brief 极速掉头动作阶段接管输出�?
+ * @return 1：本周期已接管，�?LQR 不再输出�?：已经接回路径，可继续主 LQR�?
  */
 static uint8 NavReplay_FastUTurn_ProcessAction(void)
 {
@@ -374,7 +374,7 @@ static uint8 NavReplay_FastUTurn_ProcessAction(void)
 
     NavReplay_FastUTurn_SelectLead(path_yaw, &lead, &lead_err);
     
-    // 闭环比例控制：差速自旋
+    // 闭环比例控制：差速自�?
     spin_cmd = PLAN1_FAST_UTURN_ALIGN_KP * lead_err;
     if ((spin_cmd > 0.0f) && (spin_cmd < PLAN1_FAST_UTURN_KICK_MIN_STEER))
     {
@@ -410,8 +410,8 @@ static uint8 NavReplay_FastUTurn_ProcessAction(void)
 }
 
 /**
- * @brief 后段跟踪时按“车头超前/车尾超前”修正参考 yaw 和速度符号。
- * @note 仍使用同一条路径坐标，只有车身姿态目标和速度方向随接入端切换。
+ * @brief 后段跟踪时按“车头超�?车尾超前”修正参�?yaw 和速度符号�?
+ * @note 仍使用同一条路径坐标，只有车身姿态目标和速度方向随接入端切换�?
  */
 static void NavReplay_FastUTurn_ApplyLeadReference(LqrReference_t *ref)
 {
@@ -427,7 +427,7 @@ static void NavReplay_FastUTurn_ApplyLeadReference(LqrReference_t *ref)
     path_yaw = NavReplay_FastUTurn_GetPathYawAtIndex(ref->preview_idx);
     abs_speed = fabsf(ref->target_speed);
     
-    // 强制起步速度激发：掉头完毕后即使路径点规划速度为0，也强制给一个较高的初始速度，打破零速度陷阱
+    // 强制起步速度激发：掉头完毕后即使路径点规划速度�?，也强制给一个较高的初始速度，打破零速度陷阱
     if ((g_plan1_fast_uturn_state == (uint8)PLAN1_FAST_UTURN_STATE_POST_TRACK) &&
         (s_fast_uturn_recover_ticks > 0U))
     {
@@ -454,9 +454,9 @@ static void NavReplay_FastUTurn_ApplyLeadReference(LqrReference_t *ref)
 }
 
 /**
- * @brief 将编译期静态路径表装载到 nav_ram_data。
- * @return 实际装载点数。
- * @note 路径表每行 7 字段，NavRamPoint_t 最后一项 curvature 会一起复制。
+ * @brief 将编译期静态路径表装载�?nav_ram_data�?
+ * @return 实际装载点数�?
+ * @note 路径表每�?7 字段，NavRamPoint_t 最后一�?curvature 会一起复制�?
  */
 uint16 NavReplay_LoadStaticRouteToRam(void)
 {
@@ -484,8 +484,8 @@ uint16 NavReplay_LoadStaticRouteToRam(void)
 }
 
 /**
- * @brief 启动 Plan1 LQR 路径回放。
- * @note 完成静态路径装载、索引清零、状态机切到 REPLAY_RUNNING，并清空滤波/斜率历史。
+ * @brief 启动 Plan1 LQR 路径回放�?
+ * @note 完成静态路径装载、索引清零、状态机切到 REPLAY_RUNNING，并清空滤波/斜率历史�?
  */
 void NavReplay_Start(void)
 {
@@ -527,8 +527,8 @@ void NavReplay_Start(void)
 }
 
 /**
- * @brief 停止 Plan1 LQR 路径回放。
- * @note 清零速度、转向误差和过程状态。上层急停/任务结束时可直接调用。
+ * @brief 停止 Plan1 LQR 路径回放�?
+ * @note 清零速度、转向误差和过程状态。上层急停/任务结束时可直接调用�?
  */
 void NavReplay_Stop(void)
 {
@@ -552,8 +552,8 @@ void NavReplay_Stop(void)
 }
 
 /**
- * @brief 清空 LQR 跟踪过程状态。
- * @note 包括上一周期转向输出、速度输出、特殊动作恢复标志。
+ * @brief 清空 LQR 跟踪过程状态�?
+ * @note 包括上一周期转向输出、速度输出、特殊动作恢复标志�?
  */
 static void NavReplay_ResetProcessState(void)
 {
@@ -563,10 +563,10 @@ static void NavReplay_ResetProcessState(void)
 }
 
 /**
- * @brief 速度指令斜率限制。
- * @param raw_speed 路径表给出的原始 target_speed，符号方向不改变。
- * @return 限制单周期变化量后的速度指令。
- * @note 保留纯追踪速度规划版的分段限斜率风格，避免速度目标突然跳变。
+ * @brief 速度指令斜率限制�?
+ * @param raw_speed 路径表给出的原始 target_speed，符号方向不改变�?
+ * @return 限制单周期变化量后的速度指令�?
+ * @note 保留纯追踪速度规划版的分段限斜率风格，避免速度目标突然跳变�?
  */
 static float NavReplay_SpeedSlew_Update(float raw_speed)
 {
@@ -580,7 +580,7 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     static ControlMode_e s_current_req_mode = CONTROL_MODE_NORMAL;
     static uint16 s_mode_cooldown = 0;
 
-    // --- 1. 基于实际车速决定目标 PID 模式 ---
+    // --- 1. 基于实际车速决定目�?PID 模式 ---
     float actual_speed_clamped = (abs_actual < 50.0f) ? 0.0f : current_actual_speed;
     if ((raw_speed * actual_speed_clamped) < 0.0f)
     {
@@ -605,11 +605,11 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
         // 紧急情况：需要刹车，无视冷却立即切换
         s_current_req_mode = CONTROL_MODE_BRAKE;
         Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
-        s_mode_cooldown = 30; // 切换后进入 300ms 冷却
+        s_mode_cooldown = 30; // 切换后进�?300ms 冷却
     }
     else if (target_mode != s_current_req_mode && s_mode_cooldown == 0)
     {
-        // 正常切换：冷却完毕允许切换
+        // 正常切换：冷却完毕允许切�?
         s_current_req_mode = target_mode;
         Control_Profile_RequestMode(target_mode);
         s_mode_cooldown = 30; // 重置 300ms 冷却
@@ -617,15 +617,15 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     else if (s_mode_cooldown > 0)
     {
         s_mode_cooldown--;
-        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状态
+        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状�?
     }
     else
     {
         Control_Profile_RequestMode(target_mode); // 平稳保持
     }
 
-    // --- 3. 速度曲线斜率生成 (基于前馈目标，保证目标平滑) ---
-    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
+    // --- 3. 速度曲线斜率生成 (基于前馈目标，保证目标平�? ---
+    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平�?
     if (((raw_speed * s_prev_speed_set) >= 0.0f) &&
         (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS)))
     {
@@ -654,9 +654,9 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
 
 #if IMU_CATEGORY == 3
 /**
- * @brief 处理起跑前航向对齐。
- * @return 1：对齐完成；0：仍在对齐中。
- * @note 只在 IMU_CATEGORY == 3 时启用，使用路径表头部生成的起跑航向配置。
+ * @brief 处理起跑前航向对齐�?
+ * @return 1：对齐完成；0：仍在对齐中�?
+ * @note 只在 IMU_CATEGORY == 3 时启用，使用路径表头部生成的起跑航向配置�?
  */
 static uint8 NavReplay_HandleStartHeadingAlignment(void)
 {
@@ -694,13 +694,13 @@ static uint8 NavReplay_HandleStartHeadingAlignment(void)
 }
 
 /**
- * @brief 起跑航向对齐完成后重置惯导起点。
- * @note 保持和旧 Plan1 方案一致，避免起跑前等待阶段累计的位置/速度影响首段跟踪。
+ * @brief 起跑航向对齐完成后重置惯导起点�?
+ * @note 保持和旧 Plan1 方案一致，避免起跑前等待阶段累计的位置/速度影响首段跟踪�?
  */
 static void NavReplay_ResetLaunchPose(void)
 {
-    inertial_nav.x = 0.0f;
-    inertial_nav.y = 0.0f;
+    nav_pose_fusion.fused_x_mm = 0.0f;
+    nav_pose_fusion.fused_y_mm = 0.0f;
     inertial_nav.vx_body = 0.0f;
     inertial_nav.vy_body = 0.0f;
     inertial_nav.slip_flag = 0;
@@ -719,11 +719,11 @@ static void NavReplay_ResetLaunchPose(void)
 #endif
 
 /**
- * @brief 查找前方最近的停车屏障点。
- * @param start_idx 搜索起点索引。
- * @param search_range 向前搜索窗口，单位：点数。
- * @return 圆环点、零速点或终点索引。
- * @note LQR 参考点不会越过停车屏障，防止到终点或特殊点附近还看穿过去。
+ * @brief 查找前方最近的停车屏障点�?
+ * @param start_idx 搜索起点索引�?
+ * @param search_range 向前搜索窗口，单位：点数�?
+ * @return 圆环点、零速点或终点索引�?
+ * @note LQR 参考点不会越过停车屏障，防止到终点或特殊点附近还看穿过去�?
  */
 static uint16 NavReplay_FindStopBarrierIndex(uint16 start_idx, uint16 search_range)
 {
@@ -769,12 +769,12 @@ static uint16 NavReplay_FindStopBarrierIndex(uint16 start_idx, uint16 search_ran
 }
 
 /**
- * @brief 单调向前最近点搜索。
- * @param current_idx 当前基准索引。
- * @param search_range 向前搜索窗口，单位：点数。
- * @param is_recovering 是否处于特殊动作结束后的恢复期。
- * @return 更新后的最近点索引。
- * @note 只允许索引向前搜索，不回头找点，用来压住掉头回程时的索引跳变。
+ * @brief 单调向前最近点搜索�?
+ * @param current_idx 当前基准索引�?
+ * @param search_range 向前搜索窗口，单位：点数�?
+ * @param is_recovering 是否处于特殊动作结束后的恢复期�?
+ * @return 更新后的最近点索引�?
+ * @note 只允许索引向前搜索，不回头找点，用来压住掉头回程时的索引跳变�?
  */
 static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, uint8 is_recovering)
 {
@@ -813,7 +813,7 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
 
     for (i = current_idx; i <= end_idx; i++)
     {
-        float d_sq = CalcDistanceSq(inertial_nav.x, inertial_nav.y,
+        float d_sq = CalcDistanceSq(nav_pose_fusion.fused_x_mm, nav_pose_fusion.fused_y_mm,
                                     nav_ram_data.points[i].x, nav_ram_data.points[i].y);
         if (d_sq < min_dist_sq)
         {
@@ -831,12 +831,12 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
 }
 
 /**
- * @brief 根据最近点和停车屏障选择预览点。
- * @param base_idx 最近路径点索引。
- * @param stop_idx 前方停车屏障索引。
- * @return 预览点索引。
- * @note 默认最多向前 LQR_PREVIEW_POINTS 个点；检测到急弯时自动缩短到
- *       LQR_SHARP_PREVIEW_POINTS，且不会越过 stop_idx。
+ * @brief 根据最近点和停车屏障选择预览点�?
+ * @param base_idx 最近路径点索引�?
+ * @param stop_idx 前方停车屏障索引�?
+ * @return 预览点索引�?
+ * @note 默认最多向�?LQR_PREVIEW_POINTS 个点；检测到急弯时自动缩短到
+ *       LQR_SHARP_PREVIEW_POINTS，且不会越过 stop_idx�?
  */
 static uint16 NavReplay_GetPreviewIndex(uint16 base_idx, uint16 stop_idx)
 {
@@ -875,7 +875,7 @@ static uint16 NavReplay_GetPreviewIndex(uint16 base_idx, uint16 stop_idx)
         nominal_ref_idx = last_idx;
     }
 
-    /* 急弯入口不看太远，避免参考航向一下子跳到弯内很深的位置。 */
+    /* 急弯入口不看太远，避免参考航向一下子跳到弯内很深的位置�?*/
     for (i = base_idx; i <= nominal_ref_idx; i++)
     {
         if (fabsf(nav_ram_data.points[i].curvature) >= LQR_SHARP_CURVATURE_TH)
@@ -899,11 +899,11 @@ static uint16 NavReplay_GetPreviewIndex(uint16 base_idx, uint16 stop_idx)
 }
 
 /**
- * @brief 构造本周期 LQR 参考量。
- * @param base_idx 最近点索引。
- * @param stop_idx 前方停车屏障索引。
- * @param ref 输出参考量结构体。
- * @note x/y 使用车当前位置到最近线段的投影点，yaw/curvature 使用预览点，速度使用最近点。
+ * @brief 构造本周期 LQR 参考量�?
+ * @param base_idx 最近点索引�?
+ * @param stop_idx 前方停车屏障索引�?
+ * @param ref 输出参考量结构体�?
+ * @note x/y 使用车当前位置到最近线段的投影点，yaw/curvature 使用预览点，速度使用最近点�?
  */
 static void NavReplay_BuildReference(uint16 base_idx, uint16 stop_idx, LqrReference_t *ref)
 {
@@ -946,8 +946,8 @@ static void NavReplay_BuildReference(uint16 base_idx, uint16 stop_idx, LqrRefere
     seg_len = sqrtf(seg_len_sq);
     if (seg_len_sq > (LQR_PROJECTION_MIN_SEG_LEN_MM * LQR_PROJECTION_MIN_SEG_LEN_MM))
     {
-        float car_dx = inertial_nav.x - base->x;
-        float car_dy = inertial_nav.y - base->y;
+        float car_dx = nav_pose_fusion.fused_x_mm - base->x;
+        float car_dy = nav_pose_fusion.fused_y_mm - base->y;
         proj_t = (car_dx * seg_dx + car_dy * seg_dy) / seg_len_sq;
         proj_t = Float_Constrain(proj_t, 0.0f, 1.0f);
     }
@@ -973,10 +973,10 @@ static void NavReplay_BuildReference(uint16 base_idx, uint16 stop_idx, LqrRefere
 }
 
 /**
- * @brief 根据速度方向得到曲率前馈符号。
- * @param target_speed 路径表速度指令。
- * @return 曲率符号修正系数，通常为 1 或 -1。
- * @note 本车默认 target_speed < 0 为前进；如果后续速度方向约定变了，只改头文件宏。
+ * @brief 根据速度方向得到曲率前馈符号�?
+ * @param target_speed 路径表速度指令�?
+ * @return 曲率符号修正系数，通常�?1 �?-1�?
+ * @note 本车默认 target_speed < 0 为前进；如果后续速度方向约定变了，只改头文件宏�?
  */
 static float NavReplay_GetCurvatureDirectionSign(float target_speed)
 {
@@ -997,15 +997,15 @@ static float NavReplay_GetCurvatureDirectionSign(float target_speed)
 }
 
 /**
- * @brief 计算简化 LQR 转向误差输出。
- * @param ref 本周期参考量。
- * @return 最终 err_degree，已经过限幅、变化率限制和低通滤波。
- * @note e_y 为横向误差，e_psi 为路径切线航向误差，curvature 为离线曲率前馈。
+ * @brief 计算简�?LQR 转向误差输出�?
+ * @param ref 本周期参考量�?
+ * @return 最�?err_degree，已经过限幅、变化率限制和低通滤波�?
+ * @note e_y 为横向误差，e_psi 为路径切线航向误差，curvature 为离线曲率前馈�?
  */
 static float NavReplay_CalcLqrErr(const LqrReference_t *ref)
 {
-    float dx = inertial_nav.x - ref->x;
-    float dy = inertial_nav.y - ref->y;
+    float dx = nav_pose_fusion.fused_x_mm - ref->x;
+    float dy = nav_pose_fusion.fused_y_mm - ref->y;
     /* x positive backward, y positive right: e_y > 0 means car is right of path. */
     float e_y = ref->local_tangent_y * dx - ref->local_tangent_x * dy;
     float e_psi = NormalizeAngle(ref->local_yaw_deg - inertial_nav.relative_yaw);
@@ -1071,14 +1071,14 @@ static float NavReplay_CalcLqrErr(const LqrReference_t *ref)
 }
 
 /**
- * @brief Plan1 LQR 主循环。
- * @note 周期调用流程：
- *       1. 处理起跑航向对齐；
+ * @brief Plan1 LQR 主循环�?
+ * @note 周期调用流程�?
+ *       1. 处理起跑航向对齐�?
  *       2. 处理特殊动作接管和恢复；
- *       3. 单调更新最近点索引；
+ *       3. 单调更新最近点索引�?
  *       4. 查找停车屏障和终点；
- *       5. 构造投影/预览参考点；
- *       6. 输出 err_degree 和 target_speed_set。
+ *       5. 构造投�?预览参考点�?
+ *       6. 输出 err_degree �?target_speed_set�?
  */
 void NavReplay_Process(void)
 {
@@ -1163,7 +1163,7 @@ void NavReplay_Process(void)
 
     last_idx = (uint16)(nav_ram_data.point_count - 1U);
     stop_idx = NavReplay_FindStopBarrierIndex((uint16)base_idx, (uint16)(last_idx - (uint16)base_idx));
-    dist_to_stop = CalcDistance(inertial_nav.x, inertial_nav.y,
+    dist_to_stop = CalcDistance(nav_pose_fusion.fused_x_mm, nav_pose_fusion.fused_y_mm,
                                 nav_ram_data.points[stop_idx].x, nav_ram_data.points[stop_idx].y);
 
     if ((stop_idx == last_idx) && (dist_to_stop <= NAV_DIST_ARRIVE))

@@ -48,7 +48,7 @@ static float CalcBearingDeg(float x1, float y1, float x2, float y2)
     return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
 }
 
-// 重置雷区停车稳定判定状态；切换目标点或退出雷区捕获逻辑时调用。
+// 重置雷区停车稳定判定状态；切换目标点或退出雷区捕获逻辑时调用�?
 static void ResetSpecialStopState(void)
 {
     s_special_stop_stable_ticks = 0U;
@@ -66,7 +66,7 @@ static uint8 IsSpecialPointType(uint8 point_type)
     return (uint8)(point_type != NAV_POINT_PATH);
 }
 
-// 估算车体当前沿“车->目标点”方向的逼近速度；大于 0 表示正在朝目标点逼近。
+// 估算车体当前沿“车->目标点”方向的逼近速度；大�?0 表示正在朝目标点逼近�?
 static float ComputeApproachSpeedToPoint(float target_x, float target_y)
 {
     float dist = CalcDistance(inertial_nav.x, inertial_nav.y, target_x, target_y);
@@ -94,8 +94,8 @@ static float ComputeApproachSpeedToPoint(float target_x, float target_y)
     return vx_world * ux + vy_world * uy;
 }
 
-// 判断是否要进入“雷区刹停捕获”阶段。
-// 严格模式按固定准备距离进入；宽松模式允许按预测距离更早进入减速准备。
+// 判断是否要进入“雷区刹停捕获”阶段�?
+// 严格模式按固定准备距离进入；宽松模式允许按预测距离更早进入减速准备�?
 static uint8 ShouldStartSpecialBrakeCapture(float dist_to_center, float approach_speed)
 {
     if (dist_to_center <= NAV_SPECIAL_BRAKE_PREP_DIST)
@@ -125,7 +125,7 @@ static uint8 ShouldStartSpecialBrakeCapture(float dist_to_center, float approach
     return 0U;
 }
 
-// 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组。
+// 从触发瞬间的当前车头角出发，分别计算车头/车尾朝向下一个目标点的总旋转角度，选更快的一组�?
 static void ConfigureSpinPlanForPoint(uint16 point_idx)
 {
     uint16 next_idx = (uint16)(point_idx + 1U);
@@ -198,8 +198,8 @@ static void ConfigureSpinPlanForPoint(uint16 point_idx)
 #endif
 }
 
-// 在“正向朝向目标点”和“反向朝向目标点”之间选择转向误差更小的一种。
-// speed_sign = -1 表示按当前前进符号前进，speed_sign = 1 表示倒车逼近。
+// 在“正向朝向目标点”和“反向朝向目标点”之间选择转向误差更小的一种�?
+// speed_sign = -1 表示按当前前进符号前进，speed_sign = 1 表示倒车逼近�?
 static void SelectDriveHeading(float point_yaw_deg,
                                float *selected_yaw_deg,
                                float *selected_err_deg,
@@ -210,7 +210,7 @@ static void SelectDriveHeading(float point_yaw_deg,
     float err_reverse = NormalizeAngle(reverse_yaw - inertial_nav.relative_yaw);
 
 #if NAV_PLAN2_ALLOW_REVERSE_TO_NEXT_POINT
-    // 允许倒车时，自动比较车头/车尾朝向目标点所需的转角，选更快的一侧。
+    // 允许倒车时，自动比较车头/车尾朝向目标点所需的转角，选更快的一侧�?
     if ((fabsf(err_reverse) + NAV_REVERSE_SELECT_BIAS_DEG) < fabsf(err_forward))
     {
         *selected_yaw_deg = reverse_yaw;
@@ -226,7 +226,7 @@ static void SelectDriveHeading(float point_yaw_deg,
     }
 }
 
-// 对离线路表目标速度做斜率限制，避免路表速度台阶直接传到底盘。
+// 对离线路表目标速度做斜率限制，避免路表速度台阶直接传到底盘�?
 static float OfflineSpeedSlew(float raw_speed)
 {
     float abs_raw = fabsf(raw_speed);
@@ -234,7 +234,7 @@ static float OfflineSpeedSlew(float raw_speed)
     float diff = raw_speed - s_prev_speed_cmd;
     float step_limit;
 
-    // 加速段直接给路表目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
+    // 加速段直接给路表目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平�?
     if (((raw_speed * s_prev_speed_cmd) >= 0.0f) && (abs_raw > abs_prev))
     {
         s_prev_speed_cmd = raw_speed;
@@ -262,7 +262,7 @@ static float OfflineSpeedSlew(float raw_speed)
     return s_prev_speed_cmd;
 }
 
-// 读取离线路表目标速度。普通点按路表速度跑；若路表给 0 但尚未到点，给一个低速兜底防止爬死。
+// 读取离线路表目标速度。普通点按路表速度跑；若路表给 0 但尚未到点，给一个低速兜底防止爬死�?
 static float GetOfflineSpeedAbs(const NavRamPoint_t *point, float nav_dist)
 {
     float speed_abs = fabsf(point->target_speed);
@@ -275,8 +275,8 @@ static float GetOfflineSpeedAbs(const NavRamPoint_t *point, float nav_dist)
     return speed_abs;
 }
 
-// 统一处理雷区点“提前刹停 -> 中心停车 -> 触发旋转/特殊动作”流程。
-// 返回 0 表示未接管；返回 1 表示本周期已接管导航输出；返回 2 表示本周期已触发特殊动作。
+// 统一处理雷区点“提前刹�?-> 中心停车 -> 触发旋转/特殊动作”流程�?
+// 返回 0 表示未接管；返回 1 表示本周期已接管导航输出；返�?2 表示本周期已触发特殊动作�?
 static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
                                               uint8 point_type,
                                               float tx,
@@ -294,7 +294,7 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
         return 0U;
     }
 
-    // 还未进入中心触发半径时，先刹停；速度已经很低后，切换到超低速爬行补进中心。
+    // 还未进入中心触发半径时，先刹停；速度已经很低后，切换到超低速爬行补进中心�?
     if (dist_to_center > NAV_SPECIAL_TRIGGER_RADIUS)
     {
         ResetSpecialStopState();

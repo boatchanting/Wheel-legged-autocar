@@ -33,9 +33,9 @@ static void NavReplay_ResetProcessState(void);
 // ========================= 辅助函数 =========================
 
 /**
- * @brief  角度归一化 (-180 ~ 180)
+ * @brief  角度归一�?(-180 ~ 180)
  * @param  angle 原始角度
- * @return 归一化后的角度
+ * @return 归一化后的角�?
  */
 static float NormalizeAngle(float angle)
 {
@@ -45,7 +45,7 @@ static float NormalizeAngle(float angle)
 }
 
 /**
- * @brief  计算两点间距离
+ * @brief  计算两点间距�?
  */
 static float CalcDistance(float x1, float y1, float x2, float y2)
 {
@@ -91,7 +91,7 @@ void NavReplay_Start(void)
         return;
     }
 
-    g_target_idx = 0; // 从第1个点开始（起始点没有储存，默认为(0,0)）
+    g_target_idx = 0; // 从第1个点开始（起始点没有储存，默认�?0,0)�?
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
 #if IMU_CATEGORY == 3
@@ -133,7 +133,7 @@ void NavReplay_Stop(void)
 
 //如果是科目一，仅仅需要直线行驶即可，这步暂时不做特调的情况下，不需要状态机切换
 
-// 外部/静态变量声明
+// 外部/静态变量声�?
 static float prev_err_degree = 0.0f;
 static float prev_speed_set = 0.0f;
 static float prev_curve_f = 0.0f;
@@ -152,10 +152,10 @@ static inline float CalcDistanceSq(float x1, float y1, float x2, float y2) {
 
 /**
  * @brief 严格单向索引追踪
- * 强制要求索引只能在当前位置往后 [0, search_range] 范围内寻找。
- * 彻底解决在原路折返轨迹中，索引跳到回程路径的问题。
- * 严格单向索引追踪 (带防穿模锁 + 支持大范围重定位)
- * 强制要求索引只能在当前位置往后寻找，且绝不允许跳过特殊点！
+ * 强制要求索引只能在当前位置往�?[0, search_range] 范围内寻找�?
+ * 彻底解决在原路折返轨迹中，索引跳到回程路径的问题�?
+ * 严格单向索引追踪 (带防穿模�?+ 支持大范围重定位)
+ * 强制要求索引只能在当前位置往后寻找，且绝不允许跳过特殊点�?
  */
 static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, uint8 is_recovering)
 {
@@ -197,7 +197,7 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
     if (start_idx >= nav_ram_data.point_count - 5) return 0.0f;
 
     float max_curve = 0.0f;
-    // 分三段扫描前方 (近、中、远)，寻找最急的弯点
+    // 分三段扫描前�?(近、中、远)，寻找最急的弯点
     float check_dists[3] = {preview_dist * 0.4f, preview_dist * 0.7f, preview_dist};
     
     for(int step = 0; step < 3; step++) {
@@ -229,11 +229,11 @@ static float Calculate_Upcoming_Curve_Factor(int start_idx, float preview_dist)
 
 uint8 is_arrived = 0;  // 到达判定状态锁
 
-// 局部静态变量：用于滤波历史保持与下降沿检测
+// 局部静态变量：用于滤波历史保持与下降沿检�?
 static uint8 s_is_aligning = 0;
 static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下降沿）
 
-/*这里注释了，保存的是Pure Pursuit 联合 特殊点直走 状态机*/
+/*这里注释了，保存的是Pure Pursuit 联合 特殊点直�?状态机*/
 
 static void NavReplay_ResetProcessState(void)
 {
@@ -324,14 +324,14 @@ void NavReplay_Process(void)
     }
 #endif
 
-    // 如果状态机正在干预，记录状态并退出
+    // 如果状态机正在干预，记录状态并退�?
     if (g_special_action_trigger == 1) {
         s_prev_trigger = 1;
         return; 
     }
 
     // ==========================================
-    // 🎯 灾后重建机制 (Recovery)：检测状态机刚刚结束的瞬间
+    // 🎯 灾后重建机制 (Recovery)：检测状态机刚刚结束的瞬�?
     // ==========================================
     uint8 is_recovering = 0;
     if (s_prev_trigger == 1 && g_special_action_trigger == 0) {
@@ -339,8 +339,8 @@ void NavReplay_Process(void)
         s_prev_trigger = 0;
         is_arrived = 0;
         
-        // 【关键】：清空历史包袱！
-        // 防止车子把进入特殊点前的旧角度和速度带入到现在，导致突然猛打方向盘
+        // 【关键】：清空历史包袱�?
+        // 防止车子把进入特殊点前的旧角度和速度带入到现在，导致突然猛打方向�?
         prev_err_degree = 0.0f;
         prev_speed_set = 0.0f;
         s_is_aligning = 0; 
@@ -350,8 +350,8 @@ void NavReplay_Process(void)
         #endif
     }
 
-    // 1. 获取当前车辆在路径上的基准索引
-    // 如果是刚刚结束状态机(is_recovering=1)，搜寻范围扩大到 300点(6米)，并豁免距离限制
+    // 1. 获取当前车辆在路径上的基准索�?
+    // 如果是刚刚结束状态机(is_recovering=1)，搜寻范围扩大到 300�?6�?，并豁免距离限制
     int scan_range = is_recovering ? 300 : 80;
     int base_idx = Find_Closest_Point_Index_Strict(g_target_idx, scan_range, is_recovering);
     g_target_idx = base_idx;
@@ -363,7 +363,7 @@ void NavReplay_Process(void)
         return;
     }
 
-    // 2. 往前扫描，寻找即将到来的特殊点以及计算其真实距离
+    // 2. 往前扫描，寻找即将到来的特殊点以及计算其真实距�?
     int special_idx = -1;
     float dist_to_special = 99999.0f;
     // 扫描范围 100个点(2000mm)
@@ -377,7 +377,7 @@ void NavReplay_Process(void)
     }
 
     // ====================================================================
-    // 双模式自动切换：1000mm 内进入"先转再走"模式；否则执行"高速 Pure Pursuit"
+    // 双模式自动切换：1000mm 内进�?先转再走"模式；否则执�?高�?Pure Pursuit"
     // ====================================================================
     if (special_idx != -1 && dist_to_special <= 1000.0f)
     {
@@ -385,8 +385,8 @@ void NavReplay_Process(void)
         // 【模式A】精准逼近模式 (1000mm以内)：先转再走，绝对位置精准触发
         // -------------------------------------------------------------
         
-        // 航向瞄准点计算：为了不抄近道，距离大于300mm时依然看路径前方，极近时直接看特殊点
-        int aim_idx = base_idx + 15; // 往前看约300mm
+        // 航向瞄准点计算：为了不抄近道，距离大�?00mm时依然看路径前方，极近时直接看特殊点
+        int aim_idx = base_idx + 15; // 往前看�?00mm
         if (aim_idx > special_idx) aim_idx = special_idx;
         
         float tx = nav_ram_data.points[aim_idx].x;
@@ -396,18 +396,18 @@ void NavReplay_Process(void)
         float dy = ty - inertial_nav.y;
         float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
         
-        // 精准模式下，角度不做滤波，要求直接打到目标角度
+        // 精准模式下，角度不做滤波，要求直接打到目标角�?
         err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
         if (!is_arrived) {//根据状态锁判断
             // ==========================================
-            // 【核心修复】：引入宽容到达判定，防止高速穿透
+            // 【核心修复】：引入宽容到达判定，防止高速穿�?
             // ==========================================
             if (dist_to_special <= NAV_DIST_ARRIVE) {
                 is_arrived = 1; // 精确到达
             } 
-            // 宽容判定：如果底层追踪索引已经被卡死在这个特殊点上了，
-            // 且物理距离在稍大范围内(如 60mm 内)，说明车子因为惯性稍微冲过了一点，强制判作到达！
+            // 宽容判定：如果底层追踪索引已经被卡死在这个特殊点上了�?
+            // 且物理距离在稍大范围�?�?60mm �?，说明车子因为惯性稍微冲过了一点，强制判作到达�?
             // else if (base_idx == special_idx && dist_to_special <= NAV_DIST_ARRIVE + 40.0f) {
             //     is_arrived = 1;
             // }
@@ -432,7 +432,7 @@ void NavReplay_Process(void)
             // // 判断角度是否对齐
             // if (fabsf(special_yaw_err) > NAV_YAW_TOLERANCE)
             // {
-            //     // 角度还没对齐！将特殊点的角度误差喂给底层，触发原地自转对齐
+            //     // 角度还没对齐！将特殊点的角度误差喂给底层，触发原地自转对�?
             //     err_degree = special_yaw_err;
                 
             //     #if DEBUG_LOG_ENABLE
@@ -441,7 +441,7 @@ void NavReplay_Process(void)
             // }
             // else
             // {
-                // 位置到了，角度也对齐了！正式触发状态机！【科目二优化】不要角度对齐
+                // 位置到了，角度也对齐了！正式触发状态机！【科目二优化】不要角度对�?
                 g_current_point_type = nav_ram_data.points[special_idx].point_type;
 
                 #if DEBUG_LOG_ENABLE
@@ -465,16 +465,16 @@ void NavReplay_Process(void)
                     g_special_action_trigger = 1;
                 }
                 
-                // 防死锁：动作触发后，强行跨过这个特殊点
+                // 防死锁：动作触发后，强行跨过这个特殊�?
                 g_target_idx = special_idx + 1;
             // }
         }
         else
         {
-            // --- 2. 未到达特殊点：先转再走 ---
+            // --- 2. 未到达特殊点：先转再�?---
             if (fabsf(err_degree) > NAV_YAW_TOLERANCE)
             {
-                // 角度偏差较大，先原地/极低速旋转
+                // 角度偏差较大，先原地/极低速旋�?
                 target_speed_set = NAV_SPEED_STOP;
                 #if DEBUG_LOG_ENABLE
                 // printf("[Nav] Rotating to target, err: %.2f\r\n", err_degree);
@@ -506,14 +506,14 @@ void NavReplay_Process(void)
     else
     {
         // -------------------------------------------------------------
-        // 【模式B】高速 Pure Pursuit 寻迹模式 (距离特殊点 > 800mm 或无特殊点)
+        // 【模式B】高�?Pure Pursuit 寻迹模式 (距离特殊�?> 800mm 或无特殊�?
         // -------------------------------------------------------------
         
-        // 动态极限前瞻计算
+        // 动态极限前瞻计�?
         float lookahead_dist = PP_LD_MIN_CURVE + fabsf(prev_speed_set) * PP_LD_SPEED_GAIN;
         float lookahead_dist_sq = lookahead_dist * lookahead_dist;
 
-        // 极限选点 (寻找远方前瞻点)
+        // 极限选点 (寻找远方前瞻�?
         float tx = nav_ram_data.points[base_idx].x;
         float ty = nav_ram_data.points[base_idx].y;
         int ld_scan_limit = base_idx + (int)(lookahead_dist / 15.0f) + 40;
@@ -552,7 +552,7 @@ void NavReplay_Process(void)
         if (ang_p > 1.0f) ang_p = 1.0f;
         raw_spd *= (1.0f - SPD_ANGLE_PENALTY * ang_p);
 
-        // 极速滤波输出
+        // 极速滤波输�?
         float diff = raw_err_degree - prev_err_degree;
         if (diff > SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree + SLEW_RATE_ANGLE;
         else if (diff < -SLEW_RATE_ANGLE) raw_err_degree = prev_err_degree - SLEW_RATE_ANGLE;
@@ -595,7 +595,7 @@ void NavReplay_Process(void)
 #endif
 
 
-    // 1. 检查是否跑完全部点位
+    // 1. 检查是否跑完全部点�?
     if (g_target_idx >= nav_ram_data.point_count)
     {
         g_replay_state = REPLAY_FINISHED;
@@ -607,35 +607,35 @@ void NavReplay_Process(void)
         return;
     }
 
-    // 2. 获取当前目标点数据
+    // 2. 获取当前目标点数�?
     float tx = nav_ram_data.points[g_target_idx].x;
     float ty = nav_ram_data.points[g_target_idx].y;
     g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
 
-    // 3. 计算距离和期望角度
+    // 3. 计算距离和期望角�?
     // 假设 inertial_nav 是全局结构体，x, y, relative_yaw 实时更新
     float dx = tx - inertial_nav.x;
     float dy = ty - inertial_nav.y;
     float dist = CalcDistance(inertial_nav.x, inertial_nav.y, tx, ty);
 
-    // 计算期望方位角 (atan2 返回弧度值，转为角度)
-    // 根据描述：X正方向向后，Y正方向向右，符合标准笛卡尔坐标旋转。
+    // 计算期望方位�?(atan2 返回弧度值，转为角度)
+    // 根据描述：X正方向向后，Y正方向向右，符合标准笛卡尔坐标旋转�?
     float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
     
     // err_degree = 期望 - 实际
     err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
-    // 5. 控制策略：先转再走
+    // 5. 控制策略：先转再�?
     if (dist <= NAV_DIST_ARRIVE)
     {
-        // --- A. 到达目标点 ---
+        // --- A. 到达目标�?---
         target_speed_set = NAV_SPEED_STOP;
         
         #if DEBUG_LOG_ENABLE
         printf("[Nav] Arrived Point[%d] Type[%d]\r\n", g_target_idx, g_current_point_type);
         #endif
 
-        if (g_current_point_type != NAV_POINT_PATH)//处理特殊点
+        if (g_current_point_type != NAV_POINT_PATH)//处理特殊�?
         {
              if (g_current_point_type == NAV_POINT_CIRCLE) {
                 minefield_flag = 1;
@@ -648,7 +648,7 @@ void NavReplay_Process(void)
     else
     {
         // --- B. 未到达目标点 ---
-        // 先检查角度是否对准
+        // 先检查角度是否对�?
         if (fabsf(NormalizeAngle(err_degree)) > NAV_YAW_TOLERANCE)
         {
             // 角度偏差较大，先原地旋转
@@ -659,28 +659,28 @@ void NavReplay_Process(void)
         }
         else
         {
-            // 角度基本对准，开始移动
+            // 角度基本对准，开始移�?
             if (dist > NAV_DIST_FAR)
             {
-                // 远程段：满速行驶
+                // 远程段：满速行�?
                 target_speed_set = NAV_SPEED_FAST;
             }
             else if (dist > NAV_DIST_NEAR)
             {
-                // 减速段：线性插值减速
+                // 减速段：线性插值减�?
                 float ratio = (dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
                 target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
             }
             else
             {
-                // 精准逼近段：极低速
+                // 精准逼近段：极低�?
                 target_speed_set = NAV_SPEED_SLOW;
             }
         }
     }
 }
 */
-// 【使用说明】
+// 【使用说明�?
 //  // 惯导复现控制循环 (建议放在 20ms 定时器中)
 //         // if (timer_20ms_flag) {
 //             NavReplay_Process(); 
@@ -694,7 +694,7 @@ void NavReplay_Process(void)
 //                 case NAV_POINT_CIRCLE:
 //                     // 暂停复现，执行转圈状态机
 //                     // Run_Circle_Task();
-//                     // 任务完成后清除标志
+//                     // 任务完成后清除标�?
 //                     break;
 //                 case NAV_POINT_JUMP:
 //                     // 只有在点类型为跳跃点时，可能需要加速冲过去
@@ -704,6 +704,6 @@ void NavReplay_Process(void)
 //             }
 //         }
         
-//         // 底层电机控制 (使用 target_speed_set 和 err_degree)
+//         // 底层电机控制 (使用 target_speed_set �?err_degree)
 //         // Motor_Control(target_speed_set, err_degree);
 

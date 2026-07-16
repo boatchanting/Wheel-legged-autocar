@@ -5,24 +5,24 @@
 
 //-------------------------------------------------------------------------------------------------------------------
 //  @brief      惯导打点 RAM 管理模块
-//  @note       1. 仅负责“打点 -> 存 RAM”，不涉及 Flash。
-//              2. 点坐标来源于全局 inertial_nav.x / inertial_nav.y。
-//              3. 点类型、plan 类型由外部逻辑（遥控器）控制。
-//              4. 不引入任何时间相关参数。
+//  @note       1. 仅负责“打�?-> �?RAM”，不涉�?Flash�?
+//              2. 点坐标来源于全局 nav_pose_fusion.fused_x_mm / nav_pose_fusion.fused_y_mm�?
+//              3. 点类型、plan 类型由外部逻辑（遥控器）控制�?
+//              4. 不引入任何时间相关参数�?
 //-------------------------------------------------------------------------------------------------------------------
 
 // ========================= 配置 =========================
 #define NAV_RAM_MAX_POINTS      5000     // RAM 中最多允许存储的惯导点数，后面正好能写下一页flash
 
-// ========================= 点类型定义 =========================
+// ========================= 点类型定�?=========================
 typedef enum
 {
     NAV_POINT_PATH = 0,     // 普通路径点
-    NAV_POINT_CIRCLE = 1,   // 转圈点
-    NAV_POINT_SLOPE = 2,    // 上坡点
-    NAV_POINT_JUMP = 3,     // 跳跃点
+    NAV_POINT_CIRCLE = 1,   // 转圈�?
+    NAV_POINT_SLOPE = 2,    // 上坡�?
+    NAV_POINT_JUMP = 3,     // 跳跃�?
     NAV_POINT_BRIDGE = 4,   // 单边桥点
-    NAV_POINT_BUMP = 5      // 颠簸路段点
+    NAV_POINT_BUMP = 5      // 颠簸路段�?
 } NavPointType_e;
 
 // ========================= plan 类型 =========================
@@ -33,7 +33,7 @@ typedef enum
     NAV_PLAN_3 = 3
 } NavPlanType_e;
 
-// ========================= 单个惯导点 =========================
+// ========================= 单个惯导�?=========================
 typedef struct
 {
     float x;
@@ -58,8 +58,8 @@ extern NavRamData_t nav_ram_data;
 // ========================= 接口函数 =========================
 
 /**
- * @brief  初始化惯导 RAM 打点模块
- * @note   清空所有 RAM 数据，一般在进入打点模式时调用
+ * @brief  初始化惯�?RAM 打点模块
+ * @note   清空所�?RAM 数据，一般在进入打点模式时调�?
  */
 void NavRam_Init(void);
 
@@ -70,23 +70,23 @@ void NavRam_Init(void);
 void NavRam_SetPlan(uint8 plan);
 
 /**
- * @brief  记录一个惯导点到 RAM
- * @param  point_type 点类型 (NavPointType_e)
+ * @brief  记录一个惯导点�?RAM
+ * @param  point_type 点类�?(NavPointType_e)
  * @return 0: 成功
- *         1: RAM 已满，记录失败
- * @note   点坐标自动从 inertial_nav.x / inertial_nav.y 读取
+ *         1: RAM 已满，记录失�?
+ * @note   点坐标自动从 nav_pose_fusion.fused_x_mm / nav_pose_fusion.fused_y_mm 读取
  */
 uint8 NavRam_RecordPoint(uint8 point_type);
 
 /**
  * @brief  获取当前已记录点数量
- * @return 点数量
+ * @return 点数�?
  */
 uint16 NavRam_GetPointCount(void);
 
 /**
  * @brief  根据点类型鸣叫蜂鸣器
- * @param  point_type 点类型 n
+ * @param  point_type 点类�?n
  * @note   实际鸣叫次数 = n + 1
  */
 void Buzzer_Beep_By_PointType(uint8 point_type);

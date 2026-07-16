@@ -6,7 +6,7 @@
 NavRamData_t nav_ram_data;
 
 /**
- * @brief 初始化导航 RAM 打点模块
+ * @brief 初始化导�?RAM 打点模块
  * @note 调用位置：进入打点模式前或整车流程复位时调用
  */
 void NavRam_Init(void)
@@ -31,7 +31,7 @@ void NavRam_Init(void)
 
 /**
  * @brief 设置当前导航 plan 类型
- * @param plan 科目类型（见 NavPlanType_e）
+ * @param plan 科目类型（见 NavPlanType_e�?
  * @note 调用位置：上层切换科目前调用
  */
 void NavRam_SetPlan(uint8 plan)
@@ -40,16 +40,16 @@ void NavRam_SetPlan(uint8 plan)
 }
 
 /**
- * @brief 记录一个导航点到 RAM
+ * @brief 记录一个导航点�?RAM
  * @param point_type 点类型（普通点、圆环点等）
- * @return 0 成功；1 RAM 已满
+ * @return 0 成功�? RAM 已满
  * @note 调用位置：打点流程周期调用；坐标来自当前惯导输出
  */
 uint8 NavRam_RecordPoint(uint8 point_type)
 {
     uint16 idx;
 
-    // RAM 已满，拒绝继续写入
+    // RAM 已满，拒绝继续写�?
     if (nav_ram_data.point_count >= NAV_RAM_MAX_POINTS)
     {
         return 1;
@@ -57,9 +57,9 @@ uint8 NavRam_RecordPoint(uint8 point_type)
 
     idx = nav_ram_data.point_count;
 
-    // 直接读取当前惯导位姿；target_speed 后续由离线规划脚本写入
-    nav_ram_data.points[idx].x = inertial_nav.x;
-    nav_ram_data.points[idx].y = inertial_nav.y;
+    // 直接读取当前惯导位姿；target_speed 后续由离线规划脚本写�?
+    nav_ram_data.points[idx].x = nav_pose_fusion.fused_x_mm;
+    nav_ram_data.points[idx].y = nav_pose_fusion.fused_y_mm;
     nav_ram_data.points[idx].target_yaw_deg = inertial_nav.relative_yaw;
 #if IMU_CATEGORY == 3
     nav_ram_data.points[idx].heading_deg = heading;
@@ -78,7 +78,7 @@ uint8 NavRam_RecordPoint(uint8 point_type)
 /**
  * @brief 获取当前已记录点数量
  * @return 当前点数
- * @note 调用位置：上层显示、保存和回放前检查
+ * @note 调用位置：上层显示、保存和回放前检�?
  */
 uint16 NavRam_GetPointCount(void)
 {
@@ -87,7 +87,7 @@ uint16 NavRam_GetPointCount(void)
 
 /**
  * @brief 根据点类型进行蜂鸣器提示
- * @param point_type 点类型枚举值
+ * @param point_type 点类型枚举�?
  * @note 调用位置：打点成功反馈；实际鸣叫次数 = point_type + 1
  */
 void Buzzer_Beep_By_PointType(uint8 point_type)

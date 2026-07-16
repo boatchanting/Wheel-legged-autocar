@@ -10,9 +10,9 @@ extern volatile float err_degree;
 NavReplayState_e g_replay_state = REPLAY_IDLE;
 /** @brief 当前基准索引（单调前进） */
 uint16 g_target_idx = 0;
-/** @brief 当前目标点类型，供上层动作分发使用 */
+/** @brief 当前目标点类型，供上层动作分发使�?*/
 uint8 g_current_point_type = NAV_POINT_PATH;
-/** @brief 特殊动作触发标志，1 表示暂停轨迹跟踪并交由上层处理 */
+/** @brief 特殊动作触发标志�? 表示暂停轨迹跟踪并交由上层处�?*/
 uint8 g_special_action_trigger = 0;
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
@@ -35,9 +35,9 @@ static void NavReplay_ResetProcessState(void);
 
 /**
  * @brief 将角度归一化到 [-180, 180] 区间
- * @param angle 输入角度（deg）
- * @return 归一化后的角度（deg）
- * @note 由各 plan 的误差计算流程调用
+ * @param angle 输入角度（deg�?
+ * @return 归一化后的角度（deg�?
+ * @note 由各 plan 的误差计算流程调�?
  */
 static float NormalizeAngle(float angle)
 {
@@ -48,11 +48,11 @@ static float NormalizeAngle(float angle)
 
 /**
  * @brief 计算两点欧氏距离
- * @param x1 点1 x 坐标（mm）
- * @param y1 点1 y 坐标（mm）
- * @param x2 点2 x 坐标（mm）
- * @param y2 点2 y 坐标（mm）
- * @return 两点距离（mm）
+ * @param x1 �? x 坐标（mm�?
+ * @param y1 �? y 坐标（mm�?
+ * @param x2 �? x 坐标（mm�?
+ * @param y2 �? y 坐标（mm�?
+ * @return 两点距离（mm�?
  * @note 由回放主循环中的到点判定/前瞻估计调用
  */
 static float CalcDistance(float x1, float y1, float x2, float y2)
@@ -62,12 +62,12 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
 
 /**
  * @brief 计算两点距离平方（避免频繁开方）
- * @param x1 点1 x 坐标（mm）
- * @param y1 点1 y 坐标（mm）
- * @param x2 点2 x 坐标（mm）
- * @param y2 点2 y 坐标（mm）
- * @return 距离平方（mm^2）
- * @note 由最近点搜索与前瞻搜索调用
+ * @param x1 �? x 坐标（mm�?
+ * @param y1 �? y 坐标（mm�?
+ * @param x2 �? x 坐标（mm�?
+ * @param y2 �? y 坐标（mm�?
+ * @return 距离平方（mm^2�?
+ * @note 由最近点搜索与前瞻搜索调�?
  */
 static float CalcDistanceSq(float x1, float y1, float x2, float y2)
 {
@@ -79,7 +79,7 @@ static float CalcDistanceSq(float x1, float y1, float x2, float y2)
 /**
  * @brief 装载编译期路表到 RAM 数据结构
  * @return 实际装载的轨迹点数量
- * @note 主要由 NavReplay_Start() 调用
+ * @note 主要�?NavReplay_Start() 调用
  */
 uint16 NavReplay_LoadStaticRouteToRam(void)
 {
@@ -108,7 +108,7 @@ uint16 NavReplay_LoadStaticRouteToRam(void)
 
 /**
  * @brief 启动导航回放状态机
- * @note 典型调用入口：任务启动/遥控开始；会完成路表加载、状态清零和起跑对齐状态初始化
+ * @note 典型调用入口：任务启�?遥控开始；会完成路表加载、状态清零和起跑对齐状态初始化
  */
 void NavReplay_Start(void)
 {
@@ -155,8 +155,8 @@ void NavReplay_Start(void)
 }
 
 /**
- * @brief 停止导航回放状态机并清空控制输出
- * @note 典型调用入口：任务停止/故障保护；会清零速度、角度和内部状态
+ * @brief 停止导航回放状态机并清空控制输�?
+ * @note 典型调用入口：任务停�?故障保护；会清零速度、角度和内部状�?
  */
 void NavReplay_Stop(void)
 {
@@ -191,21 +191,21 @@ static float s_prev_err_degree = 0.0f;
 static float s_prev_speed_set = 0.0f;
 /** @brief 特殊动作触发沿检测标记：1 表示上一周期进入接管态，等待恢复流程 */
 static uint8 s_prev_trigger = 0;
-/** @brief 近停点角度锁死状态：1 表示锁死已生效 */
+/** @brief 近停点角度锁死状态：1 表示锁死已生�?*/
 static uint8 s_stop_lock_active = 0;
 /** @brief 近停点锁存航向角（deg），锁死期间作为固定目标航向 */
 static float s_stop_lock_yaw_deg = 0.0f;
 
 #if IMU_CATEGORY == 3
-/** @brief 起跑对齐阶段单周期最大航向纠偏输出（deg） */
+/** @brief 起跑对齐阶段单周期最大航向纠偏输出（deg�?*/
 #define NAV_START_ALIGN_MAX_ERR      25.0f
 /** @brief 起跑航向连续稳定计数阈值（周期数） */
 #define NAV_START_ALIGN_STABLE_COUNT 6U
 #endif
 
 /**
- * @brief 清除近停点角度锁死状态
- * @note 由启动/停止/特殊动作接管恢复/锁死条件失效路径调用
+ * @brief 清除近停点角度锁死状�?
+ * @note 由启�?停止/特殊动作接管恢复/锁死条件失效路径调用
  */
 static void NavReplay_ClearStopLock(void)
 {
@@ -214,8 +214,8 @@ static void NavReplay_ClearStopLock(void)
 }
 
 /**
- * @brief 复位 plan1/plan2 过程态缓存
- * @note 由 NavReplay_Start()/NavReplay_Stop() 调用；也在起跑姿态重置时调用
+ * @brief 复位 plan1/plan2 过程态缓�?
+ * @note �?NavReplay_Start()/NavReplay_Stop() 调用；也在起跑姿态重置时调用
  */
 static void NavReplay_ResetProcessState(void)
 {
@@ -226,12 +226,12 @@ static void NavReplay_ResetProcessState(void)
 }
 
 /**
- * @brief 目标速度分段限斜率
- * @param raw_speed 本周期路表/速度规划给出的原始目标速度，符号方向保持不变
+ * @brief 目标速度分段限斜�?
+ * @param raw_speed 本周期路�?速度规划给出的原始目标速度，符号方向保持不�?
  * @return 经过单周期步长限制后的目标速度
  * @note 代替单纯低通滤波：加速、普通减速、高速减速、跨零停车分别使用不同步长，
- *       调大 NAV_SPEED_SLEW_UP_* 会让起步/出弯提速更直接；
- *       调大 NAV_SPEED_SLEW_DOWN_* 会让弯前收速更快，但过大会更像急刹。
+ *       调大 NAV_SPEED_SLEW_UP_* 会让起步/出弯提速更直接�?
+ *       调大 NAV_SPEED_SLEW_DOWN_* 会让弯前收速更快，但过大会更像急刹�?
  */
 static float NavReplay_SpeedSlew_Update(float raw_speed)
 {
@@ -245,7 +245,7 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     static ControlMode_e s_current_req_mode = CONTROL_MODE_NORMAL;
     static uint16 s_mode_cooldown = 0;
 
-    // --- 1. 基于实际车速决定目标 PID 模式 ---
+    // --- 1. 基于实际车速决定目�?PID 模式 ---
     float actual_speed_clamped = (abs_actual < 50.0f) ? 0.0f : current_actual_speed;
     if ((raw_speed * actual_speed_clamped) < 0.0f)
     {
@@ -270,11 +270,11 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
         // 紧急情况：需要刹车，无视冷却立即切换
         s_current_req_mode = CONTROL_MODE_BRAKE;
         Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
-        s_mode_cooldown = 30; // 切换后进入 300ms 冷却
+        s_mode_cooldown = 30; // 切换后进�?300ms 冷却
     }
     else if (target_mode != s_current_req_mode && s_mode_cooldown == 0)
     {
-        // 正常切换：冷却完毕允许切换
+        // 正常切换：冷却完毕允许切�?
         s_current_req_mode = target_mode;
         Control_Profile_RequestMode(target_mode);
         s_mode_cooldown = 30; // 重置 300ms 冷却
@@ -282,14 +282,14 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     else if (s_mode_cooldown > 0)
     {
         s_mode_cooldown--;
-        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状态
+        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状�?
     }
     else
     {
         Control_Profile_RequestMode(target_mode); // 平稳保持
     }
 
-    // --- 3. 速度曲线斜率生成 (基于前馈目标，保证目标平滑) ---
+    // --- 3. 速度曲线斜率生成 (基于前馈目标，保证目标平�? ---
     if ((raw_speed * s_prev_speed_set) < 0.0f)
     {
         step_limit = NAV_SPEED_SLEW_DOWN_CROSS_ZERO;
@@ -313,8 +313,8 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
 #if IMU_CATEGORY == 3
 /**
  * @brief 处理 IMU 起跑航向对齐流程
- * @return 1 对齐完成，0 仍在对齐中
- * @note 由 plan1/plan2 的 NavReplay_Process() 每周期调用
+ * @return 1 对齐完成�? 仍在对齐�?
+ * @note �?plan1/plan2 �?NavReplay_Process() 每周期调�?
  */
 static uint8 NavReplay_HandleStartHeadingAlignment(void)
 {
@@ -353,8 +353,8 @@ static uint8 NavReplay_HandleStartHeadingAlignment(void)
 }
 
 /**
- * @brief 起跑前复位导航位姿与回放状态
- * @note 在起跑航向对齐完成后调用，避免历史位姿影响首段跟踪
+ * @brief 起跑前复位导航位姿与回放状�?
+ * @note 在起跑航向对齐完成后调用，避免历史位姿影响首段跟�?
  */
 static void NavReplay_ResetLaunchPose(void)
 {
@@ -377,10 +377,10 @@ static void NavReplay_ResetLaunchPose(void)
 #endif
 
 /**
- * @brief 搜索“停止屏障”索引
+ * @brief 搜索“停止屏障”索�?
  * @param start_idx 起始索引
  * @param search_range 向前搜索范围（点数）
- * @return 首个停止屏障点索引（圆环点/零速点/终点）
+ * @return 首个停止屏障点索引（圆环�?零速点/终点�?
  * @note 由最近点搜索与主循环前瞻截止逻辑调用，用于避免看穿停车点
  */
 static uint16 NavReplay_FindStopBarrierIndex(uint16 start_idx, uint16 search_range)
@@ -422,12 +422,12 @@ static uint16 NavReplay_FindStopBarrierIndex(uint16 start_idx, uint16 search_ran
 }
 
 /**
- * @brief 单调最近点恢复（仅向前搜索）
+ * @brief 单调最近点恢复（仅向前搜索�?
  * @param current_idx 当前索引基准
  * @param search_range 搜索窗口（点数）
- * @param is_recovering 是否处于特殊动作恢复期
+ * @param is_recovering 是否处于特殊动作恢复�?
  * @return 更新后的最近点索引
- * @note 由 plan1/plan2 主循环调用，是轨迹跟踪索引推进的入口
+ * @note �?plan1/plan2 主循环调用，是轨迹跟踪索引推进的入口
  */
 static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, uint8 is_recovering)
 {
@@ -483,13 +483,13 @@ static int Find_Closest_Point_Index_Strict(int current_idx, int search_range, ui
 }
 
 /**
- * @brief 在 [base_idx, stop_idx] 区间内查找纯追踪前瞻目标点
+ * @brief �?[base_idx, stop_idx] 区间内查找纯追踪前瞻目标�?
  * @param base_idx 基准索引
  * @param stop_idx 停止屏障索引
- * @param lookahead_dist 前瞻距离（mm）
- * @param tx 输出目标点 x（mm）
- * @param ty 输出目标点 y（mm）
- * @note 由 plan1/plan2 主循环调用，前瞻不会跨越停止屏障
+ * @param lookahead_dist 前瞻距离（mm�?
+ * @param tx 输出目标�?x（mm�?
+ * @param ty 输出目标�?y（mm�?
+ * @note �?plan1/plan2 主循环调用，前瞻不会跨越停止屏障
  */
 static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, float lookahead_dist, float *tx, float *ty)
 {
@@ -513,10 +513,10 @@ static void NavReplay_FindLookaheadTarget(uint16 base_idx, uint16 stop_idx, floa
 }
 
 /**
- * @brief 更新近停点角度锁死状态
- * @param stop_idx 当前停止屏障点索引
- * @param dist_to_stop 车体到停止屏障的距离（mm）
- * @note 由 plan1/plan2 主循环调用；满足“零速目标+近距离”时锁存当前航向
+ * @brief 更新近停点角度锁死状�?
+ * @param stop_idx 当前停止屏障点索�?
+ * @param dist_to_stop 车体到停止屏障的距离（mm�?
+ * @note �?plan1/plan2 主循环调用；满足“零速目�?近距离”时锁存当前航向
  */
 static void NavReplay_UpdateStopLock(uint16 stop_idx, float dist_to_stop)
 {
@@ -537,8 +537,8 @@ static void NavReplay_UpdateStopLock(uint16 stop_idx, float dist_to_stop)
 }
 
 /**
- * @brief plan1/plan2 回放主流程（统一骨架）
- * @note 调用关系：由周期任务调用；内部串联“接管恢复→最近点恢复→停止屏障处理→纯追踪→速度低通”
+ * @brief plan1/plan2 回放主流程（统一骨架�?
+ * @note 调用关系：由周期任务调用；内部串联“接管恢复→最近点恢复→停止屏障处理→纯追踪→速度低通�?
  */
 void NavReplay_Process(void)
 {
@@ -579,7 +579,7 @@ void NavReplay_Process(void)
     }
 #endif
 
-    /* 阶段1：特殊动作接管期，直接退出跟踪计算 */
+    /* 阶段1：特殊动作接管期，直接退出跟踪计�?*/
     if (g_special_action_trigger == 1)
     {
         s_prev_trigger = 1;
@@ -587,7 +587,7 @@ void NavReplay_Process(void)
         return;
     }
 
-    /* 阶段2：接管恢复沿处理，恢复后先清空历史滤波状态 */
+    /* 阶段2：接管恢复沿处理，恢复后先清空历史滤波状�?*/
     if (s_prev_trigger == 1)
     {
         is_recovering = 1;
@@ -597,7 +597,7 @@ void NavReplay_Process(void)
         NavReplay_ClearStopLock();
     }
 
-    /* 阶段3：最近点恢复（恢复期放宽搜索窗口） */
+    /* 阶段3：最近点恢复（恢复期放宽搜索窗口�?*/
     scan_range = is_recovering ? 300 : 80;
     base_idx = Find_Closest_Point_Index_Strict((int)g_target_idx, scan_range, is_recovering);
     g_target_idx = (uint16)base_idx;
@@ -611,7 +611,7 @@ void NavReplay_Process(void)
     }
 
     last_idx = (uint16)(nav_ram_data.point_count - 1U);
-    /* 阶段4：搜索停止屏障，统一处理终点/圆环点/零速停车点 */
+    /* 阶段4：搜索停止屏障，统一处理终点/圆环�?零速停车点 */
     stop_idx = NavReplay_FindStopBarrierIndex((uint16)base_idx, (uint16)(nav_ram_data.point_count - 1U - (uint16)base_idx));
     dist_to_stop = CalcDistance(inertial_nav.x, inertial_nav.y,
                                 nav_ram_data.points[stop_idx].x, nav_ram_data.points[stop_idx].y);
@@ -653,7 +653,7 @@ void NavReplay_Process(void)
     }
 #endif
 
-    /* 阶段5：更新近停点角度锁死状态 */
+    /* 阶段5：更新近停点角度锁死状�?*/
     NavReplay_UpdateStopLock(stop_idx, dist_to_stop);
 
     if (base_idx + 1 < nav_ram_data.point_count)
@@ -692,7 +692,7 @@ void NavReplay_Process(void)
         s_prev_err_degree = err_degree;
     }
 
-    /* 阶段7：查表取速 + 单一低通；离线规划是速度唯一真源 */
+    /* 阶段7：查表取�?+ 单一低通；离线规划是速度唯一真源 */
     raw_speed = nav_ram_data.points[base_idx].target_speed;
     if (s_stop_lock_active && raw_speed > NAV_SPEED_STOP)
     {
@@ -737,7 +737,7 @@ void NavReplay_Process(void)
 #endif
 
 
-    // 1. 检查是否跑完全部点位
+    // 1. 检查是否跑完全部点�?
     if (g_target_idx >= nav_ram_data.point_count)
     {
         g_replay_state = REPLAY_FINISHED;
@@ -749,35 +749,35 @@ void NavReplay_Process(void)
         return;
     }
 
-    // 2. 获取当前目标点数据
+    // 2. 获取当前目标点数�?
     float tx = nav_ram_data.points[g_target_idx].x;
     float ty = nav_ram_data.points[g_target_idx].y;
     g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
 
-    // 3. 计算距离和期望角度
+    // 3. 计算距离和期望角�?
     // 假设 inertial_nav 是全局结构体，x, y, relative_yaw 实时更新
     float dx = tx - inertial_nav.x;
     float dy = ty - inertial_nav.y;
     float dist = CalcDistance(inertial_nav.x, inertial_nav.y, tx, ty);
 
-    // 计算期望方位角 (atan2 返回弧度值，转为角度)
-    // 根据描述：X正方向向后，Y正方向向右，符合标准笛卡尔坐标旋转。
+    // 计算期望方位�?(atan2 返回弧度值，转为角度)
+    // 根据描述：X正方向向后，Y正方向向右，符合标准笛卡尔坐标旋转�?
     float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
     
     // err_degree = 期望 - 实际
     err_degree = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
-    // 5. 控制策略：先转再走
+    // 5. 控制策略：先转再�?
     if (dist <= NAV_DIST_ARRIVE)
     {
-        // --- A. 到达目标点 ---
+        // --- A. 到达目标�?---
         target_speed_set = NAV_SPEED_STOP;
         
         #if DEBUG_LOG_ENABLE
         printf("[Nav] Arrived Point[%d] Type[%d]\r\n", g_target_idx, g_current_point_type);
         #endif
 
-        if (g_current_point_type != NAV_POINT_PATH)//处理特殊点
+        if (g_current_point_type != NAV_POINT_PATH)//处理特殊�?
         {
              if (g_current_point_type == NAV_POINT_CIRCLE) {
                 minefield_flag = 1;
@@ -790,7 +790,7 @@ void NavReplay_Process(void)
     else
     {
         // --- B. 未到达目标点 ---
-        // 先检查角度是否对准
+        // 先检查角度是否对�?
         if (fabsf(NormalizeAngle(err_degree)) > NAV_YAW_TOLERANCE)
         {
             // 角度偏差较大，先原地旋转
@@ -801,28 +801,28 @@ void NavReplay_Process(void)
         }
         else
         {
-            // 角度基本对准，开始移动
+            // 角度基本对准，开始移�?
             if (dist > NAV_DIST_FAR)
             {
-                // 远程段：满速行驶
+                // 远程段：满速行�?
                 target_speed_set = NAV_SPEED_FAST;
             }
             else if (dist > NAV_DIST_NEAR)
             {
-                // 减速段：线性插值减速
+                // 减速段：线性插值减�?
                 float ratio = (dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
                 target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
             }
             else
             {
-                // 精准逼近段：极低速
+                // 精准逼近段：极低�?
                 target_speed_set = NAV_SPEED_SLOW;
             }
         }
     }
 }
 */
-// 【使用说明】
+// 【使用说明�?
 //  // 惯导复现控制循环 (建议放在 20ms 定时器中)
 //         // if (timer_20ms_flag) {
 //             NavReplay_Process(); 
@@ -836,7 +836,7 @@ void NavReplay_Process(void)
 //                 case NAV_POINT_CIRCLE:
 //                     // 暂停复现，执行转圈状态机
 //                     // Run_Circle_Task();
-//                     // 任务完成后清除标志
+//                     // 任务完成后清除标�?
 //                     break;
 //                 case NAV_POINT_JUMP:
 //                     // 只有在点类型为跳跃点时，可能需要加速冲过去
@@ -846,6 +846,6 @@ void NavReplay_Process(void)
 //             }
 //         }
         
-//         // 底层电机控制 (使用 target_speed_set 和 err_degree)
+//         // 底层电机控制 (使用 target_speed_set �?err_degree)
 //         // Motor_Control(target_speed_set, err_degree);
 
