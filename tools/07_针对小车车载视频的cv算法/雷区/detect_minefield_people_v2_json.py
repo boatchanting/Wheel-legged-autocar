@@ -249,6 +249,106 @@ def render_segments_mask(shape: tuple[int, int], segments: list[Segment]) -> np.
     return mask.astype(bool)
 
 
+def sample_line_visibility(
+    support_mask: np.ndarray,
+    p0: np.ndarray,
+    p1: np.ndarray,
+    max_gap: int = 2,
+) -> tuple[np.ndarray, np.ndarray]:
+    length = float(np.linalg.norm(p1 - p0))
+    sample_count = max(int(math.ceil(length * 2.0)), 8)
+    ts = np.linspace(0.0, 1.0, sample_count)
+    points = p0[None, :] + (p1 - p0)[None, :] * ts[:, None]
+    xs = np.clip(np.round(points[:, 0]).astype(np.int32), 0, support_mask.shape[1] - 1)
+    ys = np.clip(np.round(points[:, 1]).astype(np.int32), 0, support_mask.shape[0] - 1)
+    visible = support_mask[ys, xs].astype(bool)
+
+    start = None
+    gap = 0
+    for idx, value in enumerate(visible):
+        if value:
+            if start is None:
+                start = idx
+            gap = 0
+        elif start is not None:
+            gap += 1
+            if gap <= max_gap:
+                visible[idx] = True
+            else:
+                gap = 0
+                start = None
+    return ts, visible
+
+
+def longest_visible_segment(
+    quad: np.ndarray | None,
+    support_mask: np.ndarray,
+    support_radius: int = 1,
+    min_visible_pixels: int = 4,
+    min_visible_fraction: float = 0.18,
+    min_segment_length_px: float = 6.0,
+) -> list[Segment]:
+    if quad is None:
+        return []
+
+    kernel = np.ones((support_radius * 2 + 1, support_radius * 2 + 1), dtype=np.uint8)
+    support_mask = cv2.dilate(support_mask.astype(np.uint8), kernel, iterations=1).astype(bool)
+    points = np.asarray(quad, dtype=np.float32)
+    segments: list[Segment] = []
+    for index in range(4):
+        p0 = points[index]
+        p1 = points[(index + 1) % 4]
+        ts, visible = sample_line_visibility(support_mask, p0, p1)
+        if not visible.any():
+            continue
+
+        best_start = best_end = -1
+        current_start = None
+        for pos, value in enumerate(visible):
+            if value and current_start is None:
+                current_start = pos
+            if (not value or pos == len(visible) - 1) and current_start is not None:
+                end_pos = pos if value and pos == len(visible) - 1 else pos - 1
+                if end_pos - current_start > best_end - best_start:
+                    best_start, best_end = current_start, end_pos
+                current_start = None
+
+        if best_start < 0 or best_end < best_start:
+            continue
+
+        run_length = best_end - best_start + 1
+        if run_length < min_visible_pixels:
+            continue
+        if run_length / max(1, len(visible)) < min_visible_fraction:
+            continue
+
+        start_point = p0 + (p1 - p0) * ts[best_start]
+        end_point = p0 + (p1 - p0) * ts[best_end]
+        if float(np.linalg.norm(end_point - start_point)) < min_segment_length_px:
+            continue
+
+        segments.append(
+            Segment(
+                x1=int(round(float(start_point[0]))),
+                y1=int(round(float(start_point[1]))),
+                x2=int(round(float(end_point[0]))),
+                y2=int(round(float(end_point[1]))),
+            )
+        )
+    return segments
+
+
+def build_edge_support_mask(gray: np.ndarray, threshold_mask: np.ndarray) -> np.ndarray:
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    canny = cv2.Canny(blurred, 40, 100) > 0
+    gradient = cv2.morphologyEx(
+        threshold_mask.astype(np.uint8) * 255,
+        cv2.MORPH_GRADIENT,
+        np.ones((3, 3), dtype=np.uint8),
+    ) > 0
+    return canny | gradient
+
+
 def render_quad_mask(shape: tuple[int, int], quad: np.ndarray | None) -> np.ndarray:
     mask = np.zeros(shape, dtype=np.uint8)
     if quad is None:
@@ -590,7 +690,12 @@ def make_threshold_debug(
         cv2.line(canvas, (seg.x1, seg.y1), (seg.x2, seg.y2), (255, 180, 0), thickness=1, lineType=cv2.LINE_8)
     for seg in inner_segments:
         cv2.line(canvas, (seg.x1, seg.y1), (seg.x2, seg.y2), (0, 220, 255), thickness=1, lineType=cv2.LINE_8)
-    return canvas
+    canvas = cv2.resize(canvas, (canvas.shape[1] * SCALE, canvas.shape[0] * SCALE), interpolation=cv2.INTER_NEAREST)
+    image = Image.fromarray(canvas, mode="RGB")
+    draw = ImageDraw.Draw(image)
+    draw.rectangle([0, 0, image.width - 1, 18], fill=(0, 0, 0))
+    draw.text((3, 3), "binary + gt", fill=(255, 255, 255))
+    return np.asarray(image)
 
 
 def scaled_gray_rgb(gray: np.ndarray) -> np.ndarray:
@@ -625,27 +730,36 @@ def make_gt_overlay(gray: np.ndarray, gt: GroundTruth, title: str) -> np.ndarray
     return np.asarray(image)
 
 
-def make_prediction_overlay(gray: np.ndarray, candidate: Candidate | None, title: str) -> np.ndarray:
+def make_prediction_overlay(
+    gray: np.ndarray,
+    pred_outer_segments: list[Segment],
+    pred_inner_segments: list[Segment],
+    title: str,
+) -> np.ndarray:
     image = Image.fromarray(scaled_gray_rgb(gray), mode="RGB")
     draw = ImageDraw.Draw(image)
     draw.rectangle([0, 0, image.width - 1, 18], fill=(0, 0, 0))
     draw.text((3, 3), title, fill=(255, 255, 255))
-    if candidate is not None:
-        draw_quad(draw, candidate.outer_quad, (255, 0, 0), 2)
-        draw_quad(draw, candidate.inner_quad_final, (0, 255, 0), 2)
+    draw_segments(draw, pred_outer_segments, (255, 0, 0), 2)
+    draw_segments(draw, pred_inner_segments, (0, 255, 0), 2)
     return np.asarray(image)
 
 
-def make_comparison_overlay(gray: np.ndarray, gt: GroundTruth, candidate: Candidate | None, title: str) -> np.ndarray:
+def make_comparison_overlay(
+    gray: np.ndarray,
+    gt: GroundTruth,
+    pred_outer_segments: list[Segment],
+    pred_inner_segments: list[Segment],
+    title: str,
+) -> np.ndarray:
     image = Image.fromarray(scaled_gray_rgb(gray), mode="RGB")
     draw = ImageDraw.Draw(image)
     draw.rectangle([0, 0, image.width - 1, 18], fill=(0, 0, 0))
     draw.text((3, 3), title, fill=(255, 255, 255))
     draw_segments(draw, gt.outer_segments, (255, 180, 0), 1)
     draw_segments(draw, gt.inner_segments, (0, 220, 255), 1)
-    if candidate is not None:
-        draw_quad(draw, candidate.outer_quad, (255, 0, 0), 2)
-        draw_quad(draw, candidate.inner_quad_final, (0, 255, 0), 2)
+    draw_segments(draw, pred_outer_segments, (255, 0, 0), 2)
+    draw_segments(draw, pred_inner_segments, (0, 255, 0), 2)
     return np.asarray(image)
 
 
@@ -661,8 +775,19 @@ def evaluate_sample(sample: Sample, output_dir: Path, fixed_threshold: int | Non
     gt = load_ground_truth(sample.annotation_json_path)
     candidate = detect_candidate(gray, fixed_threshold=fixed_threshold)
 
-    pred_outer_mask = render_quad_mask(gray.shape, None if candidate is None else candidate.outer_quad)
-    pred_inner_mask = render_quad_mask(gray.shape, None if candidate is None else candidate.inner_quad_final)
+    if candidate is None:
+        threshold_mask = np.zeros_like(gray, dtype=bool)
+        edge_support_mask = np.zeros_like(gray, dtype=bool)
+        pred_outer_segments = []
+        pred_inner_segments = []
+    else:
+        threshold_mask = candidate.threshold_mask
+        edge_support_mask = build_edge_support_mask(gray, threshold_mask)
+        pred_outer_segments = longest_visible_segment(candidate.outer_quad, edge_support_mask, support_radius=1)
+        pred_inner_segments = longest_visible_segment(candidate.inner_quad_final, edge_support_mask, support_radius=1)
+
+    pred_outer_mask = render_segments_mask(gray.shape, pred_outer_segments)
+    pred_inner_mask = render_segments_mask(gray.shape, pred_inner_segments)
     outer_scores = mask_scores(pred_outer_mask, gt.outer_mask)
     inner_scores = mask_scores(pred_inner_mask, gt.inner_mask)
 
@@ -674,9 +799,14 @@ def evaluate_sample(sample: Sample, output_dir: Path, fixed_threshold: int | Non
 
     gt_overlay = make_gt_overlay(gray, gt, f"{sample.frame_name} gt {gt.mode}")
     pred_title = f"{sample.frame_name} pred score={candidate.score:.2f}" if candidate is not None else f"{sample.frame_name} pred score=NA"
-    pred_overlay = make_prediction_overlay(gray, candidate, pred_title)
-    cmp_overlay = make_comparison_overlay(gray, gt, candidate, f"{sample.frame_name} gt=orange/cyan pred=red/green")
-    threshold_mask = candidate.threshold_mask if candidate is not None else np.zeros_like(gray, dtype=bool)
+    pred_overlay = make_prediction_overlay(gray, pred_outer_segments, pred_inner_segments, pred_title)
+    cmp_overlay = make_comparison_overlay(
+        gray,
+        gt,
+        pred_outer_segments,
+        pred_inner_segments,
+        f"{sample.frame_name} gt=orange/cyan pred=red/green",
+    )
     threshold_debug = make_threshold_debug(threshold_mask, gt.outer_segments, gt.inner_segments)
 
     save_gray(sample_dir / "01_original.png", gray)
@@ -729,7 +859,7 @@ def evaluate_sample(sample: Sample, output_dir: Path, fixed_threshold: int | Non
             "outer_present_gt": bool(gt.outer_segments),
             "inner_present_gt": bool(gt.inner_segments),
             "outer_present_pred": candidate is not None,
-            "inner_present_pred": candidate is not None and candidate.inner_quad_final is not None,
+            "inner_present_pred": bool(pred_inner_segments),
         },
     }
 
@@ -751,6 +881,8 @@ def evaluate_sample(sample: Sample, output_dir: Path, fixed_threshold: int | Non
             "inner_on_ratio": round(candidate.inner_on_ratio, 4),
             "outer_support": round(candidate.outer_support, 4),
             "inner_support": round(candidate.inner_support, 4),
+            "pred_outer_segments": [segment.__dict__ for segment in pred_outer_segments],
+            "pred_inner_segments": [segment.__dict__ for segment in pred_inner_segments],
         }
 
     (sample_dir / "result.json").write_text(
@@ -764,7 +896,12 @@ def build_contact_sheet(results: list[dict], output_path: Path) -> None:
     tiles: list[Image.Image] = []
     for result in results:
         sample_dir = Path(result["paths"]["output_dir"])
-        tiles.append(Image.open(sample_dir / "05_comparison_overlay.png").convert("RGB"))
+        comparison = Image.open(sample_dir / "05_comparison_overlay.png").convert("RGB")
+        binary = Image.open(sample_dir / "06_threshold_debug.png").convert("RGB")
+        tile = Image.new("RGB", (comparison.width, comparison.height + binary.height), (18, 18, 18))
+        tile.paste(comparison, (0, 0))
+        tile.paste(binary, (0, comparison.height))
+        tiles.append(tile)
 
     if not tiles:
         return
