@@ -13,6 +13,17 @@ typedef enum
     REPLAY_FINISHED     // 回放已到达终点
 } NavReplayState_e;
 
+#if GNSS_NAV == 1
+extern NavReplayState_e g_gps_replay_state;
+extern uint8 g_gps_current_point_type;
+extern uint8 g_gps_special_action_trigger;
+
+uint16 GpsNavReplay_LoadStaticRouteToRam(void);
+void GpsNavReplay_Start(void);
+void GpsNavReplay_Stop(void);
+void GpsNavReplay_Process(void);
+#endif
+
 /* ========================================================
  * 动态路由与编译期防呆检查
  * 根据 sys_options.h 和 nav_options.h 的组合，仅拉取对应的唯一实现。
@@ -43,9 +54,8 @@ typedef enum
         #include "plan1/plan1_pure_pursuit.h"
 
     #elif NAV_PLAN1_METHOD == PLAN1_LQR_TRACKING
-        #if GNSS_NAV == 1
-            #warning "[Nav Warning] Global GNSS_NAV=1, but Plan 1 LQR tracking uses INS route replay. GNSS data is invalid for tracking."
-        #endif
+        // GNSS_NAV may be enabled here for GNSS telemetry/fusion visualization;
+        // Plan1 LQR still uses the INS route replay for tracking.
         #include "plan1/plan1_lqr_tracking.h"
         
     #else

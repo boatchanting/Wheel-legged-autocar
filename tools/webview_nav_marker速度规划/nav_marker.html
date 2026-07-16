@@ -198,8 +198,7 @@ function feed(frames){
     if(Number.isFinite(x)&&Number.isFinite(y)){
       S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg,pid_mode:pid_mode,slip_flag:slip_flag};
     }
-    const insX=it.ins_x!=null?Number(it.ins_x):x,insY=it.ins_y!=null?Number(it.ins_y):y;
-    addTracePoint('ins',insX,insY,{pid_mode,slip_flag});
+    addTracePoint('ins',x,y,{pid_mode,slip_flag});
     addTracePoint('fusion',it.fusion_x,it.fusion_y);
     if(Number(it.gps_valid||0)&&Number(it.gps_origin_set||0))addTracePoint('gps',it.gps_x,it.gps_y);
     const trig=Number(it.mark_trigger)||0;

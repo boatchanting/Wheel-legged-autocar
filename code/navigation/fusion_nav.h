@@ -30,6 +30,8 @@ extern float g_track_base_yaw;
 extern float g_startup_avg_heading; // 上电时静置2秒采集的航向均值
 
 void Fusion_Init(void);
+void Fusion_Update_Base_Yaw_From_Config(void);
+uint8 Fusion_Get_Processed_Gps(float *gps_x_mm, float *gps_y_mm);
 void Fusion_Ins_Update(void);
 void Fusion_Gps_Correct(void);
 void Fusion_Set_Origin(void);

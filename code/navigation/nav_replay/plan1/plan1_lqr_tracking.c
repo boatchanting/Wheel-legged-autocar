@@ -150,11 +150,11 @@ static void NavReplay_FastUTurn_ClearRuntime(void)
  */
 static void NavReplay_FastUTurn_InitFromRoute(void)
 {
-    uint16 i;
-
     NavReplay_FastUTurn_ClearRuntime();
 
 #if PLAN1_FAST_UTURN_ENABLE
+    uint16 i;
+
     for (i = 0U; i < nav_ram_data.point_count; i++)
     {
         if (nav_ram_data.points[i].point_type == NAV_POINT_JUMP)

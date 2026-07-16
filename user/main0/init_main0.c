@@ -174,6 +174,8 @@ InertialNav_Init();//惯性导航初始化
 
 gnss_init(TAU1201);//gnss导航初始化
 Gnss_Transform_Init();//GNSS经纬度投影为相对平面坐标，供纯GPS打点/复刻使用
+Fusion_Init();//融合轨迹状态初始化，依赖惯导/GNSS投影初始化完成后的零基准
+Fusion_Update_Base_Yaw_From_Config();//把 FIXED_BASE_YAW/动态发车角写入融合坐标旋转
 #if DEBUG_DISPLAY_CORE0
     ips200_show_string(0, disp_y, "GNSS Init OK");
     disp_y += 16;
@@ -245,6 +247,7 @@ VisionThreeStageControl_Init(); // three-stage vision jump state machine
     if (avg_deg < 0.0f) avg_deg += 360.0f;
     
     g_startup_avg_heading = avg_deg; // 保存均值到全局变量，供发车时使用
+    Fusion_Update_Base_Yaw_From_Config();//动态发车角采样完成后刷新融合坐标旋转
 
 #if DEBUG_DISPLAY_CORE0    
     // 延时一会儿让人看清启动信息，然后清屏准备显示数据

@@ -94,7 +94,6 @@ int main(void)
     Main0_Init();
     
     uint8 display_count = 0; // 用于屏幕刷新分频
-    uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
 #if IMU_REFRESH_TEST_ENABLE
     uint8 imu_refresh_test_printed = 0; // IMU刷新率测试结果只打印一次
 #endif

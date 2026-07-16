@@ -1,5 +1,6 @@
 #include "fusion_nav.h"
 #include "../calculate/ekf.h" // 包含 imu_data 等信息
+#include "../config/sys_options.h"
 #include <math.h>
 
 #ifndef DEG_TO_RAD
@@ -29,11 +30,59 @@ void Fusion_Init(void) {
     g_fuse_state.k_pos = 0.0f;
 }
 
+void Fusion_Update_Base_Yaw_From_Config(void) {
+#if ENABLE_DYNAMIC_HEADING
+    g_track_base_yaw = g_startup_avg_heading;
+#else
+    g_track_base_yaw = FIXED_BASE_YAW;
+#endif
+}
+
 void Fusion_Set_Origin(void) {
     Fusion_Init();
     // 假设记录此时的相对偏航角为基准，或者直接用 0，这里默认使用 0，由使用者控制
     // gnss_trans 也应该重置原点
     Gnss_Transform_Reset_Origin();
+}
+
+uint8 Fusion_Get_Processed_Gps(float *gps_x_mm, float *gps_y_mm) {
+    float rad;
+    float delta_E;
+    float delta_N;
+    float ground_x;
+    float ground_y;
+    float vx_mps;
+
+    if ((gps_x_mm == 0) || (gps_y_mm == 0))
+    {
+        return 0U;
+    }
+
+    *gps_x_mm = 0.0f;
+    *gps_y_mm = 0.0f;
+
+    if ((gnss_trans.is_valid == 0U) || (gnss_trans.is_origin_set == 0U))
+    {
+        return 0U;
+    }
+
+    // GNSS transform gives relative East/North displacement in meters.
+    // Rotate it into the local INS track frame by the configured start yaw.
+    rad = g_track_base_yaw * DEG_TO_RAD;
+    delta_E = gnss_trans.x;
+    delta_N = gnss_trans.y;
+
+    ground_x = -(delta_E * sinf(rad) + delta_N * cosf(rad));
+    ground_y =   delta_E * cosf(rad) - delta_N * sinf(rad);
+
+    // Keep the displayed GPS point consistent with the correction input.
+    vx_mps = inertial_nav.vx_body * 0.001f; // mm/s to m/s
+    ground_x = ground_x - vx_mps * GPS_DELAY_SEC * cosf(g_fuse_state.fuse_yaw * DEG_TO_RAD);
+    ground_y = ground_y - vx_mps * GPS_DELAY_SEC * sinf(g_fuse_state.fuse_yaw * DEG_TO_RAD);
+
+    *gps_x_mm = ground_x * 1000.0f;
+    *gps_y_mm = ground_y * 1000.0f;
+    return 1U;
 }
 
 void Fusion_Ins_Update(void) {
@@ -64,21 +113,13 @@ void Fusion_Ins_Update(void) {
 }
 
 void Fusion_Gps_Correct(void) {
-    // 1. 地理位移转赛道本地位移 (单位：米)
-    float rad = g_track_base_yaw * DEG_TO_RAD;
-    float delta_E = gnss_trans.x;
-    float delta_N = gnss_trans.y;
-    
-    float ground_x = -(delta_E * sinf(rad) + delta_N * cosf(rad));
-    float ground_y =   delta_E * cosf(rad) - delta_N * sinf(rad);
+    float ground_x_mm = 0.0f;
+    float ground_y_mm = 0.0f;
 
-    // 2. GPS 硬件延时前馈补偿
-    float vx_mps = inertial_nav.vx_body * 0.001f; // mm/s to m/s
-    ground_x = ground_x - vx_mps * GPS_DELAY_SEC * cosf(g_fuse_state.fuse_yaw * DEG_TO_RAD);
-    ground_y = ground_y - vx_mps * GPS_DELAY_SEC * sinf(g_fuse_state.fuse_yaw * DEG_TO_RAD);
-
-    float ground_x_mm = ground_x * 1000.0f;
-    float ground_y_mm = ground_y * 1000.0f;
+    if (Fusion_Get_Processed_Gps(&ground_x_mm, &ground_y_mm) == 0U)
+    {
+        return;
+    }
 
     // 3. 跃变剔除保护 (创新度滤波)
     float dx_gps = ground_x_mm - g_fuse_state.fuse_x;

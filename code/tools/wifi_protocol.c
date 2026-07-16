@@ -412,19 +412,23 @@ void wifi_protocol_send_data(void)
     write_u8(robot_ctrl.mark_trigger);
     write_u8(robot_ctrl.point_type);
 
-    // E. projected GNSS XY for pure GPS marker/replay (unit: mm)
+    // E. trajectory traces (unit: mm)
+    float processed_gps_x = 0.0f;
+    float processed_gps_y = 0.0f;
+    uint8_t processed_gps_valid = Fusion_Get_Processed_Gps(&processed_gps_x, &processed_gps_y);
+
     // 纯惯导线 (ins)
     write_float_value(g_fuse_state.ins_x);
     write_float_value(g_fuse_state.ins_y);
-    // GPS 地面真值 (gps)
-    write_float_value(gnss_trans.x * 1000.0f);
-    write_float_value(gnss_trans.y * 1000.0f);
+    // GPS 轨迹 (gps): GNSS East/North rotated into the local INS track frame
+    write_float_value(processed_gps_x);
+    write_float_value(processed_gps_y);
     // 融合输出 (fusion)
     write_float_value(g_fuse_state.fuse_x);
     write_float_value(g_fuse_state.fuse_y);
 
-    write_u8(gnss_trans.is_valid);
-    write_u8(gnss_trans.is_origin_set);
+    write_u8((uint8_t)((processed_gps_valid != 0U) && (gnss_trans.is_valid != 0U)));
+    write_u8((uint8_t)((processed_gps_valid != 0U) && (gnss_trans.is_origin_set != 0U)));
 
     // F. PID Control Mode
     write_u8((uint8_t)g_control_mode_applied);

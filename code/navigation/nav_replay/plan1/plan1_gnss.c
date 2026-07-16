@@ -323,3 +323,42 @@ void NavReplay_Process(void){ (void)NormalizeAngle(0.0f); (void)CalcDistance(0,0
 
 
 #endif
+
+#if (GNSS_NAV == 1) && !((CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS))
+/*
+ * GPS replay compatibility stubs.
+ *
+ * GNSS_NAV can be enabled only for GNSS telemetry/fusion visualization while
+ * the active route replay method remains INS/LQR. In that configuration the
+ * upper control loop still references the GPS replay stop/state hooks, so keep
+ * those hooks linkable and inert instead of enabling GPS route tracking.
+ */
+NavReplayState_e g_gps_replay_state = REPLAY_IDLE;
+uint8 g_gps_current_point_type = NAV_POINT_PATH;
+uint8 g_gps_special_action_trigger = 0U;
+
+uint16 GpsNavReplay_LoadStaticRouteToRam(void)
+{
+    return 0U;
+}
+
+void GpsNavReplay_Start(void)
+{
+    g_gps_replay_state = REPLAY_IDLE;
+    g_gps_current_point_type = NAV_POINT_PATH;
+    g_gps_special_action_trigger = 0U;
+}
+
+void GpsNavReplay_Stop(void)
+{
+    g_gps_replay_state = REPLAY_IDLE;
+    g_gps_current_point_type = NAV_POINT_PATH;
+    g_gps_special_action_trigger = 0U;
+}
+
+void GpsNavReplay_Process(void)
+{
+    g_gps_replay_state = REPLAY_IDLE;
+    g_gps_special_action_trigger = 0U;
+}
+#endif

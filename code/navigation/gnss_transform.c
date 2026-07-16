@@ -12,8 +12,8 @@ static double s_origin_y_abs = 0.0; // 原点高斯 Y (东向)
 #define WGS84_F         (1.0 / 298.257223563) // 扁率
 #define WGS84_E2        (2.0 * WGS84_F - WGS84_F * WGS84_F) // 第一偏心率平方
 #define WGS84_E12       (WGS84_E2 / (1.0 - WGS84_E2))       // 第二偏心率平方
-#define PI              3.14159265358979323846 //【优化点】可以把类似的地方都用这一个变量名字
-#define RAD_PER_DEG     (PI / 180.0)  //【优化点】可以把类似的地方都用同一个变量名字
+#define GNSS_TRANSFORM_PI   3.14159265358979323846
+#define RAD_PER_DEG         (GNSS_TRANSFORM_PI / 180.0)
 
 // ==================== 内部辅助函数 ====================
 
