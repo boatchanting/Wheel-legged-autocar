@@ -1,5 +1,6 @@
 #include "fusion_nav.h"
 #include "../calculate/ekf.h" // 包含 imu_data 等信息
+#include "../config/sys_options.h"
 #include <math.h>
 
 #ifndef DEG_TO_RAD
@@ -73,9 +74,11 @@ void Fusion_Gps_Correct(void) {
     float ground_y =   delta_E * cosf(rad) - delta_N * sinf(rad);
 
     // 2. GPS 硬件延时前馈补偿
+#if GPS_FEEDFORWARD_ENABLE
     float vx_mps = inertial_nav.vx_body * 0.001f; // mm/s to m/s
     ground_x = ground_x - vx_mps * GPS_DELAY_SEC * cosf(g_fuse_state.fuse_yaw * DEG_TO_RAD);
     ground_y = ground_y - vx_mps * GPS_DELAY_SEC * sinf(g_fuse_state.fuse_yaw * DEG_TO_RAD);
+#endif
 
     float ground_x_mm = ground_x * 1000.0f;
     float ground_y_mm = ground_y * 1000.0f;
