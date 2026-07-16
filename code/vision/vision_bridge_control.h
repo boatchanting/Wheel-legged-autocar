@@ -35,7 +35,7 @@ extern "C" {
 /* --- 3. 角度与偏差阈值 --- */
 #define VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG         (3.0f)      /* 对齐时，车头偏角误差允许的范围（小于 4 度算对齐） */
 #define VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG         (1.5f)      /* 对齐时，综合误差（方向盘该打多少）允许的范围 */
-#define VISION_BRIDGE_TASK_IMAGE_CENTER_X            (53.0f)    /* 车辆实际直行对应的图像中心；现场标定值 */
+#define VISION_BRIDGE_TASK_IMAGE_CENTER_X            (48.0f)    /* 车辆实际直行对应的图像中心；现场标定值 */
 #define VISION_BRIDGE_TASK_LOOKAHEAD_Y               (40.0f)    /* 固定前视控制行，图像坐标由上向下增大 */
 
 /* Control-side center-line temporal filter.  These parameters deliberately
@@ -52,6 +52,9 @@ extern "C" {
 #define VISION_BRIDGE_TASK_LINE_SIGN                 (-1.0f)     /* 转向符号，如果车子往反方向修偏，改成 1.0f */
 #define VISION_BRIDGE_TASK_K_LAT_DEG_PER_PX          (0.18f)     /* 比例 P：横向每偏 1 个像素，方向盘打 0.18 度 */
 #define VISION_BRIDGE_TASK_K_YAW_DEG_PER_DEG         (0.65f)     /* 比例 P：车头每偏 1 度，方向盘多打 0.65 度 */
+#define VISION_BRIDGE_TASK_K_LAT_I_DEG_PER_PX_FRAME  (0.020f)    /* 每个有效视觉帧累积的横向补偿 */
+#define VISION_BRIDGE_TASK_LAT_I_LEAK                (0.98f)     /* 防止积分长期饱和 */
+#define VISION_BRIDGE_TASK_LAT_I_MAX_DEG             (5.0f)      /* 横向积分补偿限幅 */
 #define VISION_BRIDGE_TASK_MAX_ERR_DEG               (16.0f)     /* 限幅：方向盘最多打 16 度，防打死 */
 #define VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG      (10.0f)     /* 锁死航向盲跑时，最多修 10 度 */
 
@@ -102,6 +105,7 @@ typedef struct
     uint8 center_filter_pending_jump;
     float filtered_lookahead_x;
     float filtered_heading_deg;
+    float lateral_integral_deg;
     uint16 exit_lost_ticks;              /* 下桥时，连续看不到桥的计时 */
     uint16 bridge_hold_ticks;            /* 看见黑块后的保持倒计时 */
 } vision_bridge_task_status_t;

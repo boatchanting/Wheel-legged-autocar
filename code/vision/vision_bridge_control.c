@@ -47,6 +47,7 @@ typedef struct
     uint8 center_filter_lost_frames;
     float filtered_lookahead_x;
     float filtered_heading_deg;
+    float lateral_integral_deg;
     float pending_lookahead_x;
     float pending_heading_deg;
     float start_x_mm;                 /* 上桥那一刻的 X 坐标（惯导） */
@@ -173,6 +174,18 @@ static uint8 vision_bridge_center_jump_is_confirmed(float lookahead_x,
                     VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_DEG));
 }
 
+static void vision_bridge_update_lateral_integral(void)
+{
+    const float lateral_px = s_bridge_task.filtered_lookahead_x -
+                             VISION_BRIDGE_TASK_IMAGE_CENTER_X;
+
+    s_bridge_task.lateral_integral_deg = vision_bridge_constrain_f(
+        s_bridge_task.lateral_integral_deg * VISION_BRIDGE_TASK_LAT_I_LEAK +
+        lateral_px * VISION_BRIDGE_TASK_K_LAT_I_DEG_PER_PX_FRAME,
+        -VISION_BRIDGE_TASK_LAT_I_MAX_DEG,
+        VISION_BRIDGE_TASK_LAT_I_MAX_DEG);
+}
+
 static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_t *packet)
 {
     float lookahead_x;
@@ -198,6 +211,7 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
         if (s_bridge_task.center_filter_lost_frames >= VISION_BRIDGE_TASK_CENTER_LOST_FRAMES)
         {
             s_bridge_task.center_filter_valid = 0U;
+            s_bridge_task.lateral_integral_deg = 0.0f;
         }
         return;
     }
@@ -207,6 +221,7 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
     {
         s_bridge_task.filtered_lookahead_x = lookahead_x;
         s_bridge_task.filtered_heading_deg = heading_deg;
+        s_bridge_task.lateral_integral_deg = 0.0f;
         s_bridge_task.center_filter_valid = 1U;
         s_bridge_task.center_filter_pending_jump = 0U;
         return;
@@ -233,6 +248,7 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
                                           (lookahead_x - s_bridge_task.filtered_lookahead_x);
     s_bridge_task.filtered_heading_deg += VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA *
                                           (heading_deg - s_bridge_task.filtered_heading_deg);
+    vision_bridge_update_lateral_integral();
 }
 
 /* --- 控制核心辅助函数 --- */
@@ -261,7 +277,8 @@ static float vision_bridge_calc_geometry_err_degree(const volatile vision_ipc_pa
     /* 算综合误差 */
     const float err = VISION_BRIDGE_TASK_LINE_SIGN *
                       (lateral_px * VISION_BRIDGE_TASK_K_LAT_DEG_PER_PX +
-                       yaw_deg * VISION_BRIDGE_TASK_K_YAW_DEG_PER_DEG);
+                       yaw_deg * VISION_BRIDGE_TASK_K_YAW_DEG_PER_DEG +
+                       s_bridge_task.lateral_integral_deg);
 
     /* 限制在最大允许的范围内，防止车子突然猛打方向 */
     return vision_bridge_constrain_f(err,
@@ -389,6 +406,7 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.center_filter_pending_jump = s_bridge_task.center_filter_pending_jump;
     status.filtered_lookahead_x = s_bridge_task.filtered_lookahead_x;
     status.filtered_heading_deg = s_bridge_task.filtered_heading_deg;
+    status.lateral_integral_deg = s_bridge_task.lateral_integral_deg;
 
     g_bridge_vision_task_status = status;
 }
