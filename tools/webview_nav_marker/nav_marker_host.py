@@ -29,6 +29,18 @@ HOST_ACK_TIMEOUT_SEC = 1.5
 
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
+PAYLOAD_GPS_TRACE_FLOAT_BYTES = 8
+PAYLOAD_GPS_TRACE_FLAG_BYTES = 2
+PAYLOAD_GPS_TRACE_CTRL_BYTES = 2
+PAYLOAD_DEBUG_BYTES = 20
+PAYLOAD_FUSION_TRACE_FLOAT_BYTES = 8
+PAYLOAD_FUSION_TRACE_FLAG_BYTES = 1
+PAYLOAD_SIZE_GPS_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_GPS_TRACE_FLOAT_BYTES + PAYLOAD_GPS_TRACE_FLAG_BYTES
+PAYLOAD_SIZE_GPS_TRACE_CTRL = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
+PAYLOAD_SIZE_GPS_TRACE_DEBUG = PAYLOAD_SIZE_GPS_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
+PAYLOAD_SIZE_TRACE = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_FUSION_TRACE_FLOAT_BYTES + PAYLOAD_FUSION_TRACE_FLAG_BYTES
+PAYLOAD_SIZE_TRACE_CTRL = PAYLOAD_SIZE_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
+PAYLOAD_SIZE_TRACE_DEBUG = PAYLOAD_SIZE_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -265,6 +277,98 @@ def _estimate_start_heading():
     return best_heading
 
 
+def _resolve_trace_layout(size):
+    if size >= PAYLOAD_SIZE_TRACE_DEBUG:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": True,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_TRACE,
+            "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
+        }
+
+    if size >= PAYLOAD_SIZE_GPS_TRACE_DEBUG:
+        return {
+            "has_gps": True,
+            "has_fusion": False,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": True,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
+            "debug_base": PAYLOAD_SIZE_GPS_TRACE_CTRL,
+        }
+
+    if size >= PAYLOAD_SIZE_TRACE_CTRL:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_TRACE,
+            "debug_base": None,
+        }
+
+    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
+        return {
+            "has_gps": True,
+            "has_fusion": False,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
+            "debug_base": None,
+        }
+
+    if size >= PAYLOAD_SIZE_TRACE:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": False,
+            "has_slip_flag": False,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": None,
+            "debug_base": None,
+        }
+
+    if size >= PAYLOAD_SIZE_GPS_TRACE:
+        return {
+            "has_gps": True,
+            "has_fusion": False,
+            "has_pid_mode": False,
+            "has_slip_flag": False,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": None,
+            "debug_base": None,
+        }
+
+    return {
+        "has_gps": False,
+        "has_fusion": False,
+        "has_pid_mode": False,
+        "has_slip_flag": False,
+        "has_debug": False,
+        "gps_base": PAYLOAD_SIZE_V2,
+        "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+        "pid_base": None,
+        "debug_base": None,
+    }
+
+
 def _decode_payload(payload_bytes):
     size = len(payload_bytes)
 
@@ -274,6 +378,7 @@ def _decode_payload(payload_bytes):
     # 兼容扩展 payload：基础字段始终按 V1 解析，后续字段按可用字节补齐。
     unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes[:PAYLOAD_SIZE_V1])
     data = dict(zip(FIELD_NAMES_V1, unpacked))
+    layout = _resolve_trace_layout(size)
 
     if size >= PAYLOAD_SIZE_V2:
         data["mark_trigger"] = payload_bytes[PAYLOAD_SIZE_V1]
@@ -281,6 +386,30 @@ def _decode_payload(payload_bytes):
     else:
         data["mark_trigger"] = 0
         data["point_type"] = 0
+
+    if layout["has_gps"]:
+        gps_base = layout["gps_base"]
+        gps_x, gps_y = struct.unpack("<ff", payload_bytes[gps_base : gps_base + 8])
+        data["gps_x"] = gps_x
+        data["gps_y"] = gps_y
+        data["gps_valid"] = payload_bytes[gps_base + 8]
+        data["gps_origin_set"] = payload_bytes[gps_base + 9]
+    else:
+        data["gps_x"] = None
+        data["gps_y"] = None
+        data["gps_valid"] = 0
+        data["gps_origin_set"] = 0
+
+    if layout["has_fusion"]:
+        fusion_base = layout["fusion_base"]
+        fusion_x, fusion_y = struct.unpack("<ff", payload_bytes[fusion_base : fusion_base + 8])
+        data["fusion_x"] = fusion_x
+        data["fusion_y"] = fusion_y
+        data["fusion_valid"] = payload_bytes[fusion_base + 8]
+    else:
+        data["fusion_x"] = None
+        data["fusion_y"] = None
+        data["fusion_valid"] = 0
 
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
