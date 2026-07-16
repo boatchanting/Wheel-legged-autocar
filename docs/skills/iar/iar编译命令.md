@@ -19,3 +19,9 @@ iar\project_config\cyt4bb7_cm_7_1.ewt
 在沙箱外跑
  "C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\iarbuild.exe" ".\iar\project_config\cyt4bb7_cm_7_0.ewp" -make Debug  
  "C:\Program Files\IAR Systems\Embedded Workbench 9.2\common\bin\iarbuild.exe" ".\iar\project_config\cyt4bb7_cm_7_1.ewp" -make Debug
+
+ ## cxzzz
+ 写完之后在沙箱外跑编译命令 
+在沙箱外跑
+ > 'D:\Program Files\iar/common/bin/iarbuild.exe' 'D:\autocar\project3\project3\project\iar\project_config\cyt4bb7_cm_7_0.ewp' '-make' 'Debug' 
+ > 'D:\Program Files\iar/common/bin/iarbuild.exe' 'D:\autocar\project3\project3\project\iar\project_config\cyt4bb7_cm_7_1.ewp' '-make' 'Debug' 
