@@ -35,7 +35,7 @@ extern "C" {
 /* --- 3. 角度与偏差阈值 --- */
 #define VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG         (3.0f)      /* 对齐时，车头偏角误差允许的范围（小于 4 度算对齐） */
 #define VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG         (1.5f)      /* 对齐时，综合误差（方向盘该打多少）允许的范围 */
-#define VISION_BRIDGE_TASK_IMAGE_CENTER_X            (46.5f)
+#define VISION_BRIDGE_TASK_IMAGE_CENTER_X            (53.0f)    //54.0 偏左  50.0 偏右  52.0 偏右  53.0还有点偏左，可能是带歪的
 
 /* --- 4. 控制增益参数（PID 参数） --- */
 #define VISION_BRIDGE_TASK_LINE_SIGN                 (-1.0f)     /* 转向符号，如果车子往反方向修偏，改成 1.0f */
