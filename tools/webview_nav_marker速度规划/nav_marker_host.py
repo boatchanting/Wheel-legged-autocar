@@ -32,6 +32,9 @@ HOST_ACK_TIMEOUT_SEC = 1.5
 
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
+PAYLOAD_TRACE_FLOATS_SIZE = 24
+PAYLOAD_TRACE_FLAGS_SIZE = 2
+PAYLOAD_SIZE_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_TRACE_FLOATS_SIZE + PAYLOAD_TRACE_FLAGS_SIZE
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -285,7 +288,34 @@ def _decode_payload(payload_bytes):
         data["mark_trigger"] = 0
         data["point_type"] = 0
 
-    baseline = 96 if size >= 96 else 86
+    if size >= PAYLOAD_SIZE_V2 + PAYLOAD_TRACE_FLOATS_SIZE:
+        trace_values = struct.unpack(
+            "<ffffff",
+            payload_bytes[PAYLOAD_SIZE_V2 : PAYLOAD_SIZE_V2 + PAYLOAD_TRACE_FLOATS_SIZE],
+        )
+        data["ins_x"] = trace_values[0]
+        data["ins_y"] = trace_values[1]
+        data["gps_x"] = trace_values[2]
+        data["gps_y"] = trace_values[3]
+        data["fusion_x"] = trace_values[4]
+        data["fusion_y"] = trace_values[5]
+    else:
+        data["ins_x"] = data.get("nav_x", 0.0)
+        data["ins_y"] = data.get("nav_y", 0.0)
+        data["gps_x"] = None
+        data["gps_y"] = None
+        data["fusion_x"] = None
+        data["fusion_y"] = None
+
+    if size >= PAYLOAD_SIZE_TRACE:
+        flag_base = PAYLOAD_SIZE_V2 + PAYLOAD_TRACE_FLOATS_SIZE
+        data["gps_valid"] = payload_bytes[flag_base]
+        data["gps_origin_set"] = payload_bytes[flag_base + 1]
+    else:
+        data["gps_valid"] = 0
+        data["gps_origin_set"] = 0
+
+    baseline = PAYLOAD_SIZE_TRACE if size >= PAYLOAD_SIZE_TRACE else PAYLOAD_SIZE_V2
 
     if size >= baseline + 1:
         data["pid_mode"] = payload_bytes[baseline]
