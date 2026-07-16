@@ -1,99 +1,43 @@
-# Plan1 简化 LQR 路径跟踪调参说明
+# Plan1 LQR 路径跟踪调参说明
 
-这版不是完整 LQR，不在线解 Riccati。它先用离线路径表里的切线航向和曲率，再叠加横向误差、航向误差，最后输出到底盘原来的 `err_degree`。
-
-控制律：
+这个方案不是在线 Riccati LQR。它保留项目原来的 `err_degree` 和 `target_speed_set` 接口，但反馈目标改成“贴住最近局部线段”：
 
 ```text
-err_raw = LQR_SIGN * (LQR_K_CURV * curvature * speed_sign
-                    + LQR_K_LATERAL * e_y
-                    + LQR_K_HEADING * e_psi)
+u = u_ff(kappa_preview, speed)
+  + K_y * e_y
+  + K_psi * e_psi
+  + K_r * (r_ref - r_actual)
 ```
 
-速度仍然只用路径表里的 `target_speed`，再经过 `NavReplay_SpeedSlew_Update()` 做斜率限制。负速度表示前进。
+## 和纯追踪的差异
 
-## 关键参数
+纯追踪会找前方预瞄点，车会天然朝远处目标点切过去，绕桩或急弯时容易切弯。现在的 LQR 只用最近路径线段的投影点和局部切线做横向/航向反馈，预瞄点只提供曲率前馈，不参与 `e_y` 和 `e_psi`。
 
-- `LQR_PREVIEW_POINTS`：参考航向和曲率往前看几个点。大一点更稳，小一点更贴线。
-- `LQR_SHARP_CURVATURE_TH`：急弯判断阈值。调大时只有更急的弯才软化；调小时普通弯也会更保守。
-- `LQR_SHARP_PREVIEW_POINTS`：急弯附近的预瞄点数。调大入弯更主动；调小入弯更稳，不容易突然崴脚。
-- `LQR_SEARCH_RANGE_NORMAL`：正常最近点向前搜索窗口。太小会跟不上，太大可能跨到后面相似路段。
-- `LQR_SEARCH_RANGE_RECOVER`：特殊动作恢复后的搜索窗口。恢复时可比正常大。
-- `LQR_K_CURV`：曲率前馈。主要负责弯道提前给角。
-- `LQR_K_LATERAL`：横向误差反馈。车离线越远，纠偏越强。
-- `LQR_K_HEADING`：航向误差反馈。车头和路径切线差得越多，纠偏越强。
-- `LQR_ERR_MAX_DEG`：最大输出角度，防止一下打太狠。
-- `LQR_ERR_SLEW_DEG`：单周期最大角度变化，防止绕桩抽搐。
-- `LQR_SHARP_ERR_SLEW_DEG`：急弯段单周期最大角度变化。调大更跟手；调小更柔，能减少急弯入口颤一下。
-- `LQR_FILTER_ALPHA`：低通滤波系数。大一点反应快，小一点更稳。
-- `LQR_SHARP_FILTER_ALPHA`：急弯段低通滤波系数。调大急弯更灵；调小急弯更顺，但太小会转得慢。
-- `LQR_LATERAL_ERR_LIMIT_MM`：横向误差限幅，防止离线很远时输出爆掉。
-- `LQR_SIGN`：总方向符号。实车方向整体反了，优先改它。
-- `LQR_FORWARD_SPEED_IS_NEGATIVE`：本车负速度为前进，默认设为 1。
+局部投影反馈更贴线的原因很简单：车辆偏离哪一段，就按哪一段的法向距离回线；车头偏离哪一段，就按哪一段的切线对齐。它不会因为前方预瞄点已经拐进弯里，就提前把反馈目标拉到弯内。
 
-## 先确认方向
+## 参数和符号
 
-先低速跑，暂时不要追求快。
-
-1. 让 `LQR_K_CURV` 小一点，甚至先设 0。
-2. 只看车偏离路径时，会不会往路径方向修。
-3. 如果整体反着打，先把 `LQR_SIGN` 从 `1.0f` 改成 `-1.0f`。
-4. 如果只有横向修正反了，改 `LQR_K_LATERAL` 的正负。
-5. 如果只有弯道提前量反了，改 `LQR_K_CURV` 的正负。
-
-方向没确认前，不要加速度。
+- `LQR_SIGN`：总方向符号。实车左右整体反了，优先只改这个。
+- `LQR_K_LATERAL`：横向误差增益，单位近似 deg/mm。本项目 `x` 向后为正、`y` 向右为正；沿路径前进时，车在路径右侧定义为 `e_y > 0`，正 `err_degree` 负责向左修回线。大偏差回线不够，就先加它。
+- `LQR_K_HEADING`：局部切线航向误差增益。车头对不准线，就调它。
+- `LQR_K_YAW_RATE_FF`：曲率前馈增益，输入是 `r_ref = abs(target_speed) * LQR_SPEED_TO_MM_S * kappa_preview`。
+- `LQR_K_YAW_RATE`：实际 yaw-rate 反馈增益，默认 0。确认 `inertial_nav.actual_yaw_rate` 符号和噪声可靠后，再打开 `LQR_USE_ACTUAL_YAW_RATE_FB`。
+- `LQR_FORWARD_SPEED_IS_NEGATIVE`：本项目默认负 `target_speed` 表示前进。
+- `LQR_LOW/HIGH_SPEED_*`：速度相关限幅、slew、低通和横向加速度/yaw-rate 包络。
 
 ## 推荐调参顺序
 
-1. `LQR_K_HEADING`：先让车头能顺着路径切线走，不明显左右摆。
-2. `LQR_K_LATERAL`：再让车能回到路径中心线，不要为了贴线把它调得太大。
-3. `LQR_K_CURV`：最后加曲率前馈，让进弯不滞后、绕桩不切弯。
-4. `LQR_ERR_SLEW_DEG`：如果绕桩有抽搐，先降这个。
-5. `LQR_FILTER_ALPHA`：如果仍然抖，再适当降低；如果反应太慢，再提高。
-6. `target_speed`：控制稳定后再提高路径表速度。
+1. 低速，把 `LQR_K_YAW_RATE_FF` 暂时调小或置 0，只看反馈方向。
+2. 车偏左/偏右时如果修反，改 `LQR_SIGN`；不要在多个公式里分散加负号。
+3. 调 `LQR_K_HEADING`，先让车头能顺着局部路径切线。
+4. 调 `LQR_K_LATERAL`，让车能回到路径中心线。
+5. 恢复并调 `LQR_K_YAW_RATE_FF`，让入弯不滞后，但不能把车提前拉进弯内。
+6. 最后再加速度。速度上来后优先收紧高速限幅、横向加速度和 yaw 加速度约束。
 
-## 常见现象
+## 低速和高速分别看什么
 
-### 掉头回来第一下蹩脚
+低速、大横向误差：优先调 `LQR_K_LATERAL`、`LQR_LOW_SPEED_ERR_MAX_DEG`、`LQR_LOW_SPEED_ERR_SLEW_DEG`。低速需要有足够纠偏幅度和变化率，否则只会慢慢漂回线。
 
-按顺序查：
+高速、绕桩抽搐：优先降 `LQR_HIGH_SPEED_ERR_SLEW_DEG` 或 `LQR_HIGH_SPEED_FILTER_ALPHA`，再看 `LQR_HIGH_SPEED_YAW_RATE_LIMIT_RAD_S`、`LQR_HIGH_SPEED_YAW_ACCEL_LIMIT_RAD_S2`、`LQR_HIGH_SPEED_LATERAL_ACCEL_MM_S2`。高速不要靠固定小角度硬砍，而要按机体姿态、横向加速度和 yaw 动态能力收住。
 
-1. 最近点索引是否跳太远。
-2. `LQR_SEARCH_RANGE_NORMAL` 是否太大。
-3. `LQR_K_HEADING` 是否太大。
-4. `LQR_ERR_SLEW_DEG` 是否太大。
-5. 掉头出口处 `curvature` 是否突变。
-
-### 绕桩左右抽搐
-
-按顺序查：
-
-1. `LQR_K_LATERAL` 是否太大。
-2. `LQR_K_CURV` 是否太大。
-3. `LQR_ERR_SLEW_DEG` 是否太大。
-4. `LQR_FILTER_ALPHA` 是否太大。
-5. `LQR_PREVIEW_POINTS` 是否太小。
-
-### 车很稳但切弯撞桩
-
-按顺序查：
-
-1. `LQR_K_CURV` 是否太小或符号反了。
-2. `LQR_PREVIEW_POINTS` 是否太大，导致参考点看得太远。
-3. 路径本身和桩筒安全距离是否不够。
-4. 该段 `target_speed` 是否太高。
-
-## 建议记录的数据
-
-调车时如果能打日志，优先记录：
-
-- `g_target_idx`
-- 参考点 `x/y`
-- `target_speed_set`
-- `e_y`
-- `e_psi`
-- `curvature`
-- 限幅前 `err_raw`
-- 最终 `err_degree`
-
-这些量能快速判断问题是在路径、符号、增益，还是输出滤波。
+急弯切弯：先确认路径曲率和安全距离没有问题，再调 `LQR_K_YAW_RATE_FF` 和 `LQR_PREVIEW_POINTS`。记住预瞄只负责提前建立转向，不改变贴局部线的反馈目标。

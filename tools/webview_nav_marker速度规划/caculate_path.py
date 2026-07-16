@@ -42,7 +42,7 @@ ENABLE_FINISH_SPRINT = True    # 开启终点冲刺：绕过最后一个桩桶�
 SPRINT_SPEED_MM_S = 3000.0     # 最后的冲刺极速
 MAX_ACCEL_MM_S2 = 1500.0
 MAX_DECEL_MM_S2 = 1500.0
-MAX_LATERAL_ACCEL_MM_S2 = 1000.0
+MAX_LATERAL_ACCEL_MM_S2 = 1500.0
 SPEED_TO_MM_S = 4.936
 CURVATURE_EPS = 1e-6
 FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
@@ -52,8 +52,29 @@ FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 # ============================================================
 CAR_HALF_WIDTH_MM = 135.0      # 车身半宽
 CONE_RADIUS_MM = 140.0         # 桩桶物理半径
-SAFE_MARGIN_MM = 500.0          # 绕桩防撞安全余量（考虑平衡车侧倾和打滑冗余）
-CONE_OFFSET_MM = CAR_HALF_WIDTH_MM + CONE_RADIUS_MM + SAFE_MARGIN_MM  # 桩桶横向偏置距离
+BALANCE_LEG_SWEEP_MARGIN_MM = 85.0
+BALANCE_LEAN_SWAY_MARGIN_MM = 65.0
+LOCALIZATION_ERROR_MARGIN_MM = 80.0
+SAFE_MARGIN_MM = 200.0
+DYNAMIC_SWEEP_HALF_WIDTH_MM = (
+    CAR_HALF_WIDTH_MM + BALANCE_LEG_SWEEP_MARGIN_MM + BALANCE_LEAN_SWAY_MARGIN_MM
+)
+CONE_FORBIDDEN_RADIUS_MM = (
+    CONE_RADIUS_MM
+    + DYNAMIC_SWEEP_HALF_WIDTH_MM
+    + LOCALIZATION_ERROR_MARGIN_MM
+    + SAFE_MARGIN_MM
+)
+CORRIDOR_CLEARANCE_MM = 120.0
+CONE_OFFSET_MM = CONE_FORBIDDEN_RADIUS_MM + CORRIDOR_CLEARANCE_MM
+MIN_CONE_CHANNEL_GAP_MM = 150.0
+
+MAX_PATH_CURVATURE_PER_MM = 0.0115
+MAX_CURVATURE_RATE_PER_MM2 = 8.0e-6
+PATH_DENSE_SAMPLE_MM = 10.0
+PATH_TANGENT_EPS_MM = 1.0e-3
+CONSTRAINED_SMOOTH_TENSIONS = (0.20, 0.28, 0.35, 0.45, 0.55)
+CONSTRAINED_CLEARANCE_STEPS_MM = (0.0, 80.0, 160.0, 240.0, 400.0, 600.0)
 U_TURN_RADIUS_MM = 1500.0      # 掉头弯的期望回转半径（U_TURN_RADIUS_MODE=0 时生效）
 
 # 掉头弯半径模式开关
@@ -143,6 +164,22 @@ class FastUTurnLayout:
     lateral_unit: Tuple[float, float]
     action_point: Tuple[float, float]
     action_lateral_offset: float
+
+
+class PathConstraintError(ValueError):
+    """路径无法同时满足净空、曲率和曲率变化率时抛出。"""
+
+
+@dataclass
+class PathValidationReport:
+    min_clearance_mm: float
+    max_abs_curvature: float
+    max_abs_dkappa_ds: float
+    tangent_continuous: bool
+
+
+def cone_forbidden_radius_mm() -> float:
+    return float(CONE_FORBIDDEN_RADIUS_MM)
 
 
 # ============================================================
@@ -353,9 +390,15 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
     points: List[RoutePoint] = []
 
     pattern_v7 = re.compile(
+        rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*\}}"
+    )
+    pattern_v7_legacy = re.compile(
         rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*,\s*({FLOAT_RE})f\s*\}}"
     )
     pattern_v6 = re.compile(
+        rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*,\s*({FLOAT_RE})f\s*\}}"
+    )
+    pattern_v6_legacy = re.compile(
         rf"\{{\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*({FLOAT_RE})f\s*,\s*(?:\(uint8\))?\s*([A-Za-z_][A-Za-z0-9_]*|\d+)\s*\}}"
     )
     pattern_v5 = re.compile(
@@ -372,14 +415,41 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
                 y=float(match.group(2)),
                 target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
                 heading_deg=normalize_heading_deg(float(match.group(4))),
-                target_speed=float(match.group(5)),
-                point_type=parse_point_type(match.group(6)),
+                point_type=parse_point_type(match.group(5)),
+                target_speed=float(match.group(6)),
                 curvature=float(match.group(7)),
             )
         )
 
     if not points:
+        for match in pattern_v7_legacy.finditer(body):
+            points.append(
+                RoutePoint(
+                    x=float(match.group(1)),
+                    y=float(match.group(2)),
+                    target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
+                    heading_deg=normalize_heading_deg(float(match.group(4))),
+                    target_speed=float(match.group(5)),
+                    point_type=parse_point_type(match.group(6)),
+                    curvature=float(match.group(7)),
+                )
+            )
+
+    if not points:
         for match in pattern_v6.finditer(body):
+            points.append(
+                RoutePoint(
+                    x=float(match.group(1)),
+                    y=float(match.group(2)),
+                    target_yaw_deg=normalize_relative_yaw_deg(float(match.group(3))),
+                    heading_deg=normalize_heading_deg(float(match.group(4))),
+                    point_type=parse_point_type(match.group(5)),
+                    target_speed=float(match.group(6)),
+                )
+            )
+
+    if not points:
+        for match in pattern_v6_legacy.finditer(body):
             points.append(
                 RoutePoint(
                     x=float(match.group(1)),
@@ -1123,6 +1193,281 @@ def resample_path(x_fine: np.ndarray, y_fine: np.ndarray, target_dist: float) ->
     return x_new, y_new
 
 
+def _unit_vec(dx: float, dy: float, fallback: Tuple[float, float] = (1.0, 0.0)) -> Tuple[float, float]:
+    length = math.hypot(dx, dy)
+    if length < 1.0e-6:
+        return fallback
+    return dx / length, dy / length
+
+
+def _point_segment_distance(
+    px: float,
+    py: float,
+    ax: float,
+    ay: float,
+    bx: float,
+    by: float,
+) -> float:
+    abx = bx - ax
+    aby = by - ay
+    ab_len_sq = abx * abx + aby * aby
+    if ab_len_sq <= PATH_TANGENT_EPS_MM * PATH_TANGENT_EPS_MM:
+        return math.hypot(px - ax, py - ay)
+
+    t = ((px - ax) * abx + (py - ay) * aby) / ab_len_sq
+    t = max(0.0, min(1.0, t))
+    qx = ax + t * abx
+    qy = ay + t * aby
+    return math.hypot(px - qx, py - qy)
+
+
+def _route_points_from_xy(x_vals: np.ndarray, y_vals: np.ndarray) -> List[RoutePoint]:
+    final_yaw = tangent_yaws(x_vals, y_vals)
+    points = [
+        RoutePoint(
+            x=float(x_vals[i]),
+            y=float(y_vals[i]),
+            target_yaw_deg=normalize_relative_yaw_deg(float(final_yaw[i])),
+            heading_deg=0.0,
+            target_speed=0.0,
+            point_type=0,
+        )
+        for i in range(len(x_vals))
+    ]
+    curvatures = signed_curvature(points)
+    for point, kappa in zip(points, curvatures):
+        point.curvature = float(kappa)
+    return points
+
+
+def _minimum_path_cone_distance(points: List[RoutePoint], cones: List[RoutePoint]) -> float:
+    if not cones:
+        return float("inf")
+    if len(points) == 1:
+        return min(math.hypot(points[0].x - cone.x, points[0].y - cone.y) for cone in cones)
+
+    min_dist = float("inf")
+    for cone in cones:
+        for i in range(len(points) - 1):
+            dist = _point_segment_distance(
+                cone.x,
+                cone.y,
+                points[i].x,
+                points[i].y,
+                points[i + 1].x,
+                points[i + 1].y,
+            )
+            if dist < min_dist:
+                min_dist = dist
+    return min_dist
+
+
+def _has_continuous_tangent(points: List[RoutePoint]) -> bool:
+    if len(points) < 2:
+        return False
+
+    prev_angle: Optional[float] = None
+    for i in range(len(points) - 1):
+        dx = points[i + 1].x - points[i].x
+        dy = points[i + 1].y - points[i].y
+        seg_len = math.hypot(dx, dy)
+        if seg_len <= PATH_TANGENT_EPS_MM:
+            return False
+        angle = math.atan2(dy, dx)
+        if prev_angle is not None:
+            delta = (angle - prev_angle + math.pi) % (2.0 * math.pi) - math.pi
+            if abs(delta) > math.radians(95.0):
+                return False
+        prev_angle = angle
+    return True
+
+
+def validate_final_path(points: List[RoutePoint], cones: List[RoutePoint]) -> PathValidationReport:
+    if len(points) < 2:
+        raise PathConstraintError("路径点数不足，无法验证。")
+
+    min_clearance = _minimum_path_cone_distance(points, cones)
+    curvatures = signed_curvature(points)
+    max_abs_curvature = float(np.max(np.abs(curvatures))) if len(curvatures) else 0.0
+
+    s_vals = cumulative_arc_length(points)
+    max_abs_dkappa_ds = 0.0
+    if len(points) >= 3:
+        ds = np.diff(s_vals)
+        dkappa = np.diff(curvatures)
+        valid = ds > PATH_TANGENT_EPS_MM
+        if np.any(valid):
+            max_abs_dkappa_ds = float(np.max(np.abs(dkappa[valid] / ds[valid])))
+
+    tangent_continuous = _has_continuous_tangent(points)
+    report = PathValidationReport(
+        min_clearance_mm=float(min_clearance),
+        max_abs_curvature=max_abs_curvature,
+        max_abs_dkappa_ds=max_abs_dkappa_ds,
+        tangent_continuous=tangent_continuous,
+    )
+
+    min_required = cone_forbidden_radius_mm()
+    if cones and report.min_clearance_mm + 1.0e-6 < min_required:
+        raise PathConstraintError(
+            f"路径净空不足: min={report.min_clearance_mm:.1f}mm, required={min_required:.1f}mm"
+        )
+    if report.max_abs_curvature > MAX_PATH_CURVATURE_PER_MM + 1.0e-9:
+        raise PathConstraintError(
+            f"路径曲率超限: max={report.max_abs_curvature:.7f}, limit={MAX_PATH_CURVATURE_PER_MM:.7f}"
+        )
+    if report.max_abs_dkappa_ds > MAX_CURVATURE_RATE_PER_MM2 + 1.0e-10:
+        raise PathConstraintError(
+            f"路径曲率变化率超限: max={report.max_abs_dkappa_ds:.9f}, limit={MAX_CURVATURE_RATE_PER_MM2:.9f}"
+        )
+    if not report.tangent_continuous:
+        raise PathConstraintError("路径存在零长度段或切线跳变。")
+
+    for point, kappa in zip(points, curvatures):
+        point.curvature = float(kappa)
+    return report
+
+
+def _check_cone_channel_width(cones: List[RoutePoint]) -> None:
+    min_center_dist = 2.0 * cone_forbidden_radius_mm()
+    for i in range(len(cones) - 1):
+        dist = math.hypot(cones[i + 1].x - cones[i].x, cones[i + 1].y - cones[i].y)
+        if dist < min_center_dist:
+            raise PathConstraintError(
+                f"桩间距不足: cone[{i}]-cone[{i + 1}]={dist:.1f}mm, required>={min_center_dist:.1f}mm"
+            )
+
+
+def _build_slalom_corridor_waypoints(
+    start: RoutePoint,
+    end: RoutePoint,
+    cones: List[RoutePoint],
+    first_side: float,
+    offset_mm: float,
+    guide_points: Optional[List[RoutePoint]] = None,
+    guard_scale: float = 0.0,
+) -> List[Tuple[float, float]]:
+    guides = guide_points or []
+    waypoints: List[Tuple[float, float]] = [(start.x, start.y)]
+    waypoints.extend((p.x, p.y) for p in guides)
+
+    anchors = [start] + guides + cones + [end]
+    cone_anchor_offset = 1 + len(guides)
+
+    for i, cone in enumerate(cones):
+        prev_anchor = anchors[max(0, cone_anchor_offset + i - 1)]
+        next_anchor = anchors[min(len(anchors) - 1, cone_anchor_offset + i + 1)]
+        tx, ty = _unit_vec(next_anchor.x - prev_anchor.x, next_anchor.y - prev_anchor.y)
+        nx, ny = -ty, tx
+        side = first_side if (i % 2) == 0 else -first_side
+        if guard_scale <= 0.0:
+            waypoints.append((cone.x + nx * offset_mm * side, cone.y + ny * offset_mm * side))
+            continue
+
+        prev_dist = math.hypot(cone.x - prev_anchor.x, cone.y - prev_anchor.y)
+        next_dist = math.hypot(next_anchor.x - cone.x, next_anchor.y - cone.y)
+        guard = max(250.0, min(700.0, guard_scale * prev_dist, guard_scale * next_dist))
+        for along in (-guard, 0.0, guard):
+            waypoints.append((
+                cone.x + tx * along + nx * offset_mm * side,
+                cone.y + ty * along + ny * offset_mm * side,
+            ))
+
+    waypoints.append((end.x, end.y))
+    return waypoints
+
+
+def _sample_hermite_path(
+    waypoints: List[Tuple[float, float]],
+    tension: float,
+    sample_step_mm: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if len(waypoints) < 2:
+        raise PathConstraintError("路径控制点不足。")
+
+    tangents: List[Tuple[float, float]] = []
+    for i, point in enumerate(waypoints):
+        if i == 0:
+            dx = waypoints[1][0] - point[0]
+            dy = waypoints[1][1] - point[1]
+        elif i == len(waypoints) - 1:
+            dx = point[0] - waypoints[i - 1][0]
+            dy = point[1] - waypoints[i - 1][1]
+        else:
+            dx = waypoints[i + 1][0] - waypoints[i - 1][0]
+            dy = waypoints[i + 1][1] - waypoints[i - 1][1]
+        tangents.append((dx * tension, dy * tension))
+
+    x_vals: List[float] = []
+    y_vals: List[float] = []
+    for i in range(len(waypoints) - 1):
+        p0 = waypoints[i]
+        p1 = waypoints[i + 1]
+        m0 = tangents[i]
+        m1 = tangents[i + 1]
+        chord = math.hypot(p1[0] - p0[0], p1[1] - p0[1])
+        steps = max(int(math.ceil(chord / max(sample_step_mm, 1.0))), 4)
+
+        for step in range(steps + 1):
+            if i > 0 and step == 0:
+                continue
+            t = step / steps
+            t2 = t * t
+            t3 = t2 * t
+            h00 = 2.0 * t3 - 3.0 * t2 + 1.0
+            h10 = t3 - 2.0 * t2 + t
+            h01 = -2.0 * t3 + 3.0 * t2
+            h11 = t3 - t2
+            x_vals.append(h00 * p0[0] + h10 * m0[0] + h01 * p1[0] + h11 * m1[0])
+            y_vals.append(h00 * p0[1] + h10 * m0[1] + h01 * p1[1] + h11 * m1[1])
+
+    return np.array(x_vals, dtype=float), np.array(y_vals, dtype=float)
+
+
+def generate_constrained_slalom_path(
+    start: RoutePoint,
+    end: RoutePoint,
+    cones: List[RoutePoint],
+    guide_points: Optional[List[RoutePoint]] = None,
+) -> List[RoutePoint]:
+    if not cones and not guide_points:
+        x_vals, y_vals = _resample_segment(start.x, start.y, end.x, end.y, INTERPOLATE_DIST)
+        points = _route_points_from_xy(x_vals, y_vals)
+        validate_final_path(points, cones)
+        return points
+
+    last_error: Optional[Exception] = None
+    for first_side in (1.0, -1.0):
+        for extra_clearance in CONSTRAINED_CLEARANCE_STEPS_MM:
+            offset_mm = cone_forbidden_radius_mm() + CORRIDOR_CLEARANCE_MM + extra_clearance
+            for guard_scale in (0.0, 0.18, 0.28, 0.40):
+                waypoints = _build_slalom_corridor_waypoints(
+                    start,
+                    end,
+                    cones,
+                    first_side,
+                    offset_mm,
+                    guide_points=guide_points,
+                    guard_scale=guard_scale,
+                )
+                for tension in CONSTRAINED_SMOOTH_TENSIONS:
+                    try:
+                        dense_x, dense_y = _sample_hermite_path(
+                            waypoints,
+                            tension=tension,
+                            sample_step_mm=PATH_DENSE_SAMPLE_MM,
+                        )
+                        out_x, out_y = resample_path(dense_x, dense_y, INTERPOLATE_DIST)
+                        points = _route_points_from_xy(out_x, out_y)
+                        validate_final_path(points, cones)
+                        return points
+                    except PathConstraintError as exc:
+                        last_error = exc
+
+    detail = f" 最后失败原因: {last_error}" if last_error is not None else ""
+    raise PathConstraintError(f"无法生成满足净空/曲率/曲率变化率的桩筒路径。{detail}")
+
+
 def prepare_input_points(raw_points: List[RoutePoint]) -> Tuple[List[RoutePoint], int]:
     """
     准备输入点：若第一个点不是原点 (0,0)，则自动补一个原点作为起点。
@@ -1166,14 +1511,23 @@ def generate_calculated_path(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[f
     print(f"[参数] 实际掉头半径: {eff_radius:.0f}mm")
 
     # 2. 控制点生成
-    control_points, apex_pts = generate_control_points(start, u_turn, cones, end_point)
+    final_points = generate_constrained_slalom_path(
+        start,
+        end_point,
+        cones,
+        guide_points=[u_turn],
+    )
+    x_resampled = np.array([p.x for p in final_points], dtype=float)
+    y_resampled = np.array([p.y for p in final_points], dtype=float)
+
+    control_points = [(start.x, start.y), (u_turn.x, u_turn.y)]
+    control_points.extend((p.x, p.y) for p in cones)
+    control_points.append((end_point.x, end_point.y))
     print(f"[控制点] 总数: {len(control_points)}")
 
     # 3. B 样条平滑
-    x_fine, y_fine = bspline_smooth(control_points)
 
     # 4. 等距重采样
-    x_resampled, y_resampled = resample_path(x_fine, y_fine, INTERPOLATE_DIST)
     print(f"[轨迹] 重采样后点数: {len(x_resampled)}")
 
     return control_points, x_resampled, y_resampled, drop_first_count
@@ -1394,10 +1748,14 @@ def generate_route_plan(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float,
         method_name = f"极速掉头-{fast_uturn_mode_name(PLAN1_FAST_UTURN_MODE)}"
         return control_points, final_points, method_name
 
+    input_points, _ = prepare_input_points(raw_points)
+    _start, _u_turn, cones, _end_point = classify_points(input_points)
+
     control_points, x_resampled, y_resampled, drop_first_count = generate_calculated_path(raw_points)
     final_points = build_final_points(raw_points, x_resampled, y_resampled, drop_first_count)
+    validate_final_path(final_points, cones)
     apply_speed_plan(final_points)
-    return control_points, final_points, "AutoPath B-Spline"
+    return control_points, final_points, "AutoPath constrained Hermite"
 
 
 def generate_header(
@@ -1441,7 +1799,7 @@ def generate_header(
                     f"{p.heading_deg:.3f}f, (uint8){p.point_type}, {p.target_speed:.3f}f, {p.curvature:.6f}f}},\n"
                 )
         else:
-            f.write("    {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH, 0.0f},\n")
+            f.write("    {0.0f, 0.0f, 0.0f, 0.0f, NAV_POINT_PATH, 0.0f, 0.0f},\n")
         f.write("};\n\n")
         f.write("#endif // _NAV_REPLAY_ROUTE_TABLE_H_\n")
 

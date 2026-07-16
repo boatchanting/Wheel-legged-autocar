@@ -73,11 +73,13 @@ typedef struct
 {
     float x;
     float y;
-    float yaw_deg;
-    float curvature;
+    float local_yaw_deg;
+    float local_tangent_x;
+    float local_tangent_y;
+    float preview_curvature;
     float target_speed;
     uint8 point_type;
-    uint16 idx;
+    uint16 preview_idx;
 } LqrReference_t;
 
 static uint8 g_start_heading_aligned = 1;
@@ -131,6 +133,37 @@ static float CalcDistanceSq(float x1, float y1, float x2, float y2)
     return dx * dx + dy * dy;
 }
 
+static float NavReplay_CalcPathYawFromVector(float dx, float dy)
+{
+    if ((fabsf(dx) < 1.0e-6f) && (fabsf(dy) < 1.0e-6f))
+    {
+        return inertial_nav.relative_yaw;
+    }
+
+    return NormalizeAngle(-(float)(atan2f(dy, -dx) * (180.0f / 3.1415926535f)));
+}
+
+static float NavReplay_GetPathSpeedMmS(float target_speed)
+{
+    return fabsf(target_speed) * LQR_SPEED_TO_MM_S;
+}
+
+static float NavReplay_GetActualYawRateRadS(void)
+{
+#if LQR_USE_ACTUAL_YAW_RATE_FB
+    return inertial_nav.actual_yaw_rate;
+#else
+    return 0.0f;
+#endif
+}
+
+static float NavReplay_LerpBySpeed(float low_value, float high_value, float speed_mm_s)
+{
+    float t = (speed_mm_s - LQR_LOW_SPEED_MM_S) / (LQR_HIGH_SPEED_MM_S - LQR_LOW_SPEED_MM_S);
+    t = Float_Constrain(t, 0.0f, 1.0f);
+    return low_value + (high_value - low_value) * t;
+}
+
 /**
  * @brief 清空极速掉头运行态。
  * @note 不改惯导坐标和 yaw 零点，只清动作状态，避免“地图跳了但车没动”的问题。
@@ -150,11 +183,11 @@ static void NavReplay_FastUTurn_ClearRuntime(void)
  */
 static void NavReplay_FastUTurn_InitFromRoute(void)
 {
-    uint16 i;
-
     NavReplay_FastUTurn_ClearRuntime();
 
 #if PLAN1_FAST_UTURN_ENABLE
+    uint16 i;
+
     for (i = 0U; i < nav_ram_data.point_count; i++)
     {
         if (nav_ram_data.points[i].point_type == NAV_POINT_JUMP)
@@ -391,7 +424,7 @@ static void NavReplay_FastUTurn_ApplyLeadReference(LqrReference_t *ref)
         return;
     }
 
-    path_yaw = NavReplay_FastUTurn_GetPathYawAtIndex(ref->idx);
+    path_yaw = NavReplay_FastUTurn_GetPathYawAtIndex(ref->preview_idx);
     abs_speed = fabsf(ref->target_speed);
     
     // 强制起步速度激发：掉头完毕后即使路径点规划速度为0，也强制给一个较高的初始速度，打破零速度陷阱
@@ -408,11 +441,13 @@ static void NavReplay_FastUTurn_ApplyLeadReference(LqrReference_t *ref)
 
     if (g_plan1_fast_uturn_lead == (uint8)PLAN1_FAST_UTURN_LEAD_REAR)
     {
-        ref->yaw_deg = NormalizeAngle(path_yaw + 180.0f);
+        ref->local_yaw_deg = NormalizeAngle(path_yaw + 180.0f);
+        ref->local_tangent_x = -ref->local_tangent_x;
+        ref->local_tangent_y = -ref->local_tangent_y;
     }
     else
     {
-        ref->yaw_deg = path_yaw;
+        ref->local_yaw_deg = path_yaw;
     }
 
     ref->point_type = NAV_POINT_PATH;
@@ -881,6 +916,7 @@ static void NavReplay_BuildReference(uint16 base_idx, uint16 stop_idx, LqrRefere
     float seg_dx;
     float seg_dy;
     float seg_len_sq;
+    float seg_len;
     float proj_t = 0.0f;
 
     if (base_idx > last_idx)
@@ -907,6 +943,7 @@ static void NavReplay_BuildReference(uint16 base_idx, uint16 stop_idx, LqrRefere
     seg_dy = seg_end->y - base->y;
     seg_len_sq = seg_dx * seg_dx + seg_dy * seg_dy;
 
+    seg_len = sqrtf(seg_len_sq);
     if (seg_len_sq > (LQR_PROJECTION_MIN_SEG_LEN_MM * LQR_PROJECTION_MIN_SEG_LEN_MM))
     {
         float car_dx = inertial_nav.x - base->x;
@@ -917,11 +954,22 @@ static void NavReplay_BuildReference(uint16 base_idx, uint16 stop_idx, LqrRefere
 
     ref->x = base->x + proj_t * seg_dx;
     ref->y = base->y + proj_t * seg_dy;
-    ref->yaw_deg = preview->target_yaw_deg;
-    ref->curvature = preview->curvature;
+    if (seg_len > LQR_PROJECTION_MIN_SEG_LEN_MM)
+    {
+        ref->local_tangent_x = seg_dx / seg_len;
+        ref->local_tangent_y = seg_dy / seg_len;
+        ref->local_yaw_deg = NavReplay_CalcPathYawFromVector(seg_dx, seg_dy);
+    }
+    else
+    {
+        ref->local_tangent_x = 1.0f;
+        ref->local_tangent_y = 0.0f;
+        ref->local_yaw_deg = base->target_yaw_deg;
+    }
+    ref->preview_curvature = preview->curvature;
     ref->target_speed = base->target_speed;
     ref->point_type = base->point_type;
-    ref->idx = ref_idx;
+    ref->preview_idx = ref_idx;
 }
 
 /**
@@ -956,28 +1004,65 @@ static float NavReplay_GetCurvatureDirectionSign(float target_speed)
  */
 static float NavReplay_CalcLqrErr(const LqrReference_t *ref)
 {
-    float psi_ref_rad = ref->yaw_deg * LQR_DEG_TO_RAD;
     float dx = inertial_nav.x - ref->x;
     float dy = inertial_nav.y - ref->y;
-    float e_y = -sinf(psi_ref_rad) * dx + cosf(psi_ref_rad) * dy;
-    float e_psi = NormalizeAngle(ref->yaw_deg - inertial_nav.relative_yaw);
+    /* x positive backward, y positive right: e_y > 0 means car is right of path. */
+    float e_y = ref->local_tangent_y * dx - ref->local_tangent_x * dy;
+    float e_psi = NormalizeAngle(ref->local_yaw_deg - inertial_nav.relative_yaw);
+    float speed_mm_s = NavReplay_GetPathSpeedMmS(ref->target_speed);
     float curv_sign = NavReplay_GetCurvatureDirectionSign(ref->target_speed);
-    float curv_ff = LQR_K_CURV * ref->curvature * curv_sign;
-    float slew_limit = LQR_ERR_SLEW_DEG;
-    float filter_alpha = LQR_FILTER_ALPHA;
+    float r_ref = speed_mm_s * ref->preview_curvature * curv_sign;
+    float r_actual = NavReplay_GetActualYawRateRadS();
+    float yaw_rate_ff = LQR_K_YAW_RATE_FF * r_ref;
+    float yaw_rate_fb = LQR_K_YAW_RATE * (r_ref - r_actual);
+    float err_limit = NavReplay_LerpBySpeed(LQR_LOW_SPEED_ERR_MAX_DEG,
+                                            LQR_HIGH_SPEED_ERR_MAX_DEG,
+                                            speed_mm_s);
+    float slew_limit = NavReplay_LerpBySpeed(LQR_LOW_SPEED_ERR_SLEW_DEG,
+                                             LQR_HIGH_SPEED_ERR_SLEW_DEG,
+                                             speed_mm_s);
+    float filter_alpha = NavReplay_LerpBySpeed(LQR_LOW_SPEED_FILTER_ALPHA,
+                                               LQR_HIGH_SPEED_FILTER_ALPHA,
+                                               speed_mm_s);
+    float yaw_rate_limit = NavReplay_LerpBySpeed(LQR_LOW_SPEED_YAW_RATE_LIMIT_RAD_S,
+                                                 LQR_HIGH_SPEED_YAW_RATE_LIMIT_RAD_S,
+                                                 speed_mm_s);
+    float yaw_accel_limit = NavReplay_LerpBySpeed(LQR_LOW_SPEED_YAW_ACCEL_LIMIT_RAD_S2,
+                                                  LQR_HIGH_SPEED_YAW_ACCEL_LIMIT_RAD_S2,
+                                                  speed_mm_s);
+    float lateral_accel_limit = NavReplay_LerpBySpeed(LQR_LOW_SPEED_LATERAL_ACCEL_MM_S2,
+                                                      LQR_HIGH_SPEED_LATERAL_ACCEL_MM_S2,
+                                                      speed_mm_s);
     float err_raw;
     float diff;
+    float dynamic_err_limit;
+    float yaw_accel_slew;
 
     e_y = Float_Constrain(e_y, -LQR_LATERAL_ERR_LIMIT_MM, LQR_LATERAL_ERR_LIMIT_MM);
 
-    if (fabsf(ref->curvature) >= LQR_SHARP_CURVATURE_TH)
+    dynamic_err_limit = yaw_rate_limit * LQR_OUTPUT_DEG_PER_RADPS;
+    if (speed_mm_s > LQR_LOW_SPEED_MM_S)
     {
-        slew_limit = LQR_SHARP_ERR_SLEW_DEG;
-        filter_alpha = LQR_SHARP_FILTER_ALPHA;
+        float lat_yaw_limit = lateral_accel_limit / speed_mm_s;
+        float lat_err_limit = lat_yaw_limit * LQR_OUTPUT_DEG_PER_RADPS;
+        if (lat_err_limit < dynamic_err_limit)
+        {
+            dynamic_err_limit = lat_err_limit;
+        }
+    }
+    if (dynamic_err_limit < err_limit)
+    {
+        err_limit = dynamic_err_limit;
     }
 
-    err_raw = LQR_SIGN * (curv_ff + LQR_K_LATERAL * e_y + LQR_K_HEADING * e_psi);
-    err_raw = Float_Constrain(err_raw, -LQR_ERR_MAX_DEG, LQR_ERR_MAX_DEG);
+    yaw_accel_slew = yaw_accel_limit * LQR_CONTROL_PERIOD_S * LQR_OUTPUT_DEG_PER_RADPS;
+    if ((speed_mm_s > LQR_LOW_SPEED_MM_S) && (yaw_accel_slew < slew_limit))
+    {
+        slew_limit = yaw_accel_slew;
+    }
+
+    err_raw = LQR_SIGN * (yaw_rate_ff + LQR_K_LATERAL * e_y + LQR_K_HEADING * e_psi + yaw_rate_fb);
+    err_raw = Float_Constrain(err_raw, -err_limit, err_limit);
 
     diff = err_raw - s_prev_err_degree;
     err_raw = s_prev_err_degree + Float_Constrain(diff, -slew_limit, slew_limit);
