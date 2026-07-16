@@ -103,6 +103,12 @@ def parse_args() -> argparse.Namespace:
         default=OUTPUT_DIR,
         help="Directory for outputs under data/雷区室外偏振片.",
     )
+    parser.add_argument(
+        "--fixed-threshold",
+        type=int,
+        default=None,
+        help="Use a single fixed grayscale threshold instead of the adaptive/Otsu-derived sweep.",
+    )
     return parser.parse_args()
 
 
@@ -436,15 +442,18 @@ def score_candidate(
     return score
 
 
-def detect_candidate(gray: np.ndarray) -> Candidate | None:
+def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Candidate | None:
     height, width = gray.shape
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-    otsu_threshold, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    thresholds = {
-        int(np.clip(otsu_threshold + delta, 85, 185))
-        for delta in (-12, -6, 0, 6, 12, 18, 24, 30, 36)
-    }
-    thresholds.update(range(90, 171, 10))
+    if fixed_threshold is not None:
+        thresholds = {int(np.clip(fixed_threshold, 0, 255))}
+    else:
+        otsu_threshold, _ = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        thresholds = {
+            int(np.clip(otsu_threshold + delta, 85, 185))
+            for delta in (-12, -6, 0, 6, 12, 18, 24, 30, 36)
+        }
+        thresholds.update(range(90, 171, 10))
 
     best: Candidate | None = None
     for threshold in sorted(thresholds):
@@ -646,11 +655,11 @@ def quad_to_list(quad: np.ndarray | None) -> list[list[float]] | None:
     return np.round(quad, 2).tolist()
 
 
-def evaluate_sample(sample: Sample, output_dir: Path) -> dict:
+def evaluate_sample(sample: Sample, output_dir: Path, fixed_threshold: int | None = None) -> dict:
     gray = read_gray(sample.original_path)
     annotation_rgb = read_rgb(sample.annotation_png_path)
     gt = load_ground_truth(sample.annotation_json_path)
-    candidate = detect_candidate(gray)
+    candidate = detect_candidate(gray, fixed_threshold=fixed_threshold)
 
     pred_outer_mask = render_quad_mask(gray.shape, None if candidate is None else candidate.outer_quad)
     pred_inner_mask = render_quad_mask(gray.shape, None if candidate is None else candidate.inner_quad_final)
@@ -696,6 +705,10 @@ def evaluate_sample(sample: Sample, output_dir: Path) -> dict:
             "annotation_png": str(sample.annotation_png_path),
             "annotation_json": str(sample.annotation_json_path),
             "output_dir": str(sample_dir),
+        },
+        "threshold_mode": {
+            "type": "fixed" if fixed_threshold is not None else "sweep",
+            "value": fixed_threshold,
         },
         "ground_truth": {
             "outer_segment_count": len(gt.outer_segments),
@@ -798,7 +811,7 @@ def write_all_annotation_index(output_dir: Path) -> None:
     )
 
 
-def write_summary(results: list[dict], output_dir: Path) -> None:
+def write_summary(results: list[dict], output_dir: Path, fixed_threshold: int | None = None) -> None:
     outer_f1 = [result["metrics"]["outer_line"]["f1"] for result in results if result["metrics"]["outer_present_gt"]]
     inner_f1 = [result["metrics"]["inner_line"]["f1"] for result in results if result["metrics"]["inner_present_gt"]]
     strict_role_f1 = [result["metrics"]["strict_role_mean_f1"] for result in results]
@@ -834,6 +847,10 @@ def write_summary(results: list[dict], output_dir: Path) -> None:
             "tape_width_cm": TAPE_WIDTH_CM,
             "inner_generation": "infer by projective inset from detected outer quad when direct inner contour is absent",
         },
+        "threshold_mode": {
+            "type": "fixed" if fixed_threshold is not None else "sweep",
+            "value": fixed_threshold,
+        },
         "results": results,
     }
 
@@ -845,6 +862,11 @@ def write_summary(results: list[dict], output_dir: Path) -> None:
         f"内框线段平均 F1: {summary['mean_inner_f1']:.3f}",
         f"只按已标注线段统计的平均 F1: {summary['mean_annotated_role_f1']:.3f}",
         f"严格口径角色平均 F1: {summary['mean_strict_role_f1']:.3f}",
+        (
+            f"阈值模式: 固定阈值 {fixed_threshold}"
+            if fixed_threshold is not None
+            else "阈值模式: Otsu 派生阈值扫描"
+        ),
         (
             "外框角点平均误差(px): "
             f"{summary['mean_outer_corner_error_px']:.3f}"
@@ -884,9 +906,9 @@ def main() -> None:
     samples = build_samples()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    results = [evaluate_sample(sample, args.output_dir) for sample in samples]
+    results = [evaluate_sample(sample, args.output_dir, fixed_threshold=args.fixed_threshold) for sample in samples]
     build_contact_sheet(results, args.output_dir / "contact_sheet.png")
-    write_summary(results, args.output_dir)
+    write_summary(results, args.output_dir, fixed_threshold=args.fixed_threshold)
     write_all_annotation_index(args.output_dir)
 
     print(f"output_dir: {args.output_dir}")
