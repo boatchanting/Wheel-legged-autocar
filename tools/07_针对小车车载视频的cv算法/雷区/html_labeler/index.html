@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>雷区 PNG 标注器</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="panel">
+        <h1>雷区 PNG 标注器</h1>
+        <p class="muted">算法标记目录可选，绿色线段表示内框，红色线段表示外框，保存结果为 PNG。</p>
+      </div>
+
+      <div class="panel">
+        <div class="button-row">
+          <button id="pick-draw-dir" type="button">选择算法标记目录</button>
+          <button id="pick-original-dir" type="button">选择原图目录</button>
+          <button id="pick-output-dir" type="button">选择输出目录</button>
+        </div>
+        <div class="button-row">
+          <button id="fallback-draw-dir" type="button" class="secondary">文件夹导入算法图</button>
+          <button id="fallback-original-dir" type="button" class="secondary">文件夹导入原图</button>
+        </div>
+        <input id="draw-input" type="file" webkitdirectory directory multiple hidden>
+        <input id="original-input" type="file" webkitdirectory directory multiple hidden>
+        <div class="path-list">
+          <div><span class="label">算法标记目录</span><span id="draw-dir-label" class="value">未选择（可留空）</span></div>
+          <div><span class="label">原图目录</span><span id="original-dir-label" class="value">未选择</span></div>
+          <div><span class="label">输出目录</span><span id="output-dir-label" class="value">未选择</span></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="toolbar-header">
+          <h2>文件列表</h2>
+          <span id="file-count" class="muted">0 张</span>
+        </div>
+        <div id="file-list" class="file-list"></div>
+      </div>
+    </aside>
+
+    <main class="main-panel">
+      <section class="panel top-controls">
+        <div class="button-row">
+          <button id="prev-frame" type="button">上一张 N</button>
+          <button id="next-frame" type="button">下一张 M</button>
+          <button id="save-frame" type="button" class="primary">保存当前</button>
+          <button id="save-next-frame" type="button">保存并下一张</button>
+          <button id="accept-algorithm" type="button">直接保存算法图</button>
+          <button id="reset-frame" type="button">重置当前</button>
+          <button id="undo-action" type="button">撤销</button>
+          <button id="redo-action" type="button">重做</button>
+        </div>
+
+        <div class="button-row line-tools">
+          <button id="tool-inner" type="button" data-tool="inner" class="tool-button">1 内框线</button>
+          <button id="tool-outer" type="button" data-tool="outer" class="tool-button">2 外框线</button>
+        </div>
+
+        <div class="button-row">
+          <button id="clear-inner" type="button">清空内框线</button>
+          <button id="clear-outer" type="button">清空外框线</button>
+          <label class="checkbox">
+            <input id="replace-on-draw" type="checkbox">
+            新画线前先清空当前颜色
+          </label>
+        </div>
+
+        <div class="status-grid">
+          <div><span class="label">当前文件</span><span id="current-file" class="value">未加载</span></div>
+          <div><span class="label">状态</span><span id="frame-status" class="value">等待目录</span></div>
+          <div><span class="label">工具</span><span id="active-tool-label" class="value">内框线</span></div>
+          <div><span class="label">缩放</span><span id="zoom-label" class="value">6x</span></div>
+          <div><span class="label">提示</span><span id="pointer-label" class="value">点击起点，再点击终点</span></div>
+        </div>
+      </section>
+
+      <section class="panel canvas-panel">
+        <div class="canvas-toolbar">
+          <button id="zoom-out" type="button">缩小</button>
+          <button id="zoom-in" type="button">放大</button>
+          <button id="fit-zoom" type="button">重置缩放</button>
+        </div>
+        <div id="canvas-scroll" class="canvas-scroll">
+          <canvas id="annotator-canvas" width="96" height="60"></canvas>
+        </div>
+      </section>
+
+      <section class="panel shortcuts-panel">
+        <h2>快捷键</h2>
+        <div class="shortcut-grid">
+          <span>`1 2` 选择内框线 / 外框线</span>
+          <span>`← →` 清空当前颜色并切换工具</span>
+          <span>`Ctrl+S` 保存当前</span>
+          <span>`Shift+S` 保存并下一张</span>
+          <span>`A` 直接保存算法图</span>
+          <span>`Ctrl+Z / Ctrl+Y` 撤销 / 重做</span>
+          <span>`Backspace` 重置当前</span>
+          <span>`[` `]` 缩放</span>
+          <span>`N / M` 上一张 / 下一张</span>
+          <span>`Esc` 取消当前起点</span>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
