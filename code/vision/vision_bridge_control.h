@@ -35,7 +35,18 @@ extern "C" {
 /* --- 3. 角度与偏差阈值 --- */
 #define VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG         (3.0f)      /* 对齐时，车头偏角误差允许的范围（小于 4 度算对齐） */
 #define VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG         (1.5f)      /* 对齐时，综合误差（方向盘该打多少）允许的范围 */
-#define VISION_BRIDGE_TASK_IMAGE_CENTER_X            (53.0f)    //54.0 偏左  50.0 偏右  52.0 偏右  53.0还有点偏左，可能是带歪的
+#define VISION_BRIDGE_TASK_IMAGE_CENTER_X            (53.0f)    /* 车辆实际直行对应的图像中心；现场标定值 */
+#define VISION_BRIDGE_TASK_LOOKAHEAD_Y               (40.0f)    /* 固定前视控制行，图像坐标由上向下增大 */
+
+/* Control-side center-line temporal filter.  These parameters deliberately
+ * live here instead of the detector so that the raw vision output remains
+ * available to the rest of the system. */
+#define VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA       (0.50f)
+#define VISION_BRIDGE_TASK_CENTER_JUMP_REJECT_PX     (8.0f)
+#define VISION_BRIDGE_TASK_CENTER_JUMP_REJECT_DEG    (8.0f)
+#define VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_PX    (3.0f)
+#define VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_DEG   (3.0f)
+#define VISION_BRIDGE_TASK_CENTER_LOST_FRAMES        (3U)
 
 /* --- 4. 控制增益参数（PID 参数） --- */
 #define VISION_BRIDGE_TASK_LINE_SIGN                 (-1.0f)     /* 转向符号，如果车子往反方向修偏，改成 1.0f */
@@ -87,6 +98,10 @@ typedef struct
     int16 center_line_y0;
     int16 center_line_x1;
     int16 center_line_y1;
+    uint8 center_filter_valid;
+    uint8 center_filter_pending_jump;
+    float filtered_lookahead_x;
+    float filtered_heading_deg;
     uint16 exit_lost_ticks;              /* 下桥时，连续看不到桥的计时 */
     uint16 bridge_hold_ticks;            /* 看见黑块后的保持倒计时 */
 } vision_bridge_task_status_t;
