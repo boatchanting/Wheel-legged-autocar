@@ -417,13 +417,18 @@ void wifi_protocol_send_data(void)
     write_u8(gnss_trans.is_valid);
     write_u8(gnss_trans.is_origin_set);
 
-    // F. PID Control Mode
+    // F. reserved fusion trace (complement filter removed in this branch)
+    write_float_value(0.0f);
+    write_float_value(0.0f);
+    write_u8(0U);
+
+    // G. PID Control Mode
     write_u8((uint8_t)g_control_mode_applied);
     
-    // G. Slip Flag
+    // H. Slip Flag
     write_u8((uint8_t)inertial_nav.slip_flag);
 
-    // H. Debug logging values (20 bytes)
+    // I. Debug logging values (20 bytes)
     extern NavReplayState_e g_replay_state;
     if (g_replay_state == REPLAY_RUNNING || g_manual_log_enabled) {
         float t_speed = (float)target_speed_set;
