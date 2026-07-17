@@ -1,5 +1,6 @@
 # vscode config
 .vscode/
+.worktrees/
 # Visual Studio local cache
 .vs/
 # data
