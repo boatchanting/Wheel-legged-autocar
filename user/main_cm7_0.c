@@ -338,6 +338,7 @@ int main(void)
         if (g_nav_start_recording)
         {            
             InertialNav_Init();
+            Gnss_Transform_Reset_Origin();
             NavRam_Init();
             #if DEBUG_LOG_ENABLE
                 printf("[NAV] Init OK: x=%.2f y=%.2f yaw=%.2f\r\n",
@@ -404,6 +405,7 @@ int main(void)
         g_load_flash_request = 0;
 
         InertialNav_Init();
+        Gnss_Transform_Reset_Origin();
 
         NavReplay_Start();//start replay
         #if DEBUG_LOG_ENABLE

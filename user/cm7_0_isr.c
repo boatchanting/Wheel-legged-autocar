@@ -35,6 +35,7 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
+#include "navigation/nav_replay/nav_replay.h"
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
 #include "plan/bumpy_road.h"
@@ -71,10 +72,17 @@ volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴角速度，用于转向角速度环和示波器观测
 uint32_t loop_counter = 0;
+#if ACCEL_FF_BUZZER_ENABLE
 static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
+#endif
 static uint16 profile_switch_beep_ticks = 0U;      // 复刻PID切换蜂鸣剩余时间，1ms 递减
+#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_LQR_FUSION)
+static uint16 plan1_fusion_beep_on_ticks = 0U;     // 科目一融合状态蜂鸣响声剩余时间，1ms 递减
+static uint16 plan1_fusion_beep_gap_ticks = 0U;    // 科目一融合状态蜂鸣间隔剩余时间，1ms 递减
+static uint8 plan1_fusion_beep_times_left = 0U;    // 科目一融合状态蜂鸣剩余次数
+#endif
 static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
@@ -286,6 +294,64 @@ static void Accel_Feedforward_Buzzer_Update(float accel_pwm)
     (void)accel_pwm;
 #endif
 }
+
+static void Plan1Fusion_Buzzer_Update(void)
+{
+#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_LQR_FUSION)
+    if (plan1_fusion_beep_request != PLAN1_FUSION_BEEP_NONE)
+    {
+        uint8 request = plan1_fusion_beep_request;
+        plan1_fusion_beep_request = PLAN1_FUSION_BEEP_NONE;
+
+        plan1_fusion_beep_gap_ticks = 0U;
+        if (request == PLAN1_FUSION_BEEP_ALIGN_FAILED)
+        {
+            plan1_fusion_beep_times_left = 0U;
+            plan1_fusion_beep_on_ticks = 180U;
+        }
+        else if (request == PLAN1_FUSION_BEEP_GPS_CORRECT_START)
+        {
+            plan1_fusion_beep_times_left = 1U;
+            plan1_fusion_beep_on_ticks = 45U;
+        }
+        else if (request == PLAN1_FUSION_BEEP_ALIGN_READY)
+        {
+            plan1_fusion_beep_times_left = 0U;
+            plan1_fusion_beep_on_ticks = 45U;
+        }
+        else
+        {
+            plan1_fusion_beep_times_left = 0U;
+            plan1_fusion_beep_on_ticks = 45U;
+        }
+        gpio_set_level(BUZZER_PIN, GPIO_HIGH);
+    }
+
+    if (plan1_fusion_beep_on_ticks > 0U)
+    {
+        plan1_fusion_beep_on_ticks--;
+        if (plan1_fusion_beep_on_ticks == 0U)
+        {
+            gpio_set_level(BUZZER_PIN, GPIO_LOW);
+            if (plan1_fusion_beep_times_left > 0U)
+            {
+                plan1_fusion_beep_gap_ticks = 80U;
+            }
+        }
+    }
+    else if (plan1_fusion_beep_gap_ticks > 0U)
+    {
+        plan1_fusion_beep_gap_ticks--;
+        if ((plan1_fusion_beep_gap_ticks == 0U) &&
+            (plan1_fusion_beep_times_left > 0U))
+        {
+            plan1_fusion_beep_times_left--;
+            plan1_fusion_beep_on_ticks = 45U;
+            gpio_set_level(BUZZER_PIN, GPIO_HIGH);
+        }
+    }
+#endif
+}
 // **************************** PIT中断函数 ****************************
 
 void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务函数      
@@ -407,7 +473,14 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // float current_heading = inertial_nav.relative_yaw; // 获取相对航向角 (度)
     }
 
-    #if GNSS_NAV == 1
+#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_LQR_FUSION)
+    if ((loop_counter % 10 == 1) && g_yaw_initialized)
+    {
+        Plan1FusionLqr_UpdateFusion10ms();
+    }
+#endif
+
+    #if (GNSS_NAV == 1) || ((CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_LQR_FUSION))
     //【gnss.1】GNSS定位更新
     if (loop_counter % 100 == 2) {  // 100ms 一次
         if (gnss_flag) {
@@ -418,6 +491,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     }
     #endif
 
+#if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_LQR_FUSION)
+    if (loop_counter % 100 == 2)
+    {
+        Plan1FusionLqr_CorrectWithGnss();
+    }
+#endif
+
 
    // ------------------------------------------------------
     // 【nav.4】复现控制任务 (10ms运行一次)
@@ -427,7 +507,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         if (g_motor_enable && (!g_fallen) && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) 
         { 
             NavReplay_Process();
-            #if GNSS_NAV == 1
+            #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
             GpsNavReplay_Process(); 
             #endif
         } //复现控制
@@ -439,6 +519,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     };//【测试】抬高双腿
 
     Control_Profile_Update1ms();//pid参数调度更新
+    Plan1Fusion_Buzzer_Update();
 
     // 复刻模式下PID切换蜂鸣提示
     if (profile_switch_beep_request != 0U)
@@ -485,7 +566,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 {
                     accel_ff_replay_running = 1U;
                 }
-                #if GNSS_NAV == 1
+                #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
                 if (g_gps_replay_state == REPLAY_RUNNING)
                 {
                     accel_ff_replay_running = 1U;
@@ -505,7 +586,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                     (VisionBridgeTask_IsActive() != 0U) ||
                     (Bridge_Test_Triple_SingleSide_Is_Active()) ||
                     (g_pvc_control_enable != 0U)
-                    #if GNSS_NAV == 1
+                    #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
                     || (g_gps_special_action_trigger != 0U)
                     #endif
                    )
@@ -730,7 +811,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                                             (fabsf(brake_pwm_roll) >= BRAKE_TURN_ROLL_CLEAR_PWM_TH) ||
                                             ((fabsf(target_speed_set) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
                                              (fabsf(current_actual_speed) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND))
-                                            #if GNSS_NAV == 1
+                                            #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
                                             || (g_gps_special_action_trigger != 0U)
                                             #endif
                                            );
@@ -803,7 +884,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 // 彻底关闭电机使能
                 //g_motor_enable = 0; 
                 NavReplay_Stop();//【nav】复现停止
-                #if GNSS_NAV == 1
+                #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
                 GpsNavReplay_Stop();//【gnss】复现停止
                 #endif
             }
@@ -824,7 +905,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             NavReplay_Stop();//【nav】复现停止
             Brake_Feedforward_Reset();//【brake】锁定刹车关闭
             Accel_Feedforward_Reset();//【accel_ff】锁定加速前馈关闭
-            #if GNSS_NAV == 1
+            #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
                 GpsNavReplay_Stop();//【gnss】复现停止
             #endif
         }
@@ -844,7 +925,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         {
             accel_ff_replay_running_fast = 1U;
         }
-        #if GNSS_NAV == 1
+        #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
         if (g_gps_replay_state == REPLAY_RUNNING)
         {
             accel_ff_replay_running_fast = 1U;
@@ -864,7 +945,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             (VisionBridgeTask_IsActive() != 0U) ||
             (Bridge_Test_Triple_SingleSide_Is_Active()) ||
             (g_pvc_control_enable != 0U)
-            #if GNSS_NAV == 1
+            #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
             || (g_gps_special_action_trigger != 0U)
             #endif
            )
@@ -1005,7 +1086,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         NavReplay_Stop();//【nav】复现停止
         Accel_Feedforward_Reset();//【accel_ff】遥控刹车停止复刻时清空加速前馈
     }
-    #if GNSS_NAV == 1
+    #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
     if ((robot_ctrl.brake_active != 0U) && (g_gps_replay_state == REPLAY_RUNNING))
     {
         GpsNavReplay_Stop();//【gnss】复现停止
@@ -1013,7 +1094,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     }
     #endif
 
-    #if GNSS_NAV == 1
+    #if (GNSS_NAV == 1) && (NAV_PLAN1_METHOD == PLAN1_METHOD_GNSS)
     if ((g_replay_state != REPLAY_RUNNING) &&
         (g_gps_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&

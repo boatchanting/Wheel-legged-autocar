@@ -2,6 +2,7 @@
 #include "nav_replay/plan1/plan1_pure_pursuit.c"
 #include "nav_replay/plan1/plan1_gnss.c"
 #include "nav_replay/plan1/plan1_lqr_tracking.c"
+#include "nav_replay/plan1/plan1_fusion_lqr.c"
 #include "nav_replay/plan2/plan2_pure_pursuit_speed_planning.c"
 #include "nav_replay/plan2/plan2_pure_pursuit.c"
 #include "nav_replay/plan2/plan2_precise.c"

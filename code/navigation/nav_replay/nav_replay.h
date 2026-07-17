@@ -47,6 +47,9 @@ typedef enum
             #warning "[Nav Warning] Global GNSS_NAV=1, but Plan 1 LQR tracking uses INS route replay. GNSS data is invalid for tracking."
         #endif
         #include "plan1/plan1_lqr_tracking.h"
+
+    #elif NAV_PLAN1_METHOD == PLAN1_LQR_FUSION
+        #include "plan1/plan1_fusion_lqr.h"
         
     #else
         // 【越界检查】：填了一个不存在的方案编号

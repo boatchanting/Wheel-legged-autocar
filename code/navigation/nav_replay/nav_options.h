@@ -12,6 +12,8 @@
 #define PLAN1_PURE_PURSUIT      2 // 方案2:惯导纯追踪算法方案
 #define PLAN1_METHOD_GNSS         3 // 方案3：GNSS纯追踪算法方案
 #define PLAN1_LQR_TRACKING        4 // Plan1 simplified LQR + curvature feedforward tracking
+#define PLAN1_LQR_FUSION          5 // Plan1 GNSS + inertial fusion pose, LQR tracking control
+#define PLAN1_METHOD_LQR_FUSION   PLAN1_LQR_FUSION
 // 科目一方案
 #ifndef NAV_PLAN1_METHOD
 #define NAV_PLAN1_METHOD  PLAN1_LQR_TRACKING
