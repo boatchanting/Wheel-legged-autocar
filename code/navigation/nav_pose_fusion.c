@@ -69,8 +69,9 @@ void NavPoseFusion_Update(float delta_t) {
         // 处理核心融合
         if (nav_pose_fusion.heading_lock) {
             float v_gps = gnss.speed; 
-            // 航向角差值 (转化为弧度)
-            float delta_angle = (gnss.direction - nav_pose_fusion.heading0) * 0.01745329f;
+            // 航向角差值 (转化为弧度)。注意：必须使用车身实时绝对地理航向！
+            float current_heading = nav_pose_fusion.heading0 + inertial_nav.relative_yaw;
+            float delta_angle = (gnss.direction - current_heading) * 0.01745329f;
             float v_gps_body = v_gps * cosf(delta_angle);
             // 单位转换: km/h -> mm/s
             v_gps_body *= 277.7778f;
@@ -110,10 +111,10 @@ void NavPoseFusion_UpdateWeight(float curvature) {
     // 简单的线性/分段映射，曲率小（直道）权重低，曲率大（弯道）权重高
     // 假设 curvature 通常在 0.0 ~ 0.005 之间
     float abs_c = fabsf(curvature);
-    float target_weight = 0.05f; // 默认直道底噪
+    float target_weight = 0.00f; // 默认直道底噪设为0，完全信任轮速计，屏蔽GPS测速滞后
     
     if (abs_c > 0.0001f) {
-        target_weight = 0.05f + (abs_c - 0.0001f) * 100.0f; // 缩放系数根据实际测试调整
+        target_weight = (abs_c - 0.0001f) * 100.0f; // 缩放系数根据实际测试调整
     }
     
     if (target_weight > 0.8f) {
