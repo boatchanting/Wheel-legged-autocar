@@ -66,7 +66,7 @@ tr.sel{background:#eaf2ff}
 <div class="main">
   <div class="card canvas-card">
     <canvas id="cv"></canvas>
-    <div class="hint">拖拽平移 | 滚轮缩放 | 双击加点 | 拖动点可位移<br/>特殊点显示目标偏航箭头，下位机 mark_trigger=1 自动打点<br/><b>打滑图例：</b><span style="color:#ef4444;font-weight:bold">X</span> (横向打滑) | <span style="color:#3b82f6;font-weight:bold">■</span> (静止修正) | <span style="color:#eab308;font-weight:bold">▲</span> (自转修正)</div>
+    <div class="hint">拖拽平移 | 滚轮缩放 | 双击加点 | 拖动点可位移<br/>特殊点显示目标偏航箭头，下位机 mark_trigger=1 自动打点<br/><b>轨迹图例：</b><span style="color:#2f6fed;font-weight:bold">━</span> 惯导 (nav_x/y) | <span style="color:#e67e22;font-weight:bold">━</span> 互补滤波 (fused_x/y)<br/><b>打滑图例：</b><span style="color:#ef4444;font-weight:bold">X</span> (横向打滑) | <span style="color:#3b82f6;font-weight:bold">■</span> (静止修正) | <span style="color:#eab308;font-weight:bold">▲</span> (自转修正)</div>
   </div>
   <div class="card side">
     <div class="box">
@@ -124,7 +124,7 @@ const HOST_CTRL_START_CAR=2;
 const HOST_CTRL_START_LOG=5;
 const HOST_CTRL_STOP_LOG=6;
 // 在 S 中加入 vx_body 变量
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,enableSlipMarkers:1,showRealDistance:true};
+const S={api:false,traj:[],ftraj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,enableSlipMarkers:1,showRealDistance:true};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 // 在 E 元素绑定中加入 vxBody 节点映射
 const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStartLog:bStartLog,bStopLog:bStopLog,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
@@ -144,18 +144,19 @@ function s2w(x,y){const c=center();return{x:(x-c.x)/V.scale,y:-(y-c.y)/V.scale}}
 function getSel(){return S.marks.find(m=>m.id===S.sel)||null}
 function addMark(x,y,t,src,targetYaw,headingDeg){const m={id:S.nextId++,x:Number(x),y:Number(y),type:clampType(t),src:src||'manual',targetYaw:normalizeYaw(targetYaw),heading:normalizeHeading(headingDeg)};S.marks.push(m);if(S.marks.length>S.maxMarks)S.marks.splice(0,S.marks.length-S.maxMarks);S.sel=m.id;syncMarks();draw()}
 function rmSel(){if(S.sel==null)return;const n=S.marks.length;S.marks=S.marks.filter(m=>m.id!==S.sel);if(S.marks.length!==n){S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()}}
-function fitAll(){const pts=[];for(const p of S.traj)pts.push({x:p.x,y:p.y});for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
+function fitAll(){const pts=[];for(const p of S.traj)pts.push({x:p.x,y:p.y});for(const p of S.ftraj)pts.push({x:p.x,y:p.y});for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
 function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale}
 function hit(px,py){let best=null,bd=9999;for(const m of S.marks){const p=w2s(m.x,m.y);const d=Math.hypot(px-p.x,py-p.y);if(d<12&&d<bd){best=m;bd=d}}return best}
 function grid(w,h){const stepMm=1000;const sp=stepMm*V.scale;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let xIndex=Math.ceil(-c.x/sp),x=c.x+xIndex*sp;for(;x<w;x+=sp,xIndex++){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let yIndex=Math.floor(c.y/sp),y=c.y-yIndex*sp;for(;y<h;y+=sp,yIndex--){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}const labelY=Math.min(h-5,Math.max(14,c.y+14));const labelX=Math.min(w-5,Math.max(5,c.x+5));ctx.fillStyle='#6183a8';ctx.font='11px Microsoft YaHei';xIndex=Math.ceil(-c.x/sp);for(x=c.x+xIndex*sp;x<w;x+=sp,xIndex++){if(NavMarkerGridScale.shouldShowDistanceLabel(S.showRealDistance,xIndex))ctx.fillText(NavMarkerGridScale.formatGridCoordinate(xIndex*stepMm),x+3,labelY)}yIndex=Math.floor(c.y/sp);for(y=c.y-yIndex*sp;y<h;y+=sp,yIndex--){if(NavMarkerGridScale.shouldShowDistanceLabel(S.showRealDistance,yIndex))ctx.fillText(NavMarkerGridScale.formatGridCoordinate(yIndex*stepMm),labelX,y-4)}}
 function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
 function drawTraj(){if(S.traj.length<2)return;ctx.lineWidth=2;for(let i=1;i<S.traj.length;i++){const p1=w2s(S.traj[i-1].x,S.traj[i-1].y);const p2=w2s(S.traj[i].x,S.traj[i].y);const mode=S.traj[i].pid_mode||0;let col='#2f6fed';if(mode===1)col='#ef4444';else if(mode===2)col='#eab308';ctx.strokeStyle=col;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke();}const last=S.traj[S.traj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#114da5';ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
+function drawFusedTraj(){if(S.ftraj.length<2)return;ctx.lineWidth=2;ctx.strokeStyle='#e67e22';ctx.globalAlpha=0.6;ctx.beginPath();const p0=w2s(S.ftraj[0].x,S.ftraj[0].y);ctx.moveTo(p0.x,p0.y);for(let i=1;i<S.ftraj.length;i++){const p=w2s(S.ftraj[i].x,S.ftraj[i].y);ctx.lineTo(p.x,p.y)}ctx.stroke();ctx.globalAlpha=1.0;const last=S.ftraj[S.ftraj.length-1];const p=w2s(last.x,last.y);ctx.fillStyle='#d35400';ctx.beginPath();ctx.arc(p.x,p.y,4.5,0,Math.PI*2);ctx.fill()}
 function drawArrow(px,py,yawDeg,color,selected){const rad=yawDeg*Math.PI/180;const len=selected?30:24;const dx=-Math.cos(rad);const dy=Math.sin(rad);const tailX=px-dx*len*0.35;const tailY=py-dy*len*0.35;const tipX=px+dx*len;const tipY=py+dy*len;ctx.strokeStyle=color;ctx.lineWidth=selected?3:2;ctx.beginPath();ctx.moveTo(tailX,tailY);ctx.lineTo(tipX,tipY);ctx.stroke();const head=7;const ang=Math.atan2(tipY-tailY,tipX-tailX);ctx.beginPath();ctx.moveTo(tipX,tipY);ctx.lineTo(tipX-head*Math.cos(ang-Math.PI/7),tipY-head*Math.sin(ang-Math.PI/7));ctx.lineTo(tipX-head*Math.cos(ang+Math.PI/7),tipY-head*Math.sin(ang+Math.PI/7));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
 function drawMarks(){for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=COLORS[m.type]||'#374151';ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();if(m.type!==0)drawArrow(p.x,p.y,m.targetYaw,col,sel);if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
 function drawSlips(){if(!S.enableSlipMarkers)return;for(let i=0;i<S.traj.length;i++){const p=S.traj[i];if(!p.slip_flag)continue;const pt=w2s(p.x,p.y);ctx.textAlign='center';ctx.textBaseline='middle';ctx.font='bold 14px Microsoft YaHei';if(p.slip_flag===1){ctx.fillStyle='#ef4444';ctx.fillText('X',pt.x,pt.y)}else if(p.slip_flag===2){ctx.fillStyle='#3b82f6';ctx.fillText('■',pt.x,pt.y)}else if(p.slip_flag===3){ctx.fillStyle='#eab308';ctx.fillText('▲',pt.x,pt.y-2)}}}
-function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawSlips();drawMarks()}
+function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraj();drawFusedTraj();drawSlips();drawMarks()}
 // 渲染 vxBody 内容
-function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
+function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length+(S.ftraj.length?' (融合:'+S.ftraj.length+')':'');E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
 function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent='-';E.sy.textContent='-';E.syaw.textContent='-';E.sheading.textContent='-';E.ss.textContent='-';fillType(E.selType,0);E.inpYaw.value='';E.inpHeading.value='';return}const idx=S.marks.findIndex(v=>v.id===m.id);E.si.textContent=String(idx);E.sx.textContent=m.x.toFixed(1);E.sy.textContent=m.y.toFixed(1);E.syaw.textContent=m.targetYaw.toFixed(1);E.sheading.textContent=m.heading.toFixed(1);E.ss.textContent=m.src;fillType(E.selType,m.type);E.inpYaw.value=m.targetYaw.toFixed(1);E.inpHeading.value=m.heading.toFixed(1)}
 function syncRows(){E.rows.innerHTML=S.marks.map((m,i)=>{const opts=TYPES.map(t=>`<option value="${t.value}" ${m.type===t.value?'selected':''}>${t.value}</option>`).join('');return `<tr class="${m.id===S.sel?'sel':''}"><td>${i}</td><td>${m.x.toFixed(0)}</td><td>${m.y.toFixed(0)}</td><td>${m.targetYaw.toFixed(1)}</td><td>${m.heading.toFixed(1)}</td><td><select class="rt" data-id="${m.id}">${opts}</select></td><td><button class="rf" data-id="${m.id}">选中</button><button class="rd" data-id="${m.id}">删</button></td></tr>`}).join('');E.rows.querySelectorAll('.rf').forEach(b=>b.onclick=()=>{S.sel=Number(b.dataset.id);syncMarks();draw()});E.rows.querySelectorAll('.rd').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.id);S.marks=S.marks.filter(v=>v.id!==id);if(S.sel===id)S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()});E.rows.querySelectorAll('.rt').forEach(s=>s.onchange=()=>{const id=Number(s.dataset.id);const m=S.marks.find(v=>v.id===id);if(!m)return;m.type=clampType(s.value);if(S.sel===id)syncSel();draw()})}
 function syncMarks(){syncTop();syncSel();syncRows()}
@@ -173,6 +174,8 @@ function feed(frames){
       S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),targetYaw:yaw,heading:hdg,pid_mode:pid_mode,slip_flag:slip_flag};
       S.traj.push({x,y,pid_mode,slip_flag})
     }
+    const fx=Number(it.fused_x),fy=Number(it.fused_y);
+    if(Number.isFinite(fx)&&Number.isFinite(fy)){S.ftraj.push({x:fx,y:fy})}
     const trig=Number(it.mark_trigger)||0;
     if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',yaw,hdg);S.lastMarkLoop=Number(it.loop)||0}
     S.lastTrigger=trig;
@@ -180,6 +183,7 @@ function feed(frames){
     S.vx_body=it.vx_body!=null?Number(it.vx_body).toFixed(3):'--'; 
   }
   if(S.traj.length>S.maxTraj)S.traj.splice(0,S.traj.length-S.maxTraj);
+  if(S.ftraj.length>S.maxTraj)S.ftraj.splice(0,S.ftraj.length-S.maxTraj);
   S.rx+=frames.length;S.lastDataAt=performance.now();
   if(V.adaptive)fitAll();else if(V.follow)follow();
   syncTop();draw()
@@ -205,7 +209,7 @@ E.bAdd.onclick=()=>{if(!S.last){tip('\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u8f68\
 E.bDel.onclick=()=>{rmSel();tip('\u5df2\u5220\u9664\u9009\u4e2d\u70b9')};
 E.bClrM.onclick=()=>{S.marks=[];S.sel=null;syncMarks();draw();tip('\u5df2\u6e05\u7a7a\u6807\u8bb0\u70b9')};
 E.bClrT.onclick=async()=>{
-S.traj=[];S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
+S.traj=[];S.ftraj=[];S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
 if(S.api&&window.pywebview&&window.pywebview.api){try{await window.pywebview.api.clear_history()}catch(_){ }}
 draw();syncTop();tip('\u5df2\u6e05\u7a7a\u8f68\u8ff9');
 const sendResult=await sendHostControl(HOST_CTRL_CLEAR_TRAJECTORY);

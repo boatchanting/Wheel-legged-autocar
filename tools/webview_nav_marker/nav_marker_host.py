@@ -27,10 +27,10 @@ HOST_ACK_UNKNOWN_CMD = 0x02
 HOST_ACK_INVALID_PAYLOAD = 0x03
 HOST_ACK_TIMEOUT_SEC = 1.5
 
-PAYLOAD_SIZE_V1 = 84
-PAYLOAD_SIZE_V2 = 86
+PAYLOAD_SIZE_V1 = 100  # 84(original) + 16(fused nav: 4 floats)
+PAYLOAD_SIZE_V2 = 102  # V1 + mark_trigger(1) + point_type(1)
 
-STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
+STRUCT_FMT_V1 = "<IffffffffHBBBBBBHHHHHHddbbffBfBfff"
 
 FIELD_NAMES_V1 = [
     "loop",
@@ -38,6 +38,10 @@ FIELD_NAMES_V1 = [
     "nav_y",
     "vx_body",
     "vy_body",
+    "fused_x",
+    "fused_y",
+    "fused_vx",
+    "gps_weight",
     "year",
     "month",
     "day",

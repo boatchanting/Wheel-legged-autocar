@@ -12,7 +12,7 @@ HOST_IP = "192.168.137.1"
 HOST_PORT = 8086
 
 # 打滑检测标记绘制开关：1=启用，0=禁用
-ENABLE_SLIP_MARKERS = 1
+ENABLE_SLIP_MARKERS = 0
 
 FRAME_HEAD1 = 0x5A
 FRAME_HEAD2 = 0xA5
@@ -30,10 +30,10 @@ HOST_ACK_UNKNOWN_CMD = 0x02
 HOST_ACK_INVALID_PAYLOAD = 0x03
 HOST_ACK_TIMEOUT_SEC = 1.5
 
-PAYLOAD_SIZE_V1 = 84
-PAYLOAD_SIZE_V2 = 86
+PAYLOAD_SIZE_V1 = 100  # 84(original) + 16(fused nav: 4 floats)
+PAYLOAD_SIZE_V2 = 102  # V1 + mark_trigger(1) + point_type(1)
 
-STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
+STRUCT_FMT_V1 = "<IffffffffHBBBBBBHHHHHHddbbffBfBfff"
 
 FIELD_NAMES_V1 = [
     "loop",
@@ -41,6 +41,10 @@ FIELD_NAMES_V1 = [
     "nav_y",
     "vx_body",
     "vy_body",
+    "fused_x",
+    "fused_y",
+    "fused_vx",
+    "gps_weight",
     "year",
     "month",
     "day",
@@ -285,7 +289,7 @@ def _decode_payload(payload_bytes):
         data["mark_trigger"] = 0
         data["point_type"] = 0
 
-    baseline = 96 if size >= 96 else 86
+    baseline = 112 if size >= 112 else 102
 
     if size >= baseline + 1:
         data["pid_mode"] = payload_bytes[baseline]
