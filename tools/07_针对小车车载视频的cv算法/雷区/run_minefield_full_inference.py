@@ -24,7 +24,6 @@ from detect_minefield_people_v2_json import (  # noqa: E402
     build_edge_support_mask,
     detect_candidate,
     longest_visible_segment,
-    make_prediction_overlay,
     quad_to_list,
     read_gray,
     save_rgb,
@@ -113,6 +112,34 @@ def make_binary_debug(
     return add_title_to_scaled(canvas, title)
 
 
+def make_prediction_label_image(
+    gray: np.ndarray,
+    pred_outer_segments: list[Segment],
+    pred_inner_segments: list[Segment],
+) -> np.ndarray:
+    canvas = np.repeat(gray[:, :, None], 3, axis=2)
+    for seg in pred_outer_segments:
+        cv2.line(canvas, (seg.x1, seg.y1), (seg.x2, seg.y2), (255, 0, 0), thickness=1, lineType=cv2.LINE_8)
+    for seg in pred_inner_segments:
+        cv2.line(canvas, (seg.x1, seg.y1), (seg.x2, seg.y2), (0, 220, 0), thickness=1, lineType=cv2.LINE_8)
+    return canvas
+
+
+def make_labeler_payload(
+    frame_path: Path,
+    gray: np.ndarray,
+    pred_outer_segments: list[Segment],
+    pred_inner_segments: list[Segment],
+) -> dict:
+    return {
+        "image_name": frame_path.name,
+        "image_width": int(gray.shape[1]),
+        "image_height": int(gray.shape[0]),
+        "inner_segments": [segment_to_dict(segment) for segment in pred_inner_segments],
+        "outer_segments": [segment_to_dict(segment) for segment in pred_outer_segments],
+    }
+
+
 def serialize_candidate(candidate: Candidate | None) -> dict | None:
     if candidate is None:
         return None
@@ -175,9 +202,13 @@ def build_contact_sheets(
         for record in page_records:
             overlay = Image.open(overlays_dir / f"{record['frame_stem']}.png").convert("RGB")
             binary = Image.open(binary_dir / f"{record['frame_stem']}.png").convert("RGB")
-            tile = Image.new("RGB", (overlay.width, overlay.height + binary.height), (18, 18, 18))
-            tile.paste(overlay, (0, 0))
-            tile.paste(binary, (0, overlay.height))
+            scaled_overlay = overlay.resize(
+                (overlay.width * SCALE, overlay.height * SCALE),
+                resample=Image.Resampling.NEAREST,
+            )
+            tile = Image.new("RGB", (scaled_overlay.width, scaled_overlay.height + binary.height), (18, 18, 18))
+            tile.paste(scaled_overlay, (0, 0))
+            tile.paste(binary, (0, scaled_overlay.height))
             tiles.append(tile)
 
         if not tiles:
@@ -246,11 +277,13 @@ def process_directory(
     overlays_dir = run_dir / "overlays"
     binary_dir = run_dir / "binary"
     json_dir = run_dir / "json"
+    labeler_dir = run_dir / "labeler_ready"
     contact_dir = run_dir / "contact_sheets"
 
     overlays_dir.mkdir(parents=True, exist_ok=True)
     binary_dir.mkdir(parents=True, exist_ok=True)
     json_dir.mkdir(parents=True, exist_ok=True)
+    labeler_dir.mkdir(parents=True, exist_ok=True)
 
     records: list[dict] = []
     for index, frame_path in enumerate(frame_paths, start=1):
@@ -269,24 +302,32 @@ def process_directory(
             pred_inner_segments = longest_visible_segment(candidate.inner_quad_final, support_mask)
             score_text = f"{candidate.score:.2f}"
 
-        title_base = f"{frame_path.stem} pred score={score_text}"
-        overlay = make_prediction_overlay(gray, pred_outer_segments, pred_inner_segments, title_base)
+        overlay = make_prediction_label_image(gray, pred_outer_segments, pred_inner_segments)
         binary = make_binary_debug(
             threshold_mask,
             pred_outer_segments,
             pred_inner_segments,
             f"{frame_path.stem} binary pred=red/green",
         )
+        labeler_payload = make_labeler_payload(frame_path, gray, pred_outer_segments, pred_inner_segments)
 
         save_rgb(overlays_dir / f"{frame_path.stem}.png", overlay)
         save_rgb(binary_dir / f"{frame_path.stem}.png", binary)
+        save_rgb(labeler_dir / frame_path.name, overlay)
+        (labeler_dir / f"{frame_path.stem}.json").write_text(
+            json.dumps(labeler_payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
         record = frame_result(frame_path, candidate, pred_outer_segments, pred_inner_segments)
         record["artifacts"] = {
             "overlay": str(overlays_dir / f"{frame_path.stem}.png"),
             "binary": str(binary_dir / f"{frame_path.stem}.png"),
             "json": str(json_dir / f"{frame_path.stem}.json"),
+            "labeler_png": str(labeler_dir / frame_path.name),
+            "labeler_json": str(labeler_dir / f"{frame_path.stem}.json"),
         }
+        record["labeler_annotation"] = labeler_payload
         (json_dir / f"{frame_path.stem}.json").write_text(
             json.dumps(record, ensure_ascii=False, indent=2),
             encoding="utf-8",
@@ -325,6 +366,7 @@ def process_directory(
             "overlays_dir": str(overlays_dir),
             "binary_dir": str(binary_dir),
             "json_dir": str(json_dir),
+            "labeler_dir": str(labeler_dir),
             "summary_json": str(run_dir / "summary.json"),
             "summary_csv": str(run_dir / "summary.csv"),
         },
