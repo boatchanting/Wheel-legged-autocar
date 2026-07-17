@@ -21,6 +21,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 
+from minefield_scoring import measure_geometry, score_candidate as score_candidate_breakdown
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 DATA_ROOT = PROJECT_ROOT / "data/雷区室外偏振片"
@@ -141,10 +143,6 @@ def save_gray(path: Path, gray: np.ndarray) -> None:
 def save_mask(path: Path, mask: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray((mask.astype(np.uint8) * 255), mode="L").save(path)
-
-
-def clamp01(value: float) -> float:
-    return max(0.0, min(1.0, value))
 
 
 def build_samples() -> list[Sample]:
@@ -449,99 +447,6 @@ def find_largest_child(contours: list[np.ndarray], hierarchy: np.ndarray, outer_
     return largest_child, largest_area
 
 
-def line_support(source_mask: np.ndarray, line_mask: np.ndarray, radius: int = 1) -> float:
-    if not line_mask.any():
-        return 0.0
-    kernel = np.ones((radius * 2 + 1, radius * 2 + 1), dtype=np.uint8)
-    dilated = cv2.dilate(source_mask.astype(np.uint8), kernel, iterations=1).astype(bool)
-    return float((line_mask & dilated).sum() / max(1, line_mask.sum()))
-
-
-def geometry_features(
-    gray: np.ndarray,
-    threshold_mask: np.ndarray,
-    outer_quad: np.ndarray,
-    inner_quad: np.ndarray | None,
-) -> dict[str, float]:
-    if inner_quad is None:
-        return {
-            "geometry_score": 0.0,
-            "ring_mean": 0.0,
-            "inner_mean": 0.0,
-            "ring_on_ratio": 0.0,
-            "inner_on_ratio": 0.0,
-            "outer_support": line_support(threshold_mask, render_quad_mask(gray.shape, outer_quad)),
-            "inner_support": 0.0,
-        }
-
-    outer_fill = render_polygon_mask(gray.shape, outer_quad)
-    inner_fill = render_polygon_mask(gray.shape, inner_quad)
-    ring_fill = outer_fill & ~inner_fill
-
-    ring_mean = float(gray[ring_fill].mean()) if ring_fill.any() else 0.0
-    inner_mean = float(gray[inner_fill].mean()) if inner_fill.any() else 0.0
-    ring_on_ratio = float(threshold_mask[ring_fill].mean()) if ring_fill.any() else 0.0
-    inner_on_ratio = float(threshold_mask[inner_fill].mean()) if inner_fill.any() else 0.0
-
-    outer_support = line_support(threshold_mask, render_quad_mask(gray.shape, outer_quad))
-    inner_support = line_support(threshold_mask, render_quad_mask(gray.shape, inner_quad))
-    support_score = 0.5 * (outer_support + inner_support)
-    ring_score = clamp01(ring_on_ratio)
-    hollow_score = clamp01((ring_on_ratio - inner_on_ratio + 0.25) / 0.7)
-    contrast_score = clamp01((ring_mean - inner_mean + 6.0) / 45.0)
-    geometry_score = (
-        0.32 * support_score
-        + 0.28 * ring_score
-        + 0.22 * hollow_score
-        + 0.18 * contrast_score
-    )
-
-    return {
-        "geometry_score": geometry_score,
-        "ring_mean": ring_mean,
-        "inner_mean": inner_mean,
-        "ring_on_ratio": ring_on_ratio,
-        "inner_on_ratio": inner_on_ratio,
-        "outer_support": outer_support,
-        "inner_support": inner_support,
-    }
-
-
-def score_candidate(
-    bbox: tuple[int, int, int, int],
-    outer_area: float,
-    child_area: float,
-    touches_border: bool,
-    geometry_score: float,
-    ring_on_ratio: float,
-    inner_on_ratio: float,
-) -> float:
-    x, y, w, h = bbox
-    area_score = min(outer_area / 380.0, 1.0)
-    width_score = min(w / 58.0, 1.0)
-    height_score = min(h / 21.0, 1.0)
-    child_score = min(child_area / 220.0, 1.0)
-    size_score = (
-        0.42 * area_score
-        + 0.20 * width_score
-        + 0.14 * height_score
-        + 0.24 * child_score
-    )
-
-    score = 0.52 * size_score + 0.48 * geometry_score
-    if outer_area < 90.0 and child_area < 20.0:
-        score -= 0.12
-    if y < 7 and h < 8 and geometry_score < 0.38:
-        score -= 0.10
-    if ring_on_ratio < 0.12 and inner_on_ratio < 0.12:
-        score -= 0.08
-    if touches_border and outer_area < 75.0:
-        score -= 0.05
-    if x == 0 and w < 16 and outer_area < 80.0:
-        score -= 0.06
-    return score
-
-
 def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Candidate | None:
     height, width = gray.shape
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -568,11 +473,14 @@ def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Ca
                 continue
 
             outer_area = float(cv2.contourArea(contour))
-            if outer_area < 35.0:
+            min_outer_area = 18.0 if fixed_threshold is not None else 35.0
+            if outer_area < min_outer_area:
                 continue
 
             x, y, bw, bh = cv2.boundingRect(contour)
-            if bw < 10 or bh < 3:
+            min_width = 6 if fixed_threshold is not None else 10
+            min_height = 2 if fixed_threshold is not None else 3
+            if bw < min_width or bh < min_height:
                 continue
 
             outer_quad = approx_quad_from_contour(contour, allow_box_fallback=outer_area >= 85.0)
@@ -586,25 +494,26 @@ def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Ca
 
             inner_quad_final = inner_quad_direct if inner_quad_direct is not None else infer_inner_quad(outer_quad)
             touches_border = x == 0 or y == 0 or (x + bw) >= width or (y + bh) >= height
-            geom = geometry_features(
+            geom = measure_geometry(
                 gray=gray,
                 threshold_mask=threshold_mask,
                 outer_quad=outer_quad,
                 inner_quad=inner_quad_final,
+                render_quad_mask=render_quad_mask,
+                render_polygon_mask=render_polygon_mask,
             )
-            score = score_candidate(
+            score_breakdown = score_candidate_breakdown(
                 bbox=(x, y, bw, bh),
                 outer_area=outer_area,
                 child_area=child_area,
                 touches_border=touches_border,
-                geometry_score=geom["geometry_score"],
-                ring_on_ratio=geom["ring_on_ratio"],
-                inner_on_ratio=geom["inner_on_ratio"],
+                geometry=geom,
+                image_height=height,
             )
 
             candidate = Candidate(
                 threshold=threshold,
-                score=score,
+                score=score_breakdown.total_score,
                 outer_area=outer_area,
                 outer_bbox=(x, y, bw, bh),
                 child_area=child_area,
@@ -613,18 +522,35 @@ def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Ca
                 inner_quad_direct=inner_quad_direct,
                 inner_quad_final=inner_quad_final,
                 threshold_mask=threshold_mask,
-                geometry_score=geom["geometry_score"],
-                ring_mean=geom["ring_mean"],
-                inner_mean=geom["inner_mean"],
-                ring_on_ratio=geom["ring_on_ratio"],
-                inner_on_ratio=geom["inner_on_ratio"],
-                outer_support=geom["outer_support"],
-                inner_support=geom["inner_support"],
+                geometry_score=geom.geometry_score,
+                ring_mean=geom.ring_mean,
+                inner_mean=geom.inner_mean,
+                ring_on_ratio=geom.ring_on_ratio,
+                inner_on_ratio=geom.inner_on_ratio,
+                outer_support=geom.outer_support,
+                inner_support=geom.inner_support,
             )
             if best is None or candidate.score > best.score:
                 best = candidate
 
-    if best is None or best.score < 0.34:
+    if best is None:
+        return None
+    best_breakdown = score_candidate_breakdown(
+        bbox=best.outer_bbox,
+        outer_area=best.outer_area,
+        child_area=best.child_area,
+        touches_border=best.touches_border,
+        geometry=measure_geometry(
+            gray=gray,
+            threshold_mask=best.threshold_mask,
+            outer_quad=best.outer_quad,
+            inner_quad=best.inner_quad_final,
+            render_quad_mask=render_quad_mask,
+            render_polygon_mask=render_polygon_mask,
+        ),
+        image_height=height,
+    )
+    if best.score < best_breakdown.decision_threshold:
         return None
     return best
 
@@ -703,31 +629,27 @@ def scaled_gray_rgb(gray: np.ndarray) -> np.ndarray:
     return cv2.resize(rgb, (gray.shape[1] * SCALE, gray.shape[0] * SCALE), interpolation=cv2.INTER_NEAREST)
 
 
-def draw_segments(draw: ImageDraw.ImageDraw, segments: list[Segment], color: tuple[int, int, int], width: int) -> None:
+def draw_segments_original(rgb: np.ndarray, segments: list[Segment], color: tuple[int, int, int]) -> np.ndarray:
+    canvas = rgb.copy()
     for seg in segments:
-        draw.line(
-            [(seg.x1 * SCALE, seg.y1 * SCALE), (seg.x2 * SCALE, seg.y2 * SCALE)],
-            fill=color,
-            width=width,
-        )
+        cv2.line(canvas, (seg.x1, seg.y1), (seg.x2, seg.y2), color, thickness=1, lineType=cv2.LINE_8)
+    return canvas
 
 
-def draw_quad(draw: ImageDraw.ImageDraw, quad: np.ndarray | None, color: tuple[int, int, int], width: int) -> None:
-    if quad is None:
-        return
-    pts = [tuple((np.asarray(point) * SCALE).tolist()) for point in quad]
-    pts.append(pts[0])
-    draw.line(pts, fill=color, width=width)
-
-
-def make_gt_overlay(gray: np.ndarray, gt: GroundTruth, title: str) -> np.ndarray:
-    image = Image.fromarray(scaled_gray_rgb(gray), mode="RGB")
+def add_title_to_scaled(rgb: np.ndarray, title: str) -> np.ndarray:
+    scaled = cv2.resize(rgb, (rgb.shape[1] * SCALE, rgb.shape[0] * SCALE), interpolation=cv2.INTER_NEAREST)
+    image = Image.fromarray(scaled, mode="RGB")
     draw = ImageDraw.Draw(image)
     draw.rectangle([0, 0, image.width - 1, 18], fill=(0, 0, 0))
     draw.text((3, 3), title, fill=(255, 255, 255))
-    draw_segments(draw, gt.outer_segments, (255, 180, 0), 2)
-    draw_segments(draw, gt.inner_segments, (0, 220, 255), 2)
     return np.asarray(image)
+
+
+def make_gt_overlay(gray: np.ndarray, gt: GroundTruth, title: str) -> np.ndarray:
+    base = np.repeat(gray[:, :, None], 3, axis=2)
+    base = draw_segments_original(base, gt.outer_segments, (255, 180, 0))
+    base = draw_segments_original(base, gt.inner_segments, (0, 220, 255))
+    return add_title_to_scaled(base, title)
 
 
 def make_prediction_overlay(
@@ -736,13 +658,10 @@ def make_prediction_overlay(
     pred_inner_segments: list[Segment],
     title: str,
 ) -> np.ndarray:
-    image = Image.fromarray(scaled_gray_rgb(gray), mode="RGB")
-    draw = ImageDraw.Draw(image)
-    draw.rectangle([0, 0, image.width - 1, 18], fill=(0, 0, 0))
-    draw.text((3, 3), title, fill=(255, 255, 255))
-    draw_segments(draw, pred_outer_segments, (255, 0, 0), 2)
-    draw_segments(draw, pred_inner_segments, (0, 255, 0), 2)
-    return np.asarray(image)
+    base = np.repeat(gray[:, :, None], 3, axis=2)
+    base = draw_segments_original(base, pred_outer_segments, (255, 0, 0))
+    base = draw_segments_original(base, pred_inner_segments, (0, 255, 0))
+    return add_title_to_scaled(base, title)
 
 
 def make_comparison_overlay(
@@ -752,15 +671,12 @@ def make_comparison_overlay(
     pred_inner_segments: list[Segment],
     title: str,
 ) -> np.ndarray:
-    image = Image.fromarray(scaled_gray_rgb(gray), mode="RGB")
-    draw = ImageDraw.Draw(image)
-    draw.rectangle([0, 0, image.width - 1, 18], fill=(0, 0, 0))
-    draw.text((3, 3), title, fill=(255, 255, 255))
-    draw_segments(draw, gt.outer_segments, (255, 180, 0), 1)
-    draw_segments(draw, gt.inner_segments, (0, 220, 255), 1)
-    draw_segments(draw, pred_outer_segments, (255, 0, 0), 2)
-    draw_segments(draw, pred_inner_segments, (0, 255, 0), 2)
-    return np.asarray(image)
+    base = np.repeat(gray[:, :, None], 3, axis=2)
+    base = draw_segments_original(base, gt.outer_segments, (255, 180, 0))
+    base = draw_segments_original(base, gt.inner_segments, (0, 220, 255))
+    base = draw_segments_original(base, pred_outer_segments, (255, 0, 0))
+    base = draw_segments_original(base, pred_inner_segments, (0, 255, 0))
+    return add_title_to_scaled(base, title)
 
 
 def quad_to_list(quad: np.ndarray | None) -> list[list[float]] | None:
