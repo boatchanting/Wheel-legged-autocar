@@ -167,6 +167,29 @@ function getJsonNameFromImageName(name) {
   return `${name.slice(0, dotIndex)}.json`;
 }
 
+function normalizeSegment(segment) {
+  if (!segment || typeof segment !== "object") {
+    return null;
+  }
+  const values = ["x1", "y1", "x2", "y2"].map((key) => Number(segment[key]));
+  if (values.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+  return {
+    x1: Math.round(values[0]),
+    y1: Math.round(values[1]),
+    x2: Math.round(values[2]),
+    y2: Math.round(values[3]),
+  };
+}
+
+function parseSegments(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.map(normalizeSegment).filter(Boolean);
+}
+
 function createEmptyEditState() {
   return {
     clearedTypes: new Set(),
@@ -214,6 +237,48 @@ function ensureHistory(editState) {
   }
 }
 
+function applyAnnotationPayloadToEditState(editState, payload) {
+  editState.clearedTypes = new Set();
+  editState.segments.inner = parseSegments(payload?.inner_segments);
+  editState.segments.outer = parseSegments(payload?.outer_segments);
+  editState.history = [];
+  editState.historyIndex = -1;
+  ensureHistory(editState);
+  editState.savedVersion = buildVersionKey(editState);
+}
+
+async function loadAnnotationPayloadForEntry(entry) {
+  const jsonEntry = entry?.drawJsonEntry || entry?.originalJsonEntry;
+  if (!jsonEntry) {
+    return null;
+  }
+  try {
+    const raw = await getFileText(jsonEntry);
+    return JSON.parse(raw);
+  } catch (error) {
+    console.error(error);
+    return null;
+  }
+}
+
+async function ensureEntryState(entry) {
+  if (!entry) {
+    return null;
+  }
+  if (state.entryState.has(entry.id)) {
+    return state.entryState.get(entry.id);
+  }
+  const editState = createEmptyEditState();
+  const payload = await loadAnnotationPayloadForEntry(entry);
+  if (payload) {
+    applyAnnotationPayloadToEditState(editState, payload);
+  } else {
+    ensureHistory(editState);
+  }
+  state.entryState.set(entry.id, editState);
+  return editState;
+}
+
 function pushHistory(editState) {
   ensureHistory(editState);
   const current = snapshotEditState(editState);
@@ -243,10 +308,15 @@ function getCurrentEditState() {
   return state.entryState.get(entry.id);
 }
 
-async function collectHandlesFromDirectory(dirHandle, prefix = "") {
+function hasAllowedExtension(name, extensions) {
+  const lower = name.toLowerCase();
+  return extensions.some((extension) => lower.endsWith(extension));
+}
+
+async function collectFilesFromDirectory(dirHandle, prefix = "", extensions = [".png"]) {
   const results = [];
   for await (const [name, handle] of dirHandle.entries()) {
-    if (handle.kind === "file" && name.toLowerCase().endsWith(".png")) {
+    if (handle.kind === "file" && hasAllowedExtension(name, extensions)) {
       results.push({
         id: `${prefix}${name}`,
         name,
@@ -254,16 +324,20 @@ async function collectHandlesFromDirectory(dirHandle, prefix = "") {
         handle,
       });
     } else if (handle.kind === "directory") {
-      const nested = await collectHandlesFromDirectory(handle, `${prefix}${name}/`);
+      const nested = await collectFilesFromDirectory(handle, `${prefix}${name}/`, extensions);
       results.push(...nested);
     }
   }
   return results.sort((a, b) => naturalCompare(a.relativePath, b.relativePath));
 }
 
-function collectHandlesFromInput(fileList) {
+async function collectHandlesFromDirectory(dirHandle, prefix = "") {
+  return collectFilesFromDirectory(dirHandle, prefix, [".png"]);
+}
+
+function collectFilesFromInput(fileList, extensions = [".png"]) {
   const items = Array.from(fileList)
-    .filter((file) => file.name.toLowerCase().endsWith(".png"))
+    .filter((file) => hasAllowedExtension(file.name, extensions))
     .map((file) => ({
       id: file.webkitRelativePath || file.name,
       name: file.name,
@@ -272,6 +346,10 @@ function collectHandlesFromInput(fileList) {
     }));
   items.sort((a, b) => naturalCompare(a.relativePath, b.relativePath));
   return items;
+}
+
+function collectHandlesFromInput(fileList) {
+  return collectFilesFromInput(fileList, [".png"]);
 }
 
 function mapEntries(entries) {
@@ -284,6 +362,10 @@ function mapEntries(entries) {
   return { exact, normalized };
 }
 
+function mapJsonEntries(entries) {
+  return mapEntries(entries);
+}
+
 function findMatchingEntry(entry, maps) {
   if (!entry || !maps) {
     return null;
@@ -293,11 +375,23 @@ function findMatchingEntry(entry, maps) {
   return exactMatch || normalizedMatch || null;
 }
 
+function findMatchingJsonEntry(entry, maps) {
+  if (!entry || !maps) {
+    return null;
+  }
+  const jsonName = getJsonNameFromImageName(entry.name);
+  const exactMatch = maps.exact.get(jsonName.toLowerCase());
+  const normalizedMatch = maps.normalized.get(normalizeKey(jsonName));
+  return exactMatch || normalizedMatch || null;
+}
+
 function rebuildEntries() {
   const originalEntries = state.originalSource?.entries || [];
   const drawEntries = state.drawSource?.entries || [];
   const originalMap = mapEntries(originalEntries);
   const drawMap = mapEntries(drawEntries);
+  const originalJsonMap = state.originalSource?.jsonMap || mapJsonEntries([]);
+  const drawJsonMap = state.drawSource?.jsonMap || mapJsonEntries([]);
 
   let baseEntries;
   if (drawEntries.length > 0) {
@@ -305,12 +399,16 @@ function rebuildEntries() {
       ...entry,
       drawEntry: entry,
       originalEntry: findMatchingEntry(entry, originalMap),
+      drawJsonEntry: findMatchingJsonEntry(entry, drawJsonMap),
+      originalJsonEntry: findMatchingJsonEntry(entry, originalJsonMap),
     }));
   } else {
     baseEntries = originalEntries.map((entry) => ({
       ...entry,
       drawEntry: null,
       originalEntry: entry,
+      drawJsonEntry: null,
+      originalJsonEntry: findMatchingJsonEntry(entry, originalJsonMap),
     }));
   }
 
@@ -322,6 +420,11 @@ async function getFileBlob(entry) {
     return entry.handle.getFile();
   }
   return entry.file;
+}
+
+async function getFileText(entry) {
+  const blob = await getFileBlob(entry);
+  return blob.text();
 }
 
 async function createImageDataFromEntry(entry) {
@@ -677,12 +780,14 @@ async function loadFrame(index) {
   }
   state.currentIndex = index;
   const entry = state.entries[index];
-  const baseEntry = entry.drawEntry || entry.originalEntry;
+  const preferOriginalBase = Boolean(entry.originalEntry && (entry.drawJsonEntry || entry.originalJsonEntry));
+  const baseEntry = preferOriginalBase ? entry.originalEntry : (entry.drawEntry || entry.originalEntry);
   if (!baseEntry) {
     setStatus("当前文件没有可加载的图像");
     return;
   }
 
+  await ensureEntryState(entry);
   const baseImageData = await createImageDataFromEntry(baseEntry);
   let originalImageData = null;
   if (entry.originalEntry) {
@@ -731,8 +836,9 @@ async function pickDrawDirectory() {
     return;
   }
   const dirHandle = await window.showDirectoryPicker({ mode: "read" });
-  const entries = await collectHandlesFromDirectory(dirHandle);
-  state.drawSource = { mode: "handle", entries, dirHandle };
+  const entries = await collectFilesFromDirectory(dirHandle, "", [".png"]);
+  const jsonEntries = await collectFilesFromDirectory(dirHandle, "", [".json"]);
+  state.drawSource = { mode: "handle", entries, jsonEntries, jsonMap: mapJsonEntries(jsonEntries), dirHandle };
   elements.drawDirLabel.textContent = dirHandle.name;
   await setStoredHandle("drawDirHandle", dirHandle);
   await rebuildAndRenderEntries();
@@ -744,8 +850,9 @@ async function pickOriginalDirectory() {
     return;
   }
   const dirHandle = await window.showDirectoryPicker({ mode: "read" });
-  const entries = await collectHandlesFromDirectory(dirHandle);
-  state.originalSource = { mode: "handle", entries, dirHandle };
+  const entries = await collectFilesFromDirectory(dirHandle, "", [".png"]);
+  const jsonEntries = await collectFilesFromDirectory(dirHandle, "", [".json"]);
+  state.originalSource = { mode: "handle", entries, jsonEntries, jsonMap: mapJsonEntries(jsonEntries), dirHandle };
   elements.originalDirLabel.textContent = dirHandle.name;
   await setStoredHandle("originalDirHandle", dirHandle);
   await rebuildAndRenderEntries();
@@ -764,16 +871,18 @@ async function pickOutputDirectory() {
 }
 
 async function loadDrawInputFiles() {
-  const entries = collectHandlesFromInput(elements.drawInput.files);
-  state.drawSource = { mode: "input", entries };
+  const entries = collectFilesFromInput(elements.drawInput.files, [".png"]);
+  const jsonEntries = collectFilesFromInput(elements.drawInput.files, [".json"]);
+  state.drawSource = { mode: "input", entries, jsonEntries, jsonMap: mapJsonEntries(jsonEntries) };
   elements.drawDirLabel.textContent = "已从文件夹导入";
   persistSessionState();
   await rebuildAndRenderEntries();
 }
 
 async function loadOriginalInputFiles() {
-  const entries = collectHandlesFromInput(elements.originalInput.files);
-  state.originalSource = { mode: "input", entries };
+  const entries = collectFilesFromInput(elements.originalInput.files, [".png"]);
+  const jsonEntries = collectFilesFromInput(elements.originalInput.files, [".json"]);
+  state.originalSource = { mode: "input", entries, jsonEntries, jsonMap: mapJsonEntries(jsonEntries) };
   elements.originalDirLabel.textContent = "已从文件夹导入";
   persistSessionState();
   await rebuildAndRenderEntries();
@@ -988,8 +1097,15 @@ async function restoreSession() {
     const originalHandle = await tryRestoreDirectoryHandle("originalDirHandle");
     if (originalHandle) {
       try {
-        const entries = await collectHandlesFromDirectory(originalHandle);
-        state.originalSource = { mode: "handle", entries, dirHandle: originalHandle };
+        const entries = await collectFilesFromDirectory(originalHandle, "", [".png"]);
+        const jsonEntries = await collectFilesFromDirectory(originalHandle, "", [".json"]);
+        state.originalSource = {
+          mode: "handle",
+          entries,
+          jsonEntries,
+          jsonMap: mapJsonEntries(jsonEntries),
+          dirHandle: originalHandle,
+        };
         elements.originalDirLabel.textContent = originalHandle.name;
       } catch (error) {
         console.error(error);
@@ -1005,8 +1121,15 @@ async function restoreSession() {
     const drawHandle = await tryRestoreDirectoryHandle("drawDirHandle");
     if (drawHandle) {
       try {
-        const entries = await collectHandlesFromDirectory(drawHandle);
-        state.drawSource = { mode: "handle", entries, dirHandle: drawHandle };
+        const entries = await collectFilesFromDirectory(drawHandle, "", [".png"]);
+        const jsonEntries = await collectFilesFromDirectory(drawHandle, "", [".json"]);
+        state.drawSource = {
+          mode: "handle",
+          entries,
+          jsonEntries,
+          jsonMap: mapJsonEntries(jsonEntries),
+          dirHandle: drawHandle,
+        };
         elements.drawDirLabel.textContent = drawHandle.name;
       } catch (error) {
         console.error(error);
@@ -1023,9 +1146,19 @@ async function restoreSession() {
   }
 }
 
+function warnIfOpenedFromFileProtocol() {
+  if (window.location.protocol !== "file:") {
+    return;
+  }
+  window.alert(
+    "当前是通过 file:// 直接打开的，浏览器会拦截保存。\n\n请运行 html_labeler 目录下的 start_labeler_server.bat，\n然后用 http://127.0.0.1:8765/index.html 打开。"
+  );
+}
+
 async function initialize() {
   state.suspendSessionPersist = true;
   try {
+    warnIfOpenedFromFileProtocol();
     bindEvents();
     setActiveType("inner");
     updateCanvasScale();
