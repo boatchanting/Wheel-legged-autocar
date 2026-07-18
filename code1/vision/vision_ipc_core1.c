@@ -20,15 +20,15 @@ static vision_ipc_command_t g_core1_command_shadow;
 static uint32 g_core1_result_seq = 0U;
 
 static volatile uint8 g_core1_pvc_enabled = 0U;
-static volatile uint8 g_core1_line_enabled = 0U;
+static volatile uint8 g_core1_bridge_enabled = 0U;
 static volatile uint8 g_core1_bumpy_enabled = 0U;
 
 static volatile uint8 g_core1_pvc_reset_request = 0U;
-static volatile uint8 g_core1_line_reset_request = 0U;
+static volatile uint8 g_core1_bridge_reset_request = 0U;
 static volatile uint8 g_core1_bumpy_reset_request = 0U;
 
 static uint32 g_core1_last_published_pvc_frame_id = 0U;
-static uint32 g_core1_last_published_line_frame_id = 0U;
+static uint32 g_core1_last_published_bridge_frame_id = 0U;
 static uint32 g_core1_last_published_bumpy_frame_id = 0U;
 static uint32 g_core1_last_published_command_seq = 0U;
 static uint16 g_core1_last_published_enable_mask = 0U;
@@ -44,19 +44,6 @@ static uint16 vision_confidence_to_u16(float confidence)
         return 1000U;
     }
     return (uint16)(confidence * 1000.0f);
-}
-
-static int16 vision_float_to_i16_x100(float value)
-{
-    if (value > 327.67f)
-    {
-        return 32767;
-    }
-    if (value < -327.68f)
-    {
-        return -32768;
-    }
-    return (int16)(value * 100.0f);
 }
 
 static uint32 vision_max_u32(uint32 a, uint32 b)
@@ -86,7 +73,7 @@ static uint8 vision_ipc_core1_command_wants_pvc(const vision_ipc_command_t *cmd)
     return (uint8)(active_is_pvc || mask_has_pvc);
 }
 
-static uint8 vision_ipc_core1_command_wants_line(const vision_ipc_command_t *cmd)
+static uint8 vision_ipc_core1_command_wants_bridge(const vision_ipc_command_t *cmd)
 {
     const uint8 active_is_bridge = (uint8)(cmd->active_target == VISION_TARGET_BRIDGE);
     const uint8 mask_has_bridge = (uint8)((cmd->enable_mask & VISION_MASK_BRIDGE) != 0U);
@@ -144,56 +131,56 @@ static void vision_ipc_core1_fill_pvc(vision_ipc_packet_t *packet,
  * @brief 将视觉检测结果提取并填充到 IPC 数据包中
  * 
  * @param packet 将要发送给 0 核的数据包
- * @param line_output 当前最新的直线检测输出结果
+ * @param bridge_output 当前最新的单边桥检测输出结果
  */
-static void vision_ipc_core1_fill_line(vision_ipc_packet_t *packet,
-                                       const volatile line_vision_output_t *line_output)
+static void vision_ipc_core1_fill_bridge(vision_ipc_packet_t *packet,
+                                         const volatile bridge_vision_output_t *bridge_output)
 {
-    line_vision_output_t line;
-    const line_vision_frame_result_t *ctrl;
+    bridge_vision_output_t bridge;
+    const bridge_vision_frame_result_t *ctrl;
 
     /* 如果没有有效数据，直接退出 */
-    if ((line_output == NULL) || (line_output->frame_id == 0U))
+    if ((bridge_output == NULL) || (bridge_output->frame_id == 0U))
     {
         return;
     }
 
     /* 拷贝数据，防止并发修改 */
-    line = *line_output;
-    ctrl = (line.stable_detected || line.bridge_stable_detected) ? &line.stable : &line.raw;
+    bridge = *bridge_output;
+    ctrl = (bridge.stable_detected || bridge.bridge_stable_detected) ? &bridge.stable : &bridge.raw;
 
     packet->valid_mask = (uint16)(packet->valid_mask | VISION_VALID_BRIDGE | VISION_VALID_PROFILE);
-    packet->frame_id = vision_max_u32(packet->frame_id, line.frame_id);
-    packet->frame_dt_us = (uint16)g_line_vision_frame_profiler.last_us;
-    packet->cost_us = (uint16)g_line_vision_cost_profiler.last_us;
+    packet->frame_id = vision_max_u32(packet->frame_id, bridge.frame_id);
+    packet->frame_dt_us = (uint16)g_bridge_vision_frame_profiler.last_us;
+    packet->cost_us = (uint16)g_bridge_vision_cost_profiler.last_us;
 
-    packet->line_detected = line.raw_detected;
-    packet->line_stable_detected = line.stable_detected;
-    packet->line_confidence_u16 = vision_confidence_to_u16(ctrl->confidence);
-    packet->line_lateral_px_x100 = vision_float_to_i16_x100(ctrl->lateral_error_px);
-    packet->line_yaw_error_deg_x100 = vision_float_to_i16_x100(ctrl->yaw_error_deg);
-    packet->line_x_bottom_x100 = vision_float_to_i16_x100(ctrl->line_x_bottom);
-    packet->line_x_lookahead_x100 = vision_float_to_i16_x100(ctrl->line_x_lookahead);
-    packet->line_points_used = ctrl->points_used;
-    packet->line_y_span = ctrl->y_span;
-    packet->line_rmse_px_x100 = (uint16)(ctrl->fit_rmse * 100.0f);
-    packet->line_roi_white_ratio_u16 = vision_confidence_to_u16(ctrl->roi_white_ratio);
-    packet->line_speed_hint = (int16)ctrl->target_speed_hint;
+    packet->bridge_detected = bridge.bridge_raw_detected;
+    packet->bridge_stable_detected = bridge.bridge_stable_detected;
+    packet->bridge_geometry_detected = bridge.raw_detected;
+    packet->bridge_geometry_stable_detected = bridge.stable_detected;
+    packet->bridge_state = ctrl->state;
+    packet->bridge_geometry_valid = ctrl->geometry_valid;
 
-    packet->line_bridge_detected = line.bridge_raw_detected;
-    packet->line_bridge_stable_detected = line.bridge_stable_detected;
-    packet->line_bridge_confidence_u16 = vision_confidence_to_u16(ctrl->bridge_confidence);
-    packet->line_bridge_component_count = ctrl->bridge_component_count;
-    packet->line_bridge_bbox_xmin = ctrl->bridge_bbox_xmin;
-    packet->line_bridge_bbox_ymin = ctrl->bridge_bbox_ymin;
-    packet->line_bridge_bbox_xmax = ctrl->bridge_bbox_xmax;
-    packet->line_bridge_bbox_ymax = ctrl->bridge_bbox_ymax;
-
-    packet->bridge_detected = line.bridge_stable_detected;
-    packet->bridge_count = ctrl->bridge_component_count;
-    packet->bridge_side = 0;
-    packet->bridge_exit_seen = 0U;
-    packet->bridge_center_err = packet->line_lateral_px_x100;
+    packet->bridge_left_line_x0 = ctrl->left_line_x0;
+    packet->bridge_left_line_y0 = ctrl->left_line_y0;
+    packet->bridge_left_line_x1 = ctrl->left_line_x1;
+    packet->bridge_left_line_y1 = ctrl->left_line_y1;
+    packet->bridge_right_line_x0 = ctrl->right_line_x0;
+    packet->bridge_right_line_y0 = ctrl->right_line_y0;
+    packet->bridge_right_line_x1 = ctrl->right_line_x1;
+    packet->bridge_right_line_y1 = ctrl->right_line_y1;
+    packet->bridge_down_line_x0 = ctrl->down_line_x0;
+    packet->bridge_down_line_y0 = ctrl->down_line_y0;
+    packet->bridge_down_line_x1 = ctrl->down_line_x1;
+    packet->bridge_down_line_y1 = ctrl->down_line_y1;
+    packet->bridge_up_line_x0 = ctrl->up_line_x0;
+    packet->bridge_up_line_y0 = ctrl->up_line_y0;
+    packet->bridge_up_line_x1 = ctrl->up_line_x1;
+    packet->bridge_up_line_y1 = ctrl->up_line_y1;
+    packet->bridge_center_line_x0 = ctrl->center_line_x0;
+    packet->bridge_center_line_y0 = ctrl->center_line_y0;
+    packet->bridge_center_line_x1 = ctrl->center_line_x1;
+    packet->bridge_center_line_y1 = ctrl->center_line_y1;
 }
 
 static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
@@ -256,15 +243,15 @@ void VisionIpc_Core1_Init(void)
     g_core1_result_seq = 0U;
 
     g_core1_pvc_enabled = 0U;
-    g_core1_line_enabled = 0U;
+    g_core1_bridge_enabled = 0U;
     g_core1_bumpy_enabled = 0U;
 
     g_core1_pvc_reset_request = 0U;
-    g_core1_line_reset_request = 0U;
+    g_core1_bridge_reset_request = 0U;
     g_core1_bumpy_reset_request = 0U;
 
     g_core1_last_published_pvc_frame_id = 0U;
-    g_core1_last_published_line_frame_id = 0U;
+    g_core1_last_published_bridge_frame_id = 0U;
     g_core1_last_published_bumpy_frame_id = 0U;
     g_core1_last_published_command_seq = 0U;
     g_core1_last_published_enable_mask = 0U;
@@ -284,14 +271,14 @@ void VisionIpc_Core1_Init(void)
 void VisionIpc_Core1_Update_2ms(void)
 {
     uint32 pvc_frame_id = 0U;
-    uint32 line_frame_id = 0U;
+    uint32 bridge_frame_id = 0U;
     uint32 bumpy_frame_id = 0U;
     uint8 should_publish = 0U;
 
     VisionIpc_Core1_PollCommand();
 
     if ((g_core1_pvc_enabled == 0U) &&
-        (g_core1_line_enabled == 0U) &&
+        (g_core1_bridge_enabled == 0U) &&
         (g_core1_bumpy_enabled == 0U))
     {
         if (g_core1_last_published_enable_mask != 0U)
@@ -306,9 +293,9 @@ void VisionIpc_Core1_Update_2ms(void)
     {
         pvc_frame_id = pvc_vision_get_output()->frame_id;
     }
-    if ((g_core1_line_enabled != 0U) && (g_line_vision_output_write_busy == 0U))
+    if ((g_core1_bridge_enabled != 0U) && (g_bridge_vision_output_write_busy == 0U))
     {
-        line_frame_id = line_vision_get_output()->frame_id;
+        bridge_frame_id = bridge_vision_get_output()->frame_id;
     }
     if ((g_core1_bumpy_enabled != 0U) && (g_bumpy_vision_output_write_busy == 0U))
     {
@@ -322,7 +309,7 @@ void VisionIpc_Core1_Update_2ms(void)
         should_publish = 1U;
     }
     /* 如果产生了新的 直线 帧 */
-    if ((line_frame_id != 0U) && (line_frame_id != g_core1_last_published_line_frame_id))
+    if ((bridge_frame_id != 0U) && (bridge_frame_id != g_core1_last_published_bridge_frame_id))
     {
         should_publish = 1U;
     }
@@ -340,7 +327,7 @@ void VisionIpc_Core1_Update_2ms(void)
     {
         VisionIpc_Core1_PublishCurrent();
         g_core1_last_published_pvc_frame_id = pvc_frame_id;
-        g_core1_last_published_line_frame_id = line_frame_id;
+        g_core1_last_published_bridge_frame_id = bridge_frame_id;
         g_core1_last_published_bumpy_frame_id = bumpy_frame_id;
         g_core1_last_published_command_seq = g_core1_command_shadow.seq;
         g_core1_last_published_enable_mask = g_core1_command_shadow.enable_mask;
@@ -357,7 +344,7 @@ void VisionIpc_Core1_PollCommand(void)
 {
     vision_ipc_command_t cmd;
     uint8 next_pvc_enabled;
-    uint8 next_line_enabled;
+    uint8 next_bridge_enabled;
     uint8 next_bumpy_enabled;
 
     /* 刷新数据缓存，确保从物理内存读到 0 核最新写入的命令 */
@@ -376,7 +363,7 @@ void VisionIpc_Core1_PollCommand(void)
     g_core1_command_shadow = cmd;
 
     next_pvc_enabled = vision_ipc_core1_command_wants_pvc(&g_core1_command_shadow);
-    next_line_enabled = vision_ipc_core1_command_wants_line(&g_core1_command_shadow);
+    next_bridge_enabled = vision_ipc_core1_command_wants_bridge(&g_core1_command_shadow);
     next_bumpy_enabled = vision_ipc_core1_command_wants_bumpy(&g_core1_command_shadow);
 
     if (next_pvc_enabled != g_core1_pvc_enabled)
@@ -385,11 +372,11 @@ void VisionIpc_Core1_PollCommand(void)
         g_core1_pvc_enabled = next_pvc_enabled;
         g_core1_last_published_pvc_frame_id = 0U;
     }
-    if (next_line_enabled != g_core1_line_enabled)
+    if (next_bridge_enabled != g_core1_bridge_enabled)
     {
-        g_core1_line_reset_request = 1U;
-        g_core1_line_enabled = next_line_enabled;
-        g_core1_last_published_line_frame_id = 0U;
+        g_core1_bridge_reset_request = 1U;
+        g_core1_bridge_enabled = next_bridge_enabled;
+        g_core1_last_published_bridge_frame_id = 0U;
     }
     if (next_bumpy_enabled != g_core1_bumpy_enabled)
     {
@@ -430,9 +417,9 @@ uint8 VisionIpc_Core1_TakePvcResetRequest(void)
  * 
  * @return uint8 1: 需要运行; 0: 不需要
  */
-uint8 VisionIpc_Core1_ShouldRunBridgeLine(void)
+uint8 VisionIpc_Core1_ShouldRunBridge(void)
 {
-    return g_core1_line_enabled;
+    return g_core1_bridge_enabled;
 }
 
 /**
@@ -440,11 +427,11 @@ uint8 VisionIpc_Core1_ShouldRunBridgeLine(void)
  * 
  * @return uint8 1: 有重置请求; 0: 没有
  */
-uint8 VisionIpc_Core1_TakeLineResetRequest(void)
+uint8 VisionIpc_Core1_TakeBridgeResetRequest(void)
 {
-    if (g_core1_line_reset_request)
+    if (g_core1_bridge_reset_request)
     {
-        g_core1_line_reset_request = 0U;
+        g_core1_bridge_reset_request = 0U;
         return 1U;
     }
     return 0U;
@@ -523,9 +510,9 @@ void VisionIpc_Core1_PublishCurrent(void)
     {
         vision_ipc_core1_fill_pvc(&packet, pvc_vision_get_output());
     }
-    if ((g_core1_line_enabled != 0U) && (g_line_vision_output_write_busy == 0U))
+    if ((g_core1_bridge_enabled != 0U) && (g_bridge_vision_output_write_busy == 0U))
     {
-        vision_ipc_core1_fill_line(&packet, line_vision_get_output());
+        vision_ipc_core1_fill_bridge(&packet, bridge_vision_get_output());
     }
     if ((g_core1_bumpy_enabled != 0U) && (g_bumpy_vision_output_write_busy == 0U))
     {
@@ -536,16 +523,12 @@ void VisionIpc_Core1_PublishCurrent(void)
     if (packet.active_target == VISION_TARGET_BRIDGE)
     {
         /* 桥梁模式下，综合直线和桥梁的结果 */
-        packet.stable_detected = (uint8)(packet.line_stable_detected || packet.line_bridge_stable_detected);
-        packet.detected = (uint8)(packet.line_stable_detected || packet.line_bridge_stable_detected);
-        packet.raw_detected = (uint8)(packet.line_detected || packet.line_bridge_detected);
-        
-        /* 桥梁优先级高于普通直线 */
-        packet.confidence_u16 = packet.line_bridge_stable_detected ?
-                                packet.line_bridge_confidence_u16 :
-                                packet.line_confidence_u16;
-        packet.lateral_mm = packet.line_lateral_px_x100;
-        packet.yaw_error_deg_x100 = packet.line_yaw_error_deg_x100;
+        packet.stable_detected = packet.bridge_geometry_stable_detected;
+        packet.detected = packet.bridge_geometry_stable_detected ? 1U :
+                          packet.bridge_geometry_detected;
+        packet.raw_detected = packet.bridge_geometry_detected;
+        packet.confidence_u16 = packet.bridge_geometry_stable_detected ? 1000U :
+                                (packet.bridge_stable_detected ? 500U : 0U);
         
         if (packet.stable_detected)
         {

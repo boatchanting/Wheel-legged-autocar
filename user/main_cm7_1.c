@@ -39,6 +39,7 @@
 #include "../code1/wifi.h"
 #include "../code1/wifi_diff_stream.h"
 #include "../code1/wifi_protocol.h"
+#include "../code1/vision/bridge_vision.h"
 #include "../code1/vision/pvc_vision.h"
 #include "../code1/vision/bumpy_vision.h"
 #include "../code1/vision/vision_ipc_core1.h"
@@ -87,7 +88,7 @@ int main(void)
     mt9v03x_init();//初始化摄像头
 #endif
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
-    line_vision_init();                                                         // 初始化任务区直线/单边桥视觉检测
+    bridge_vision_init();                                                       // 初始化单边桥视觉检测
     bumpy_vision_init();                                                        // 初始化颠簸路段视觉检测
     VisionIpc_Core1_Init();                                                     // 初始化1核视觉共享内存结果发布
     pit_ms_init(VISION_IPC_PIT_NUM, 2);                                          // 2ms 中断中处理0/1核视觉通信
@@ -135,9 +136,9 @@ int main(void)
             {
                 pvc_vision_reset_filter();
             }
-            if(VisionIpc_Core1_TakeLineResetRequest())
+            if(VisionIpc_Core1_TakeBridgeResetRequest())
             {
-                line_vision_reset_filter();
+                bridge_vision_reset_filter();
             }
             if(VisionIpc_Core1_TakeBumpyResetRequest())
             {
@@ -152,10 +153,10 @@ int main(void)
                 // 4. 将 PVC 检测框直接画在 compressed_image_copy[0] 上，供 WIFI 发送显示
                 render_pvc_vision_to_image();//算法执行完毕后，将 PVC 检测框画在 image_copy 上,必须放在这！如果放在算法前面，画的黑线会破坏算法寻找白色的逻辑
             }
-            if(VisionIpc_Core1_ShouldRunBridgeLine())
+            if(VisionIpc_Core1_ShouldRunBridge())
             {
-                line_vision_process_camera_frame(compressed_image_copy[0]);
-                render_line_vision_to_image();
+                bridge_vision_process_camera_frame(compressed_image_copy[0]);
+                render_bridge_vision_to_image();
             }
             if(VisionIpc_Core1_ShouldRunBumpy())
             {

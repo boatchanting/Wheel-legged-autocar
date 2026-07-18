@@ -31,8 +31,10 @@ typedef struct {
     const char *pgm_dir;
     const char *output_csv;
     const char *timing_json;
+    const char *mask_dir;
     int max_frames;
     int debug_every;
+    int fixed_threshold;
 } Options;
 
 static int ends_with(const char *text, const char *suffix)
@@ -185,6 +187,39 @@ static int write_csv(const char *path, const FrameResult *rows, int count)
     return 1;
 }
 
+static int write_bitmap_pgm(const char *path, const BridgeDetectionBitmap *bitmap,
+                            int width, int height, int valid)
+{
+    FILE *fp = fopen(path, "wb");
+    int x, y;
+    if (!fp) return 0;
+    fprintf(fp, "P5\n%d %d\n255\n", width, height);
+    for (y = 0; y < height; ++y) {
+        for (x = 0; x < width; ++x) {
+            uint8_t pixel = 0U;
+            if (valid) pixel = (uint8_t)(((bitmap->row[y][x >> 5] >> (x & 31)) & 1u) ? 255U : 0U);
+            fputc(pixel, fp);
+        }
+    }
+    fclose(fp);
+    return 1;
+}
+
+static int write_selected_masks(const char *dir, const char *frame_name,
+                                const BridgeDetectionScratch *scratch,
+                                const BridgeDetectionResult *result,
+                                int width, int height)
+{
+    char base[280], visible[B2_PC_PATH_MAX], outer[B2_PC_PATH_MAX];
+    size_t length = strlen(frame_name);
+    if (length >= 4 && strcmp(frame_name + length - 4, ".pgm") == 0) length -= 4;
+    snprintf(base, sizeof(base), "%.*s", (int)length, frame_name);
+    snprintf(visible, sizeof(visible), "%s\\%s_visible.pgm", dir, base);
+    snprintf(outer, sizeof(outer), "%s\\%s_outer.pgm", dir, base);
+    return write_bitmap_pgm(visible, &scratch->best_visible, width, height, result->candidate_found) &&
+           write_bitmap_pgm(outer, &scratch->best_outer, width, height, result->candidate_found);
+}
+
 static double percentile_sorted(const double *values, int count, double q)
 {
     double pos = (count - 1) * q;
@@ -206,9 +241,33 @@ static int write_timing_json(const char *path, const FrameResult *rows, int coun
     fp = fopen(path, "wb");
     if (!fp) { free(values); return 0; }
     fprintf(fp,
-        "{\n  \"frame_count\": %d,\n  \"total_ms\": %.6f,\n  \"mean_us\": %.6f,\n  \"min_us\": %.6f,\n  \"max_us\": %.6f,\n  \"stddev_us\": %.6f,\n  \"p50_us\": %.6f,\n  \"p95_us\": %.6f,\n  \"p99_us\": %.6f\n}\n",
+        "{\n  \"frame_count\": %d,\n  \"total_ms\": %.6f,\n  \"mean_us\": %.6f,\n  \"min_us\": %.6f,\n  \"max_us\": %.6f,\n  \"stddev_us\": %.6f,\n  \"p50_us\": %.6f,\n  \"p95_us\": %.6f,\n  \"p99_us\": %.6f",
         count, sum / 1000.0, mean, values[0], values[count - 1], sqrt(variance),
         percentile_sorted(values, count, 0.50), percentile_sorted(values, count, 0.95), percentile_sorted(values, count, 0.99));
+#ifdef BRIDGE_DETECTION_PC_PROFILE
+    {
+        BridgeDetectionPcProfile profile;
+        double scale;
+        bridge_detection_pc_profile_get(&profile);
+        scale = profile.ticks_per_second ? 1000000.0 / (double)profile.ticks_per_second : 0.0;
+        fprintf(fp,
+            ",\n  \"phase_profile\": {\n"
+            "    \"cache_check_us\": %.3f,\n    \"threshold_select_us\": %.3f,\n"
+            "    \"threshold_mask_us\": %.3f,\n    \"global_morph_us\": %.3f,\n"
+            "    \"component_us\": %.3f,\n    \"candidate_eval_us\": %.3f,\n"
+            "    \"local_morph_us\": %.3f,\n    \"convex_hull_us\": %.3f,\n"
+            "    \"final_geometry_us\": %.3f,\n    \"cache_store_us\": %.3f,\n"
+            "    \"component_calls\": %u,\n    \"candidate_eval_calls\": %u,\n"
+            "    \"full_search_calls\": %u\n  }\n",
+            profile.cache_check_ticks * scale, profile.threshold_select_ticks * scale,
+            profile.threshold_mask_ticks * scale, profile.global_morph_ticks * scale,
+            profile.component_ticks * scale, profile.candidate_eval_ticks * scale,
+            profile.local_morph_ticks * scale, profile.convex_hull_ticks * scale,
+            profile.final_geometry_ticks * scale, profile.cache_store_ticks * scale,
+            profile.component_calls, profile.candidate_eval_calls, profile.full_search_calls);
+    }
+#endif
+    fprintf(fp, "\n}\n");
     fclose(fp);
     printf("timing detector-only: mean %.3f us, min %.3f us, max %.3f us, p95 %.3f us, total %.3f ms\n",
            mean, values[0], values[count - 1], percentile_sorted(values, count, 0.95), sum / 1000.0);
@@ -218,19 +277,21 @@ static int write_timing_json(const char *path, const FrameResult *rows, int coun
 
 static void usage(const char *exe)
 {
-    fprintf(stderr, "usage: %s --pgm-dir DIR --output-csv FILE --timing-json FILE [--max-frames N] [--debug-every N]\n", exe);
+    fprintf(stderr, "usage: %s --pgm-dir DIR --output-csv FILE --timing-json FILE [--mask-dir DIR] [--fixed-threshold 0..255] [--max-frames N] [--debug-every N]\n", exe);
 }
 
 static int parse_options(int argc, char **argv, Options *o)
 {
     int i;
-    memset(o, 0, sizeof(*o)); o->max_frames = B2_PC_MAX_FRAMES; o->debug_every = 100;
+    memset(o, 0, sizeof(*o)); o->max_frames = B2_PC_MAX_FRAMES; o->debug_every = 100; o->fixed_threshold = -1;
     for (i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--pgm-dir") == 0 && i + 1 < argc) o->pgm_dir = argv[++i];
         else if (strcmp(argv[i], "--output-csv") == 0 && i + 1 < argc) o->output_csv = argv[++i];
         else if (strcmp(argv[i], "--timing-json") == 0 && i + 1 < argc) o->timing_json = argv[++i];
+        else if (strcmp(argv[i], "--mask-dir") == 0 && i + 1 < argc) o->mask_dir = argv[++i];
         else if (strcmp(argv[i], "--max-frames") == 0 && i + 1 < argc) o->max_frames = atoi(argv[++i]);
         else if (strcmp(argv[i], "--debug-every") == 0 && i + 1 < argc) o->debug_every = atoi(argv[++i]);
+        else if (strcmp(argv[i], "--fixed-threshold") == 0 && i + 1 < argc) o->fixed_threshold = atoi(argv[++i]);
         else return 0;
     }
     if (o->max_frames <= 0 || o->max_frames > B2_PC_MAX_FRAMES) o->max_frames = B2_PC_MAX_FRAMES;
@@ -254,6 +315,10 @@ int main(int argc, char **argv)
     frame_count = list_frames(options.pgm_dir, names, options.max_frames);
     if (!frame_count) { fprintf(stderr, "no PGM frames in %s\n", options.pgm_dir); return 4; }
     bridge_detection_default_config(&config);
+    if (options.fixed_threshold >= 0) config.fixed_threshold = options.fixed_threshold;
+#ifdef BRIDGE_DETECTION_PC_PROFILE
+    bridge_detection_pc_profile_reset();
+#endif
     printf("core memory: scratch=%zu bytes, result=%zu bytes\n", sizeof(*scratch), sizeof(BridgeDetectionResult));
     for (i = 0; i < frame_count; ++i) {
         char path[B2_PC_PATH_MAX];
@@ -267,6 +332,12 @@ int main(int argc, char **argv)
         if (status < 0) { fprintf(stderr, "detector error %d: %s\n", status, path); continue; }
         strncpy(rows[processed].name, names[i].name, sizeof(rows[processed].name) - 1);
         rows[processed].elapsed_us = end - begin;
+        if (options.mask_dir != NULL &&
+            !write_selected_masks(options.mask_dir, names[i].name, scratch,
+                                  &rows[processed].result, width, height)) {
+            fprintf(stderr, "cannot write selected masks for: %s\n", path);
+            return 7;
+        }
         ++processed;
         if (options.debug_every > 0 && (processed == 1 || processed % options.debug_every == 0)) {
             const BridgeDetectionResult *r = &rows[processed - 1].result;

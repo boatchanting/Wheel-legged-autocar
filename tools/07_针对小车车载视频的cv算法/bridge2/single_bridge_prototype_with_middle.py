@@ -1343,8 +1343,10 @@ def compute_center_line(
     return [cx0, cy0, cx1, cy1]
 
 
-def analyze_frame(item: dict[str, Any]) -> tuple[BridgeResult, Image.Image, Image.Image]:
-    image_path = FRAMES_DIR / item["video"] / item["frame"]
+def analyze_frame(
+    item: dict[str, Any], frames_dir: Path
+) -> tuple[BridgeResult, Image.Image, Image.Image]:
+    image_path = frames_dir / item["video"] / item["frame"]
     with Image.open(image_path) as image:
         gray = np.array(image.convert("L"), dtype=np.uint8)
 
@@ -2620,9 +2622,27 @@ def write_readme(output_dir: Path) -> None:
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
 
 
+def build_all_frames_subset(frames_dir: Path) -> dict[str, list[dict[str, Any]]]:
+    items: list[dict[str, Any]] = []
+    for video_dir in sorted(path for path in frames_dir.iterdir() if path.is_dir()):
+        for frame_path in sorted(video_dir.glob("*.png")):
+            items.append(
+                {
+                    "video": video_dir.name,
+                    "frame": frame_path.name,
+                    "tag": "all_frames",
+                }
+            )
+    if not items:
+        raise FileNotFoundError(f"no PNG frames found under {frames_dir}")
+    return {"items": items}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="PVC-only single-bridge prototype with straight-line fitting.")
     parser.add_argument("--subset", type=Path, default=DEFAULT_SUBSET, help="Subset JSON file.")
+    parser.add_argument("--frames-dir", type=Path, default=FRAMES_DIR, help="Root directory containing video frame folders.")
+    parser.add_argument("--all-frames", action="store_true", help="Process every PNG in --frames-dir instead of --subset.")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT, help="Directory for generated results.")
     args = parser.parse_args()
 
@@ -2636,18 +2656,22 @@ def main() -> None:
     original_dir.mkdir(parents=True, exist_ok=True)
     compare_dir.mkdir(parents=True, exist_ok=True)
 
-    subset = json.loads(args.subset.read_text(encoding="utf-8"))
+    frames_dir = args.frames_dir
+    if args.all_frames:
+        subset = build_all_frames_subset(frames_dir)
+    else:
+        subset = json.loads(args.subset.read_text(encoding="utf-8"))
     results: list[BridgeResult] = []
     original_images: list[Image.Image] = []
     draw_images: list[Image.Image] = []
     mask_images: list[Image.Image] = []
 
     for item in subset["items"]:
-        image_path = FRAMES_DIR / item["video"] / item["frame"]
+        image_path = frames_dir / item["video"] / item["frame"]
         with Image.open(image_path) as image:
             original_image = image.convert("RGB")
 
-        result, draw_image, mask_image = analyze_frame(item)
+        result, draw_image, mask_image = analyze_frame(item, frames_dir)
         results.append(result)
         original_images.append(original_image)
         draw_images.append(draw_image)

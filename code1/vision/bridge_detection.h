@@ -7,8 +7,6 @@
 extern "C" {
 #endif
 
-/* The current camera data is 94x60. Keep a little horizontal headroom while
- * retaining a bounded, caller-owned workspace for the embedded port. */
 #define BRIDGE_DETECTION_MAX_WIDTH   96
 #define BRIDGE_DETECTION_MAX_HEIGHT  60
 #define BRIDGE_DETECTION_MAX_PIXELS  (BRIDGE_DETECTION_MAX_WIDTH * BRIDGE_DETECTION_MAX_HEIGHT)
@@ -24,12 +22,12 @@ typedef enum {
 typedef struct {
     float min_valid_score;
     float min_edge_contrast;
-    int fixed_threshold; /* -1: adaptive multi-threshold mode; 0..255: one fixed threshold */
+    int fixed_threshold;
 } BridgeDetectionConfig;
 
 typedef struct {
     uint8_t valid;
-    float slope;       /* x = slope * y + intercept */
+    float slope;
     float intercept;
     float support_min_y;
     float support_max_y;
@@ -52,7 +50,6 @@ typedef struct {
     uint8_t candidate_found;
     uint8_t bridge_found;
     BridgeDetectionState state;
-
     int threshold;
     float candidate_score;
     int area;
@@ -68,7 +65,6 @@ typedef struct {
     float right_clip_ratio;
     float dual_clip_ratio;
     float border_monotonic;
-
     uint8_t left_line_visible;
     uint8_t right_line_visible;
     uint8_t top_line_visible;
@@ -80,9 +76,6 @@ typedef struct {
     BridgeDetectionSegment top_segment;
     BridgeDetectionSegment entry_segment;
     BridgeDetectionSegment center_segment;
-
-    /* Control-facing geometry at bottom_row. Positive error means target is
-     * to the right of the image center. Valid when center_segment.valid=1. */
     float control_center_x;
     float lateral_error_px;
     float heading_dx_per_dy;
@@ -100,9 +93,6 @@ typedef struct {
     BridgeDetectionBitmap best_visible;
     BridgeDetectionBitmap best_outer;
     uint16_t queue[BRIDGE_DETECTION_MAX_PIXELS];
-    /* Convex-hull column extrema.  These are caller-owned workspace rather
-     * than automatic arrays because evaluate_component() calls the hull
-     * routine through an already deep M7 call chain. */
     int16_t column_top[BRIDGE_DETECTION_MAX_WIDTH];
     int16_t column_bottom[BRIDGE_DETECTION_MAX_WIDTH];
     /* Geometry of the selected candidate.  The final reporting stage used to
@@ -133,37 +123,10 @@ typedef struct {
 void bridge_detection_default_config(BridgeDetectionConfig *config);
 void bridge_detection_result_clear(BridgeDetectionResult *result);
 const char *bridge_detection_state_name(BridgeDetectionState state);
-
-int bridge_detection_detect_gray(
-    const uint8_t *gray,
-    int width,
-    int height,
-    int stride,
-    const BridgeDetectionConfig *config,
-    BridgeDetectionScratch *scratch,
-    BridgeDetectionResult *result);
-
-#ifdef BRIDGE_DETECTION_PC_PROFILE //pc端测试用
-typedef struct {
-    uint64_t ticks_per_second;
-    uint64_t frames;
-    uint64_t cache_check_ticks;
-    uint64_t threshold_select_ticks;
-    uint64_t threshold_mask_ticks;
-    uint64_t global_morph_ticks;
-    uint64_t component_ticks;
-    uint64_t candidate_eval_ticks;
-    uint64_t local_morph_ticks;
-    uint64_t convex_hull_ticks;
-    uint64_t final_geometry_ticks;
-    uint64_t cache_store_ticks;
-    uint32_t component_calls;
-    uint32_t candidate_eval_calls;
-    uint32_t full_search_calls;
-} BridgeDetectionPcProfile;
-void bridge_detection_pc_profile_reset(void);
-void bridge_detection_pc_profile_get(BridgeDetectionPcProfile *out);
-#endif
+int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int stride,
+                                 const BridgeDetectionConfig *config,
+                                 BridgeDetectionScratch *scratch,
+                                 BridgeDetectionResult *result);
 
 #ifdef __cplusplus
 }

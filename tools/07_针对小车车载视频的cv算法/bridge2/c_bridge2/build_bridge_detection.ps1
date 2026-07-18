@@ -1,4 +1,7 @@
-param([string]$Output = "")
+param(
+    [string]$Output = "",
+    [switch]$PhaseProfile
+)
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -12,6 +15,7 @@ $Sources = @(
     (Join-Path $ScriptDir "bridge_detection.c"),
     (Join-Path $ScriptDir "bridge_detection_pc.c")
 )
+$ProfileDefine = if ($PhaseProfile) { "/DBRIDGE_DETECTION_PC_PROFILE" } else { "" }
 
 function Find-VsDevCmd {
     $VsWhere = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
@@ -25,7 +29,7 @@ function Find-VsDevCmd {
 
 $Cl = Get-Command cl -ErrorAction SilentlyContinue
 if ($Cl) {
-    & $Cl.Source /nologo /O2 /W4 /TC /utf-8 "/Fo:$OutDir\" $Sources "/Fe:$Output"
+    & $Cl.Source /nologo /O2 /W4 /TC /utf-8 $ProfileDefine "/Fo:$OutDir\" $Sources "/Fe:$Output"
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host "built: $Output"
     exit 0
@@ -33,7 +37,7 @@ if ($Cl) {
 
 $VsDevCmd = Find-VsDevCmd
 if ($VsDevCmd) {
-    $Command = "call `"$VsDevCmd`" -arch=x64 -host_arch=x64 && cl /nologo /O2 /W4 /TC /utf-8 /Fo:$OutDir\ $($Sources[0]) $($Sources[1]) /Fe:$Output"
+    $Command = "call `"$VsDevCmd`" -arch=x64 -host_arch=x64 && cl /nologo /O2 /W4 /TC /utf-8 $ProfileDefine /Fo:$OutDir\ $($Sources[0]) $($Sources[1]) /Fe:$Output"
     & cmd.exe /d /s /c $Command
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     Write-Host "built with Visual Studio: $Output"

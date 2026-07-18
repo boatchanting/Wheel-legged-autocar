@@ -112,12 +112,18 @@ def parse_ground_truth(image: np.ndarray) -> dict[str, ImageLine | None]:
     }
 
 
+def canny_edges(gray: np.ndarray) -> tuple[np.ndarray, int]:
+    """与 Hough 使用完全相同的边缘图，供调试图直接展示。"""
+    width = gray.shape[1]
+    scale = 4 if width < 120 else 2
+    enlarged = cv2.resize(gray, (gray.shape[1] * scale, gray.shape[0] * scale), interpolation=cv2.INTER_CUBIC)
+    return cv2.Canny(cv2.GaussianBlur(enlarged, (3, 3), 0), 25, 82), scale
+
+
 def hough_lines(gray: np.ndarray) -> tuple[list[ImageLine], list[ImageLine], list[ImageLine]]:
     """返回左斜边、右斜边和横线候选；先放大以适配 94x60 的低分辨率。"""
     height, width = gray.shape
-    scale = 4 if width < 120 else 2
-    enlarged = cv2.resize(gray, (width * scale, height * scale), interpolation=cv2.INTER_CUBIC)
-    edge = cv2.Canny(cv2.GaussianBlur(enlarged, (3, 3), 0), 25, 82)
+    edge, scale = canny_edges(gray)
     raw = cv2.HoughLinesP(
         edge, 1, np.pi / 180, threshold=max(16, width // 4),
         minLineLength=max(8 * scale, int(width * scale * 0.10)), maxLineGap=4 * scale,
@@ -285,6 +291,49 @@ def draw_target(image: np.ndarray, target: FrontTarget | None) -> None:
     cv2.line(image, tuple(np.round(target.top_center).astype(int)), center, (0, 255, 0), 1, cv2.LINE_AA)
 
 
+def make_tile(image: np.ndarray, title: str, scale: int = 4) -> np.ndarray:
+    """先放大低分辨率帧再写标题，避免文字遮挡实际特征。"""
+    tile = cv2.resize(image, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST)
+    cv2.rectangle(tile, (0, 0), (tile.shape[1] - 1, 17), (0, 0, 0), -1)
+    cv2.putText(tile, title, (3, 13), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 0), 1, cv2.LINE_AA)
+    return tile
+
+
+def make_debug_steps(original: np.ndarray, target: FrontTarget | None) -> np.ndarray:
+    """生成从原图到最终前沿的可视化中间过程。"""
+    gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
+    edge, scale = canny_edges(gray)
+    lefts, rights, fronts = hough_lines(gray)
+
+    candidates = original.copy()
+    for line in lefts:
+        draw_line(candidates, line, (50, 50, 180))
+    for line in rights:
+        draw_line(candidates, line, (180, 130, 30))
+    for line in fronts:
+        draw_line(candidates, line, (180, 180, 30))
+
+    # 远距离场景的备用分支：显示高亮区域，说明 Canny 看不到斜边时算法使用了什么。
+    threshold = max(220, min(235, int(np.percentile(gray, 98))))
+    bright_mask = (gray >= threshold).astype(np.uint8) * 255
+    bright = cv2.cvtColor(bright_mask, cv2.COLOR_GRAY2BGR)
+    contours, _ = cv2.findContours(bright_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if contours:
+        cv2.drawContours(bright, [max(contours, key=cv2.contourArea)], -1, (0, 255, 0), 1)
+
+    final = original.copy()
+    draw_target(final, target)
+    edge_small = cv2.resize(edge, (original.shape[1], original.shape[0]), interpolation=cv2.INTER_AREA)
+    edge_bgr = cv2.cvtColor(edge_small, cv2.COLOR_GRAY2BGR)
+    return np.hstack((
+        make_tile(original, "1 raw"),
+        make_tile(edge_bgr, "2 canny"),
+        make_tile(candidates, "3 hough candidates"),
+        make_tile(bright, f"4 bright >= {threshold}"),
+        make_tile(final, "5 selected S1 front"),
+    ))
+
+
 def save_image(path: Path, image: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imencode(".png", image)[1].tofile(str(path))
@@ -306,6 +355,7 @@ def run(paths: list[Path], output: Path) -> None:
     output.mkdir(parents=True, exist_ok=True)
     rows: list[dict[str, object]] = []
     panels: list[np.ndarray] = []
+    debug_panels: list[np.ndarray] = []
     for label_path in paths:
         original_path = FRAME_ROOT / label_path.name
         marked = cv2.imdecode(np.fromfile(str(label_path), dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -321,6 +371,9 @@ def run(paths: list[Path], output: Path) -> None:
         predicted = None if target is None else {"left": target.left, "right": target.right, "front": target.front}
         output_image = original.copy()
         draw_target(output_image, target)
+        debug = make_debug_steps(original, target)
+        save_image(output / "debug_steps" / label_path.name, debug)
+        debug_panels.append(debug)
         # 左侧是人工标注，右侧是算法输出；两者均保留红蓝黄语义。
         scale = 6
         panel = np.hstack((
@@ -363,6 +416,9 @@ def run(paths: list[Path], output: Path) -> None:
             panels.append(blank.copy())
         contact = np.vstack([np.hstack(panels[i:i + columns]) for i in range(0, len(panels), columns)])
         save_image(output / "comparison_contact.png", contact)
+    if debug_panels:
+        # 单列拼接，保持“从原图到结果”的每一步都能完整查看。
+        save_image(output / "debug_steps_contact.png", np.vstack(debug_panels))
     print(json.dumps({key: value for key, value in summary.items() if key != "rows"}, ensure_ascii=False, indent=2))
 
 

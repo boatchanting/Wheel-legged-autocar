@@ -47,6 +47,11 @@ typedef enum
 #define VISION_VALID_GRASS              (1U << 5)
 #define VISION_VALID_PROFILE            (1U << 6)
 
+#define VISION_BRIDGE_STATE_NONE          (0U)
+#define VISION_BRIDGE_STATE_PREPARE_ENTER (1U)
+#define VISION_BRIDGE_STATE_ON_BRIDGE     (2U)
+#define VISION_BRIDGE_STATE_PREPARE_EXIT  (3U)
+
 typedef struct
 {
     uint16 magic;
@@ -115,36 +120,39 @@ typedef struct
     uint8 pvc_component_count;
     uint8 pvc_candidate_count;
 
-    /* Reserved: bridge. */
+    /* bridge begin */
+    /* Single-bridge result. Coordinates are in the 94x60 camera image;
+     * -1 denotes an unavailable endpoint. */
     uint8 bridge_detected;
-    uint8 bridge_count;
-    int8 bridge_side;
-    uint8 bridge_exit_seen;
-    int16 bridge_center_err;
+    uint8 bridge_stable_detected;
+    uint8 bridge_geometry_detected;
+    uint8 bridge_geometry_stable_detected;
+    uint8 bridge_state;
+    uint8 bridge_geometry_valid;
+    uint16 bridge_reserved0;
 
-    /* Bridge task straight-line result. */
-    uint8 line_detected;
-    uint8 line_stable_detected;
-    uint16 line_confidence_u16;
-    int16 line_lateral_px_x100;
-    int16 line_yaw_error_deg_x100;
-    int16 line_x_bottom_x100;
-    int16 line_x_lookahead_x100;
-    uint8 line_points_used;
-    uint8 line_y_span;
-    uint16 line_rmse_px_x100;
-    uint16 line_roi_white_ratio_u16;
-    int16 line_speed_hint;
+    int16 bridge_left_line_x0;
+    int16 bridge_left_line_y0;
+    int16 bridge_left_line_x1;
+    int16 bridge_left_line_y1;
+    int16 bridge_right_line_x0;
+    int16 bridge_right_line_y0;
+    int16 bridge_right_line_x1;
+    int16 bridge_right_line_y1;
+    int16 bridge_down_line_x0;
+    int16 bridge_down_line_y0;
+    int16 bridge_down_line_x1;
+    int16 bridge_down_line_y1;
+    int16 bridge_up_line_x0;
+    int16 bridge_up_line_y0;
+    int16 bridge_up_line_x1;
+    int16 bridge_up_line_y1;
+    int16 bridge_center_line_x0;
+    int16 bridge_center_line_y0;
+    int16 bridge_center_line_x1;
+    int16 bridge_center_line_y1;
 
-    /* Dark single-side bridge block detected inside the straight-line module. */
-    uint8 line_bridge_detected;
-    uint8 line_bridge_stable_detected;
-    uint16 line_bridge_confidence_u16;
-    uint8 line_bridge_component_count;
-    uint8 line_bridge_bbox_xmin;
-    uint8 line_bridge_bbox_ymin;
-    uint8 line_bridge_bbox_xmax;
-    uint8 line_bridge_bbox_ymax;
+    /* bridge end */
 
     /* Bumpy road result. */
     uint8 bumpy_detected;

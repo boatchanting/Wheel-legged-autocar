@@ -557,6 +557,8 @@ void render_pvc_vision_to_image(void)
     }
 }
 
+/* Debug rendering is kept outside bridge_vision so it never affects detector
+ * input.  Call it only after bridge_vision_process_camera_frame(). */
 static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
 {
     int dx = (x1 > x0) ? (x1 - x0) : (x0 - x1);
@@ -588,6 +590,78 @@ static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
     }
 }
 
+void render_bridge_vision_to_image(void)
+{
+    const volatile bridge_vision_output_t *bridge_out = bridge_vision_get_output();
+    bridge_vision_frame_result_t result;
+
+    if ((bridge_out->bridge_stable_detected != 0U) ||
+        (bridge_out->stable_detected != 0U))
+    {
+        result = bridge_out->stable;
+    }
+    else
+    {
+        result = bridge_out->raw;
+    }
+
+    if ((result.left_line_x0 >= 0) && (result.left_line_y0 >= 0) &&
+        (result.left_line_x1 >= 0) && (result.left_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.left_line_x0,
+                           (int)result.left_line_y0,
+                           (int)result.left_line_x1,
+                           (int)result.left_line_y1,
+                           0U);
+    }
+
+    if ((result.right_line_x0 >= 0) && (result.right_line_y0 >= 0) &&
+        (result.right_line_x1 >= 0) && (result.right_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.right_line_x0,
+                           (int)result.right_line_y0,
+                           (int)result.right_line_x1,
+                           (int)result.right_line_y1,
+                           0U);
+    }
+
+    if ((result.up_line_x0 >= 0) && (result.up_line_y0 >= 0) &&
+        (result.up_line_x1 >= 0) && (result.up_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.up_line_x0,
+                           (int)result.up_line_y0,
+                           (int)result.up_line_x1,
+                           (int)result.up_line_y1,
+                           0U);
+    }
+
+    if ((result.down_line_x0 >= 0) && (result.down_line_y0 >= 0) &&
+        (result.down_line_x1 >= 0) && (result.down_line_y1 >= 0))
+    {
+        draw_line_on_image((int)result.down_line_x0,
+                           (int)result.down_line_y0,
+                           (int)result.down_line_x1,
+                           (int)result.down_line_y1,
+                           0U);
+    }
+
+    /* 中线是控制真正使用的几何输出，最后单独强调画出来。 */
+    if (result.geometry_valid != 0U)
+    {
+        draw_line_on_image((int)result.center_line_x0,
+                           (int)result.center_line_y0,
+                           (int)result.center_line_x1,
+                           (int)result.center_line_y1,
+                           0U);
+        draw_cross_on_image((int)result.center_line_x1,
+                            (int)result.center_line_y1,
+                            2,
+                            0U);
+    }
+}
+
+#if 0
+/* Removed legacy line-vision renderer retained only as disabled history. */
 void render_line_vision_to_image(void)
 {
     const volatile line_vision_output_t *line_out = &g_line_vision_output;
@@ -685,6 +759,8 @@ void render_line_vision_to_image(void)
 #endif
     }
 }
+
+#endif
 
 void render_bumpy_vision_to_image(void)
 {

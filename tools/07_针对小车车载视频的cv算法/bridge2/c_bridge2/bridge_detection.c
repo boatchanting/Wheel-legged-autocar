@@ -3,12 +3,18 @@
 #include <stddef.h>
 #include <string.h>
 
+#ifdef BRIDGE_DETECTION_PC_PROFILE
+#include <windows.h>
+#endif
+
 #define BD_MIN_COMPONENT_AREA 24
 #define BD_MAX_LINE_POINTS BRIDGE_DETECTION_MAX_WIDTH
 #define BD_MAX_HULL_POINTS (BRIDGE_DETECTION_MAX_WIDTH * 4)
 #define BD_LINE_SAMPLE_COUNT 24
 #define BD_CACHE_MAGIC 0x42444745u
 #define BD_TEMPORAL_MAX_STREAK 3
+#define BD_QUEUE_X_BITS 7
+#define BD_QUEUE_X_MASK ((1u << BD_QUEUE_X_BITS) - 1u)
 
 typedef struct {
     int threshold;
@@ -45,6 +51,21 @@ typedef struct { int x; int y; } PointI;
 
 enum { PREF_TOP, PREF_BOTTOM, PREF_LEFT, PREF_RIGHT };
 
+#ifdef BRIDGE_DETECTION_PC_PROFILE
+static BridgeDetectionPcProfile g_bd_pc_profile;
+static uint64_t bd_profile_now(void) { LARGE_INTEGER value; QueryPerformanceCounter(&value); return (uint64_t)value.QuadPart; }
+static void bd_profile_add(uint64_t *total, uint64_t start) { *total += bd_profile_now() - start; }
+void bridge_detection_pc_profile_reset(void) { LARGE_INTEGER frequency; memset(&g_bd_pc_profile, 0, sizeof(g_bd_pc_profile)); QueryPerformanceFrequency(&frequency); g_bd_pc_profile.ticks_per_second = (uint64_t)frequency.QuadPart; }
+void bridge_detection_pc_profile_get(BridgeDetectionPcProfile *out) { if (out != NULL) *out = g_bd_pc_profile; }
+#define BD_PROFILE_BEGIN() bd_profile_now()
+#define BD_PROFILE_ADD(field_, start_) bd_profile_add(&g_bd_pc_profile.field_, (start_))
+#define BD_PROFILE_INC(field_) (++g_bd_pc_profile.field_)
+#else
+#define BD_PROFILE_BEGIN() ((uint64_t)0)
+#define BD_PROFILE_ADD(field_, start_) do { (void)(start_); } while (0)
+#define BD_PROFILE_INC(field_) do { } while (0)
+#endif
+
 static float absf_fast(float value) { return value < 0.0f ? -value : value; }
 
 static int clamp_int(int value, int lo, int hi)
@@ -68,6 +89,20 @@ static int ctz32(uint32_t value)
     return table[((value & (0u - value)) * 0x077CB531u) >> 27];
 }
 
+static int msb32(uint32_t value)
+{
+    static const uint8_t table[32] = {
+        0, 9, 1, 10, 13, 21, 2, 29, 11, 14, 16, 18, 22, 25, 3, 30,
+        8, 12, 20, 28, 15, 17, 24, 7, 19, 27, 23, 6, 26, 5, 4, 31
+    };
+    value |= value >> 1;
+    value |= value >> 2;
+    value |= value >> 4;
+    value |= value >> 8;
+    value |= value >> 16;
+    return table[(value * 0x07C4ACDDu) >> 27];
+}
+
 static uint32_t valid_last_word_mask(int width)
 {
     int bits = width & 31;
@@ -82,7 +117,8 @@ static int cache_matches(const BridgeDetectionScratch *scratch, const uint8_t *g
     int y;
     if (scratch->cache_magic != BD_CACHE_MAGIC || scratch->cache_width != width || scratch->cache_height != height ||
         scratch->cache_min_valid_score != config->min_valid_score ||
-        scratch->cache_min_edge_contrast != config->min_edge_contrast) return 0;
+        scratch->cache_min_edge_contrast != config->min_edge_contrast ||
+        scratch->cache_fixed_threshold != config->fixed_threshold) return 0;
     for (y = 0; y < height; ++y) {
         if (memcmp(scratch->previous_gray + y * width, gray + y * stride, (size_t)width) != 0) return 0;
     }
@@ -100,6 +136,7 @@ static void cache_store(BridgeDetectionScratch *scratch, const uint8_t *gray,
     scratch->cache_height = (uint16_t)height;
     scratch->cache_min_valid_score = config->min_valid_score;
     scratch->cache_min_edge_contrast = config->min_edge_contrast;
+    scratch->cache_fixed_threshold = config->fixed_threshold;
     scratch->cache_status = status;
     scratch->cache_magic = BD_CACHE_MAGIC;
 }
@@ -397,7 +434,10 @@ static int component_seed_span(BridgeDetectionBitmap *global_mask, BridgeDetecti
     while (right + 1 < width && bitmap_get(global_mask, right + 1, y)) ++right;
     bitmap_clear_range(global_mask, y, left, right);
     bitmap_set_range(component, y, left, right);
-    queue[(*tail)++] = (uint16_t)(y * width + left);
+    /* Queue entries are span starts.  Packing x/y removes the expensive
+     * divide/modulo pair from every breadth-first span dequeue.  X needs
+     * seven bits for the fixed <=96-pixel input width. */
+    queue[(*tail)++] = (uint16_t)(((uint16_t)y << BD_QUEUE_X_BITS) | (uint16_t)left);
     *span_length = right - left + 1;
     return right;
 }
@@ -412,8 +452,10 @@ static int extract_component(BridgeDetectionBitmap *global_mask, BridgeDetection
     component_seed_span(global_mask, component, queue, &tail, sx, sy, width, &span_length);
     area += span_length;
     while (head < tail) {
-        int index = queue[head++];
-        int left = index % width, y = index / width, right = left;
+        uint16_t packed = queue[head++];
+        int left = (int)(packed & BD_QUEUE_X_MASK);
+        int y = (int)(packed >> BD_QUEUE_X_BITS);
+        int right = left;
         int adjacent_index;
         while (right + 1 < width && bitmap_get(component, right + 1, y)) ++right;
         for (adjacent_index = 0; adjacent_index < 2; ++adjacent_index) {
@@ -449,11 +491,7 @@ static int extract_row_borders(const BridgeDetectionBitmap *mask, int width, int
             uint32_t bits = mask->row[y][word];
             if (!bits) continue;
             if (first < 0) first = (word << 5) + ctz32(bits);
-            {
-                int bit = 31;
-                while (((bits >> bit) & 1u) == 0u) --bit;
-                last = (word << 5) + bit;
-            }
+            last = (word << 5) + msb32(bits);
         }
         if (last >= width) last = width - 1;
         left[y] = first; right[y] = last;
@@ -463,18 +501,90 @@ static int extract_row_borders(const BridgeDetectionBitmap *mask, int width, int
     return count;
 }
 
+/* Build the reporting metadata once, after the best candidate has been
+ * selected.  The former reporting path scanned these two bitmaps separately
+ * in every side/top/entry fit. */
+static void cache_best_geometry(BridgeDetectionScratch *scratch, int width, int height)
+{
+    int y, x, word;
+    int words = words_for_width(width);
+    for (y = 0; y < height; ++y) {
+        int visible_left = -1, visible_right = -1, outer_left = -1, outer_right = -1;
+        for (word = 0; word < words; ++word) {
+            uint32_t visible_bits = scratch->best_visible.row[y][word];
+            uint32_t outer_bits = scratch->best_outer.row[y][word];
+            if (visible_bits != 0u) {
+                if (visible_left < 0) visible_left = (word << 5) + ctz32(visible_bits);
+                visible_right = (word << 5) + msb32(visible_bits);
+            }
+            if (outer_bits != 0u) {
+                if (outer_left < 0) outer_left = (word << 5) + ctz32(outer_bits);
+                outer_right = (word << 5) + msb32(outer_bits);
+            }
+        }
+        if (visible_right >= width) visible_right = width - 1;
+        if (outer_right >= width) outer_right = width - 1;
+        scratch->best_visible_left[y] = (int8_t)visible_left;
+        scratch->best_visible_right[y] = (int8_t)visible_right;
+        scratch->best_outer_left[y] = (int8_t)outer_left;
+        scratch->best_outer_right[y] = (int8_t)outer_right;
+    }
+    for (x = 0; x < width; ++x) {
+        scratch->best_outer_top[x] = -1;
+        scratch->best_outer_bottom[x] = -1;
+    }
+    for (y = 0; y < height; ++y) {
+        for (word = 0; word < words; ++word) {
+            uint32_t bits = scratch->best_outer.row[y][word];
+            while (bits != 0u) {
+                x = (word << 5) + ctz32(bits);
+                if (x < width) {
+                    if (scratch->best_outer_top[x] < 0) scratch->best_outer_top[x] = (int8_t)y;
+                    scratch->best_outer_bottom[x] = (int8_t)y;
+                }
+                bits &= bits - 1u;
+            }
+        }
+    }
+}
+
 static int convex_hull_mask(const BridgeDetectionBitmap *src, BridgeDetectionBitmap *dst,
-                            int width, int height, int *left, int *right, int *widths, int *area_out)
+                            int width, int height, int *left, int *right, int *widths, int *area_out,
+                            BridgeDetectionScratch *scratch)
 {
     PointI points[BRIDGE_DETECTION_MAX_WIDTH * 2];
     PointI hull[BD_MAX_HULL_POINTS];
+    int16_t *column_top = scratch->column_top;
+    int16_t *column_bottom = scratch->column_bottom;
     int point_count = 0, hull_count = 0, lower_count, x, y, i, reverse_first = 1;
     int area = 0;
+
+    /* The old implementation searched every column from both ends, i.e.
+     * 2*width*height bitmap tests.  A single forward row scan obtains the
+     * exact same per-column extrema and is considerably cheaper on M7. */
     for (x = 0; x < width; ++x) {
-        int top = -1, bottom = -1;
-        for (y = 0; y < height; ++y) if (bitmap_get(src, x, y)) { top = y; break; }
-        if (top < 0) continue;
-        for (y = height - 1; y >= top; --y) if (bitmap_get(src, x, y)) { bottom = y; break; }
+        column_top[x] = (int16_t)height;
+        column_bottom[x] = (int16_t)-1;
+    }
+    for (y = 0; y < height; ++y) {
+        int word;
+        int words = words_for_width(width);
+        for (word = 0; word < words; ++word) {
+            uint32_t bits = src->row[y][word];
+            while (bits != 0u) {
+                int bit_x = (word << 5) + ctz32(bits);
+                if (bit_x < width) {
+                    if (column_top[bit_x] == height) column_top[bit_x] = (int16_t)y;
+                    column_bottom[bit_x] = (int16_t)y;
+                }
+                bits &= bits - 1u;
+            }
+        }
+    }
+    for (x = 0; x < width; ++x) {
+        int top = column_top[x];
+        int bottom = column_bottom[x];
+        if (bottom < 0) continue;
         points[point_count].x = x; points[point_count++].y = top;
         if (bottom != top) { points[point_count].x = x; points[point_count++].y = bottom; }
     }
@@ -532,16 +642,22 @@ static int evaluate_component(const uint8_t *gray, int stride, const BridgeDetec
     float center_x, edge_contrast, score;
     BridgeDetectionBitmap *visible = &scratch->work4;
     BridgeDetectionBitmap *outer = &scratch->work2;
+    uint64_t phase_start;
+    BD_PROFILE_INC(candidate_eval_calls);
+    phase_start = BD_PROFILE_BEGIN();
     bitmap_copy(visible, component);
     close3_open2(visible, &scratch->work1, width, height);
+    BD_PROFILE_ADD(local_morph_ticks, phase_start);
     /* Filling interior holes is redundant before a convex hull: it cannot
      * add an extreme point or change the hull boundary. */
-    if (!convex_hull_mask(visible, outer, width, height, left, right, widths, &area)) {
+    phase_start = BD_PROFILE_BEGIN();
+    if (!convex_hull_mask(visible, outer, width, height, left, right, widths, &area, scratch)) {
         bitmap_copy(outer, visible);
         extract_row_borders(outer, width, height, left, right, widths);
         area = 0;
         for (y = 0; y < height; ++y) area += widths[y];
     }
+    BD_PROFILE_ADD(convex_hull_ticks, phase_start);
     for (y = 0; y < height; ++y) if (widths[y] > 0) {
         valid_rows[valid_count++] = y;
         if (widths[y] > max_width) max_width = widths[y];
@@ -642,8 +758,48 @@ static int build_sample_indices(int count, int *sample)
     return sample_count;
 }
 
+/* Fast path for an already clean boundary.  If every point is close enough
+ * to the all-point least-squares line, the endpoint hypothesis used by the
+ * legacy RANSAC is guaranteed to classify every point as an inlier too.  The
+ * final legacy fit therefore reduces to this same all-point fit.  A strict
+ * half-threshold certificate leaves margin for finite-precision arithmetic;
+ * noisy or partly occluded boundaries always fall through to the original
+ * robust RANSAC below. */
+static int fit_line_certified_all_inliers(const float *independent, const float *dependent, int count,
+                                          float slope_min, float slope_max, float residual_threshold,
+                                          int min_inliers, float min_span, float border_limit, int prefer,
+                                          LineFit *out)
+{
+    uint8_t all_inliers[BD_MAX_LINE_POINTS];
+    float slope, intercept, support_min = 1.0e30f, support_max = -1.0e30f;
+    float sum_dep = 0.0f, sum_res = 0.0f;
+    float certificate_limit = residual_threshold * 0.45f;
+    int i, border_count = 0;
+    if (count < min_inliers) return 0;
+    for (i = 0; i < count; ++i) all_inliers[i] = 1u;
+    linear_fit(independent, dependent, all_inliers, count, &slope, &intercept);
+    if (slope < slope_min || slope > slope_max) return 0;
+    for (i = 0; i < count; ++i) {
+        float residual = absf_fast(dependent[i] - (slope * independent[i] + intercept));
+        if (residual > certificate_limit) return 0;
+        if (independent[i] < support_min) support_min = independent[i];
+        if (independent[i] > support_max) support_max = independent[i];
+        sum_dep += dependent[i];
+        sum_res += residual;
+        if ((prefer == PREF_LEFT || prefer == PREF_TOP) ? dependent[i] <= border_limit : dependent[i] >= border_limit) ++border_count;
+    }
+    if (support_max - support_min < min_span) return 0;
+    memset(out, 0, sizeof(*out));
+    out->valid = 1; out->slope = slope; out->intercept = intercept;
+    out->support_min = support_min; out->support_max = support_max;
+    out->inlier_count = count; out->span = support_max - support_min;
+    out->residual = sum_res / count; out->border_touch_ratio = (float)border_count / count;
+    out->mean_value = sum_dep / count;
+    return 1;
+}
+
 static LineFit fit_line_fast(const float *independent, const float *dependent, int count,
-                             float slope_min, float slope_max, float residual_threshold,
+                              float slope_min, float slope_max, float residual_threshold,
                              int min_inliers, float min_span, float border_limit, int prefer)
 {
     LineFit result;
@@ -653,6 +809,9 @@ static LineFit fit_line_fast(const float *independent, const float *dependent, i
     float best_score = -1.0e30f, slope = 0.0f, intercept = 0.0f;
     memset(&result, 0, sizeof(result));
     if (count < min_inliers) return result;
+    if (fit_line_certified_all_inliers(independent, dependent, count,
+                                       slope_min, slope_max, residual_threshold,
+                                       min_inliers, min_span, border_limit, prefer, &result)) return result;
     sample_count = build_sample_indices(count, sample);
     for (ai = 0; ai < sample_count - 1; ++ai) for (aj = ai + 1; aj < sample_count; ++aj) {
         int p0 = sample[ai], p1 = sample[aj], n = 0;
@@ -707,15 +866,16 @@ static LineFit fit_line_fast(const float *independent, const float *dependent, i
     return result;
 }
 
-static LineFit fit_one_side(const BridgeDetectionBitmap *mask, int width, int height, int side_right)
+static LineFit fit_one_side_cached(const BridgeDetectionScratch *scratch, int width, int height,
+                                   int side_right, int outer)
 {
-    int left[BRIDGE_DETECTION_MAX_HEIGHT], right[BRIDGE_DETECTION_MAX_HEIGHT], widths[BRIDGE_DETECTION_MAX_HEIGHT];
     int rows[BRIDGE_DETECTION_MAX_HEIGHT], unclipped[BRIDGE_DETECTION_MAX_HEIGHT];
     float independent[BRIDGE_DETECTION_MAX_HEIGHT], dependent[BRIDGE_DETECTION_MAX_HEIGHT];
     int row_count = 0, unclipped_count = 0, y, count, use_unclipped;
     LineFit none;
-    extract_row_borders(mask, width, height, left, right, widths);
-    for (y = 0; y < height; ++y) if (widths[y] > 0) {
+    const int8_t *left = outer ? scratch->best_outer_left : scratch->best_visible_left;
+    const int8_t *right = outer ? scratch->best_outer_right : scratch->best_visible_right;
+    for (y = 0; y < height; ++y) if (left[y] >= 0) {
         rows[row_count++] = y;
         if ((!side_right && left[y] > 1) || (side_right && right[y] < width - 2)) unclipped[unclipped_count++] = y;
     }
@@ -734,29 +894,27 @@ static float score_side_fit(LineFit line)
            absf_fast(line.slope) * 10.0f + absf_fast(line.slope) * line.span * 3.0f;
 }
 
-static LineFit fit_horizontal(const BridgeDetectionBitmap *mask, int width, int height, int bottom)
+static LineFit fit_horizontal_cached(const BridgeDetectionScratch *scratch, int width, int height, int bottom)
 {
     float independent[BRIDGE_DETECTION_MAX_WIDTH], dependent[BRIDGE_DETECTION_MAX_WIDTH];
     int x, count = 0;
+    const int8_t *values = bottom ? scratch->best_outer_bottom : scratch->best_outer_top;
+    (void)height;
     for (x = 0; x < width; ++x) {
-        int y, found = -1;
-        if (!bottom) { for (y = 0; y < height; ++y) if (bitmap_get(mask, x, y)) { found = y; break; } }
-        else { for (y = height - 1; y >= 0; --y) if (bitmap_get(mask, x, y)) { found = y; break; } }
-        if (found >= 0) { independent[count] = (float)x; dependent[count] = (float)found; ++count; }
+        if (values[x] >= 0) { independent[count] = (float)x; dependent[count] = (float)values[x]; ++count; }
     }
     return fit_line_fast(independent, dependent, count, -0.32f, 0.32f, 1.2f, 6, 8.0f,
                          bottom ? height - 2.5f : 1.5f, bottom ? PREF_BOTTOM : PREF_TOP);
 }
 
-static LineFit fit_top_plateau(const BridgeDetectionBitmap *mask, int width, int height)
+static LineFit fit_top_plateau_cached(const BridgeDetectionScratch *scratch, int width, int height)
 {
     int top[BRIDGE_DETECTION_MAX_WIDTH], cols[BRIDGE_DETECTION_MAX_WIDTH];
-    int col_count = 0, min_top = height, x, y, tolerance;
+    int col_count = 0, min_top = height, x, tolerance;
     LineFit none;
     memset(&none, 0, sizeof(none));
     for (x = 0; x < width; ++x) {
-        top[x] = -1;
-        for (y = 0; y < height; ++y) if (bitmap_get(mask, x, y)) { top[x] = y; break; }
+        top[x] = scratch->best_outer_top[x];
         if (top[x] >= 0) { cols[col_count++] = x; if (top[x] < min_top) min_top = top[x]; }
     }
     if (col_count < 6) return none;
@@ -861,11 +1019,34 @@ static BridgeDetectionSegment center_segment(BridgeDetectionSegment left, Bridge
     return out;
 }
 
+static BridgeDetectionSegment horizontal_segment(LineFit line, int visible, int width, int height)
+{
+    BridgeDetectionSegment segment;
+    float x0, x1, y0, y1;
+
+    memset(&segment, 0, sizeof(segment));
+    if (!visible || !line.valid) return segment;
+
+    x0 = line.support_min;
+    x1 = line.support_max;
+    y0 = line.slope * x0 + line.intercept;
+    y1 = line.slope * x1 + line.intercept;
+
+    segment.valid = 1;
+    segment.x0 = clamp_int(round_positive(x0), 0, width - 1);
+    segment.y0 = clamp_int(round_positive(y0), 0, height - 1);
+    segment.x1 = clamp_int(round_positive(x1), 0, width - 1);
+    segment.y1 = clamp_int(round_positive(y1), 0, height - 1);
+    if (segment.x0 == segment.x1 && segment.y0 == segment.y1) segment.valid = 0;
+    return segment;
+}
+
 void bridge_detection_default_config(BridgeDetectionConfig *config)
 {
     if (config == NULL) return;
     config->min_valid_score = 350.0f;
     config->min_edge_contrast = 20.0f;
+    config->fixed_threshold = -1;
 }
 
 void bridge_detection_result_clear(BridgeDetectionResult *result)
@@ -893,8 +1074,12 @@ static int find_best_candidate(const uint8_t *gray, int width, int height, int s
     Candidate best;
     memset(&best, 0, sizeof(best));
     for (t = 0; t < threshold_count; ++t) {
+        uint64_t phase_start = BD_PROFILE_BEGIN();
         threshold_mask(gray, &scratch->work0, width, height, stride, thresholds[t]);
+        BD_PROFILE_ADD(threshold_mask_ticks, phase_start);
+        phase_start = BD_PROFILE_BEGIN();
         close3_open2(&scratch->work0, &scratch->work1, width, height);
+        BD_PROFILE_ADD(global_morph_ticks, phase_start);
         for (y = 0; y < height; ++y) for (word = 0; word < words; ++word) {
             uint32_t bits;
             while ((bits = scratch->work0.row[y][word]) != 0u) {
@@ -903,9 +1088,17 @@ static int find_best_candidate(const uint8_t *gray, int width, int height, int s
                 Candidate candidate;
                 if (x >= width) { scratch->work0.row[y][word] = 0; break; }
                 start = y * width + x;
+                phase_start = BD_PROFILE_BEGIN();
                 component_area = extract_component(&scratch->work0, &scratch->work2, scratch->queue, start, width, height);
+                BD_PROFILE_ADD(component_ticks, phase_start);
+                BD_PROFILE_INC(component_calls);
                 if (component_area < BD_MIN_COMPONENT_AREA) continue;
-                if (!evaluate_component(gray, stride, &scratch->work2, thresholds[t], width, height, scratch, &candidate)) continue;
+                phase_start = BD_PROFILE_BEGIN();
+                if (!evaluate_component(gray, stride, &scratch->work2, thresholds[t], width, height, scratch, &candidate)) {
+                    BD_PROFILE_ADD(candidate_eval_ticks, phase_start);
+                    continue;
+                }
+                BD_PROFILE_ADD(candidate_eval_ticks, phase_start);
                 if (!have_best || candidate.score > best.score) {
                     best = candidate; have_best = 1;
                     bitmap_copy(&scratch->best_visible, &scratch->work4);
@@ -958,7 +1151,8 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     Candidate best;
     int thresholds[11], threshold_count, have_best = 0;
     int temporal_used = 0;
-    LineFit visible_left, visible_right, outer_left, outer_right, left, right, top, plateau, entry;
+    uint64_t phase_start;
+    LineFit visible_left, visible_right, outer_left, outer_right, left, right, top, plateau, entry, top_selected;
     if (result == NULL) return -1;
     bridge_detection_result_clear(result);
     memset(&best, 0, sizeof(best));
@@ -971,13 +1165,25 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
         scratch->temporal_streak = 0;
     }
     if (config == NULL) { bridge_detection_default_config(&default_config); config = &default_config; }
+    BD_PROFILE_INC(frames);
+    phase_start = BD_PROFILE_BEGIN();
     if (cache_matches(scratch, gray, width, height, stride, config)) {
+        BD_PROFILE_ADD(cache_check_ticks, phase_start);
         ++scratch->exact_cache_hits;
         *result = scratch->cached_result;
         return scratch->cache_status;
     }
-    threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
-    if (scratch->cache_magic == BD_CACHE_MAGIC && scratch->cached_result.candidate_found &&
+    BD_PROFILE_ADD(cache_check_ticks, phase_start);
+    phase_start = BD_PROFILE_BEGIN();
+    if (config->fixed_threshold >= 0) {
+        thresholds[0] = clamp_int(config->fixed_threshold, 0, 255);
+        threshold_count = 1;
+    } else {
+        threshold_count = build_threshold_candidates(gray, width, height, stride, thresholds);
+    }
+    BD_PROFILE_ADD(threshold_select_ticks, phase_start);
+    if ((config->fixed_threshold < 0) &&
+        scratch->cache_magic == BD_CACHE_MAGIC && scratch->cached_result.candidate_found &&
         scratch->temporal_streak < BD_TEMPORAL_MAX_STREAK &&
         temporal_input_is_small_change(scratch, gray, width, height, stride)) {
         int previous_threshold = scratch->cached_result.threshold;
@@ -994,11 +1200,14 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     }
     if (!have_best) {
         ++scratch->full_detection_calls;
+        BD_PROFILE_INC(full_search_calls);
         have_best = find_best_candidate(gray, width, height, stride, thresholds, threshold_count, scratch, &best);
     }
     if (!have_best) {
         scratch->temporal_streak = 0;
+        phase_start = BD_PROFILE_BEGIN();
         cache_store(scratch, gray, width, height, stride, config, result, 0);
+        BD_PROFILE_ADD(cache_store_ticks, phase_start);
         return 0;
     }
     result->candidate_found = 1; result->threshold = best.threshold; result->candidate_score = best.score;
@@ -1006,15 +1215,18 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     result->bottom_row = best.bottom_row; result->max_width = best.max_width; result->bottom_width = best.bottom_width;
     result->center_x = best.center_x; result->edge_contrast = best.edge_contrast; result->left_clip_ratio = best.left_clip_ratio;
     result->right_clip_ratio = best.right_clip_ratio; result->dual_clip_ratio = best.dual_clip_ratio; result->border_monotonic = best.border_monotonic;
-    visible_left = fit_one_side(&scratch->best_visible, width, height, 0);
-    visible_right = fit_one_side(&scratch->best_visible, width, height, 1);
-    outer_left = fit_one_side(&scratch->best_outer, width, height, 0);
-    outer_right = fit_one_side(&scratch->best_outer, width, height, 1);
+    phase_start = BD_PROFILE_BEGIN();
+    cache_best_geometry(scratch, width, height);
+    visible_left = fit_one_side_cached(scratch, width, height, 0, 0);
+    visible_right = fit_one_side_cached(scratch, width, height, 1, 0);
+    outer_left = fit_one_side_cached(scratch, width, height, 0, 1);
+    outer_right = fit_one_side_cached(scratch, width, height, 1, 1);
     left = score_side_fit(visible_left) >= score_side_fit(outer_left) ? visible_left : outer_left;
     right = score_side_fit(visible_right) >= score_side_fit(outer_right) ? visible_right : outer_right;
-    top = fit_horizontal(&scratch->best_outer, width, height, 0);
-    plateau = fit_top_plateau(&scratch->best_outer, width, height);
-    entry = fit_horizontal(&scratch->best_outer, width, height, 1);
+    top = fit_horizontal_cached(scratch, width, height, 0);
+    plateau = fit_top_plateau_cached(scratch, width, height);
+    entry = fit_horizontal_cached(scratch, width, height, 1);
+    top_selected = plateau.valid ? plateau : top;
     export_side_line(left, &result->left_line); export_side_line(right, &result->right_line);
     result->left_line_visible = (uint8_t)should_show_left(left, &best);
     result->right_line_visible = (uint8_t)should_show_right(right, width, &best);
@@ -1039,6 +1251,8 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     if (result->bridge_found) {
         result->left_segment = side_segment(left, result->left_line_visible, 0, best.bottom_row, width, height);
         result->right_segment = side_segment(right, result->right_line_visible, 1, best.bottom_row, width, height);
+        result->top_segment = horizontal_segment(top_selected, result->top_line_visible, width, height);
+        result->entry_segment = horizontal_segment(entry, result->entry_line_visible, width, height);
         result->center_segment = center_segment(result->left_segment, result->right_segment, width, height);
         if (result->center_segment.valid) {
             int dy = result->center_segment.y1 - result->center_segment.y0;
@@ -1047,12 +1261,15 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
             result->heading_dx_per_dy = dy ? (float)(result->center_segment.x1 - result->center_segment.x0) / dy : 0.0f;
         }
     }
+    BD_PROFILE_ADD(final_geometry_ticks, phase_start);
     if (temporal_used) {
         ++scratch->temporal_fast_hits;
         ++scratch->temporal_streak;
     } else {
         scratch->temporal_streak = 0;
     }
+    phase_start = BD_PROFILE_BEGIN();
     cache_store(scratch, gray, width, height, stride, config, result, 1);
+    BD_PROFILE_ADD(cache_store_ticks, phase_start);
     return 1;
 }

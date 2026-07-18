@@ -1,7 +1,7 @@
 """Extract MP4 video frames to PNG files.
 
 This helper targets on-car MP4 recordings and stores each video's frames in:
-data/雷区视觉/frames/{video_name}/frame_000001.png
+{output_root}/{video_name}/{video_name}_frame000001.png
 """
 
 from __future__ import annotations
@@ -60,7 +60,7 @@ def extract_frames(
                 continue
 
             saved += 1
-            output_path = output_dir / f"frame_{seen:06d}.png"
+            output_path = output_dir / f"{video_path.stem}_frame{seen:06d}.png"
             save_png_unicode_safe(output_path, frame)
 
             if max_frames is not None and saved >= max_frames:
