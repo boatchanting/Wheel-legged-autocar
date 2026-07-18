@@ -332,11 +332,34 @@ def _decode_payload(payload_bytes):
 
 debug_log_file = None
 
+def _is_full_log_recording():
+    with full_log_lock:
+        return full_log_file is not None
+
+
+def _close_debug_log():
+    global debug_log_file
+    if debug_log_file is None:
+        return
+
+    try:
+        debug_log_file.close()
+    except:
+        pass
+    debug_log_file = None
+    print("[DEBUG LOG] 结束调试日志写入。")
+
+
 def _handle_debug_logging(data):
     global debug_log_file
+    if not _is_full_log_recording():
+        _close_debug_log()
+        return
+
     if data.get("has_debug"):
         if debug_log_file is None:
-            filename = time.strftime("slip_debug_log_%Y%m%d_%H%M%S.txt")
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            filename = os.path.join(current_dir, time.strftime("slip_debug_log_%Y%m%d_%H%M%S.txt"))
             try:
                 debug_log_file = open(filename, "w", encoding="utf-8")
                 debug_log_file.write("Time,TargetSpeed,SpeedL,SpeedR,TheoYawRate,ActualYawRate,SlipFlag\n")
@@ -352,64 +375,75 @@ def _handle_debug_logging(data):
         except Exception as e:
             print(f"[DEBUG LOG] 写入日志失败: {e}")
     else:
-        if debug_log_file is not None:
-            try:
-                debug_log_file.close()
-            except:
-                pass
-            debug_log_file = None
-            print("[DEBUG LOG] 退出复刻，结束日志写入。")
+        _close_debug_log()
 
 
 # ============= 新增：全量数据日志相关 =============
+full_log_lock = threading.Lock()
 full_log_file = None
 full_log_writer = None
+full_log_path = ""
 
 def _open_full_log():
     """打开全量日志 CSV 文件并写入表头"""
-    global full_log_file, full_log_writer
-    if full_log_file is not None:
-        return
-    
-    filename = time.strftime("full_data_log_%Y%m%d_%H%M%S.csv")
-    try:
-        # 使用 utf-8-sig 编码，防止 Excel 打开中文乱码
-        full_log_file = open(filename, "w", newline="", encoding="utf-8-sig")
-        full_log_writer = csv.writer(full_log_file)
-        full_log_writer.writerow(FULL_LOG_FIELDS)
-        full_log_file.flush()
-        print(f"[FULL LOG] 开始写入全量数据日志: {filename}")
-    except Exception as e:
-        print(f"[FULL LOG] 创建全量日志失败: {e}")
-        full_log_file = None
-        full_log_writer = None
+    global full_log_file, full_log_writer, full_log_path
+    with full_log_lock:
+        if full_log_file is not None:
+            return {"success": True, "msg": f"全量数据日志已在记录中: {full_log_path}", "path": full_log_path}
+        
+        filename = time.strftime("full_data_log_%Y%m%d_%H%M%S.csv")
+        filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        try:
+            # 使用 utf-8-sig 编码，防止 Excel 打开中文乱码
+            full_log_file = open(filepath, "w", newline="", encoding="utf-8-sig")
+            full_log_writer = csv.writer(full_log_file)
+            full_log_writer.writerow(FULL_LOG_FIELDS)
+            full_log_file.flush()
+            full_log_path = filepath
+            print(f"[FULL LOG] 开始写入全量数据日志: {filepath}")
+            return {"success": True, "msg": f"开始记录日志: {filepath}", "path": filepath}
+        except Exception as e:
+            print(f"[FULL LOG] 创建全量日志失败: {e}")
+            full_log_file = None
+            full_log_writer = None
+            full_log_path = ""
+            return {"success": False, "msg": f"创建全量日志失败: {e}"}
 
 def _close_full_log():
     """关闭全量日志 CSV 文件"""
-    global full_log_file, full_log_writer
-    if full_log_file is not None:
-        try:
-            full_log_file.close()
-            print("[FULL LOG] 全量数据日志已关闭")
-        except:
-            pass
-        finally:
-            full_log_file = None
-            full_log_writer = None
+    global full_log_file, full_log_writer, full_log_path
+    with full_log_lock:
+        if full_log_file is not None:
+            closed_path = full_log_path
+            try:
+                full_log_file.close()
+                print(f"[FULL LOG] 全量数据日志已关闭: {closed_path}")
+            except:
+                pass
+            finally:
+                full_log_file = None
+                full_log_writer = None
+                full_log_path = ""
+            _close_debug_log()
+            return {"success": True, "msg": f"结束记录日志: {closed_path}", "path": closed_path}
+
+        _close_debug_log()
+        return {"success": True, "msg": "当前没有正在记录的日志", "path": ""}
 
 def _write_full_log(data):
     """将一帧全量数据写入 CSV"""
     global full_log_writer
-    if full_log_writer is None:
-        return
+    with full_log_lock:
+        if full_log_writer is None:
+            return
 
-    try:
-        # 按 FULL_LOG_FIELDS 定义的顺序提取数据，如果字段不存在则留空
-        row = [data.get(field, "") for field in FULL_LOG_FIELDS]
-        full_log_writer.writerow(row)
-        full_log_file.flush()
-    except Exception as e:
-        print(f"[FULL LOG] 写入全量日志失败: {e}")
+        try:
+            # 按 FULL_LOG_FIELDS 定义的顺序提取数据，如果字段不存在则留空
+            row = [data.get(field, "") for field in FULL_LOG_FIELDS]
+            full_log_writer.writerow(row)
+            full_log_file.flush()
+        except Exception as e:
+            print(f"[FULL LOG] 写入全量日志失败: {e}")
 # ==================================================
 
 
@@ -535,9 +569,6 @@ def tcp_server_thread():
                 server_error = ""
             print(f"[TCP] Connected: {peer}")
 
-            # 新增：设备连接时打开全量日志
-            _open_full_log()
-
             raw_buffer = bytearray()
             with conn:
                 conn.settimeout(1.0)
@@ -555,10 +586,7 @@ def tcp_server_thread():
                 peer_addr = ""
                 if active_conn is conn:
                     active_conn = None
-            
-            # 新增：设备断开时关闭全量日志
-            _close_full_log()
-            
+
             print(f"[TCP] Disconnected: {peer}")
         except socket.timeout:
             continue
@@ -567,9 +595,6 @@ def tcp_server_thread():
                 peer_addr = ""
                 active_conn = None
                 server_error = f"Server error: {exc}"
-            
-            # 异常时也要尝试关闭日志
-            _close_full_log()
             time.sleep(0.5)
 
 
@@ -588,6 +613,9 @@ class Api:
             connected = bool(peer_addr)
             data_fresh = (now - last_rx_time) < 1.2
             frame_fresh = (now - last_frame_time) < 1.2
+            with full_log_lock:
+                full_log_recording = full_log_file is not None
+                current_full_log_path = full_log_path
             return {
                 "connected": connected,
                 "data_fresh": data_fresh,
@@ -599,6 +627,8 @@ class Api:
                 "host_ip": listen_ip,
                 "host_port": HOST_PORT,
                 "enable_slip_markers": ENABLE_SLIP_MARKERS,
+                "full_log_recording": full_log_recording,
+                "full_log_path": current_full_log_path,
             }
 
     def clear_history(self):
@@ -617,6 +647,12 @@ class Api:
             return {"success": False, "msg": "control_code 超出范围"}
 
         return _send_control_to_vehicle(code)
+
+    def start_full_log(self):
+        return _open_full_log()
+
+    def stop_full_log(self):
+        return _close_full_log()
 
     def export_mark_points_csv(self, points):
         try:
