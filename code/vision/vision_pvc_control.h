@@ -46,7 +46,7 @@ extern "C" {
  * - 这是给 1 核下的命令。1 表示让 1 核一开机就一直找 PVC。
  * - 测试的时候一般常开，这样可以在电脑上随时看 1 核找得准不准。
  */
-#define VISION_PVC_DETECT_DEFAULT_ACTIVE          (1)
+#define VISION_PVC_DETECT_DEFAULT_ACTIVE          (0)
 
 /*
  * 控制默认关闭：
