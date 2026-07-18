@@ -34,6 +34,18 @@ LINE_THICKNESS = 1
 OUTER_SIDE_CM = 120.0
 INNER_SIDE_CM = 100.0
 TAPE_WIDTH_CM = (OUTER_SIDE_CM - INNER_SIDE_CM) / 2.0
+VISIBLE_SEGMENT_SUPPORT_RADIUS = 1
+VISIBLE_SEGMENT_MIN_VISIBLE_FRACTION = 0.20
+INNER_SUPPRESS_FAR_VIEW_THRESHOLD = 0.38
+INNER_DIRECT_AREA_RATIO_THRESHOLD = 0.45
+INNER_DIRECT_LEFT_DELTA_THRESHOLD = 4.0
+INNER_DIRECT_WIDTH_RATIO_THRESHOLD = 0.72
+INNER_DIRECT_TOP_DELTA_MIN = -2.0
+THRESHOLD_125_AREA_WEIGHT = 0.02
+THRESHOLD_125_HEIGHT_WEIGHT = 0.03
+FAR_SMALL_FALLBACK_THRESHOLD = 110
+FAR_SMALL_FALLBACK_FAR_VIEW = 0.35
+FAR_SMALL_FALLBACK_OUTER_AREA = 70.0
 
 REPRESENTATIVE_FRAMES: dict[str, tuple[int, ...]] = {
     "雷区阴天30固定曝光侧_20260713_180026": (3, 71, 159, 202, 302, 320),
@@ -78,6 +90,7 @@ class GroundTruth:
 class Candidate:
     threshold: int
     score: float
+    far_view_factor: float
     outer_area: float
     outer_bbox: tuple[int, int, int, int]
     child_area: float
@@ -336,6 +349,12 @@ def longest_visible_segment(
     return segments
 
 
+def should_suppress_inner_segments(candidate: Candidate | None) -> bool:
+    if candidate is None:
+        return True
+    return candidate.far_view_factor >= INNER_SUPPRESS_FAR_VIEW_THRESHOLD
+
+
 def build_edge_support_mask(gray: np.ndarray, threshold_mask: np.ndarray) -> np.ndarray:
     blurred = cv2.GaussianBlur(gray, (3, 3), 0)
     canny = cv2.Canny(blurred, 40, 100) > 0
@@ -363,6 +382,33 @@ def render_polygon_mask(shape: tuple[int, int], quad: np.ndarray | None) -> np.n
     pts = np.round(quad).astype(np.int32).reshape(-1, 1, 2)
     cv2.fillPoly(mask, [pts], color=255, lineType=cv2.LINE_8)
     return mask.astype(bool)
+
+
+def extract_prediction_segments(
+    gray: np.ndarray,
+    candidate: Candidate | None,
+) -> tuple[np.ndarray, list[Segment], list[Segment]]:
+    if candidate is None:
+        empty_mask = np.zeros_like(gray, dtype=bool)
+        return empty_mask, [], []
+
+    edge_support_mask = build_edge_support_mask(gray, candidate.threshold_mask)
+    pred_outer_segments = longest_visible_segment(
+        candidate.outer_quad,
+        edge_support_mask,
+        support_radius=VISIBLE_SEGMENT_SUPPORT_RADIUS,
+        min_visible_fraction=VISIBLE_SEGMENT_MIN_VISIBLE_FRACTION,
+    )
+    if should_suppress_inner_segments(candidate):
+        pred_inner_segments: list[Segment] = []
+    else:
+        pred_inner_segments = longest_visible_segment(
+            candidate.inner_quad_final,
+            edge_support_mask,
+            support_radius=VISIBLE_SEGMENT_SUPPORT_RADIUS,
+            min_visible_fraction=VISIBLE_SEGMENT_MIN_VISIBLE_FRACTION,
+        )
+    return edge_support_mask, pred_outer_segments, pred_inner_segments
 
 
 def quad_from_segments(segments: list[Segment]) -> np.ndarray | None:
@@ -434,6 +480,50 @@ def infer_inner_quad(outer_quad: np.ndarray) -> np.ndarray | None:
     return order_quad(inner_quad)
 
 
+def should_replace_direct_inner_quad(
+    inner_quad_direct: np.ndarray | None,
+    inferred_inner_quad: np.ndarray | None,
+) -> bool:
+    if inner_quad_direct is None or inferred_inner_quad is None:
+        return False
+
+    inferred_area = polygon_area(inferred_inner_quad)
+    if inferred_area <= 1e-6:
+        return False
+
+    direct_area = polygon_area(inner_quad_direct)
+    area_ratio = direct_area / inferred_area
+
+    direct_pts = np.asarray(inner_quad_direct, dtype=np.float32)
+    inferred_pts = np.asarray(inferred_inner_quad, dtype=np.float32)
+    direct_width = float(direct_pts[:, 0].max() - direct_pts[:, 0].min())
+    inferred_width = float(inferred_pts[:, 0].max() - inferred_pts[:, 0].min())
+    width_ratio = direct_width / max(inferred_width, 1e-6)
+    left_delta = float(direct_pts[:, 0].min() - inferred_pts[:, 0].min())
+    top_delta = float(direct_pts[:, 1].min() - inferred_pts[:, 1].min())
+
+    return (
+        area_ratio < INNER_DIRECT_AREA_RATIO_THRESHOLD
+        and left_delta > INNER_DIRECT_LEFT_DELTA_THRESHOLD
+        and width_ratio < INNER_DIRECT_WIDTH_RATIO_THRESHOLD
+        and top_delta > INNER_DIRECT_TOP_DELTA_MIN
+    )
+
+
+def choose_inner_quad(
+    outer_quad: np.ndarray,
+    inner_quad_direct: np.ndarray | None,
+) -> np.ndarray | None:
+    inferred_inner_quad = infer_inner_quad(outer_quad)
+    if inner_quad_direct is None:
+        return inferred_inner_quad
+    if inferred_inner_quad is None:
+        return inner_quad_direct
+    if should_replace_direct_inner_quad(inner_quad_direct, inferred_inner_quad):
+        return inferred_inner_quad
+    return inner_quad_direct
+
+
 def find_largest_child(contours: list[np.ndarray], hierarchy: np.ndarray, outer_idx: int) -> tuple[np.ndarray | None, float]:
     largest_child: np.ndarray | None = None
     largest_area = 0.0
@@ -492,7 +582,7 @@ def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Ca
             if child_contour is not None and child_area >= 18.0:
                 inner_quad_direct = approx_quad_from_contour(child_contour, allow_box_fallback=False)
 
-            inner_quad_final = inner_quad_direct if inner_quad_direct is not None else infer_inner_quad(outer_quad)
+            inner_quad_final = choose_inner_quad(outer_quad, inner_quad_direct)
             touches_border = x == 0 or y == 0 or (x + bw) >= width or (y + bh) >= height
             geom = measure_geometry(
                 gray=gray,
@@ -514,6 +604,7 @@ def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Ca
             candidate = Candidate(
                 threshold=threshold,
                 score=score_breakdown.total_score,
+                far_view_factor=score_breakdown.far_view_factor,
                 outer_area=outer_area,
                 outer_bbox=(x, y, bw, bh),
                 child_area=child_area,
@@ -553,6 +644,56 @@ def detect_candidate(gray: np.ndarray, fixed_threshold: int | None = None) -> Ca
     if best.score < best_breakdown.decision_threshold:
         return None
     return best
+
+
+def detect_best_candidate(
+    gray: np.ndarray,
+    fixed_threshold: int | None = None,
+    fixed_thresholds: list[int] | tuple[int, ...] | None = None,
+) -> Candidate | None:
+    if fixed_thresholds:
+        candidates_by_threshold: dict[int, Candidate] = {}
+        for threshold in dict.fromkeys(int(value) for value in fixed_thresholds):
+            candidate = detect_candidate(gray, fixed_threshold=threshold)
+            if candidate is not None:
+                candidates_by_threshold[threshold] = candidate
+
+        best: Candidate | None
+        candidate_120 = candidates_by_threshold.get(120)
+        candidate_125 = candidates_by_threshold.get(125)
+        if candidate_120 is not None and candidate_125 is not None:
+            area_delta = (candidate_120.outer_area - candidate_125.outer_area) / max(
+                candidate_120.outer_area,
+                candidate_125.outer_area,
+                1e-6,
+            )
+            height_delta = (candidate_120.outer_bbox[3] - candidate_125.outer_bbox[3]) / max(
+                candidate_120.outer_bbox[3],
+                candidate_125.outer_bbox[3],
+                1.0,
+            )
+            choose_125 = (
+                (candidate_125.score - candidate_120.score)
+                + THRESHOLD_125_AREA_WEIGHT * area_delta
+                + THRESHOLD_125_HEIGHT_WEIGHT * height_delta
+            ) >= 0.0
+            best = candidate_125 if choose_125 else candidate_120
+        elif candidate_120 is not None or candidate_125 is not None:
+            best = candidate_125 if candidate_125 is not None else candidate_120
+        else:
+            best = max(candidates_by_threshold.values(), key=lambda item: item.score, default=None)
+
+        fallback_candidate = candidates_by_threshold.get(FAR_SMALL_FALLBACK_THRESHOLD)
+        if fallback_candidate is not None and (
+            best is None
+            or (
+                best.far_view_factor >= FAR_SMALL_FALLBACK_FAR_VIEW
+                and best.outer_area < FAR_SMALL_FALLBACK_OUTER_AREA
+            )
+        ):
+            return fallback_candidate
+        return best
+    return detect_candidate(gray, fixed_threshold=fixed_threshold)
 
 
 def mask_scores(pred_mask: np.ndarray, gt_mask: np.ndarray, radius: int = 1) -> dict[str, float]:
@@ -693,14 +834,11 @@ def evaluate_sample(sample: Sample, output_dir: Path, fixed_threshold: int | Non
 
     if candidate is None:
         threshold_mask = np.zeros_like(gray, dtype=bool)
-        edge_support_mask = np.zeros_like(gray, dtype=bool)
         pred_outer_segments = []
         pred_inner_segments = []
     else:
         threshold_mask = candidate.threshold_mask
-        edge_support_mask = build_edge_support_mask(gray, threshold_mask)
-        pred_outer_segments = longest_visible_segment(candidate.outer_quad, edge_support_mask, support_radius=1)
-        pred_inner_segments = longest_visible_segment(candidate.inner_quad_final, edge_support_mask, support_radius=1)
+    _, pred_outer_segments, pred_inner_segments = extract_prediction_segments(gray, candidate)
 
     pred_outer_mask = render_segments_mask(gray.shape, pred_outer_segments)
     pred_inner_mask = render_segments_mask(gray.shape, pred_inner_segments)
@@ -783,6 +921,8 @@ def evaluate_sample(sample: Sample, output_dir: Path, fixed_threshold: int | Non
         result["detection"] = {
             "threshold": candidate.threshold,
             "score": round(candidate.score, 4),
+            "far_view_factor": round(candidate.far_view_factor, 4),
+            "inner_suppressed": should_suppress_inner_segments(candidate),
             "outer_area": round(candidate.outer_area, 2),
             "outer_bbox": list(candidate.outer_bbox),
             "child_area": round(candidate.child_area, 2),

@@ -21,9 +21,8 @@ from detect_minefield_people_v2_json import (  # noqa: E402
     Candidate,
     Segment,
     add_title_to_scaled,
-    build_edge_support_mask,
-    detect_candidate,
-    longest_visible_segment,
+    detect_best_candidate,
+    extract_prediction_segments,
     quad_to_list,
     read_gray,
     save_rgb,
@@ -55,6 +54,13 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=128,
         help="Fixed grayscale threshold passed to the detector.",
+    )
+    parser.add_argument(
+        "--fixed-threshold-candidates",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Optional list of fixed thresholds. The detector keeps the highest-score candidate among them.",
     )
     parser.add_argument(
         "--contact-cols",
@@ -146,6 +152,8 @@ def serialize_candidate(candidate: Candidate | None) -> dict | None:
     return {
         "threshold": int(candidate.threshold),
         "score": round(float(candidate.score), 4),
+        "far_view_factor": round(float(candidate.far_view_factor), 4),
+        "inner_suppressed": bool(candidate.far_view_factor >= 0.45),
         "outer_area": round(float(candidate.outer_area), 2),
         "outer_bbox": [int(value) for value in candidate.outer_bbox],
         "child_area": round(float(candidate.child_area), 2),
@@ -268,6 +276,7 @@ def process_directory(
     frames_dir: Path,
     output_root: Path,
     fixed_threshold: int,
+    fixed_threshold_candidates: list[int] | None,
     contact_cols: int,
     contact_rows: int,
     max_frames: int | None,
@@ -288,19 +297,19 @@ def process_directory(
     records: list[dict] = []
     for index, frame_path in enumerate(frame_paths, start=1):
         gray = read_gray(frame_path)
-        candidate = detect_candidate(gray, fixed_threshold=fixed_threshold)
+        candidate = detect_best_candidate(
+            gray,
+            fixed_threshold=fixed_threshold,
+            fixed_thresholds=fixed_threshold_candidates,
+        )
 
         if candidate is None:
             threshold_mask = np.zeros_like(gray, dtype=bool)
-            pred_outer_segments: list[Segment] = []
-            pred_inner_segments: list[Segment] = []
             score_text = "NA"
         else:
             threshold_mask = candidate.threshold_mask
-            support_mask = build_edge_support_mask(gray, threshold_mask)
-            pred_outer_segments = longest_visible_segment(candidate.outer_quad, support_mask)
-            pred_inner_segments = longest_visible_segment(candidate.inner_quad_final, support_mask)
             score_text = f"{candidate.score:.2f}"
+        _, pred_outer_segments, pred_inner_segments = extract_prediction_segments(gray, candidate)
 
         overlay = make_prediction_label_image(gray, pred_outer_segments, pred_inner_segments)
         binary = make_binary_debug(
@@ -358,6 +367,7 @@ def process_directory(
         "detected_count": len(detected_records),
         "detected_ratio": (len(detected_records) / len(frame_paths)) if frame_paths else 0.0,
         "fixed_threshold": fixed_threshold,
+        "fixed_threshold_candidates": fixed_threshold_candidates,
         "mean_detection_score": float(np.mean(scores)) if scores else None,
         "contact_sheet_page_count": len(contact_sheet_paths),
         "contact_sheet_paths": contact_sheet_paths,
@@ -391,6 +401,7 @@ def main() -> None:
             frames_dir=frames_dir,
             output_root=args.output_root,
             fixed_threshold=args.fixed_threshold,
+            fixed_threshold_candidates=args.fixed_threshold_candidates,
             contact_cols=args.contact_cols,
             contact_rows=args.contact_rows,
             max_frames=args.max_frames,
@@ -400,6 +411,7 @@ def main() -> None:
     batch_summary = {
         "run_count": len(all_summaries),
         "fixed_threshold": args.fixed_threshold,
+        "fixed_threshold_candidates": args.fixed_threshold_candidates,
         "output_root": str(args.output_root),
         "runs": all_summaries,
     }
