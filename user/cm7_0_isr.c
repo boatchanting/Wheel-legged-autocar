@@ -571,7 +571,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
              // 只有在偏航角成功初始化后，才执行航向保持控制
             // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
-            if (g_yaw_initialized && Minefield_Is_Active() == 0)
+            if ((g_yaw_initialized != 0U) &&
+                (Minefield_Is_Active() == 0U) &&
+                (g_special_action_trigger == 0U))
             {
                 // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
                 
@@ -670,6 +672,10 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         {
             final_turn_cmd = spin_cmd; // 使用平滑的旋转指令
         }
+        else if (g_special_action_trigger != 0U)
+        {
+            final_turn_cmd = 0.0f;
+        }
         else
         {
             final_turn_cmd = turn_angle_loop_out; // 使用正常的PID外环指令
@@ -723,6 +729,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                                             ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
                                             (g_is_push_mode != 0U) ||
                                             (Minefield_Is_Active() != 0U) ||
+                                            (g_special_action_trigger != 0U) ||
                                             (BumpyRoad_Is_Active() != 0U) ||
                                             (VisionThreeStageControl_IsActive() != 0U) ||
                                             (turn_roll_task_takeover != 0U) ||

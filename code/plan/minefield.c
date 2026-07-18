@@ -16,6 +16,10 @@ extern uint8 g_special_action_trigger;
 #define SPIN_MIN_SPEED            (SPIN_MAX_SPEED * 0.5f)
 // 旋转输出符号；用于统一适配底层角速度方向定义。
 #define SPIN_OUTPUT_SIGN          1.0f
+#define MINEFIELD_SPIN_MAX_DURATION_S       7.5f
+#define MINEFIELD_SPIN_STALL_CMD_MIN_DPS    120.0f
+#define MINEFIELD_SPIN_STALL_GYRO_MIN_DPS   25.0f
+#define MINEFIELD_SPIN_STALL_MAX_DURATION_S 2.0f
 
 volatile uint8_t minefield_flag = 0;
 static uint8_t  s_is_spinning = 0;
@@ -25,7 +29,10 @@ static float    s_planned_total_angle = SPIN_TARGET_ANGLE_DEFAULT;
 static float    s_spin_speed_sign = 1.0f;
 static float    s_exit_yaw_deg = 0.0f;
 static uint8_t  s_exit_release_enabled = 0;
+static float    s_spin_elapsed_s = 0.0f;
+static float    s_spin_stall_elapsed_s = 0.0f;
 uint8_t vision_detected_marker = 0;
+volatile uint8_t g_minefield_spin_abort_reason = MINEFIELD_SPIN_ABORT_NONE;
 
 static float Minefield_NormalizeAngle(float angle)
 {
@@ -34,11 +41,14 @@ static float Minefield_NormalizeAngle(float angle)
     return angle;
 }
 
-static void Minefield_FinishSpin(void)
+static void Minefield_FinishSpin(uint8_t abort_reason)
 {
     s_is_spinning = 0;
     s_current_speed_cmd = 0.0f;
     s_exit_release_enabled = 0;
+    s_spin_elapsed_s = 0.0f;
+    s_spin_stall_elapsed_s = 0.0f;
+    g_minefield_spin_abort_reason = abort_reason;
     g_special_action_trigger = 0;
 }
 
@@ -92,6 +102,9 @@ void Minefield_Init(void)
     s_spin_speed_sign = 1.0f;
     s_exit_yaw_deg = 0.0f;
     s_exit_release_enabled = 0;
+    s_spin_elapsed_s = 0.0f;
+    s_spin_stall_elapsed_s = 0.0f;
+    g_minefield_spin_abort_reason = MINEFIELD_SPIN_ABORT_NONE;
 }
 
 // 设置本次旋转动作：total_spin_deg 是兜底总角，exit_yaw_deg 用于 725 度后的提前释放。
@@ -106,6 +119,7 @@ void Minefield_SetSpinPlan(float total_spin_deg, float exit_yaw_deg, float spin_
     s_exit_yaw_deg = exit_yaw_deg;
     s_exit_release_enabled = 1;
     s_spin_speed_sign = (spin_speed_sign >= 0.0f) ? 1.0f : -1.0f;
+    g_minefield_spin_abort_reason = MINEFIELD_SPIN_ABORT_NONE;
 }
 
 uint8_t Minefield_Is_Active(void)
@@ -117,8 +131,14 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
 {
     float remaining;
     float target_speed = 0.0f;
+    float gyro_abs;
 
     (void)target_yaw_ptr;
+
+    if (dt_s <= 0.0f)
+    {
+        dt_s = 0.001f;
+    }
 
     // 外部将 minefield_flag 置 1 后，这里正式进入旋转状态机。
     if (minefield_flag == 1)
@@ -127,6 +147,9 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
         s_is_spinning = 1;
         s_accumulated_angle = 0.0f;
         s_current_speed_cmd = 0.0f;
+        s_spin_elapsed_s = 0.0f;
+        s_spin_stall_elapsed_s = 0.0f;
+        g_minefield_spin_abort_reason = MINEFIELD_SPIN_ABORT_NONE;
     }
 
     if (s_is_spinning == 0)
@@ -134,12 +157,20 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
         return 0.0f;
     }
 
-    s_accumulated_angle += fabsf(gyro_z_deg * dt_s);
+    gyro_abs = fabsf(gyro_z_deg);
+    s_spin_elapsed_s += dt_s;
+    s_accumulated_angle += gyro_abs * dt_s;
     remaining = s_planned_total_angle - s_accumulated_angle;
 
     if (Minefield_ShouldFinishSpin(current_yaw_deg) != 0)
     {
-        Minefield_FinishSpin();
+        Minefield_FinishSpin(MINEFIELD_SPIN_ABORT_NONE);
+        return 0.0f;
+    }
+
+    if (s_spin_elapsed_s >= MINEFIELD_SPIN_MAX_DURATION_S)
+    {
+        Minefield_FinishSpin(MINEFIELD_SPIN_ABORT_TIMEOUT);
         return 0.0f;
     }
 
@@ -158,5 +189,21 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
     }
 
     s_current_speed_cmd = Minefield_RampFloat(s_current_speed_cmd, target_speed, SPIN_ACCEL_STEP);
+
+    if ((fabsf(s_current_speed_cmd) >= MINEFIELD_SPIN_STALL_CMD_MIN_DPS) &&
+        (gyro_abs <= MINEFIELD_SPIN_STALL_GYRO_MIN_DPS))
+    {
+        s_spin_stall_elapsed_s += dt_s;
+        if (s_spin_stall_elapsed_s >= MINEFIELD_SPIN_STALL_MAX_DURATION_S)
+        {
+            Minefield_FinishSpin(MINEFIELD_SPIN_ABORT_STALLED);
+            return 0.0f;
+        }
+    }
+    else
+    {
+        s_spin_stall_elapsed_s = 0.0f;
+    }
+
     return s_current_speed_cmd * s_spin_speed_sign * SPIN_OUTPUT_SIGN;
 }
