@@ -39,7 +39,7 @@ from detect_minefield_people_v2_json import (  # noqa: E402
 
 
 DEFAULT_ANNOTATION_DIR = DATA_ROOT / "frames/雷区peoplev3"
-DEFAULT_OUTPUT_DIR = DATA_ROOT / "test/peoplev3_v6"
+DEFAULT_OUTPUT_DIR = DATA_ROOT / "test/peoplev3_v10"
 
 
 @dataclass(frozen=True)

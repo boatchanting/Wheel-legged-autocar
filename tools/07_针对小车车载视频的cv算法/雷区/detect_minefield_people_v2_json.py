@@ -46,6 +46,13 @@ THRESHOLD_125_HEIGHT_WEIGHT = 0.03
 FAR_SMALL_FALLBACK_THRESHOLD = 110
 FAR_SMALL_FALLBACK_FAR_VIEW = 0.35
 FAR_SMALL_FALLBACK_OUTER_AREA = 70.0
+HOUGH_LINE_THRESHOLD = 10
+HOUGH_MIN_LINE_LENGTH = 8
+HOUGH_MAX_LINE_GAP = 4
+HOUGH_HORIZONTAL_DY_BASE = 1.5
+HOUGH_HORIZONTAL_DY_RATIO = 0.08
+HOUGH_SLOPE_RATIO_MIN = 0.15
+HOUGH_NEAR_VIEW_MIN_HEIGHT_RATIO = 0.45
 
 REPRESENTATIVE_FRAMES: dict[str, tuple[int, ...]] = {
     "雷区阴天30固定曝光侧_20260713_180026": (3, 71, 159, 202, 302, 320),
@@ -291,6 +298,44 @@ def sample_line_visibility(
     return ts, visible
 
 
+def normalize_segment_points(p0: np.ndarray, p1: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if p0[0] < p1[0]:
+        return p0, p1
+    if p0[0] > p1[0]:
+        return p1, p0
+    if p0[1] <= p1[1]:
+        return p0, p1
+    return p1, p0
+
+
+def sample_side_ratios(
+    source_mask: np.ndarray,
+    p0: np.ndarray,
+    p1: np.ndarray,
+    offset: float = 1.5,
+) -> tuple[float, float]:
+    p0, p1 = normalize_segment_points(p0.astype(np.float32), p1.astype(np.float32))
+    delta = p1 - p0
+    length = float(np.linalg.norm(delta))
+    if length < 1e-6:
+        return 0.0, 0.0
+
+    tangent = delta / length
+    normal = np.array([-tangent[1], tangent[0]], dtype=np.float32)
+    sample_count = max(int(math.ceil(length * 1.5)), 8)
+    ts = np.linspace(0.0, 1.0, sample_count)
+    points = p0[None, :] + delta[None, :] * ts[:, None]
+    plus_points = points + normal[None, :] * offset
+    minus_points = points - normal[None, :] * offset
+
+    def points_ratio(points_array: np.ndarray) -> float:
+        xs = np.clip(np.round(points_array[:, 0]).astype(np.int32), 0, source_mask.shape[1] - 1)
+        ys = np.clip(np.round(points_array[:, 1]).astype(np.int32), 0, source_mask.shape[0] - 1)
+        return float(source_mask[ys, xs].mean())
+
+    return points_ratio(plus_points), points_ratio(minus_points)
+
+
 def longest_visible_segment(
     quad: np.ndarray | None,
     support_mask: np.ndarray,
@@ -366,6 +411,140 @@ def build_edge_support_mask(gray: np.ndarray, threshold_mask: np.ndarray) -> np.
     return canny | gradient
 
 
+def classify_hough_segment(
+    threshold_mask: np.ndarray,
+    bbox_center_y: float,
+    raw_line: np.ndarray,
+) -> tuple[str, Segment, float] | None:
+    p0 = np.asarray(raw_line[:2], dtype=np.float32)
+    p1 = np.asarray(raw_line[2:], dtype=np.float32)
+    p0, p1 = normalize_segment_points(p0, p1)
+
+    dx = float(p1[0] - p0[0])
+    dy = float(p1[1] - p0[1])
+    length = float(np.hypot(dx, dy))
+    if length < HOUGH_MIN_LINE_LENGTH:
+        return None
+
+    horizontal_limit = max(HOUGH_HORIZONTAL_DY_BASE, HOUGH_HORIZONTAL_DY_RATIO * max(abs(dx), 1.0))
+    if abs(dy) <= horizontal_limit:
+        orientation = "horizontal"
+    elif dy <= -(HOUGH_SLOPE_RATIO_MIN * max(abs(dx), 1.0)):
+        orientation = "neg"
+    elif dy >= (HOUGH_SLOPE_RATIO_MIN * max(abs(dx), 1.0)):
+        orientation = "pos"
+    else:
+        return None
+
+    plus_ratio, minus_ratio = sample_side_ratios(threshold_mask, p0, p1)
+    if abs(plus_ratio - minus_ratio) < 0.08:
+        return None
+
+    white_plus = plus_ratio > minus_ratio
+    mid_y = float((p0[1] + p1[1]) * 0.5)
+    if orientation == "horizontal":
+        if white_plus:
+            class_name = "outer_top" if mid_y <= bbox_center_y else "inner_bottom"
+        else:
+            class_name = "inner_top" if mid_y <= bbox_center_y else "outer_bottom"
+    elif orientation == "neg":
+        class_name = "outer_left" if white_plus else "inner_left"
+    else:
+        class_name = "inner_right" if white_plus else "outer_right"
+
+    segment = Segment(
+        x1=int(round(float(p0[0]))),
+        y1=int(round(float(p0[1]))),
+        x2=int(round(float(p1[0]))),
+        y2=int(round(float(p1[1]))),
+    )
+    return class_name, segment, length
+
+
+def merge_hough_segments(class_name: str, items: list[tuple[Segment, float]]) -> Segment | None:
+    if not items:
+        return None
+
+    if len(items) == 1:
+        return items[0][0]
+
+    endpoints: list[tuple[float, float, float]] = []
+    for segment, length in items:
+        endpoints.append((float(segment.x1), float(segment.y1), length))
+        endpoints.append((float(segment.x2), float(segment.y2), length))
+
+    xs = np.asarray([item[0] for item in endpoints], dtype=np.float32)
+    ys = np.asarray([item[1] for item in endpoints], dtype=np.float32)
+    weights = np.asarray([item[2] for item in endpoints], dtype=np.float32)
+
+    if class_name.endswith("top") or class_name.endswith("bottom"):
+        x1 = int(round(float(xs.min())))
+        x2 = int(round(float(xs.max())))
+        y = int(round(float(np.average(ys, weights=weights))))
+        return Segment(x1=x1, y1=y, x2=x2, y2=y)
+
+    slope, intercept = np.polyfit(xs, ys, deg=1, w=weights)
+    x1 = float(xs.min())
+    x2 = float(xs.max())
+    y1 = float(slope * x1 + intercept)
+    y2 = float(slope * x2 + intercept)
+    return Segment(
+        x1=int(round(x1)),
+        y1=int(round(y1)),
+        x2=int(round(x2)),
+        y2=int(round(y2)),
+    )
+
+
+def extract_hough_prediction_segments(
+    gray: np.ndarray,
+    candidate: Candidate,
+    edge_support_mask: np.ndarray,
+) -> tuple[list[Segment], list[Segment], set[str]]:
+    edge_mask_u8 = edge_support_mask.astype(np.uint8) * 255
+    lines = cv2.HoughLinesP(
+        edge_mask_u8,
+        rho=1,
+        theta=np.pi / 180.0,
+        threshold=HOUGH_LINE_THRESHOLD,
+        minLineLength=HOUGH_MIN_LINE_LENGTH,
+        maxLineGap=HOUGH_MAX_LINE_GAP,
+    )
+    if lines is None:
+        return [], [], set()
+
+    bbox_center_y = float(candidate.outer_bbox[1] + candidate.outer_bbox[3] * 0.5)
+    grouped: dict[str, list[tuple[Segment, float]]] = {
+        "outer_left": [],
+        "outer_top": [],
+        "outer_right": [],
+        "outer_bottom": [],
+        "inner_left": [],
+        "inner_top": [],
+        "inner_right": [],
+        "inner_bottom": [],
+    }
+    for raw_line in lines[:, 0, :]:
+        classified = classify_hough_segment(candidate.threshold_mask, bbox_center_y, raw_line)
+        if classified is None:
+            continue
+        class_name, segment, length = classified
+        grouped[class_name].append((segment, length))
+
+    outer_segments: list[Segment] = []
+    inner_segments: list[Segment] = []
+    for class_name in ("outer_left", "outer_top", "outer_right", "outer_bottom"):
+        merged = merge_hough_segments(class_name, grouped[class_name])
+        if merged is not None:
+            outer_segments.append(merged)
+    for class_name in ("inner_left", "inner_top", "inner_right", "inner_bottom"):
+        merged = merge_hough_segments(class_name, grouped[class_name])
+        if merged is not None:
+            inner_segments.append(merged)
+    present_classes = {class_name for class_name, items in grouped.items() if items}
+    return outer_segments, inner_segments, present_classes
+
+
 def render_quad_mask(shape: tuple[int, int], quad: np.ndarray | None) -> np.ndarray:
     mask = np.zeros(shape, dtype=np.uint8)
     if quad is None:
@@ -393,21 +572,44 @@ def extract_prediction_segments(
         return empty_mask, [], []
 
     edge_support_mask = build_edge_support_mask(gray, candidate.threshold_mask)
-    pred_outer_segments = longest_visible_segment(
+    fallback_outer_segments = longest_visible_segment(
         candidate.outer_quad,
         edge_support_mask,
         support_radius=VISIBLE_SEGMENT_SUPPORT_RADIUS,
         min_visible_fraction=VISIBLE_SEGMENT_MIN_VISIBLE_FRACTION,
     )
+    hough_outer_segments, hough_inner_segments, hough_present_classes = extract_hough_prediction_segments(
+        gray,
+        candidate,
+        edge_support_mask,
+    )
+    near_view_height_ratio = candidate.outer_bbox[3] / max(float(gray.shape[0]), 1.0)
+    hough_has_bottom_band = (
+        "outer_bottom" in hough_present_classes or "inner_bottom" in hough_present_classes
+    )
+
+    use_hough = (
+        candidate.far_view_factor <= 0.2
+        and candidate.outer_bbox[2] >= int(gray.shape[1] * 0.9)
+        and candidate.outer_bbox[1] <= int(gray.shape[0] * 0.2)
+        and near_view_height_ratio >= HOUGH_NEAR_VIEW_MIN_HEIGHT_RATIO
+        and hough_has_bottom_band
+        and (len(hough_outer_segments) + len(hough_inner_segments)) >= 5
+    )
+    use_hough_outer = use_hough and len(hough_outer_segments) >= 2
+    pred_outer_segments = hough_outer_segments if use_hough_outer else fallback_outer_segments
+
     if should_suppress_inner_segments(candidate):
         pred_inner_segments: list[Segment] = []
     else:
-        pred_inner_segments = longest_visible_segment(
+        fallback_inner_segments = longest_visible_segment(
             candidate.inner_quad_final,
             edge_support_mask,
             support_radius=VISIBLE_SEGMENT_SUPPORT_RADIUS,
             min_visible_fraction=VISIBLE_SEGMENT_MIN_VISIBLE_FRACTION,
         )
+        use_hough_inner = use_hough and len(hough_inner_segments) >= 2
+        pred_inner_segments = hough_inner_segments if use_hough_inner else fallback_inner_segments
     return edge_support_mask, pred_outer_segments, pred_inner_segments
 
 
