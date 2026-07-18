@@ -16,14 +16,14 @@
 /* ==========================================================================
  * 内部常量 (模块自包含, 不暴露到头文件)
  * ========================================================================== */
-#define EDGE_IMAGE_W        (188U)
-#define EDGE_IMAGE_H        (120U)
+#define EDGE_IMAGE_W        (96U)
+#define EDGE_IMAGE_H        (60U)
 #define EDGE_OUT_W          (185U)   /* W-3 */
 #define EDGE_RING_DEPTH     (4U)
 
-#define EDGE_FIXED_THR      (1500)   /* 固定阈值: |Gx|+|Gy| >= thr */
-#define EDGE_R_SQ_BUMPY     (0.81f)  /* R² > 0.81 (对应 R > 0.9)     */
-#define EDGE_MIN_STRONG_N   (128U)   /* 强边缘数 > 128 才判定        */
+#define EDGE_FIXED_THR      (1500)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动*/
+#define EDGE_R_SQ_BUMPY     (0.81f)  /* R² > 0.81 (对应 R > 0.9)     */ /*主要调这两个，滤除背景用*/
+#define EDGE_MIN_STRONG_N   (128U)   /* 强边缘数 > 128 才判定        */ /*主要调这两个，判别面积用，体现在远近上*/
 
 /* ==========================================================================
  * DTCM 环形缓冲 (模块私有, 0 等待数据访问)
