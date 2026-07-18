@@ -777,6 +777,30 @@ void render_bumpy_vision_to_image(void)
         result = bumpy_out->raw;
     }
 
+    if ((bumpy_out->stable_detected != 0U) || (bumpy_out->raw_detected != 0U))
+    {
+        const int center_x = BUMPY_IMAGE_W / 2;
+        const int center_y = BUMPY_IMAGE_H / 2;
+        const int line_length = (BUMPY_IMAGE_H * 46) / 100;
+        const int x0 = clamp_int_to_range(center_x - (int)(result.direction_x * line_length),
+                                          0,
+                                          BUMPY_IMAGE_W - 1);
+        const int y0 = clamp_int_to_range(center_y - (int)(result.direction_y * line_length),
+                                          0,
+                                          BUMPY_IMAGE_H - 1);
+        const int x1 = clamp_int_to_range(center_x + (int)(result.direction_x * line_length),
+                                          0,
+                                          BUMPY_IMAGE_W - 1);
+        const int y1 = clamp_int_to_range(center_y + (int)(result.direction_y * line_length),
+                                          0,
+                                          BUMPY_IMAGE_H - 1);
+
+        draw_line_on_image(x0, y0, x1, y1, 0U);
+    }
+
+    return;
+
+#if 0
 #if VISION_IMAGE_RENDER_ENABLE
     /* 画顶部的通用状态指示灯 (借用原有函数，没有桥梁则后两个参数填 0) */
     render_common_status_strip(bumpy_out->raw_detected,
@@ -790,10 +814,14 @@ void render_bumpy_vision_to_image(void)
         int cost_us = (int)g_bumpy_vision_cost_profiler.last_us;
         int phase = (int)result.phase;
         int rib_count = (int)result.rib_count;
+        int dir_x_x100 = (int)(result.direction_x * 100.0f);
+        int dir_y_x100 = (int)(result.direction_y * 100.0f);
 
         /* 画进度条：置信度 (左侧) 和 耗时 (右侧) */
         draw_bar_on_image(0, 0, 22, conf, 1000, 0U);
         draw_bar_on_image(24, 0, 16, clamp_int_to_range(cost_us, 0, 10000), 10000, 0U);
+        draw_int3x5_on_image(70, 4, dir_x_x100, 0U);
+        draw_int3x5_on_image(82, 4, dir_y_x100, 0U);
 
 #if VISION_IMAGE_RENDER_NUMERIC_ENABLE
         /* 打印具体微型数字：置信度 | 阶段Phase | 识别到的黑条数 | 转向误差 */
@@ -846,4 +874,5 @@ void render_bumpy_vision_to_image(void)
             draw_cross_on_image(target_x, bottom_y, 3, 0U);
         }
     }
+#endif
 }

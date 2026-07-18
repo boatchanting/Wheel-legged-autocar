@@ -175,7 +175,6 @@ static void bumpy_vision_clear_frame_result(bumpy_vision_frame_result_t *result)
     result->bbox_ymax = 0xFFU;
     result->centerline_top_y = 0xFFU;
     result->centerline_bottom_y = 0xFFU;
-    result->target_x_px_x100 = (int16)((BUMPY_IMAGE_W - 1U) * 50U);
 }
 
 static void bumpy_vision_make_frame_result(const bumpy_edge_detect_output_t *edge,
@@ -227,6 +226,11 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     bumpy_edge_detect_output_t edge = {0};
     bumpy_vision_output_t next = g_bumpy_vision_output_shadow;
 
+    if (gray == NULL)
+    {
+        return;
+    }
+
 #if BUMPY_VISION_PROFILE_ENABLE
     {
         const uint32 now_us = timer_get(BUMPY_VISION_PROFILE_TIMER);
@@ -237,10 +241,7 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     RUNTIME_PROFILE_BEGIN(g_bumpy_vision_cost_profiler, BUMPY_VISION_PROFILE_TIMER);
 #endif
 
-    if (gray != NULL)
-    {
-        bumpy_edge_detect_process(gray, &edge);
-    }
+    bumpy_edge_detect_process(gray, &edge);
 
     next.frame_id++;
     bumpy_vision_make_frame_result(&edge, &next.raw);

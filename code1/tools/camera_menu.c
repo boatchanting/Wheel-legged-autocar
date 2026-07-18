@@ -70,9 +70,9 @@ static void CameraMenu_DrawStaticLayout(void)
     ips200_show_string(0, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "BRG G:");
     ips200_show_string(120, y + 5U * CAMERA_MENU_TEXT_Y_STEP, "CX:");
     ips200_show_string(0, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "BMP D/S:");
-    ips200_show_string(120, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "P:");
-    ips200_show_string(0, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "BMP E:");
-    ips200_show_string(120, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "S:");
+    ips200_show_string(120, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "DX:");
+    ips200_show_string(0, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "BMP DY:");
+    ips200_show_string(120, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "C:");
     ips200_show_string(0, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "B L:");
     ips200_show_string(78, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "A:");
     ips200_show_string(150, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "X:");
@@ -98,7 +98,7 @@ static void CameraMenu_PrintDebug(const pvc_vision_output_t *pvc,
     g_camera_menu_log_counter = 0U;
 #endif
 
-    printf("[CAM1] task=%u mask=%u frame=%lu pvc=%u/%u conf=%.3f line=%u/%u state=%u geo=%u bumpy=%u/%u phase=%u err=%d\r\n",
+    printf("[CAM1] task=%u mask=%u frame=%lu pvc=%u/%u conf=%.3f line=%u/%u state=%u geo=%u bumpy=%u/%u dir=(%.2f,%.2f) cost=%lu\r\n",
            (unsigned int)active_target,
            (unsigned int)enable_mask,
            (unsigned long)CameraMenu_MaxFrameId(pvc->frame_id, bridge->frame_id, bumpy->frame_id),
@@ -111,8 +111,9 @@ static void CameraMenu_PrintDebug(const pvc_vision_output_t *pvc,
            (unsigned int)bridge->stable.geometry_valid,
            (unsigned int)bumpy->raw_detected,
            (unsigned int)bumpy->stable_detected,
-           (unsigned int)bumpy->stable.phase,
-           (int)bumpy->stable.steer_error_px_x100);
+           (double)bumpy->stable.direction_x,
+           (double)bumpy->stable.direction_y,
+           (unsigned long)g_bumpy_vision_cost_profiler.last_us);
 #else
     (void)pvc;
     (void)bridge;
@@ -190,18 +191,18 @@ void CameraMenu_Update(void)
 
     ips200_show_uint(72, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->raw_detected, 1);
     ips200_show_uint(96, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable_detected, 1);
-    ips200_show_uint(138, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.phase, 1);
-    ips200_show_int(48, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.steer_error_px_x100, 6);
-    ips200_show_uint(138, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.local_s_mm, 5);
+    ips200_show_float(150, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.direction_x, 1, 2);
+    ips200_show_float(54, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.direction_y, 1, 2);
+    ips200_show_uint(138, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.confidence_u16, 4);
 
-    ips200_show_uint(30, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.last_us, 5);
-    ips200_show_uint(100, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.avg_us, 5);
-    ips200_show_uint(172, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.max_us, 5);
+    ips200_show_uint(30, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.last_us, 5);
+    ips200_show_uint(100, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.avg_us, 5);
+    ips200_show_uint(172, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.max_us, 5);
 
     ips200_show_uint(30, y + 9U * CAMERA_MENU_TEXT_Y_STEP,
-                     CameraMenu_ProfileMinOrZero(&g_bridge_vision_cost_profiler), 5);
-    ips200_show_uint(100, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_cost_profiler.count, 6);
-    ips200_show_uint(190, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bridge_vision_frame_profiler.last_us, 5);
+                      CameraMenu_ProfileMinOrZero(&g_bumpy_vision_cost_profiler), 5);
+    ips200_show_uint(100, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.count, 6);
+    ips200_show_uint(190, y + 9U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_frame_profiler.last_us, 5);
 
     CameraMenu_PrintDebug(pvc, bridge, bumpy, active_target, enable_mask);
 }
