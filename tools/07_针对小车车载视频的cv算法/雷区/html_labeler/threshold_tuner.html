@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>雷区阈值调试器</title>
+  <style>
+    :root {
+      --bg: #f2efe8;
+      --panel: rgba(255, 252, 246, 0.95);
+      --panel-strong: #fffaf1;
+      --line: #d6c7b0;
+      --ink: #2f241a;
+      --muted: #7b6a58;
+      --accent: #b44c2f;
+      --accent-soft: #e8b08d;
+      --shadow: 0 18px 50px rgba(88, 58, 30, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(226, 196, 160, 0.45), transparent 32%),
+        radial-gradient(circle at top right, rgba(180, 76, 47, 0.12), transparent 26%),
+        linear-gradient(180deg, #f7f4ed 0%, #efe8dc 100%);
+      min-height: 100vh;
+    }
+
+    .page {
+      width: min(1500px, calc(100vw - 32px));
+      margin: 20px auto 36px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(255, 250, 241, 0.97), rgba(246, 237, 223, 0.96));
+      border: 1px solid rgba(182, 152, 118, 0.38);
+      border-radius: 28px;
+      box-shadow: var(--shadow);
+      padding: 24px 24px 18px;
+    }
+
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: clamp(26px, 3vw, 40px);
+      line-height: 1.05;
+      letter-spacing: 0.02em;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1.6;
+      max-width: 900px;
+    }
+
+    .control-panel {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: 1.3fr 1fr;
+      gap: 18px;
+      align-items: start;
+    }
+
+    .drop-zone,
+    .controls {
+      background: var(--panel);
+      border: 1px solid rgba(182, 152, 118, 0.35);
+      border-radius: 22px;
+      padding: 18px;
+      min-height: 100%;
+    }
+
+    .drop-zone {
+      border-style: dashed;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+      cursor: pointer;
+    }
+
+    .drop-zone.dragover {
+      transform: translateY(-2px);
+      border-color: var(--accent);
+      background: #fff7ee;
+    }
+
+    .drop-zone h2,
+    .controls h2 {
+      margin: 0 0 10px;
+      font-size: 18px;
+    }
+
+    .drop-zone p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .actions {
+      margin-top: 14px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    button,
+    .fake-button,
+    select,
+    input[type="range"] {
+      font: inherit;
+    }
+
+    .button,
+    .fake-button {
+      appearance: none;
+      border: 1px solid rgba(180, 76, 47, 0.28);
+      border-radius: 999px;
+      background: #fff8f0;
+      color: var(--ink);
+      padding: 10px 16px;
+      cursor: pointer;
+      transition: background 140ms ease, transform 140ms ease, border-color 140ms ease;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 42px;
+    }
+
+    .button:hover,
+    .fake-button:hover {
+      background: #fff1e4;
+      border-color: rgba(180, 76, 47, 0.48);
+      transform: translateY(-1px);
+    }
+
+    .button.primary {
+      background: linear-gradient(135deg, #b44c2f, #d26f4a);
+      color: #fff;
+      border-color: transparent;
+    }
+
+    .button.primary:hover {
+      background: linear-gradient(135deg, #a54329, #c96644);
+    }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px 18px;
+    }
+
+    .control {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control.wide {
+      grid-column: 1 / -1;
+    }
+
+    .control label {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .control .value-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      font-size: 14px;
+    }
+
+    .control select,
+    .control input[type="range"] {
+      width: 100%;
+    }
+
+    .control select {
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: #fffdf9;
+      padding: 10px 12px;
+      color: var(--ink);
+    }
+
+    .note {
+      margin-top: 12px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(232, 176, 141, 0.16);
+      border: 1px solid rgba(180, 76, 47, 0.14);
+      color: #6d4328;
+      font-size: 13px;
+      line-height: 1.6;
+    }
+
+    .status-bar {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: center;
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .gallery {
+      margin-top: 18px;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
+    }
+
+    .card {
+      background: var(--panel-strong);
+      border: 1px solid rgba(182, 152, 118, 0.35);
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow: 0 12px 32px rgba(88, 58, 30, 0.08);
+      min-height: 280px;
+    }
+
+    .card-header {
+      padding: 14px 16px 10px;
+      border-bottom: 1px solid rgba(182, 152, 118, 0.2);
+      background: linear-gradient(180deg, rgba(255, 248, 239, 0.95), rgba(255, 252, 247, 0.95));
+    }
+
+    .card-title {
+      font-size: 14px;
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .card-meta {
+      margin-top: 5px;
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .canvas-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+    }
+
+    .pane {
+      position: relative;
+      background: #221d17;
+      min-height: 180px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-right: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .pane:last-child {
+      border-right: none;
+    }
+
+    .pane-label {
+      position: absolute;
+      top: 8px;
+      left: 8px;
+      z-index: 1;
+      padding: 4px 8px;
+      border-radius: 999px;
+      background: rgba(0, 0, 0, 0.58);
+      color: #fff;
+      font-size: 11px;
+      letter-spacing: 0.03em;
+    }
+
+    canvas {
+      display: block;
+      width: 100%;
+      height: auto;
+      image-rendering: pixelated;
+    }
+
+    .empty-state {
+      padding: 32px 18px;
+      text-align: center;
+      color: var(--muted);
+      border: 1px dashed rgba(182, 152, 118, 0.35);
+      border-radius: 24px;
+      background: rgba(255, 252, 246, 0.75);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    @media (max-width: 1100px) {
+      .control-panel {
+        grid-template-columns: 1fr;
+      }
+
+      .gallery {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw - 18px, 1000px);
+        margin: 10px auto 24px;
+      }
+
+      .hero {
+        padding: 18px 14px 14px;
+      }
+
+      .controls-grid,
+      .canvas-grid,
+      .gallery {
+        grid-template-columns: 1fr;
+      }
+
+      .status-bar {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <h1>雷区二值化阈值调试器</h1>
+      <p>
+        拖入若干张图片后，统一调阈值，实时查看原图与二值化结果。
+        页面额外提供了几个“抑制蓝布”的特征模式，方便对比纯灰度阈值和去蓝干扰之后的差别。
+        建议先拖 3 到 6 张具有代表性的近景、中央、斜视角图一起看。
+      </p>
+
+      <div class="control-panel">
+        <div class="drop-zone" id="dropZone" tabindex="0" role="button" aria-label="拖入图片区域">
+          <h2>拖入图片</h2>
+          <p>
+            支持直接拖拽，或点击选择多张图片。默认显示 3 列，通常 3×2 足够。
+            本页面完全本地运行，不上传图片。
+          </p>
+          <div class="actions">
+            <label class="fake-button primary" for="fileInput">选择图片</label>
+            <button class="button" id="clearButton" type="button">清空当前图片</button>
+          </div>
+          <input id="fileInput" type="file" accept="image/*" multiple class="hidden" />
+        </div>
+
+        <div class="controls">
+          <h2>调试参数</h2>
+          <div class="controls-grid">
+            <div class="control wide">
+              <div class="value-row">
+                <label for="thresholdRange">阈值</label>
+                <strong id="thresholdValue">120</strong>
+              </div>
+              <input id="thresholdRange" type="range" min="0" max="255" step="1" value="120" />
+            </div>
+
+            <div class="control">
+              <div class="value-row">
+                <label for="blurRange">预模糊</label>
+                <strong id="blurValue">0</strong>
+              </div>
+              <input id="blurRange" type="range" min="0" max="4" step="1" value="0" />
+            </div>
+
+            <div class="control">
+              <label for="polaritySelect">二值化方向</label>
+              <select id="polaritySelect">
+                <option value="bright">亮于阈值为白</option>
+                <option value="dark">暗于阈值为白</option>
+              </select>
+            </div>
+
+            <div class="control wide">
+              <label for="modeSelect">特征模式</label>
+              <select id="modeSelect">
+                <option value="gray">标准灰度</option>
+                <option value="antiBlue">去蓝增强 `max(R,G)-B`</option>
+                <option value="warmLane">暖色增强 `(R+G)/2-B`</option>
+                <option value="value">HSV 明度 V</option>
+              </select>
+            </div>
+
+            <div class="control">
+              <label for="overlaySelect">结果显示</label>
+              <select id="overlaySelect">
+                <option value="mask">纯二值图</option>
+                <option value="overlay">原图叠加红色 mask</option>
+                <option value="feature">仅特征图</option>
+              </select>
+            </div>
+
+            <div class="control">
+              <label for="columnsSelect">每行列数</label>
+              <select id="columnsSelect">
+                <option value="2">2 列</option>
+                <option value="3" selected>3 列</option>
+                <option value="4">4 列</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="note">
+            如果纯灰度模式下总是更像“蓝布大方块”而不是雷区投影，优先试
+            <strong>去蓝增强</strong> 或 <strong>暖色增强</strong>，
+            再配合阈值和二值化方向一起看。
+          </div>
+        </div>
+      </div>
+
+      <div class="status-bar">
+        <div id="statusText">还没有载入图片。</div>
+        <div>提示：方向键左右可微调阈值。</div>
+      </div>
+    </section>
+
+    <section id="emptyState" class="empty-state" style="margin-top: 18px;">
+      先拖入几张图片，再开始调阈值。
+    </section>
+
+    <section id="gallery" class="gallery hidden"></section>
+  </div>
+
+  <template id="cardTemplate">
+    <article class="card">
+      <div class="card-header">
+        <div class="card-title"></div>
+        <div class="card-meta"></div>
+      </div>
+      <div class="canvas-grid">
+        <div class="pane">
+          <div class="pane-label">原图</div>
+          <canvas class="original-canvas"></canvas>
+        </div>
+        <div class="pane">
+          <div class="pane-label result-label">二值化</div>
+          <canvas class="result-canvas"></canvas>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script>
+    const fileInput = document.getElementById("fileInput");
+    const dropZone = document.getElementById("dropZone");
+    const clearButton = document.getElementById("clearButton");
+    const thresholdRange = document.getElementById("thresholdRange");
+    const blurRange = document.getElementById("blurRange");
+    const thresholdValue = document.getElementById("thresholdValue");
+    const blurValue = document.getElementById("blurValue");
+    const polaritySelect = document.getElementById("polaritySelect");
+    const modeSelect = document.getElementById("modeSelect");
+    const overlaySelect = document.getElementById("overlaySelect");
+    const columnsSelect = document.getElementById("columnsSelect");
+    const statusText = document.getElementById("statusText");
+    const emptyState = document.getElementById("emptyState");
+    const gallery = document.getElementById("gallery");
+    const cardTemplate = document.getElementById("cardTemplate");
+
+    const images = [];
+    const MAX_IMAGES = 12;
+
+    const hiddenCanvas = document.createElement("canvas");
+    const hiddenCtx = hiddenCanvas.getContext("2d", { willReadFrequently: true });
+
+    function clamp(value, min, max) {
+      return Math.max(min, Math.min(max, value));
+    }
+
+    function syncValueLabels() {
+      thresholdValue.textContent = thresholdRange.value;
+      blurValue.textContent = blurRange.value;
+    }
+
+    function updateGalleryColumns() {
+      gallery.style.gridTemplateColumns = `repeat(${columnsSelect.value}, minmax(0, 1fr))`;
+    }
+
+    function setStatus(message) {
+      statusText.textContent = message;
+    }
+
+    function clearImages() {
+      images.length = 0;
+      gallery.innerHTML = "";
+      gallery.classList.add("hidden");
+      emptyState.classList.remove("hidden");
+      setStatus("还没有载入图片。");
+    }
+
+    function readFiles(fileList) {
+      const files = Array.from(fileList).filter((file) => file.type.startsWith("image/"));
+      if (!files.length) {
+        setStatus("没有识别到图片文件。");
+        return;
+      }
+
+      const remaining = Math.max(0, MAX_IMAGES - images.length);
+      const accepted = files.slice(0, remaining);
+      if (!accepted.length) {
+        setStatus(`最多保留 ${MAX_IMAGES} 张图片，当前已满。`);
+        return;
+      }
+
+      Promise.all(accepted.map(loadImageRecord)).then((records) => {
+        records.forEach((record) => images.push(record));
+        renderGallery();
+        renderAll();
+        if (files.length > accepted.length) {
+          setStatus(`已载入 ${accepted.length} 张图片，超过 ${MAX_IMAGES} 张的部分已忽略。`);
+        } else {
+          setStatus(`已载入 ${accepted.length} 张图片，共 ${images.length} 张。`);
+        }
+      }).catch((error) => {
+        console.error(error);
+        setStatus("读取图片时出错，请重试。");
+      });
+    }
+
+    function loadImageRecord(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            resolve({
+              id: `${file.name}-${crypto.randomUUID()}`,
+              name: file.name,
+              file,
+              image: img
+            });
+          };
+          img.onerror = reject;
+          img.src = reader.result;
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    function renderGallery() {
+      gallery.innerHTML = "";
+      if (!images.length) {
+        gallery.classList.add("hidden");
+        emptyState.classList.remove("hidden");
+        return;
+      }
+
+      emptyState.classList.add("hidden");
+      gallery.classList.remove("hidden");
+      updateGalleryColumns();
+
+      for (const record of images) {
+        const fragment = cardTemplate.content.cloneNode(true);
+        const card = fragment.querySelector(".card");
+        card.dataset.id = record.id;
+        fragment.querySelector(".card-title").textContent = record.name;
+        gallery.appendChild(fragment);
+      }
+    }
+
+    function getFeatureValue(r, g, b, mode) {
+      if (mode === "antiBlue") {
+        return clamp(Math.max(r, g) - b + 128, 0, 255);
+      }
+      if (mode === "warmLane") {
+        return clamp(((r + g) * 0.5) - b + 128, 0, 255);
+      }
+      if (mode === "value") {
+        return Math.max(r, g, b);
+      }
+      return clamp(0.299 * r + 0.587 * g + 0.114 * b, 0, 255);
+    }
+
+    function boxBlurGray(source, width, height, radius) {
+      if (radius <= 0) {
+        return source;
+      }
+
+      const tmp = new Float32Array(source.length);
+      const out = new Uint8ClampedArray(source.length);
+      const size = radius * 2 + 1;
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          let sum = 0;
+          let count = 0;
+          for (let dx = -radius; dx <= radius; dx++) {
+            const xx = x + dx;
+            if (xx < 0 || xx >= width) {
+              continue;
+            }
+            sum += source[y * width + xx];
+            count += 1;
+          }
+          tmp[y * width + x] = sum / count;
+        }
+      }
+
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          let sum = 0;
+          let count = 0;
+          for (let dy = -radius; dy <= radius; dy++) {
+            const yy = y + dy;
+            if (yy < 0 || yy >= height) {
+              continue;
+            }
+            sum += tmp[yy * width + x];
+            count += 1;
+          }
+          out[y * width + x] = Math.round(sum / count);
+        }
+      }
+
+      return out;
+    }
+
+    function buildBinaryResult(record) {
+      const img = record.image;
+      hiddenCanvas.width = img.naturalWidth;
+      hiddenCanvas.height = img.naturalHeight;
+      hiddenCtx.clearRect(0, 0, hiddenCanvas.width, hiddenCanvas.height);
+      hiddenCtx.drawImage(img, 0, 0);
+      const source = hiddenCtx.getImageData(0, 0, hiddenCanvas.width, hiddenCanvas.height);
+      const rgba = source.data;
+      const width = source.width;
+      const height = source.height;
+      const threshold = Number(thresholdRange.value);
+      const blurLevel = Number(blurRange.value);
+      const mode = modeSelect.value;
+      const polarity = polaritySelect.value;
+      const displayMode = overlaySelect.value;
+
+      const featureMap = new Uint8ClampedArray(width * height);
+      for (let i = 0, p = 0; i < rgba.length; i += 4, p += 1) {
+        featureMap[p] = getFeatureValue(rgba[i], rgba[i + 1], rgba[i + 2], mode);
+      }
+
+      const processed = boxBlurGray(featureMap, width, height, blurLevel);
+      const result = new ImageData(width, height);
+      const resultData = result.data;
+      let whiteCount = 0;
+
+      for (let i = 0, p = 0; i < resultData.length; i += 4, p += 1) {
+        const value = processed[p];
+        const isWhite = polarity === "bright" ? value >= threshold : value <= threshold;
+        if (isWhite) {
+          whiteCount += 1;
+        }
+
+        if (displayMode === "feature") {
+          resultData[i] = value;
+          resultData[i + 1] = value;
+          resultData[i + 2] = value;
+          resultData[i + 3] = 255;
+          continue;
+        }
+
+        if (displayMode === "overlay") {
+          const baseR = rgba[i];
+          const baseG = rgba[i + 1];
+          const baseB = rgba[i + 2];
+          if (isWhite) {
+            resultData[i] = clamp(baseR * 0.38 + 255 * 0.62, 0, 255);
+            resultData[i + 1] = clamp(baseG * 0.38 + 36 * 0.62, 0, 255);
+            resultData[i + 2] = clamp(baseB * 0.38 + 36 * 0.62, 0, 255);
+          } else {
+            resultData[i] = baseR;
+            resultData[i + 1] = baseG;
+            resultData[i + 2] = baseB;
+          }
+          resultData[i + 3] = 255;
+          continue;
+        }
+
+        const binaryValue = isWhite ? 255 : 0;
+        resultData[i] = binaryValue;
+        resultData[i + 1] = binaryValue;
+        resultData[i + 2] = binaryValue;
+        resultData[i + 3] = 255;
+      }
+
+      return {
+        imageData: result,
+        whiteRatio: whiteCount / (width * height)
+      };
+    }
+
+    function drawCanvas(canvas, imageOrImageData, width, height) {
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext("2d");
+      ctx.clearRect(0, 0, width, height);
+      if (imageOrImageData instanceof ImageData) {
+        ctx.putImageData(imageOrImageData, 0, 0);
+      } else {
+        ctx.drawImage(imageOrImageData, 0, 0, width, height);
+      }
+    }
+
+    function renderCard(record) {
+      const card = gallery.querySelector(`[data-id="${CSS.escape(record.id)}"]`);
+      if (!card) {
+        return;
+      }
+
+      const originalCanvas = card.querySelector(".original-canvas");
+      const resultCanvas = card.querySelector(".result-canvas");
+      const resultLabel = card.querySelector(".result-label");
+      const meta = card.querySelector(".card-meta");
+      const result = buildBinaryResult(record);
+
+      drawCanvas(originalCanvas, record.image, record.image.naturalWidth, record.image.naturalHeight);
+      drawCanvas(resultCanvas, result.imageData, result.imageData.width, result.imageData.height);
+
+      const modeText = modeSelect.options[modeSelect.selectedIndex].textContent;
+      const overlayText = overlaySelect.options[overlaySelect.selectedIndex].textContent;
+      resultLabel.textContent = overlayText;
+      meta.innerHTML = `
+        <span>尺寸 ${record.image.naturalWidth}×${record.image.naturalHeight}</span>
+        <span>白色占比 ${(result.whiteRatio * 100).toFixed(1)}%</span>
+        <span>${modeText}</span>
+      `;
+    }
+
+    function renderAll() {
+      syncValueLabels();
+      updateGalleryColumns();
+      for (const record of images) {
+        renderCard(record);
+      }
+    }
+
+    function handleDrop(event) {
+      event.preventDefault();
+      dropZone.classList.remove("dragover");
+      if (event.dataTransfer?.files?.length) {
+        readFiles(event.dataTransfer.files);
+      }
+    }
+
+    dropZone.addEventListener("click", () => fileInput.click());
+    dropZone.addEventListener("dragover", (event) => {
+      event.preventDefault();
+      dropZone.classList.add("dragover");
+    });
+    dropZone.addEventListener("dragleave", () => {
+      dropZone.classList.remove("dragover");
+    });
+    dropZone.addEventListener("drop", handleDrop);
+    dropZone.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    fileInput.addEventListener("change", () => {
+      if (fileInput.files?.length) {
+        readFiles(fileInput.files);
+        fileInput.value = "";
+      }
+    });
+
+    clearButton.addEventListener("click", clearImages);
+    thresholdRange.addEventListener("input", renderAll);
+    blurRange.addEventListener("input", renderAll);
+    polaritySelect.addEventListener("change", renderAll);
+    modeSelect.addEventListener("change", renderAll);
+    overlaySelect.addEventListener("change", renderAll);
+    columnsSelect.addEventListener("change", renderAll);
+
+    window.addEventListener("keydown", (event) => {
+      if (event.target.tagName === "INPUT" || event.target.tagName === "SELECT") {
+        return;
+      }
+      let changed = false;
+      if (event.key === "ArrowLeft") {
+        thresholdRange.value = String(clamp(Number(thresholdRange.value) - 1, 0, 255));
+        changed = true;
+      } else if (event.key === "ArrowRight") {
+        thresholdRange.value = String(clamp(Number(thresholdRange.value) + 1, 0, 255));
+        changed = true;
+      }
+      if (changed) {
+        event.preventDefault();
+        renderAll();
+      }
+    });
+
+    syncValueLabels();
+    updateGalleryColumns();
+  </script>
+</body>
+</html>
