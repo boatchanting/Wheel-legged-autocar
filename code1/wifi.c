@@ -762,6 +762,38 @@ void render_line_vision_to_image(void)
 
 #endif
 
+#if VISION_IMAGE_RENDER_NUMERIC_ENABLE
+static void draw_bumpy_metric_label(int x, int y, uint8 metric, uint8 color)
+{
+    static const uint8 glyph[2][5] =
+    {
+        {6U, 5U, 6U, 5U, 5U},
+        {5U, 7U, 7U, 7U, 5U}
+    };
+
+    for (int row = 0; row < 5; row++)
+    {
+        for (int col = 0; col < 3; col++)
+        {
+            if ((glyph[metric][row] & (uint8)(1U << (2 - col))) != 0U)
+            {
+                draw_point_on_image(x + col, y + row, color);
+            }
+        }
+    }
+}
+
+static void draw_bumpy_r_value(int x, int y, uint16 value, uint8 color)
+{
+    (void)draw_digit3x5_on_image(x, y, 0U, color);
+    draw_point_on_image(x + 4, y + 4, color);
+    x += 6;
+    x = draw_digit3x5_on_image(x, y, (uint8)(value / 100U), color);
+    x = draw_digit3x5_on_image(x, y, (uint8)((value / 10U) % 10U), color);
+    (void)draw_digit3x5_on_image(x, y, (uint8)(value % 10U), color);
+}
+#endif
+
 void render_bumpy_vision_to_image(void)
 {
     const volatile bumpy_vision_output_t *bumpy_out = &g_bumpy_vision_output;
@@ -776,6 +808,19 @@ void render_bumpy_vision_to_image(void)
     {
         result = bumpy_out->raw;
     }
+
+#if VISION_IMAGE_RENDER_ENABLE && VISION_IMAGE_RENDER_NUMERIC_ENABLE
+    {
+        uint16 r_x1000 = (uint16)clamp_int_to_range((int)(result.coherence_r * 1000.0f),
+                                                     0,
+                                                     999);
+
+        draw_bumpy_metric_label(0, 2, 0U, 0U);
+        draw_bumpy_r_value(5, 2, r_x1000, 0U);
+        draw_bumpy_metric_label(0, 9, 1U, 0U);
+        (void)draw_uint3x5_on_image(5, 9, result.strong_count, 0U);
+    }
+#endif
 
     if ((bumpy_out->stable_detected != 0U) || (bumpy_out->raw_detected != 0U))
     {

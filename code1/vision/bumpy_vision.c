@@ -30,7 +30,7 @@
 
 #define EDGE_FIXED_THR      (1500)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动*/
 #define EDGE_R_SQ_BUMPY     (0.81f)  /* R² > 0.81 (对应 R > 0.9)     */ /*主要调这两个，滤除背景用*/
-#define EDGE_MIN_STRONG_N   (128U)   /* 强边缘数 > 128 才判定        */ /*主要调这两个，判别面积用，体现在远近上*/
+#define EDGE_MIN_STRONG_N   (32)   /* 强边缘数 > 128 才判定        */ /*主要调这两个，判别面积用，体现在远近上*/
 
 /* ==========================================================================
  * DTCM 环形缓冲 (模块私有, 0 等待数据访问)
@@ -154,6 +154,9 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
     /* ---- 判定颠簸路段: N > 128 且 R² > 0.81 ---- */
     out->is_bumpy = (edge_accum.strong_count > EDGE_MIN_STRONG_N
                      && r_sq > EDGE_R_SQ_BUMPY) ? 1U : 0U;
+    out->coherence_r = edge_sqrtf(r_sq);
+    out->strong_count = edge_accum.strong_count;
+    out->total_pixels = edge_accum.total_pixels;
 }
 
 volatile runtime_profiler_t g_bumpy_vision_cost_profiler = {0};
@@ -187,6 +190,9 @@ static void bumpy_vision_make_frame_result(const bumpy_edge_detect_output_t *edg
     result->confidence_u16 = edge->is_bumpy ? 1000U : 0U;
     result->direction_x = edge->dir_x;
     result->direction_y = edge->dir_y;
+    result->coherence_r = edge->coherence_r;
+    result->strong_count = edge->strong_count;
+    result->total_pixels = edge->total_pixels;
 }
 
 void bumpy_vision_reset_filter(void)
