@@ -1,4 +1,4 @@
-import csv
+﻿import csv
 import math
 import os
 import socket
@@ -73,6 +73,19 @@ FIELD_NAMES_V1 = [
 ]
 
 FIELD_NAMES_V2 = FIELD_NAMES_V1 + ["mark_trigger", "point_type"]
+
+# 新增：全量日志 CSV 的列名，包含基础字段、扩展字段及解析辅助字段
+FULL_LOG_FIELDS = FIELD_NAMES_V2 + [
+    "pid_mode",
+    "slip_flag",
+    "target_speed",
+    "speed_L",
+    "speed_R",
+    "theoretical_yaw_rate",
+    "actual_yaw_rate",
+    "payload_size",
+    "time_str",
+]
 
 MAX_HISTORY = 20000
 MAX_NEW_BUFFER = 4000
@@ -348,6 +361,58 @@ def _handle_debug_logging(data):
             print("[DEBUG LOG] 退出复刻，结束日志写入。")
 
 
+# ============= 新增：全量数据日志相关 =============
+full_log_file = None
+full_log_writer = None
+
+def _open_full_log():
+    """打开全量日志 CSV 文件并写入表头"""
+    global full_log_file, full_log_writer
+    if full_log_file is not None:
+        return
+    
+    filename = time.strftime("full_data_log_%Y%m%d_%H%M%S.csv")
+    try:
+        # 使用 utf-8-sig 编码，防止 Excel 打开中文乱码
+        full_log_file = open(filename, "w", newline="", encoding="utf-8-sig")
+        full_log_writer = csv.writer(full_log_file)
+        full_log_writer.writerow(FULL_LOG_FIELDS)
+        full_log_file.flush()
+        print(f"[FULL LOG] 开始写入全量数据日志: {filename}")
+    except Exception as e:
+        print(f"[FULL LOG] 创建全量日志失败: {e}")
+        full_log_file = None
+        full_log_writer = None
+
+def _close_full_log():
+    """关闭全量日志 CSV 文件"""
+    global full_log_file, full_log_writer
+    if full_log_file is not None:
+        try:
+            full_log_file.close()
+            print("[FULL LOG] 全量数据日志已关闭")
+        except:
+            pass
+        finally:
+            full_log_file = None
+            full_log_writer = None
+
+def _write_full_log(data):
+    """将一帧全量数据写入 CSV"""
+    global full_log_writer
+    if full_log_writer is None:
+        return
+
+    try:
+        # 按 FULL_LOG_FIELDS 定义的顺序提取数据，如果字段不存在则留空
+        row = [data.get(field, "") for field in FULL_LOG_FIELDS]
+        full_log_writer.writerow(row)
+        full_log_file.flush()
+    except Exception as e:
+        print(f"[FULL LOG] 写入全量日志失败: {e}")
+# ==================================================
+
+
 def _push_data(data):
     global last_rx_time, last_payload_size
 
@@ -362,6 +427,9 @@ def _push_data(data):
 
         last_rx_time = time.time()
         last_payload_size = data.get("payload_size", 0)
+
+    # 在数据入缓冲后，写入全量日志
+    _write_full_log(data)
 
 
 def _parse_frame_stream(raw_buffer):
@@ -467,6 +535,9 @@ def tcp_server_thread():
                 server_error = ""
             print(f"[TCP] Connected: {peer}")
 
+            # 新增：设备连接时打开全量日志
+            _open_full_log()
+
             raw_buffer = bytearray()
             with conn:
                 conn.settimeout(1.0)
@@ -484,6 +555,10 @@ def tcp_server_thread():
                 peer_addr = ""
                 if active_conn is conn:
                     active_conn = None
+            
+            # 新增：设备断开时关闭全量日志
+            _close_full_log()
+            
             print(f"[TCP] Disconnected: {peer}")
         except socket.timeout:
             continue
@@ -492,6 +567,9 @@ def tcp_server_thread():
                 peer_addr = ""
                 active_conn = None
                 server_error = f"Server error: {exc}"
+            
+            # 异常时也要尝试关闭日志
+            _close_full_log()
             time.sleep(0.5)
 
 
@@ -616,4 +694,3 @@ if __name__ == "__main__":
         min_size=(1120, 700),
     )
     webview.start(debug=False)
-
