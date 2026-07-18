@@ -39,7 +39,13 @@ from detect_minefield_people_v2_json import (  # noqa: E402
 
 
 DEFAULT_ANNOTATION_DIR = DATA_ROOT / "frames/雷区peoplev3"
-DEFAULT_OUTPUT_DIR = DATA_ROOT / "test/peoplev3_v10"
+DEFAULT_OUTPUT_DIR = DATA_ROOT / "test/peoplev3_v12"
+
+CENTRAL_LARGE_MIN_WIDTH_RATIO = 0.80
+CENTRAL_LARGE_MIN_HEIGHT_RATIO = 0.35
+CENTRAL_LARGE_MAX_CENTER_DX = 0.18
+CENTRAL_LARGE_MAX_CENTER_DY = 0.18
+CENTRAL_LARGE_WEIGHT = 3.0
 
 
 @dataclass(frozen=True)
@@ -136,6 +142,62 @@ def build_samples(annotation_dir: Path, max_samples: int | None = None) -> list[
     return samples
 
 
+def scene_bbox_from_segments(segments) -> tuple[int, int, int, int] | None:
+    points: list[tuple[int, int]] = []
+    for segment in segments:
+        points.append((segment.x1, segment.y1))
+        points.append((segment.x2, segment.y2))
+    if not points:
+        return None
+
+    xs = [point[0] for point in points]
+    ys = [point[1] for point in points]
+    min_x = min(xs)
+    max_x = max(xs)
+    min_y = min(ys)
+    max_y = max(ys)
+    return min_x, min_y, max_x - min_x + 1, max_y - min_y + 1
+
+
+def describe_scene_layout(gt) -> dict:
+    bbox = scene_bbox_from_segments(gt.outer_segments + gt.inner_segments)
+    height, width = gt.outer_mask.shape
+    if bbox is None:
+        return {
+            "gt_bbox": None,
+            "width_ratio": 0.0,
+            "height_ratio": 0.0,
+            "area_ratio": 0.0,
+            "center_dx": 1.0,
+            "center_dy": 1.0,
+            "central_large": False,
+        }
+
+    x, y, bw, bh = bbox
+    center_x = x + (bw - 1) * 0.5
+    center_y = y + (bh - 1) * 0.5
+    width_ratio = bw / max(float(width), 1.0)
+    height_ratio = bh / max(float(height), 1.0)
+    area_ratio = (bw * bh) / max(float(width * height), 1.0)
+    center_dx = abs(center_x - (width - 1) * 0.5) / max(width * 0.5, 1.0)
+    center_dy = abs(center_y - (height - 1) * 0.5) / max(height * 0.5, 1.0)
+    central_large = (
+        width_ratio >= CENTRAL_LARGE_MIN_WIDTH_RATIO
+        and height_ratio >= CENTRAL_LARGE_MIN_HEIGHT_RATIO
+        and center_dx <= CENTRAL_LARGE_MAX_CENTER_DX
+        and center_dy <= CENTRAL_LARGE_MAX_CENTER_DY
+    )
+    return {
+        "gt_bbox": [x, y, bw, bh],
+        "width_ratio": width_ratio,
+        "height_ratio": height_ratio,
+        "area_ratio": area_ratio,
+        "center_dx": center_dx,
+        "center_dy": center_dy,
+        "central_large": central_large,
+    }
+
+
 def build_contact_sheets(
     results: list[dict],
     output_dir: Path,
@@ -184,6 +246,8 @@ def evaluate_sample(
     gray = read_gray(sample.original_path)
     annotation_rgb = read_rgb(sample.annotation_png_path)
     gt = load_ground_truth(sample.annotation_json_path)
+    scene_layout = describe_scene_layout(gt)
+    scene_weight = CENTRAL_LARGE_WEIGHT if scene_layout["central_large"] else 1.0
     candidate = detect_best_candidate(
         gray,
         fixed_threshold=fixed_threshold,
@@ -243,6 +307,10 @@ def evaluate_sample(
         "prefix": sample.prefix,
         "frame_idx": sample.frame_idx,
         "annotation_mode": gt.mode,
+        "scene": {
+            **scene_layout,
+            "weight": scene_weight,
+        },
         "paths": {
             "original": str(sample.original_path),
             "annotation_png": str(sample.annotation_png_path),
@@ -279,6 +347,8 @@ def evaluate_sample(
             "inner_present_gt": bool(gt.inner_segments),
             "outer_present_pred": bool(pred_outer_segments),
             "inner_present_pred": bool(pred_inner_segments),
+            "scene_weight": scene_weight,
+            "weighted_shortfall": (1.0 - annotated_role_mean_f1) * scene_weight,
         },
     }
 
@@ -318,6 +388,8 @@ def write_summary_csv(results: list[dict], output_path: Path) -> None:
     fieldnames = [
         "frame_name",
         "annotation_mode",
+        "central_large",
+        "scene_weight",
         "outer_f1",
         "inner_f1",
         "annotated_role_mean_f1",
@@ -337,6 +409,8 @@ def write_summary_csv(results: list[dict], output_path: Path) -> None:
                 {
                     "frame_name": result["frame_name"],
                     "annotation_mode": result["annotation_mode"],
+                    "central_large": result["scene"]["central_large"],
+                    "scene_weight": result["metrics"]["scene_weight"],
                     "outer_f1": round(result["metrics"]["outer_line"]["f1"], 4),
                     "inner_f1": round(result["metrics"]["inner_line"]["f1"], 4),
                     "annotated_role_mean_f1": round(result["metrics"]["annotated_role_mean_f1"], 4),
@@ -392,6 +466,20 @@ def write_summary(
     inner_f1 = [result["metrics"]["inner_line"]["f1"] for result in results if result["metrics"]["inner_present_gt"]]
     strict_role_f1 = [result["metrics"]["strict_role_mean_f1"] for result in results]
     annotated_role_f1 = [result["metrics"]["annotated_role_mean_f1"] for result in results]
+    central_large_results = [result for result in results if result["scene"]["central_large"]]
+    central_large_annotated_role_f1 = [
+        result["metrics"]["annotated_role_mean_f1"] for result in central_large_results
+    ]
+    total_weight = sum(result["metrics"]["scene_weight"] for result in results)
+    weighted_annotated_role_f1 = (
+        sum(
+            result["metrics"]["annotated_role_mean_f1"] * result["metrics"]["scene_weight"]
+            for result in results
+        )
+        / total_weight
+        if total_weight > 0.0
+        else 0.0
+    )
 
     outer_corner_errors = [
         result["metrics"]["outer_corner_error_px"]["mean_px"]
@@ -408,7 +496,7 @@ def write_summary(
     for result in results:
         modes[result["annotation_mode"]] = modes.get(result["annotation_mode"], 0) + 1
 
-    ranked_results = sorted(results, key=lambda item: item["metrics"]["annotated_role_mean_f1"])
+    ranked_results = sorted(results, key=lambda item: item["metrics"]["weighted_shortfall"], reverse=True)
     summary = {
         "dataset": annotation_dir.name,
         "sample_count": len(results),
@@ -417,6 +505,12 @@ def write_summary(
         "mean_inner_f1": float(np.mean(inner_f1)) if inner_f1 else 0.0,
         "mean_strict_role_f1": float(np.mean(strict_role_f1)) if strict_role_f1 else 0.0,
         "mean_annotated_role_f1": float(np.mean(annotated_role_f1)) if annotated_role_f1 else 0.0,
+        "central_large_count": len(central_large_results),
+        "mean_central_large_annotated_role_f1": (
+            float(np.mean(central_large_annotated_role_f1)) if central_large_annotated_role_f1 else 0.0
+        ),
+        "weighted_mean_annotated_role_f1": weighted_annotated_role_f1,
+        "central_large_weight": CENTRAL_LARGE_WEIGHT,
         "mean_outer_corner_error_px": float(np.mean(outer_corner_errors)) if outer_corner_errors else None,
         "mean_inner_corner_error_px": float(np.mean(inner_corner_errors)) if inner_corner_errors else None,
         "contact_sheet_paths": contact_sheet_paths,
@@ -442,6 +536,9 @@ def write_summary(
         f"mean_inner_f1: {summary['mean_inner_f1']:.4f}",
         f"mean_strict_role_f1: {summary['mean_strict_role_f1']:.4f}",
         f"mean_annotated_role_f1: {summary['mean_annotated_role_f1']:.4f}",
+        f"central_large_count: {summary['central_large_count']}",
+        f"mean_central_large_annotated_role_f1: {summary['mean_central_large_annotated_role_f1']:.4f}",
+        f"weighted_mean_annotated_role_f1: {summary['weighted_mean_annotated_role_f1']:.4f}",
         (
             f"mean_outer_corner_error_px: {summary['mean_outer_corner_error_px']:.4f}"
             if summary["mean_outer_corner_error_px"] is not None

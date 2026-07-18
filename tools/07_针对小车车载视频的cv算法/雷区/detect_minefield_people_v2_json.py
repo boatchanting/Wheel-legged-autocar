@@ -53,6 +53,21 @@ HOUGH_HORIZONTAL_DY_BASE = 1.5
 HOUGH_HORIZONTAL_DY_RATIO = 0.08
 HOUGH_SLOPE_RATIO_MIN = 0.15
 HOUGH_NEAR_VIEW_MIN_HEIGHT_RATIO = 0.45
+CENTRAL_SCENE_MAX_FAR_VIEW = 0.20
+CENTRAL_SCENE_MIN_WIDTH_RATIO = 0.90
+CENTRAL_SCENE_MIN_HEIGHT_RATIO = 0.30
+CENTRAL_SCENE_THIN_TOP_MIN_HEIGHT_RATIO = 0.22
+CENTRAL_SCENE_LOW_SUPPORT_OUTER_MAX = 0.75
+CENTRAL_SCENE_LOW_SUPPORT_INNER_MAX = 0.65
+CENTRAL_SCENE_DARK_TOP_MAX_RATIO = 0.45
+CENTRAL_SCENE_OUTER_TOP_RATIO = 0.28
+CENTRAL_SCENE_INNER_TOP_RATIO = 0.35
+CENTRAL_SCENE_INNER_BOTTOM_VISIBLE_RATIO = 0.70
+THRESHOLD_110_RECOVERY_MIN_SCORE_GAIN = 0.006
+THRESHOLD_110_RECOVERY_MIN_Y_GAIN = 5
+THRESHOLD_110_RECOVERY_MIN_HEIGHT_GAIN = 5
+THRESHOLD_110_RECOVERY_MAX_SCORE_DELTA = 0.05
+THRESHOLD_110_RECOVERY_MAX_BEST_WIDTH_RATIO = 0.60
 
 REPRESENTATIVE_FRAMES: dict[str, tuple[int, ...]] = {
     "雷区阴天30固定曝光侧_20260713_180026": (3, 71, 159, 202, 302, 320),
@@ -411,6 +426,247 @@ def build_edge_support_mask(gray: np.ndarray, threshold_mask: np.ndarray) -> np.
     return canny | gradient
 
 
+def segment_length(segment: Segment) -> float:
+    return float(math.hypot(segment.x2 - segment.x1, segment.y2 - segment.y1))
+
+
+def edge_length(p0: np.ndarray, p1: np.ndarray) -> float:
+    return float(np.linalg.norm(p1 - p0))
+
+
+def build_segment(p0: np.ndarray, p1: np.ndarray) -> Segment:
+    return Segment(
+        x1=int(round(float(p0[0]))),
+        y1=int(round(float(p0[1]))),
+        x2=int(round(float(p1[0]))),
+        y2=int(round(float(p1[1]))),
+    )
+
+
+def dedupe_segments(segments: list[Segment]) -> list[Segment]:
+    unique: list[Segment] = []
+    seen: set[tuple[int, int, int, int]] = set()
+    for segment in segments:
+        endpoints = ((segment.x1, segment.y1), (segment.x2, segment.y2))
+        ordered = tuple(endpoints if endpoints[0] <= endpoints[1] else (endpoints[1], endpoints[0]))
+        key = (ordered[0][0], ordered[0][1], ordered[1][0], ordered[1][1])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(segment)
+    return unique
+
+
+def is_side_segment(segment: Segment) -> bool:
+    dx = abs(segment.x2 - segment.x1)
+    dy = abs(segment.y2 - segment.y1)
+    return segment_length(segment) >= 6.0 and dy >= max(3.0, dx * 0.25)
+
+
+def is_central_scene_candidate(candidate: Candidate, image_shape: tuple[int, int]) -> bool:
+    height, width = image_shape
+    width_ratio = candidate.outer_bbox[2] / max(float(width), 1.0)
+    height_ratio = candidate.outer_bbox[3] / max(float(height), 1.0)
+    return (
+        candidate.far_view_factor <= CENTRAL_SCENE_MAX_FAR_VIEW
+        and width_ratio >= CENTRAL_SCENE_MIN_WIDTH_RATIO
+        and (
+            height_ratio >= CENTRAL_SCENE_MIN_HEIGHT_RATIO
+            or (
+                candidate.outer_bbox[1] <= int(height * 0.2)
+                and height_ratio >= CENTRAL_SCENE_THIN_TOP_MIN_HEIGHT_RATIO
+            )
+        )
+    )
+
+
+def find_matching_outer_contour(candidate: Candidate) -> np.ndarray | None:
+    mask_u8 = candidate.threshold_mask.astype(np.uint8) * 255
+    contours, hierarchy = cv2.findContours(mask_u8, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours or hierarchy is None:
+        return None
+
+    target_bbox = tuple(candidate.outer_bbox)
+    best: np.ndarray | None = None
+    best_score = float("inf")
+    for idx, contour in enumerate(contours):
+        if int(hierarchy[0, idx, 3]) != -1:
+            continue
+
+        area = float(cv2.contourArea(contour))
+        bbox = tuple(cv2.boundingRect(contour))
+        score = abs(area - candidate.outer_area) + sum(abs(a - b) for a, b in zip(bbox, target_bbox)) * 5.0
+        if score < best_score:
+            best = contour
+            best_score = score
+    return best
+
+
+def pick_central_dark_component_contour(
+    threshold_mask: np.ndarray,
+) -> tuple[np.ndarray | None, tuple[int, int, int, int] | None]:
+    inv = (~threshold_mask).astype(np.uint8) * 255
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(inv, 8)
+    height, width = threshold_mask.shape
+
+    best_idx = -1
+    best_score = float("-inf")
+    for idx in range(1, num_labels):
+        x, y, bw, bh, area = (int(value) for value in stats[idx])
+        if bw < int(width * 0.35) or bh < int(height * 0.2):
+            continue
+
+        cx, cy = centroids[idx]
+        center_dx = abs(float(cx) - (width - 1) * 0.5) / max(width * 0.5, 1.0)
+        center_dy = abs(float(cy) - (height - 1) * 0.5) / max(height * 0.5, 1.0)
+        score = float(area) - 1200.0 * center_dx - 600.0 * center_dy - (200.0 if y == 0 else 0.0)
+        if score > best_score:
+            best_idx = idx
+            best_score = score
+
+    if best_idx < 0:
+        return None, None
+
+    component_mask = (labels == best_idx).astype(np.uint8) * 255
+    contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None, None
+
+    contour = max(contours, key=cv2.contourArea)
+    x, y, bw, bh = cv2.boundingRect(contour)
+    return contour, (int(x), int(y), int(bw), int(bh))
+
+
+def approx_ordered_contour_points(contour: np.ndarray, eps_ratio: float) -> np.ndarray:
+    perimeter = cv2.arcLength(contour, True)
+    approx = cv2.approxPolyDP(contour, eps_ratio * perimeter, True)
+    return approx[:, 0, :].astype(np.float32)
+
+
+def group_contour_edges(points: np.ndarray, predicate) -> list[list[int]]:
+    point_count = len(points)
+    if point_count == 0:
+        return []
+
+    active_edges = [
+        bool(predicate(points[idx], points[(idx + 1) % point_count]))
+        for idx in range(point_count)
+    ]
+    groups: list[list[int]] = []
+    start_idx: int | None = None
+    for edge_idx, is_active in enumerate(active_edges):
+        if is_active and start_idx is None:
+            start_idx = edge_idx
+        elif (not is_active) and start_idx is not None:
+            groups.append(list(range(start_idx, edge_idx)))
+            start_idx = None
+    if start_idx is not None:
+        groups.append(list(range(start_idx, point_count)))
+
+    if groups and active_edges[0] and active_edges[-1] and len(groups) >= 2:
+        groups[0] = groups[-1] + groups[0]
+        groups.pop()
+    return groups
+
+
+def extract_central_open_outer_segments(
+    candidate: Candidate,
+    image_shape: tuple[int, int],
+) -> dict[str, list[Segment]]:
+    contour = find_matching_outer_contour(candidate)
+    if contour is None:
+        return {}
+
+    points = approx_ordered_contour_points(contour, eps_ratio=0.008)
+    if len(points) < 4:
+        return {}
+
+    ys = points[:, 1]
+    min_y = float(ys.min())
+    max_y = float(ys.max())
+    top_threshold = min_y + CENTRAL_SCENE_OUTER_TOP_RATIO * max(1.0, max_y - min_y)
+    top_groups = group_contour_edges(
+        points,
+        lambda p0, p1: p0[1] <= top_threshold and p1[1] <= top_threshold and edge_length(p0, p1) >= 6.0,
+    )
+    if len(top_groups) < 2:
+        return {}
+
+    top_group = min(
+        top_groups,
+        key=lambda group: float(
+            np.mean([(points[idx][1] + points[(idx + 1) % len(points)][1]) * 0.5 for idx in group])
+        ),
+    )
+
+    roles: dict[str, list[Segment]] = {"outer_top": []}
+    for edge_idx in top_group:
+        roles["outer_top"].append(build_segment(points[edge_idx], points[(edge_idx + 1) % len(points)]))
+
+    center_x = candidate.outer_bbox[0] + candidate.outer_bbox[2] * 0.5
+    for edge_idx in ((top_group[0] - 1) % len(points), (top_group[-1] + 1) % len(points)):
+        segment = build_segment(points[edge_idx], points[(edge_idx + 1) % len(points)])
+        if not is_side_segment(segment):
+            continue
+        if min(segment.x1, segment.x2) <= 1 and max(segment.x1, segment.x2) <= 1:
+            continue
+        role_name = "outer_left" if (segment.x1 + segment.x2) * 0.5 <= center_x else "outer_right"
+        roles.setdefault(role_name, []).append(segment)
+    return roles
+
+
+def extract_central_open_inner_segments(candidate: Candidate) -> dict[str, list[Segment]]:
+    contour, dark_bbox = pick_central_dark_component_contour(candidate.threshold_mask)
+    if contour is None or dark_bbox is None:
+        return {}
+
+    points = approx_ordered_contour_points(contour, eps_ratio=0.02)
+    if len(points) < 4:
+        return {}
+
+    outer_y = candidate.outer_bbox[1]
+    outer_h = candidate.outer_bbox[3]
+    if dark_bbox[1] > int(round(outer_y + outer_h * CENTRAL_SCENE_DARK_TOP_MAX_RATIO)):
+        return {}
+
+    ys = points[:, 1]
+    min_y = float(ys.min())
+    max_y = float(ys.max())
+    top_threshold = min_y + CENTRAL_SCENE_INNER_TOP_RATIO * max(1.0, max_y - min_y)
+    top_groups = group_contour_edges(
+        points,
+        lambda p0, p1: p0[1] <= top_threshold and p1[1] <= top_threshold and edge_length(p0, p1) >= 6.0,
+    )
+    if not top_groups:
+        return {}
+
+    top_group = min(
+        top_groups,
+        key=lambda group: float(
+            np.mean([(points[idx][1] + points[(idx + 1) % len(points)][1]) * 0.5 for idx in group])
+        ),
+    )
+    roles: dict[str, list[Segment]] = {"inner_top": []}
+    for edge_idx in top_group:
+        roles["inner_top"].append(build_segment(points[edge_idx], points[(edge_idx + 1) % len(points)]))
+
+    center_x = candidate.outer_bbox[0] + candidate.outer_bbox[2] * 0.5
+    for edge_idx in ((top_group[0] - 1) % len(points), (top_group[-1] + 1) % len(points)):
+        segment = build_segment(points[edge_idx], points[(edge_idx + 1) % len(points)])
+        if not is_side_segment(segment):
+            continue
+        role_name = "inner_left" if (segment.x1 + segment.x2) * 0.5 <= center_x else "inner_right"
+        roles.setdefault(role_name, []).append(segment)
+
+    bottom_points = points[points[:, 1] >= (max_y - 0.18 * max(1.0, max_y - min_y))]
+    if len(bottom_points) >= 2:
+        left_point = bottom_points[np.argmin(bottom_points[:, 0])]
+        right_point = bottom_points[np.argmax(bottom_points[:, 0])]
+        if float(right_point[0] - left_point[0]) >= candidate.outer_bbox[2] * CENTRAL_SCENE_INNER_BOTTOM_VISIBLE_RATIO:
+            roles["inner_bottom"] = [build_segment(left_point, right_point)]
+    return roles
+
+
 def classify_hough_segment(
     threshold_mask: np.ndarray,
     bbox_center_y: float,
@@ -598,6 +854,7 @@ def extract_prediction_segments(
     )
     use_hough_outer = use_hough and len(hough_outer_segments) >= 2
     pred_outer_segments = hough_outer_segments if use_hough_outer else fallback_outer_segments
+    fallback_inner_segments: list[Segment] = []
 
     if should_suppress_inner_segments(candidate):
         pred_inner_segments: list[Segment] = []
@@ -610,6 +867,52 @@ def extract_prediction_segments(
         )
         use_hough_inner = use_hough and len(hough_inner_segments) >= 2
         pred_inner_segments = hough_inner_segments if use_hough_inner else fallback_inner_segments
+
+    should_try_central_rescue = (
+        not should_suppress_inner_segments(candidate)
+        and is_central_scene_candidate(candidate, gray.shape)
+        and candidate.inner_quad_direct is None
+        and candidate.outer_support <= CENTRAL_SCENE_LOW_SUPPORT_OUTER_MAX
+        and candidate.inner_support <= CENTRAL_SCENE_LOW_SUPPORT_INNER_MAX
+        and len(fallback_outer_segments) <= 2
+        and len(fallback_inner_segments) <= 2
+    )
+    if should_try_central_rescue:
+        contour_outer_roles = extract_central_open_outer_segments(candidate, gray.shape)
+        contour_inner_roles = extract_central_open_inner_segments(candidate)
+        rescue_outer_segments = dedupe_segments(
+            contour_outer_roles.get("outer_top", [])
+            + contour_outer_roles.get("outer_left", [])
+            + contour_outer_roles.get("outer_right", [])
+        )
+        rescue_inner_segments = dedupe_segments(
+            contour_inner_roles.get("inner_left", [])
+            + contour_inner_roles.get("inner_top", [])
+            + contour_inner_roles.get("inner_right", [])
+            + contour_inner_roles.get("inner_bottom", [])
+        )
+        if len(rescue_outer_segments) >= 2 and len(rescue_inner_segments) >= 3:
+            pred_outer_segments = rescue_outer_segments
+            pred_inner_segments = rescue_inner_segments
+
+    should_try_low_band_inner_rescue = (
+        not should_suppress_inner_segments(candidate)
+        and is_central_scene_candidate(candidate, gray.shape)
+        and candidate.inner_quad_direct is None
+        and candidate.threshold >= 120
+        and candidate.outer_bbox[1] >= int(gray.shape[0] * 0.35)
+        and len(pred_inner_segments) <= 2
+    )
+    if should_try_low_band_inner_rescue:
+        contour_inner_roles = extract_central_open_inner_segments(candidate)
+        rescue_inner_segments = dedupe_segments(
+            contour_inner_roles.get("inner_left", [])
+            + contour_inner_roles.get("inner_top", [])
+            + contour_inner_roles.get("inner_right", [])
+            + contour_inner_roles.get("inner_bottom", [])
+        )
+        if "inner_bottom" in contour_inner_roles and len(rescue_inner_segments) >= 4:
+            pred_inner_segments = rescue_inner_segments
     return edge_support_mask, pred_outer_segments, pred_inner_segments
 
 
@@ -884,6 +1187,28 @@ def detect_best_candidate(
             best = candidate_125 if candidate_125 is not None else candidate_120
         else:
             best = max(candidates_by_threshold.values(), key=lambda item: item.score, default=None)
+
+        candidate_110 = candidates_by_threshold.get(110)
+        image_height, image_width = gray.shape
+        if candidate_110 is not None and best is not None:
+            candidate_110_width_ratio = candidate_110.outer_bbox[2] / max(float(image_width), 1.0)
+            best_width_ratio = best.outer_bbox[2] / max(float(image_width), 1.0)
+            if (
+                candidate_110.score >= best.score + THRESHOLD_110_RECOVERY_MIN_SCORE_GAIN
+                and candidate_110_width_ratio >= CENTRAL_SCENE_MIN_WIDTH_RATIO
+                and candidate_110.outer_bbox[1] <= best.outer_bbox[1] - THRESHOLD_110_RECOVERY_MIN_Y_GAIN
+                and candidate_110.outer_bbox[3] >= best.outer_bbox[3] + THRESHOLD_110_RECOVERY_MIN_HEIGHT_GAIN
+            ):
+                best = candidate_110
+            elif (
+                candidate_110_width_ratio >= CENTRAL_SCENE_MIN_WIDTH_RATIO
+                and (
+                    best_width_ratio <= THRESHOLD_110_RECOVERY_MAX_BEST_WIDTH_RATIO
+                    or best.outer_bbox[0] >= int(image_width * 0.5)
+                )
+                and candidate_110.score + THRESHOLD_110_RECOVERY_MAX_SCORE_DELTA >= best.score
+            ):
+                best = candidate_110
 
         fallback_candidate = candidates_by_threshold.get(FAR_SMALL_FALLBACK_THRESHOLD)
         if fallback_candidate is not None and (
