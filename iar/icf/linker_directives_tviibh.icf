@@ -240,7 +240,18 @@ define block HEAP_STACK     { block HEAP, last block CSTACK };
 // Initialization
 //============================================================
 initialize by copy { readwrite };
-do not initialize  { section .intvec_ram };
+
+// TCM acceleration: Flash LMA -> TCM VMA copy at startup
+//   .itcm_text : hotspot functions placed by ITCM_FUNC macro -> SELF_ITCM (0x00000000)
+//   .dtcm_data : initialized DTCM data placed by DTCM_DATA macro  -> SELF_DTCM (0x20000000)
+//   After copy-init, the VMA side becomes rw (use rw section in placement below)
+initialize by copy { ro section .itcm_text, rw section .dtcm_data };
+
+do not initialize   { section .intvec_ram };
+
+// .dtcm_bss : DTCM_BSS zero-init data, NOT auto-initialized
+//   Reason: DTCM power-on random; ECC init + user code handles zeroing
+do not initialize   { section .dtcm_bss };
 
 
 //============================================================
@@ -276,6 +287,25 @@ else if(isdefinedsymbol(_LINK_sram_))
 
 place in          SRAM  { readwrite };
 place at end   of SRAM  { block HEAP_STACK };
+
+// ===========================================================================
+// TCM placement (CYT4BB Cortex-M7 0-wait Tightly-Coupled Memory)
+//
+//   SELF_ITCM @ 0x00000000: core-local ITCM (16KB per CM7)
+//     - Hotspot functions via ITCM_FUNC macro (.itcm_text section)
+//     - Must use 'rw section' here: after initialize-by-copy, VMA is rw
+//     - Check .map file under SELF_ITCM for actual usage
+//
+//   SELF_DTCM @ 0x20000000: core-local DTCM (16KB per CM7)
+//     - Initialized data via DTCM_DATA macro (.dtcm_data section)
+//     - Zero-init data via DTCM_BSS macro  (.dtcm_bss section)
+//     - Check .map file under SELF_DTCM for actual usage
+//
+//   If overflow: prune fewer symbols from tcm.h annotations, or
+//     increase cm7_itcm_reserve / cm7_dtcm_reserve (max 16KB each)
+// ===========================================================================
+place in SELF_ITCM { rw section .itcm_text };
+place in SELF_DTCM { rw section .dtcm_data, section .dtcm_bss };
 
 //============================================================
 // Symbols for use by application

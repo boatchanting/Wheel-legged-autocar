@@ -1172,6 +1172,21 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\vision_ipc_core1.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\edge_conv_asm.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\edge_conv_asm.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\vision_edge_detect.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\vision_edge_detect.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\tcm.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code1\wifi_diff_stream.c</name>
             </file>
             <file>
