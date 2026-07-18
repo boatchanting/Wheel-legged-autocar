@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 CURRENT_DIR = Path(__file__).resolve().parent
 if str(CURRENT_DIR) not in sys.path:
@@ -39,7 +39,7 @@ from detect_minefield_people_v2_json import (  # noqa: E402
 
 
 DEFAULT_ANNOTATION_DIR = DATA_ROOT / "frames/雷区peoplev3"
-DEFAULT_OUTPUT_DIR = DATA_ROOT / "test/peoplev3_v12"
+DEFAULT_OUTPUT_DIR = DATA_ROOT / "test/peoplev3_v15"
 
 CENTRAL_LARGE_MIN_WIDTH_RATIO = 0.80
 CENTRAL_LARGE_MIN_HEIGHT_RATIO = 0.35
@@ -213,11 +213,11 @@ def build_contact_sheets(
         tiles: list[Image.Image] = []
         for result in page_results:
             sample_dir = Path(result["paths"]["output_dir"])
-            comparison = Image.open(sample_dir / "05_comparison_overlay.png").convert("RGB")
-            binary = Image.open(sample_dir / "06_threshold_debug.png").convert("RGB")
-            tile = Image.new("RGB", (comparison.width, comparison.height + binary.height), (18, 18, 18))
-            tile.paste(comparison, (0, 0))
-            tile.paste(binary, (0, comparison.height))
+            prediction = Image.open(sample_dir / "04_prediction_overlay.png").convert("RGB")
+            binary = Image.open(sample_dir / "11_prediction_binary_debug.png").convert("RGB")
+            tile = Image.new("RGB", (prediction.width, prediction.height + binary.height), (18, 18, 18))
+            tile.paste(prediction, (0, 0))
+            tile.paste(binary, (0, prediction.height))
             tiles.append(tile)
 
         if not tiles:
@@ -235,6 +235,46 @@ def build_contact_sheets(
         page_paths.append(str(page_path))
 
     return page_paths
+
+
+def make_prediction_binary_debug(
+    threshold_mask: np.ndarray,
+    pred_outer_segments,
+    pred_inner_segments,
+    title: str,
+) -> np.ndarray:
+    canvas = np.zeros((threshold_mask.shape[0], threshold_mask.shape[1], 3), dtype=np.uint8)
+    canvas[threshold_mask] = (255, 255, 255)
+    image = Image.fromarray(canvas, mode="RGB").resize(
+        (threshold_mask.shape[1] * SCALE, threshold_mask.shape[0] * SCALE),
+        resample=Image.Resampling.NEAREST,
+    )
+    draw = ImageDraw.Draw(image)
+    for seg in pred_outer_segments:
+        draw.line(
+            (
+                seg.x1 * SCALE,
+                seg.y1 * SCALE,
+                seg.x2 * SCALE,
+                seg.y2 * SCALE,
+            ),
+            fill=(255, 0, 0),
+            width=max(1, SCALE // 3),
+        )
+    for seg in pred_inner_segments:
+        draw.line(
+            (
+                seg.x1 * SCALE,
+                seg.y1 * SCALE,
+                seg.x2 * SCALE,
+                seg.y2 * SCALE,
+            ),
+            fill=(0, 255, 0),
+            width=max(1, SCALE // 3),
+        )
+    draw.rectangle([0, 0, image.width - 1, 18], fill=(0, 0, 0))
+    draw.text((3, 3), title, fill=(255, 255, 255))
+    return np.asarray(image)
 
 
 def evaluate_sample(
@@ -284,6 +324,12 @@ def evaluate_sample(
         f"{sample.frame_name} gt=orange/cyan pred=red/green",
     )
     threshold_debug = make_threshold_debug(threshold_mask, gt.outer_segments, gt.inner_segments)
+    prediction_binary_debug = make_prediction_binary_debug(
+        threshold_mask,
+        pred_outer_segments,
+        pred_inner_segments,
+        f"{sample.frame_name} binary pred=red/green",
+    )
 
     save_gray(sample_dir / "01_original.png", gray)
     save_rgb(sample_dir / "02_annotation_png.png", annotation_rgb)
@@ -295,6 +341,7 @@ def evaluate_sample(
     save_mask(sample_dir / "08_gt_inner_mask.png", gt.inner_mask)
     save_mask(sample_dir / "09_pred_outer_mask.png", pred_outer_mask)
     save_mask(sample_dir / "10_pred_inner_mask.png", pred_inner_mask)
+    save_rgb(sample_dir / "11_prediction_binary_debug.png", prediction_binary_debug)
 
     strict_role_mean_f1 = (outer_scores["f1"] + inner_scores["f1"]) / 2.0
     annotated_role_values = [outer_scores["f1"]]

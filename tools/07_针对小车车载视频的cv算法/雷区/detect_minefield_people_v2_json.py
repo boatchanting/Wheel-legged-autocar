@@ -68,6 +68,22 @@ THRESHOLD_110_RECOVERY_MIN_Y_GAIN = 5
 THRESHOLD_110_RECOVERY_MIN_HEIGHT_GAIN = 5
 THRESHOLD_110_RECOVERY_MAX_SCORE_DELTA = 0.05
 THRESHOLD_110_RECOVERY_MAX_BEST_WIDTH_RATIO = 0.60
+THRESHOLD_MID_PREFERENCE_MAX_SCORE_DELTA = 0.03
+OBLIQUE_SCENE_MIN_WIDTH_RATIO = 0.90
+OBLIQUE_SCENE_MIN_HEIGHT_RATIO = 0.18
+OBLIQUE_SCENE_MAX_TOP_RATIO = 0.50
+OBLIQUE_SCENE_MIN_OUTER_SLOPE = 0.12
+OBLIQUE_BRANCH_MIN_SLOPE = 0.08
+OBLIQUE_BRANCH_MIN_SPAN_RATIO = 0.20
+OBLIQUE_BRANCH_BORDER_MAX_OFFSET_RATIO = 0.22
+OBLIQUE_BRANCH_APEX_LEFT_MIN_OFFSET_RATIO = -0.18
+OBLIQUE_BRANCH_APEX_LEFT_MAX_OFFSET_RATIO = 0.15
+OBLIQUE_BRANCH_APEX_RIGHT_MIN_OFFSET_RATIO = -0.15
+OBLIQUE_BRANCH_APEX_RIGHT_MAX_OFFSET_RATIO = 0.18
+OBLIQUE_PROFILE_INNER_APEX_MAX_OFFSET_RATIO = 0.10
+OBLIQUE_BRANCH_RIGHT_MIN_END_RATIO = 0.78
+OBLIQUE_INNER_MIN_OUTER_GAP_PX = 1.5
+OBLIQUE_PROFILE_SOURCE_BONUS = 0.02
 
 REPRESENTATIVE_FRAMES: dict[str, tuple[int, ...]] = {
     "雷区阴天30固定曝光侧_20260713_180026": (3, 71, 159, 202, 302, 320),
@@ -443,6 +459,53 @@ def build_segment(p0: np.ndarray, p1: np.ndarray) -> Segment:
     )
 
 
+def normalize_segment(segment: Segment) -> Segment:
+    if segment.x1 < segment.x2:
+        return segment
+    if segment.x1 == segment.x2 and segment.y1 <= segment.y2:
+        return segment
+    return Segment(segment.x2, segment.y2, segment.x1, segment.y1)
+
+
+def segment_slope(segment: Segment) -> float:
+    normalized = normalize_segment(segment)
+    dx = float(normalized.x2 - normalized.x1)
+    if abs(dx) < 1e-6:
+        return float("inf") if normalized.y2 >= normalized.y1 else float("-inf")
+    return float(normalized.y2 - normalized.y1) / dx
+
+
+def segment_visibility_ratio(segment: Segment, support_mask: np.ndarray) -> float:
+    normalized = normalize_segment(segment)
+    p0 = np.array([normalized.x1, normalized.y1], dtype=np.float32)
+    p1 = np.array([normalized.x2, normalized.y2], dtype=np.float32)
+    _, visible = sample_line_visibility(support_mask, p0, p1, max_gap=2)
+    if len(visible) == 0:
+        return 0.0
+    return float(visible.mean())
+
+
+def line_y_at_x(segment: Segment, x: float) -> float:
+    normalized = normalize_segment(segment)
+    dx = float(normalized.x2 - normalized.x1)
+    if abs(dx) < 1e-6:
+        return float(normalized.y1)
+    return float(normalized.y1 + (x - normalized.x1) * (normalized.y2 - normalized.y1) / dx)
+
+
+def is_inner_branch_below_outer(
+    inner_segment: Segment,
+    outer_segment: Segment,
+    min_gap_px: float = OBLIQUE_INNER_MIN_OUTER_GAP_PX,
+) -> bool:
+    inner = normalize_segment(inner_segment)
+    outer = normalize_segment(outer_segment)
+    for x, y in ((float(inner.x1), float(inner.y1)), (float(inner.x2), float(inner.y2))):
+        if y < line_y_at_x(outer, x) + min_gap_px:
+            return False
+    return True
+
+
 def dedupe_segments(segments: list[Segment]) -> list[Segment]:
     unique: list[Segment] = []
     seen: set[tuple[int, int, int, int]] = set()
@@ -535,6 +598,111 @@ def pick_central_dark_component_contour(
     contour = max(contours, key=cv2.contourArea)
     x, y, bw, bh = cv2.boundingRect(contour)
     return contour, (int(x), int(y), int(bw), int(bh))
+
+
+def build_top_band_profiles(
+    threshold_mask: np.ndarray,
+    bbox: tuple[int, int, int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    _, width = threshold_mask.shape
+    x, _, bw, _ = bbox
+    start_x = max(0, x)
+    end_x = min(width - 1, x + bw - 1)
+    top_profile = np.full(width, np.nan, dtype=np.float32)
+    band_bottom_profile = np.full(width, np.nan, dtype=np.float32)
+    for x_pos in range(start_x, end_x + 1):
+        ys = np.flatnonzero(threshold_mask[:, x_pos])
+        if len(ys) == 0:
+            continue
+        top_profile[x_pos] = float(ys[0])
+        run_end = int(ys[0])
+        for y_pos in ys[1:]:
+            if int(y_pos) == run_end + 1:
+                run_end = int(y_pos)
+            else:
+                break
+        band_bottom_profile[x_pos] = float(run_end)
+    return top_profile, band_bottom_profile
+
+
+def smooth_sparse_profile(profile: np.ndarray, kernel_size: int = 5) -> np.ndarray:
+    if kernel_size <= 1:
+        return profile.copy()
+    kernel = np.ones(kernel_size, dtype=np.float32)
+    values = np.where(np.isnan(profile), 0.0, profile).astype(np.float32)
+    weights = (~np.isnan(profile)).astype(np.float32)
+    smoothed_values = np.convolve(values, kernel, mode="same")
+    smoothed_weights = np.convolve(weights, kernel, mode="same")
+    result = np.full(profile.shape, np.nan, dtype=np.float32)
+    valid = smoothed_weights > 1e-6
+    result[valid] = smoothed_values[valid] / smoothed_weights[valid]
+    return result
+
+
+def fit_profile_branch(
+    profile: np.ndarray,
+    start_x: int,
+    end_x: int,
+) -> tuple[Segment | None, float]:
+    lo = min(start_x, end_x)
+    hi = max(start_x, end_x)
+    xs = np.arange(lo, hi + 1)
+    xs = xs[~np.isnan(profile[lo:hi + 1])]
+    if len(xs) < 6:
+        return None, 0.0
+    ys = profile[xs]
+    slope, intercept = np.polyfit(xs.astype(np.float32), ys.astype(np.float32), deg=1)
+    x1 = int(xs[0])
+    x2 = int(xs[-1])
+    y1 = int(round(float(slope * x1 + intercept)))
+    y2 = int(round(float(slope * x2 + intercept)))
+    return Segment(x1=x1, y1=y1, x2=x2, y2=y2), float(slope)
+
+
+def extract_oblique_profile_roles(candidate: Candidate) -> dict:
+    top_profile, band_bottom_profile = build_top_band_profiles(candidate.threshold_mask, candidate.outer_bbox)
+    top_profile = smooth_sparse_profile(top_profile)
+    band_bottom_profile = smooth_sparse_profile(band_bottom_profile)
+
+    valid_top = np.flatnonzero(~np.isnan(top_profile))
+    if len(valid_top) < max(12, int(round(candidate.outer_bbox[2] * 0.55))):
+        return {}
+
+    apex_x = int(valid_top[np.argmin(top_profile[valid_top])])
+    roles: dict[str, object] = {
+        "apex_x": apex_x,
+        "slopes": {},
+    }
+
+    outer_left, outer_left_slope = fit_profile_branch(top_profile, int(valid_top[0]), apex_x)
+    outer_right, outer_right_slope = fit_profile_branch(top_profile, apex_x, int(valid_top[-1]))
+    if outer_left is not None:
+        roles["outer_left"] = outer_left
+    if outer_right is not None:
+        roles["outer_right"] = outer_right
+    roles["slopes"]["outer_left"] = outer_left_slope
+    roles["slopes"]["outer_right"] = outer_right_slope
+
+    valid_bottom = np.flatnonzero(~np.isnan(band_bottom_profile))
+    if len(valid_bottom) >= max(12, int(round(candidate.outer_bbox[2] * 0.45))):
+        bottom_apex_x = int(valid_bottom[np.argmin(band_bottom_profile[valid_bottom])])
+        inner_left, inner_left_slope = fit_profile_branch(
+            band_bottom_profile,
+            int(valid_bottom[0]),
+            bottom_apex_x,
+        )
+        inner_right, inner_right_slope = fit_profile_branch(
+            band_bottom_profile,
+            bottom_apex_x,
+            int(valid_bottom[-1]),
+        )
+        if inner_left is not None:
+            roles["inner_left"] = inner_left
+        if inner_right is not None:
+            roles["inner_right"] = inner_right
+        roles["slopes"]["inner_left"] = inner_left_slope
+        roles["slopes"]["inner_right"] = inner_right_slope
+    return roles
 
 
 def approx_ordered_contour_points(contour: np.ndarray, eps_ratio: float) -> np.ndarray:
@@ -667,6 +835,297 @@ def extract_central_open_inner_segments(candidate: Candidate) -> dict[str, list[
     return roles
 
 
+def is_oblique_scene_candidate(candidate: Candidate, image_shape: tuple[int, int], profile_roles: dict) -> bool:
+    if not profile_roles:
+        return False
+    outer_left = profile_roles.get("outer_left")
+    outer_right = profile_roles.get("outer_right")
+    if outer_left is None or outer_right is None:
+        return False
+
+    height, width = image_shape
+    width_ratio = candidate.outer_bbox[2] / max(float(width), 1.0)
+    height_ratio = candidate.outer_bbox[3] / max(float(height), 1.0)
+    if width_ratio < OBLIQUE_SCENE_MIN_WIDTH_RATIO or height_ratio < OBLIQUE_SCENE_MIN_HEIGHT_RATIO:
+        return False
+    if candidate.outer_bbox[1] > int(height * OBLIQUE_SCENE_MAX_TOP_RATIO):
+        return False
+
+    slopes = profile_roles.get("slopes", {})
+    return (
+        float(slopes.get("outer_left", 0.0)) <= -OBLIQUE_SCENE_MIN_OUTER_SLOPE
+        and float(slopes.get("outer_right", 0.0)) >= OBLIQUE_SCENE_MIN_OUTER_SLOPE
+    )
+
+
+def is_valid_oblique_branch_segment(
+    segment: Segment,
+    side: str,
+    apex_x: int,
+    bbox: tuple[int, int, int, int],
+    min_slope: float = OBLIQUE_BRANCH_MIN_SLOPE,
+    strict_inner_profile: bool = False,
+) -> bool:
+    normalized = normalize_segment(segment)
+    bbox_x, _, bbox_w, _ = bbox
+    min_span = max(12.0, bbox_w * OBLIQUE_BRANCH_MIN_SPAN_RATIO)
+    dx = float(normalized.x2 - normalized.x1)
+    if dx < min_span:
+        return False
+
+    slope = segment_slope(normalized)
+    if side == "left":
+        if slope > -min_slope:
+            return False
+        if normalized.x1 > bbox_x + bbox_w * OBLIQUE_BRANCH_BORDER_MAX_OFFSET_RATIO:
+            return False
+        apex_max_ratio = (
+            OBLIQUE_PROFILE_INNER_APEX_MAX_OFFSET_RATIO
+            if strict_inner_profile
+            else OBLIQUE_BRANCH_APEX_LEFT_MAX_OFFSET_RATIO
+        )
+        if normalized.x2 < apex_x + bbox_w * OBLIQUE_BRANCH_APEX_LEFT_MIN_OFFSET_RATIO:
+            return False
+        if normalized.x2 > apex_x + bbox_w * apex_max_ratio:
+            return False
+        return True
+
+    if slope < min_slope:
+        return False
+    apex_min_ratio = (
+        -OBLIQUE_PROFILE_INNER_APEX_MAX_OFFSET_RATIO
+        if strict_inner_profile
+        else OBLIQUE_BRANCH_APEX_RIGHT_MIN_OFFSET_RATIO
+    )
+    apex_max_ratio = (
+        OBLIQUE_PROFILE_INNER_APEX_MAX_OFFSET_RATIO
+        if strict_inner_profile
+        else OBLIQUE_BRANCH_APEX_RIGHT_MAX_OFFSET_RATIO
+    )
+    if normalized.x1 < apex_x + bbox_w * apex_min_ratio:
+        return False
+    if normalized.x1 > apex_x + bbox_w * apex_max_ratio:
+        return False
+    if normalized.x2 < bbox_x + bbox_w * OBLIQUE_BRANCH_RIGHT_MIN_END_RATIO:
+        return False
+    return True
+
+
+def score_oblique_branch_segment(
+    segment: Segment,
+    side: str,
+    apex_x: int,
+    bbox: tuple[int, int, int, int],
+    edge_support_mask: np.ndarray,
+    source: str,
+) -> float:
+    normalized = normalize_segment(segment)
+    bbox_x, _, bbox_w, _ = bbox
+    support = segment_visibility_ratio(normalized, edge_support_mask)
+    length_ratio = min(segment_length(normalized) / max(float(bbox_w), 1.0), 1.0)
+    apex_anchor_x = normalized.x2 if side == "left" else normalized.x1
+    border_anchor_x = normalized.x1 if side == "left" else normalized.x2
+    apex_error = abs(float(apex_anchor_x) - float(apex_x)) / max(float(bbox_w), 1.0)
+    border_target_x = bbox_x if side == "left" else bbox_x + bbox_w - 1
+    border_error = abs(float(border_anchor_x) - float(border_target_x)) / max(float(bbox_w), 1.0)
+    score = (
+        0.60 * support
+        + 0.25 * length_ratio
+        + 0.10 * (1.0 - min(apex_error / 0.15, 1.0))
+        + 0.05 * (1.0 - min(border_error / 0.15, 1.0))
+    )
+    if source == "profile":
+        score += OBLIQUE_PROFILE_SOURCE_BONUS
+    return score
+
+
+def has_strong_bottom_evidence(
+    segments: list[Segment],
+    bbox: tuple[int, int, int, int],
+) -> bool:
+    _, bbox_y, bbox_w, bbox_h = bbox
+    for segment in segments:
+        normalized = normalize_segment(segment)
+        dx = float(normalized.x2 - normalized.x1)
+        dy = abs(float(normalized.y2 - normalized.y1))
+        mid_y = (float(normalized.y1) + float(normalized.y2)) * 0.5
+        if (
+            dx >= bbox_w * 0.55
+            and dy <= max(2.0, dx * 0.08)
+            and mid_y >= bbox_y + bbox_h * 0.45
+        ):
+            return True
+    return False
+
+
+def has_strong_lower_branch_evidence(
+    segments: list[Segment],
+    apex_x: int,
+    bbox: tuple[int, int, int, int],
+) -> bool:
+    bbox_x, bbox_y, bbox_w, bbox_h = bbox
+    for segment in segments:
+        normalized = normalize_segment(segment)
+        slope = segment_slope(normalized)
+        dy = abs(float(normalized.y2 - normalized.y1))
+        mid_y = (float(normalized.y1) + float(normalized.y2)) * 0.5
+        left_like = (
+            normalized.x1 <= bbox_x + bbox_w * 0.18
+            and abs(float(normalized.x2) - float(apex_x)) <= bbox_w * 0.22
+        )
+        right_like = (
+            abs(float(normalized.x1) - float(apex_x)) <= bbox_w * 0.22
+            and normalized.x2 >= bbox_x + bbox_w * 0.82
+        )
+        if (
+            (left_like or right_like)
+            and abs(slope) >= 0.25
+            and dy >= bbox_h * 0.45
+            and mid_y >= bbox_y + bbox_h * 0.55
+        ):
+            return True
+    return False
+
+
+def select_best_oblique_branch_segment(
+    candidates: list[tuple[str, Segment]],
+    role_name: str,
+    apex_x: int,
+    bbox: tuple[int, int, int, int],
+    edge_support_mask: np.ndarray,
+    outer_reference: Segment | None = None,
+) -> Segment | None:
+    role_kind, side = role_name.split("_", 1)
+    best_segment: Segment | None = None
+    best_score = float("-inf")
+    for source, segment in candidates:
+        strict_inner_profile = role_kind == "inner" and source == "profile"
+        min_slope = OBLIQUE_SCENE_MIN_OUTER_SLOPE if role_kind == "outer" else OBLIQUE_BRANCH_MIN_SLOPE
+        if strict_inner_profile:
+            min_slope = max(min_slope, OBLIQUE_SCENE_MIN_OUTER_SLOPE)
+        if not is_valid_oblique_branch_segment(
+            segment,
+            side=side,
+            apex_x=apex_x,
+            bbox=bbox,
+            min_slope=min_slope,
+            strict_inner_profile=strict_inner_profile,
+        ):
+            continue
+        normalized = normalize_segment(segment)
+        if role_kind == "inner" and outer_reference is not None and not is_inner_branch_below_outer(
+            normalized,
+            outer_reference,
+        ):
+            continue
+        score = score_oblique_branch_segment(
+            normalized,
+            side=side,
+            apex_x=apex_x,
+            bbox=bbox,
+            edge_support_mask=edge_support_mask,
+            source=source,
+        )
+        if score > best_score:
+            best_score = score
+            best_segment = normalized
+    return best_segment
+
+
+def build_oblique_rescue_segments(
+    candidate: Candidate,
+    edge_support_mask: np.ndarray,
+    fallback_outer_segments: list[Segment],
+    fallback_inner_segments: list[Segment],
+    hough_merged_segments: dict[str, Segment],
+) -> tuple[list[Segment], list[Segment]]:
+    profile_roles = extract_oblique_profile_roles(candidate)
+    if not is_oblique_scene_candidate(candidate, edge_support_mask.shape, profile_roles):
+        return [], []
+
+    apex_x = int(profile_roles["apex_x"])
+    bbox = candidate.outer_bbox
+    fallback_segments = fallback_outer_segments + fallback_inner_segments
+    if has_strong_bottom_evidence(fallback_segments, bbox):
+        return [], []
+    if has_strong_lower_branch_evidence(fallback_segments, apex_x, bbox):
+        return [], []
+
+    outer_left_candidates: list[tuple[str, Segment]] = []
+    outer_right_candidates: list[tuple[str, Segment]] = []
+    inner_left_candidates: list[tuple[str, Segment]] = []
+    inner_right_candidates: list[tuple[str, Segment]] = []
+
+    for source, roles in (("profile", profile_roles), ("hough", hough_merged_segments)):
+        left_segment = roles.get("outer_left")
+        right_segment = roles.get("outer_right")
+        if isinstance(left_segment, Segment):
+            outer_left_candidates.append((source, left_segment))
+        if isinstance(right_segment, Segment):
+            outer_right_candidates.append((source, right_segment))
+
+    for segment in fallback_outer_segments:
+        outer_left_candidates.append(("fallback", segment))
+        outer_right_candidates.append(("fallback", segment))
+
+    rescue_outer_left = select_best_oblique_branch_segment(
+        outer_left_candidates,
+        role_name="outer_left",
+        apex_x=apex_x,
+        bbox=bbox,
+        edge_support_mask=edge_support_mask,
+    )
+    rescue_outer_right = select_best_oblique_branch_segment(
+        outer_right_candidates,
+        role_name="outer_right",
+        apex_x=apex_x,
+        bbox=bbox,
+        edge_support_mask=edge_support_mask,
+    )
+    if rescue_outer_left is None or rescue_outer_right is None:
+        return [], []
+
+    rescue_outer_segments = dedupe_segments([rescue_outer_left, rescue_outer_right])
+    if should_suppress_inner_segments(candidate):
+        return rescue_outer_segments, []
+
+    for source, roles in (("profile", profile_roles), ("hough", hough_merged_segments)):
+        left_segment = roles.get("inner_left")
+        right_segment = roles.get("inner_right")
+        if isinstance(left_segment, Segment):
+            inner_left_candidates.append((source, left_segment))
+        if isinstance(right_segment, Segment):
+            inner_right_candidates.append((source, right_segment))
+
+    for segment in fallback_inner_segments:
+        inner_left_candidates.append(("fallback", segment))
+        inner_right_candidates.append(("fallback", segment))
+
+    rescue_inner_left = select_best_oblique_branch_segment(
+        inner_left_candidates,
+        role_name="inner_left",
+        apex_x=apex_x,
+        bbox=bbox,
+        edge_support_mask=edge_support_mask,
+        outer_reference=rescue_outer_left,
+    )
+    rescue_inner_right = select_best_oblique_branch_segment(
+        inner_right_candidates,
+        role_name="inner_right",
+        apex_x=apex_x,
+        bbox=bbox,
+        edge_support_mask=edge_support_mask,
+        outer_reference=rescue_outer_right,
+    )
+
+    rescue_inner_segments: list[Segment] = []
+    if rescue_inner_left is not None and rescue_inner_right is not None:
+        rescue_inner_segments = dedupe_segments([rescue_inner_left, rescue_inner_right])
+    if len(rescue_inner_segments) < 2:
+        return [], []
+    return rescue_outer_segments, rescue_inner_segments
+
+
 def classify_hough_segment(
     threshold_mask: np.ndarray,
     bbox_center_y: float,
@@ -756,7 +1215,7 @@ def extract_hough_prediction_segments(
     gray: np.ndarray,
     candidate: Candidate,
     edge_support_mask: np.ndarray,
-) -> tuple[list[Segment], list[Segment], set[str]]:
+) -> tuple[list[Segment], list[Segment], set[str], dict[str, Segment]]:
     edge_mask_u8 = edge_support_mask.astype(np.uint8) * 255
     lines = cv2.HoughLinesP(
         edge_mask_u8,
@@ -767,7 +1226,7 @@ def extract_hough_prediction_segments(
         maxLineGap=HOUGH_MAX_LINE_GAP,
     )
     if lines is None:
-        return [], [], set()
+        return [], [], set(), {}
 
     bbox_center_y = float(candidate.outer_bbox[1] + candidate.outer_bbox[3] * 0.5)
     grouped: dict[str, list[tuple[Segment, float]]] = {
@@ -787,18 +1246,33 @@ def extract_hough_prediction_segments(
         class_name, segment, length = classified
         grouped[class_name].append((segment, length))
 
+    merged_segments: dict[str, Segment] = {}
+    for class_name in (
+        "outer_left",
+        "outer_top",
+        "outer_right",
+        "outer_bottom",
+        "inner_left",
+        "inner_top",
+        "inner_right",
+        "inner_bottom",
+    ):
+        merged = merge_hough_segments(class_name, grouped[class_name])
+        if merged is not None:
+            merged_segments[class_name] = merged
+
     outer_segments: list[Segment] = []
     inner_segments: list[Segment] = []
     for class_name in ("outer_left", "outer_top", "outer_right", "outer_bottom"):
-        merged = merge_hough_segments(class_name, grouped[class_name])
+        merged = merged_segments.get(class_name)
         if merged is not None:
             outer_segments.append(merged)
     for class_name in ("inner_left", "inner_top", "inner_right", "inner_bottom"):
-        merged = merge_hough_segments(class_name, grouped[class_name])
+        merged = merged_segments.get(class_name)
         if merged is not None:
             inner_segments.append(merged)
     present_classes = {class_name for class_name, items in grouped.items() if items}
-    return outer_segments, inner_segments, present_classes
+    return outer_segments, inner_segments, present_classes, merged_segments
 
 
 def render_quad_mask(shape: tuple[int, int], quad: np.ndarray | None) -> np.ndarray:
@@ -834,7 +1308,7 @@ def extract_prediction_segments(
         support_radius=VISIBLE_SEGMENT_SUPPORT_RADIUS,
         min_visible_fraction=VISIBLE_SEGMENT_MIN_VISIBLE_FRACTION,
     )
-    hough_outer_segments, hough_inner_segments, hough_present_classes = extract_hough_prediction_segments(
+    hough_outer_segments, hough_inner_segments, hough_present_classes, hough_merged_segments = extract_hough_prediction_segments(
         gray,
         candidate,
         edge_support_mask,
@@ -913,6 +1387,18 @@ def extract_prediction_segments(
         )
         if "inner_bottom" in contour_inner_roles and len(rescue_inner_segments) >= 4:
             pred_inner_segments = rescue_inner_segments
+
+    oblique_outer_segments, oblique_inner_segments = build_oblique_rescue_segments(
+        candidate,
+        edge_support_mask,
+        fallback_outer_segments,
+        fallback_inner_segments,
+        hough_merged_segments,
+    )
+    if len(oblique_outer_segments) >= 2:
+        pred_outer_segments = oblique_outer_segments
+    if not should_suppress_inner_segments(candidate) and len(oblique_inner_segments) >= 2:
+        pred_inner_segments = oblique_inner_segments
     return edge_support_mask, pred_outer_segments, pred_inner_segments
 
 
@@ -1163,7 +1649,7 @@ def detect_best_candidate(
             if candidate is not None:
                 candidates_by_threshold[threshold] = candidate
 
-        best: Candidate | None
+        best = max(candidates_by_threshold.values(), key=lambda item: item.score, default=None)
         candidate_120 = candidates_by_threshold.get(120)
         candidate_125 = candidates_by_threshold.get(125)
         if candidate_120 is not None and candidate_125 is not None:
@@ -1182,11 +1668,11 @@ def detect_best_candidate(
                 + THRESHOLD_125_AREA_WEIGHT * area_delta
                 + THRESHOLD_125_HEIGHT_WEIGHT * height_delta
             ) >= 0.0
-            best = candidate_125 if choose_125 else candidate_120
-        elif candidate_120 is not None or candidate_125 is not None:
+            preferred_mid = candidate_125 if choose_125 else candidate_120
+            if best is None or preferred_mid.score + THRESHOLD_MID_PREFERENCE_MAX_SCORE_DELTA >= best.score:
+                best = preferred_mid
+        elif best is None and (candidate_120 is not None or candidate_125 is not None):
             best = candidate_125 if candidate_125 is not None else candidate_120
-        else:
-            best = max(candidates_by_threshold.values(), key=lambda item: item.score, default=None)
 
         candidate_110 = candidates_by_threshold.get(110)
         image_height, image_width = gray.shape
