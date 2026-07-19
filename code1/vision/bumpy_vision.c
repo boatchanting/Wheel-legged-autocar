@@ -22,7 +22,8 @@
 #define EDGE_OUT_W          (EDGE_IMAGE_W - 3U) /* W-3 */
 
 #define EDGE_FIXED_THR      (1500)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动 188*120 条件下是1500，1000这个测试不通过*/
-#define EDGE_R_SQ_BUMPY     (0.00012f) /* R²       */
+#define EDGE_R              (0.945)
+#define EDGE_R_SQ_BUMPY     (EDGE_R * EDGE_R)  /* 结构张量 R²；对应显示 R > 0.945 r**2>0.893 */
 #define EDGE_MIN_STRONG_N   (300U)   /* 全图强边缘数 > 300 才判定    */
 
 /* ==========================================================================
@@ -47,6 +48,9 @@ static uint64 bumpy_edge_accumulate_strong_energy(const int16_t *gx_row,
                                                    const int16_t *gy_row,
                                                    uint32 width,
                                                    int32 threshold,
+                                                   uint64 *strong_gx_sq,
+                                                   uint64 *strong_gy_sq,
+                                                   int64 *strong_gx_gy,
                                                    uint16 *max_gradient_mag)
 {
     uint64 energy = 0U;
@@ -66,7 +70,13 @@ static uint64 bumpy_edge_accumulate_strong_energy(const int16_t *gx_row,
 
         if ((abs_gx >= threshold) || (gradient_mag >= threshold))
         {
-            energy += (uint64)((int64)gx * gx + (int64)gy * gy);
+            const uint64 gx_sq = (uint64)((int64)gx * gx);
+            const uint64 gy_sq = (uint64)((int64)gy * gy);
+
+            *strong_gx_sq += gx_sq;
+            *strong_gy_sq += gy_sq;
+            *strong_gx_gy += (int64)gx * gy;
+            energy += gx_sq + gy_sq;
         }
     }
 
@@ -90,6 +100,9 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
     int ring_idx;
     int row;
     uint64 strong_energy = 0U;
+    uint64 strong_gx_sq = 0U;
+    uint64 strong_gy_sq = 0U;
+    int64 strong_gx_gy = 0;
     uint16 max_gradient_mag = 0U;
     float r_sq, norm;
 
@@ -152,18 +165,25 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
                                                                    edge_gy_ring[i0],
                                                                    EDGE_OUT_W,
                                                                    EDGE_FIXED_THR,
+                                                                   &strong_gx_sq,
+                                                                   &strong_gy_sq,
+                                                                   &strong_gx_gy,
                                                                    &max_gradient_mag);
         }
 
         ring_idx = (ring_idx + 1) & 3;
     }
 
-    /* ---- 计算 R² 和方向向量 ---- */
+    /* ---- 计算结构张量方向一致性 R²=L² 和方向向量 ---- */
     if ((edge_accum.strong_count > 0U) && (strong_energy > 0U))
     {
-        r_sq = (float)(((double)((int64)edge_accum.sum_gx * edge_accum.sum_gx +
-                                 (int64)edge_accum.sum_gy * edge_accum.sum_gy)) /
-                       ((double)edge_accum.strong_count * (double)strong_energy));
+        const float inv_energy = 1.0f / (float)strong_energy;
+        const float tensor_diff =
+            (float)((int64)strong_gx_sq - (int64)strong_gy_sq) * inv_energy;
+        const float tensor_cross = 2.0f * (float)strong_gx_gy * inv_energy;
+
+        /* L² = ((A-B)/(A+B))² + (2C/(A+B))²；判定时无需开方。 */
+        r_sq = tensor_diff * tensor_diff + tensor_cross * tensor_cross;
         if (r_sq > 1.0f)
         {
             r_sq = 1.0f;
@@ -190,7 +210,7 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
         out->dir_y = 0.0f;
     }
 
-    /* ---- 判定颠簸路段: 全图 N > 300 且 R² > 0.043 ---- */
+    /* ---- 判定颠簸路段: 全图 N 达标且结构张量 L² 达标 ---- */
     out->is_bumpy = (edge_accum.strong_count > EDGE_MIN_STRONG_N
                      && r_sq > EDGE_R_SQ_BUMPY) ? 1U : 0U;
     out->coherence_r = edge_sqrtf(r_sq);
