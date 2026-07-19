@@ -29,6 +29,7 @@
  * DTCM 环形缓冲 (模块私有, 0 等待数据访问)
  * ========================================================================== */
 
+#define EDGE_RING_DEPTH     (4U)
 DTCM_BSS static int16_t  edge_gx_ring[EDGE_RING_DEPTH][EDGE_OUT_W];
 DTCM_BSS static int16_t  edge_gy_ring[EDGE_RING_DEPTH][EDGE_OUT_W];
 DTCM_BSS static int16_t  edge_row_buf[EDGE_IMAGE_W];
