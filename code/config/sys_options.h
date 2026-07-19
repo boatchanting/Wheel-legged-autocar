@@ -1,12 +1,12 @@
 #ifndef __SYS_OPTIONS_H__
 #define __SYS_OPTIONS_H__
 
-#define WIFI_USE 1 // 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 0 // 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
 #define WIFI_PROTOCOL_SELECT 2 // 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
-#define DEBUG_DISPLAY_CORE_SELECT 1      // 【显示核心选择】0: 0核独占屏幕  1: 1核视觉屏幕
+#define DEBUG_DISPLAY_CORE_SELECT 0      // 【显示核心选择】0: 0核独占屏幕  1: 1核视觉屏幕
 #define CAMERA_MENU_REFRESH_DIV 4U       // 【图像刷新分频】1核屏幕分频，每N帧刷新一次图像画面（降低刷新频率以减少CPU占用）
 #define CAMERA_MENU_DEBUG_LOG_ENABLE 0U  // 【图像调试日志】1: 打开1核 camera_menu 串口调试打印  0: 关闭
 #define CAMERA_MENU_DEBUG_LOG_DIV 20U    // 【日志打印分频】1核 camera_menu 串口打印分频，每N帧打印一次
