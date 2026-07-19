@@ -94,7 +94,11 @@ static void bumpy_edge_detect_init(void)
     memset((void *)edge_row_buf,  0, sizeof(edge_row_buf));
 }
 
-static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_output_t *out)
+static void bumpy_edge_detect_process(const uint8_t *gray,
+                                      uint8 reference_valid,
+                                      float reference_dir_x,
+                                      float reference_dir_y,
+                                      bumpy_edge_detect_output_t *out)
 {
     edge_dir_result_t edge_accum;
     int ring_idx;
@@ -104,7 +108,7 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
     uint64 strong_gy_sq = 0U;
     int64 strong_gx_gy = 0;
     uint16 max_gradient_mag = 0U;
-    float r_sq, norm;
+    float r_sq, r, norm;
 
     /* ---- 初始化累加器 ---- */
     edge_accum.sum_gx       = 0;
@@ -174,7 +178,7 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
         ring_idx = (ring_idx + 1) & 3;
     }
 
-    /* ---- 计算结构张量方向一致性 R²=L² 和方向向量 ---- */
+    /* ---- 计算结构张量方向一致性 R²=L² 和主梯度方向 ---- */
     if ((edge_accum.strong_count > 0U) && (strong_energy > 0U))
     {
         const float inv_energy = 1.0f / (float)strong_energy;
@@ -189,13 +193,81 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
             r_sq = 1.0f;
         }
 
-        /* 方向向量归一化 */
-        norm = edge_sqrtf((float)((int64_t)edge_accum.sum_gx * edge_accum.sum_gx
-                                + (int64_t)edge_accum.sum_gy * edge_accum.sum_gy));
-        if (norm > 0.0f)
+        r = edge_sqrtf(r_sq);
+
+        /*
+         * 由 cos(2θ)=(A-B)/D、sin(2θ)=2C/D 直接构造主特征向量。
+         * 分支形式避开 atan2f/sinf/cosf，并避免 θ 接近 90° 时的消减误差。
+         */
+        if ((edge_accum.strong_count > EDGE_MIN_STRONG_N) &&
+            (r_sq > EDGE_R_SQ_BUMPY))
         {
-            out->dir_x = (float)edge_accum.sum_gx / norm;
-            out->dir_y = (float)edge_accum.sum_gy / norm;
+            if (tensor_diff >= 0.0f)
+            {
+                out->dir_x = r + tensor_diff;
+                out->dir_y = tensor_cross;
+            }
+            else
+            {
+                out->dir_x = tensor_cross;
+                out->dir_y = r - tensor_diff;
+            }
+
+            norm = edge_sqrtf(out->dir_x * out->dir_x + out->dir_y * out->dir_y);
+            if (norm > 0.0f)
+            {
+                out->dir_x /= norm;
+                out->dir_y /= norm;
+            }
+            else
+            {
+                out->dir_x = 1.0f;
+                out->dir_y = 0.0f;
+            }
+
+            /* 结构张量只确定一条轴；选择与上一帧同向的符号，消除 180° 翻转。 */
+            if (reference_valid != 0U)
+            {
+                if ((out->dir_x * reference_dir_x + out->dir_y * reference_dir_y) < 0.0f)
+                {
+                    out->dir_x = -out->dir_x;
+                    out->dir_y = -out->dir_y;
+                }
+            }
+            else if ((out->dir_y < 0.0f) ||
+                     ((out->dir_y == 0.0f) && (out->dir_x < 0.0f)))
+            {
+                out->dir_x = -out->dir_x;
+                out->dir_y = -out->dir_y;
+            }
+        }
+        else
+        {
+            /* 当前帧方向不可信时保持上一次有效方向，防止噪声抖动。 */
+            norm = edge_sqrtf(reference_dir_x * reference_dir_x +
+                              reference_dir_y * reference_dir_y);
+            if ((reference_valid != 0U) && (norm > 0.0f))
+            {
+                out->dir_x = reference_dir_x / norm;
+                out->dir_y = reference_dir_y / norm;
+            }
+            else
+            {
+                out->dir_x = 1.0f;
+                out->dir_y = 0.0f;
+            }
+        }
+    }
+    else
+    {
+        r_sq = 0.0f;
+        r = 0.0f;
+        norm = edge_sqrtf(reference_dir_x * reference_dir_x +
+                          reference_dir_y * reference_dir_y);
+        if ((reference_valid != 0U) && (norm > 0.0f))
+        {
+            out->dir_x = reference_dir_x / norm;
+            out->dir_y = reference_dir_y / norm;
         }
         else
         {
@@ -203,17 +275,11 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
             out->dir_y = 0.0f;
         }
     }
-    else
-    {
-        r_sq = 0.0f;
-        out->dir_x = 1.0f;
-        out->dir_y = 0.0f;
-    }
 
     /* ---- 判定颠簸路段: 全图 N 达标且结构张量 L² 达标 ---- */
     out->is_bumpy = (edge_accum.strong_count > EDGE_MIN_STRONG_N
                      && r_sq > EDGE_R_SQ_BUMPY) ? 1U : 0U;
-    out->coherence_r = edge_sqrtf(r_sq);
+    out->coherence_r = r;
     out->strong_count = edge_accum.strong_count;
     out->total_pixels = edge_accum.total_pixels;
     out->max_gradient_mag = max_gradient_mag;
@@ -308,7 +374,11 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     RUNTIME_PROFILE_BEGIN(g_bumpy_vision_cost_profiler, BUMPY_VISION_PROFILE_TIMER);
 #endif
 
-    bumpy_edge_detect_process(gray, &edge);
+    bumpy_edge_detect_process(gray,
+                              next.start_seen,
+                              next.stable.direction_x,
+                              next.stable.direction_y,
+                              &edge);
 
     next.frame_id++;
     bumpy_vision_make_frame_result(&edge, &next.raw);
