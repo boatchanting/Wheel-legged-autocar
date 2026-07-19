@@ -3,8 +3,8 @@
 The image is never thresholded by intensity.  The only convolutions are the
 two rank-one 4x4 FIR filters:
 
-    Gx = [1, 3, 3, 1]^T * [-1, -1, 1, 1]
-    Gy = [-1, -1, 1, 1]^T * [1, 3, 3, 1]
+    Gx = [1, 3, 3, 1]^T * [-1, 0, 0, 1]
+    Gy = [-1, 0, 0, 1]^T * [1, 3, 3, 1]
 
 Each kernel is separable and its largest dimension is four.  Their L1
 gradient magnitude is then sparsified only for line fitting; that response
@@ -41,7 +41,7 @@ from detect_minefield_people_v2_json import (
 
 
 SMOOTH = np.array([1.0, 3.0, 3.0, 1.0], dtype=np.float32) / 8.0
-DIFF = np.array([-1.0, -1.0, 1.0, 1.0], dtype=np.float32) / 4.0
+DIFF = np.array([-1.0, 0.0, 0.0, 1.0], dtype=np.float32) / 2.0
 EDGE_PERCENTILE = 90.0
 MIN_EDGE_RESPONSE = 12.0
 HOUGH_THRESHOLD = 9
@@ -83,14 +83,16 @@ class LineCluster:
     y_at_center: float
     segment: Segment
     support: float
+    normal_alignment: float
+    polarity: float
 
 
-def gradient_edges(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
+def gradient_edges(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
     """Return a Sobel-L1 response map and a response-selected edge map.
 
     ``sepFilter2D`` performs the horizontal and vertical FIR passes implied by
     the two outer products above.  The binomial 1x4 factor suppresses texture
-    before the 1x4 box-difference factor; no Gaussian blur or brightness
+    before the wide-baseline central difference; no Gaussian blur or brightness
     threshold is applied before the differentiators.
     """
 
@@ -98,9 +100,11 @@ def gradient_edges(gray: np.ndarray) -> tuple[np.ndarray, np.ndarray, int]:
     gx = cv2.sepFilter2D(signal, cv2.CV_32F, DIFF, SMOOTH, borderType=cv2.BORDER_REPLICATE)
     gy = cv2.sepFilter2D(signal, cv2.CV_32F, SMOOTH, DIFF, borderType=cv2.BORDER_REPLICATE)
     magnitude = np.abs(gx) + np.abs(gy)
-    response_threshold = int(round(max(MIN_EDGE_RESPONSE, float(np.percentile(magnitude, EDGE_PERCENTILE)))))
-    edges = magnitude >= response_threshold
-    return magnitude, edges, response_threshold
+    # Directional gradient information is used later for line confidence.
+    line_response = magnitude
+    response_threshold = int(round(max(MIN_EDGE_RESPONSE, float(np.percentile(line_response, EDGE_PERCENTILE)))))
+    edges = line_response >= response_threshold
+    return gx, gy, magnitude, edges, response_threshold
 
 
 def normalize_segment(p0: np.ndarray, p1: np.ndarray) -> Segment:
@@ -136,19 +140,38 @@ def classify_line(segment: Segment) -> str | None:
     return "negative" if slope < 0.0 else "positive"
 
 
-def sample_support(magnitude: np.ndarray, segment: Segment) -> float:
+def sample_gradient(
+    gx: np.ndarray,
+    gy: np.ndarray,
+    magnitude: np.ndarray,
+    segment: Segment,
+) -> tuple[float, float, float]:
+    """Measure response strength, normal alignment and signed edge polarity."""
+
     count = max(8, int(round(segment_length(segment) * 1.4)))
     xs = np.linspace(segment.x1, segment.x2, count)
     ys = np.linspace(segment.y1, segment.y2, count)
     xi = np.clip(np.round(xs).astype(np.int32), 0, magnitude.shape[1] - 1)
     yi = np.clip(np.round(ys).astype(np.int32), 0, magnitude.shape[0] - 1)
-    return float(magnitude[yi, xi].mean())
+    dx = float(segment.x2 - segment.x1)
+    dy = float(segment.y2 - segment.y1)
+    length = max(1e-6, float(np.hypot(dx, dy)))
+    normal_response = gx[yi, xi] * (-dy / length) + gy[yi, xi] * (dx / length)
+    support = float(magnitude[yi, xi].mean())
+    alignment = float(np.mean(np.abs(normal_response) / np.maximum(magnitude[yi, xi], 1e-3)))
+    polarity = float(normal_response.mean())
+    return support, alignment, polarity
 
 
-def merge_cluster(items: list[tuple[Segment, float]], slope_kind: str, center_x: float) -> LineCluster:
-    weights = np.asarray([max(1.0, segment_length(segment) * support) for segment, support in items], dtype=np.float32)
+def merge_cluster(
+    items: list[tuple[Segment, float, float, float]],
+    slope_kind: str,
+    center_x: float,
+) -> LineCluster:
+    weights = np.asarray([max(1.0, segment_length(segment) * support) for segment, support, _, _ in items], dtype=np.float32)
     points = np.asarray(
-        [(segment.x1, segment.y1) for segment, _ in items] + [(segment.x2, segment.y2) for segment, _ in items],
+        [(segment.x1, segment.y1) for segment, _, _, _ in items]
+        + [(segment.x2, segment.y2) for segment, _, _, _ in items],
         dtype=np.float32,
     )
     point_weights = np.repeat(weights, 2)
@@ -168,11 +191,18 @@ def merge_cluster(items: list[tuple[Segment, float]], slope_kind: str, center_x:
         slope_kind=slope_kind,
         y_at_center=line_y_at_center(merged, center_x),
         segment=merged,
-        support=float(np.average([support for _, support in items], weights=weights)),
+        support=float(np.average([support for _, support, _, _ in items], weights=weights)),
+        normal_alignment=float(np.average([alignment for _, _, alignment, _ in items], weights=weights)),
+        polarity=float(np.average([polarity for _, _, _, polarity in items], weights=weights)),
     )
 
 
-def hough_clusters(magnitude: np.ndarray, edges: np.ndarray) -> dict[str, list[LineCluster]]:
+def hough_clusters(
+    gx: np.ndarray,
+    gy: np.ndarray,
+    magnitude: np.ndarray,
+    edges: np.ndarray,
+) -> dict[str, list[LineCluster]]:
     lines = cv2.HoughLinesP(
         (edges.astype(np.uint8) * 255),
         rho=1,
@@ -181,7 +211,7 @@ def hough_clusters(magnitude: np.ndarray, edges: np.ndarray) -> dict[str, list[L
         minLineLength=HOUGH_MIN_LENGTH,
         maxLineGap=HOUGH_MAX_GAP,
     )
-    groups: dict[str, list[tuple[Segment, float]]] = {"horizontal": [], "negative": [], "positive": []}
+    groups: dict[str, list[tuple[Segment, float, float, float]]] = {"horizontal": [], "negative": [], "positive": []}
     if lines is None:
         return {key: [] for key in groups}
     for raw in lines[:, 0, :]:
@@ -189,13 +219,14 @@ def hough_clusters(magnitude: np.ndarray, edges: np.ndarray) -> dict[str, list[L
         kind = classify_line(segment)
         if kind is None or segment_length(segment) < HOUGH_MIN_LENGTH:
             continue
-        groups[kind].append((segment, sample_support(magnitude, segment)))
+        support, alignment, polarity = sample_gradient(gx, gy, magnitude, segment)
+        groups[kind].append((segment, support, alignment, polarity))
 
     center_x = (magnitude.shape[1] - 1) * 0.5
     merged: dict[str, list[LineCluster]] = {}
     for kind, items in groups.items():
         items.sort(key=lambda item: line_y_at_center(item[0], center_x))
-        buckets: list[list[tuple[Segment, float]]] = []
+        buckets: list[list[tuple[Segment, float, float, float]]] = []
         for item in items:
             line_y = line_y_at_center(item[0], center_x)
             if not buckets:
@@ -226,7 +257,8 @@ def select_role_lines(clusters: dict[str, list[LineCluster]]) -> tuple[list[Segm
         # A bright tape produces two closely parallel gradient ridges.  Their
         # midpoint is the physical tape centreline, which is what peoplev3
         # annotates.  The following more distant ridge is the next frame.
-        if len(family) >= 3 and family[1].y_at_center - family[0].y_at_center <= 5.0:
+        paired = len(family) >= 2 and family[1].y_at_center - family[0].y_at_center <= 5.0
+        if len(family) >= 3 and paired:
             outer.append(midpoint_segment(family[0].segment, family[1].segment))
             inner.append(family[2].segment)
         else:
@@ -305,8 +337,8 @@ def detect_best_candidate(
 ) -> EdgeCandidate | None:
     """Detect line families; threshold arguments are ignored for edge-only mode."""
 
-    magnitude, edges, response_threshold = gradient_edges(gray)
-    clusters = hough_clusters(magnitude, edges)
+    gx, gy, magnitude, edges, response_threshold = gradient_edges(gray)
+    clusters = hough_clusters(gx, gy, magnitude, edges)
     outer_segments, inner_segments = select_role_lines(clusters)
     all_segments = outer_segments + inner_segments
     if len(all_segments) < 2:
@@ -317,8 +349,10 @@ def detect_best_candidate(
     line_count_score = min(1.0, len(all_segments) / 5.0)
     orientation_score = sum(bool(clusters[key]) for key in ("negative", "positive", "horizontal")) / 3.0
     support_values = [cluster.support for family in clusters.values() for cluster in family]
+    alignment_values = [cluster.normal_alignment for family in clusters.values() for cluster in family]
     response_score = min(1.0, float(np.mean(support_values)) / max(1.0, response_threshold * 1.8)) if support_values else 0.0
-    score = 0.42 * line_count_score + 0.36 * orientation_score + 0.22 * response_score
+    alignment_score = float(np.mean(alignment_values)) if alignment_values else 0.0
+    score = 0.38 * line_count_score + 0.30 * orientation_score + 0.20 * response_score + 0.12 * alignment_score
     far_view = estimate_far_view(bbox, gray.shape)
     area = float(width * height)
     touches_border = x == 0 or y == 0 or x + width >= gray.shape[1] or y + height >= gray.shape[0]

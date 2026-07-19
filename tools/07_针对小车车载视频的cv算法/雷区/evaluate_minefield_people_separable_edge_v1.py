@@ -80,7 +80,7 @@ def make_prediction_edge_debug(
 
 base_eval.make_prediction_binary_debug = make_prediction_edge_debug
 base_eval.DEFAULT_ANNOTATION_DIR = edge_detector.DATA_ROOT / "frames/雷区peoplev3"
-base_eval.DEFAULT_OUTPUT_DIR = edge_detector.DATA_ROOT / "test/peoplev3_v22"
+base_eval.DEFAULT_OUTPUT_DIR = edge_detector.DATA_ROOT / "test/peoplev3_v30"
 
 
 def main() -> None:
@@ -94,7 +94,7 @@ def main() -> None:
         summary["threshold_mode"] = {
             "type": "gradient-response-percentile",
             "value": {
-                "kernel": "[1,3,3,1]^T * [-1,-1,1,1] and transpose",
+                "kernel": "[1,3,3,1]^T * [-1,0,0,1] and transpose",
                 "percentile": edge_detector.EDGE_PERCENTILE,
             },
         }
