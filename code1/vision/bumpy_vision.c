@@ -28,13 +28,18 @@
 #define EDGE_IMAGE_H        (BUMPY_IMAGE_H)
 #define EDGE_OUT_W          (EDGE_IMAGE_W - 3U)
 
-#define EDGE_FIXED_THR      (1000)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动 188*120 条件下是1500，1000这个测试不通过*/
-#define EDGE_R_SQ_BUMPY     (0.81f)  /* R² > 0.81 (对应 R > 0.9)     */ /*主要调这两个，滤除背景用*/
+#define EDGE_FIXED_THR      (1500)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动 188*120 条件下是1500，1000这个测试不通过*/
+#define EDGE_R_SQ_BUMPY     (0.05f)  /* R² > 0.81 (对应 R > 0.9)     */ /*主要调这两个，滤除背景用*/
 #define EDGE_MIN_STRONG_N   (32)   /* 强边缘数 > 128 才判定        */ /*主要调这两个，判别面积用，体现在远近上*/
 
 /* ==========================================================================
  * DTCM 环形缓冲 (模块私有, 0 等待数据访问)
  * ========================================================================== */
+#undef EDGE_FIXED_THR
+#undef EDGE_MIN_STRONG_N
+#define EDGE_FIXED_THR      (1500)
+#define EDGE_MIN_STRONG_N   (1000U)
+
 DTCM_BSS static int16_t  edge_gx_ring[EDGE_RING_DEPTH][EDGE_OUT_W];
 DTCM_BSS static int16_t  edge_gy_ring[EDGE_RING_DEPTH][EDGE_OUT_W];
 DTCM_BSS static int16_t  edge_row_buf[EDGE_IMAGE_W];
@@ -46,6 +51,29 @@ DTCM_BSS static int16_t  edge_row_buf[EDGE_IMAGE_W];
 static float edge_sqrtf(float x)
 {
     return sqrtf(x);
+}
+
+static uint64 bumpy_edge_accumulate_strong_energy(const int16_t *gx_row,
+                                                   const int16_t *gy_row,
+                                                   uint32 width,
+                                                   int32 threshold)
+{
+    uint64 energy = 0U;
+
+    for (uint32 x = 0U; x < width; x++)
+    {
+        const int32 gx = gx_row[x];
+        const int32 gy = gy_row[x];
+        const int32 abs_gx = (gx < 0) ? -gx : gx;
+        const int32 abs_gy = (gy < 0) ? -gy : gy;
+
+        if ((abs_gx >= threshold) || ((abs_gx + abs_gy) >= threshold))
+        {
+            energy += (uint64)((int64)gx * gx + (int64)gy * gy);
+        }
+    }
+
+    return energy;
 }
 
 
@@ -65,6 +93,7 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
     edge_dir_result_t edge_accum;
     int ring_idx;
     int row;
+    uint64 strong_energy = 0U;
     float r_sq, norm;
 
     /* ---- 初始化累加器 ---- */
@@ -96,10 +125,11 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
         /* 3) 积累 4 行后触发垂直 pass + 方向累加 */
         if (row >= 3)
         {
-            int i0 = ring_idx;
-            int i1 = (ring_idx + 1) & 3;
-            int i2 = (ring_idx + 2) & 3;
-            int i3 = (ring_idx + 3) & 3;
+            edge_dir_result_t edge_row;
+            int i0 = (ring_idx + 1) & 3;
+            int i1 = (ring_idx + 2) & 3;
+            int i2 = (ring_idx + 3) & 3;
+            int i3 = ring_idx;
 
             conv1d_vert_gxgy_row(
                 edge_gx_ring[i0], edge_gx_ring[i1],
@@ -113,22 +143,33 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
             gradient_mag_dir_fixed(
                 edge_gx_ring[i0],
                 edge_gy_ring[i0],
-                &edge_accum,
+                &edge_row,
                 EDGE_FIXED_THR,
                 EDGE_OUT_W);
 
+            edge_accum.sum_gx += edge_row.sum_gx;
+            edge_accum.sum_gy += edge_row.sum_gy;
+            edge_accum.strong_count += edge_row.strong_count;
             edge_accum.total_pixels += EDGE_OUT_W;
+            strong_energy += bumpy_edge_accumulate_strong_energy(edge_gx_ring[i0],
+                                                                   edge_gy_ring[i0],
+                                                                   EDGE_OUT_W,
+                                                                   EDGE_FIXED_THR);
         }
 
         ring_idx = (ring_idx + 1) & 3;
     }
 
     /* ---- 计算 R² 和方向向量 ---- */
-    if (edge_accum.strong_count > 0U)
+    if ((edge_accum.strong_count > 0U) && (strong_energy > 0U))
     {
-        r_sq = (float)((int64_t)edge_accum.sum_gx * edge_accum.sum_gx
-                     + (int64_t)edge_accum.sum_gy * edge_accum.sum_gy)
-             / ((float)edge_accum.strong_count * (float)edge_accum.strong_count);
+        r_sq = (float)(((double)((int64)edge_accum.sum_gx * edge_accum.sum_gx +
+                                 (int64)edge_accum.sum_gy * edge_accum.sum_gy)) /
+                       ((double)edge_accum.strong_count * (double)strong_energy));
+        if (r_sq > 1.0f)
+        {
+            r_sq = 1.0f;
+        }
 
         /* 方向向量归一化 */
         norm = edge_sqrtf((float)((int64_t)edge_accum.sum_gx * edge_accum.sum_gx

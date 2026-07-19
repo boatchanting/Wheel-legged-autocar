@@ -824,21 +824,21 @@ void render_bumpy_vision_to_image(void)
 
     if ((bumpy_out->stable_detected != 0U) || (bumpy_out->raw_detected != 0U))
     {
-        const int center_x = BUMPY_IMAGE_W / 2;
-        const int center_y = BUMPY_IMAGE_H / 2;
-        const int line_length = (BUMPY_IMAGE_H * 46) / 100;
+        const int center_x = PVC_IMAGE_W / 2;
+        const int center_y = PVC_IMAGE_H / 2;
+        const int line_length = (PVC_IMAGE_H * 46) / 100;
         const int x0 = clamp_int_to_range(center_x - (int)(result.direction_x * line_length),
                                           0,
-                                          BUMPY_IMAGE_W - 1);
+                                          PVC_IMAGE_W - 1);
         const int y0 = clamp_int_to_range(center_y - (int)(result.direction_y * line_length),
                                           0,
-                                          BUMPY_IMAGE_H - 1);
+                                          PVC_IMAGE_H - 1);
         const int x1 = clamp_int_to_range(center_x + (int)(result.direction_x * line_length),
                                           0,
-                                          BUMPY_IMAGE_W - 1);
+                                          PVC_IMAGE_W - 1);
         const int y1 = clamp_int_to_range(center_y + (int)(result.direction_y * line_length),
                                           0,
-                                          BUMPY_IMAGE_H - 1);
+                                          PVC_IMAGE_H - 1);
 
         draw_line_on_image(x0, y0, x1, y1, 0U);
     }

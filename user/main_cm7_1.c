@@ -160,7 +160,7 @@ int main(void)
             }
             if(1) // VisionIpc_Core1_ShouldRunBumpy() ，测试时用 1 0
             {
-                bumpy_vision_process_camera_frame(compressed_image_copy[0]);
+                bumpy_vision_process_camera_frame(image_copy[0]);
                 render_bumpy_vision_to_image();
             }
 #endif
