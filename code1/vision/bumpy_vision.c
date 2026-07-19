@@ -28,7 +28,7 @@
 #define EDGE_IMAGE_H        (BUMPY_IMAGE_H)
 #define EDGE_OUT_W          (EDGE_IMAGE_W - 3U)
 
-#define EDGE_FIXED_THR      (1500)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动*/
+#define EDGE_FIXED_THR      (1000)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动 188*120 条件下是1500，1000这个测试不通过*/
 #define EDGE_R_SQ_BUMPY     (0.81f)  /* R² > 0.81 (对应 R > 0.9)     */ /*主要调这两个，滤除背景用*/
 #define EDGE_MIN_STRONG_N   (32)   /* 强边缘数 > 128 才判定        */ /*主要调这两个，判别面积用，体现在远近上*/
 
