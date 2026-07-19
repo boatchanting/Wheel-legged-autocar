@@ -145,7 +145,7 @@ int main(void)
                 bumpy_vision_reset_filter();
             }
 
-            if(0)
+            if(0) // VisionIpc_Core1_ShouldRunPvc() ，测试时用 1 0
             {
 
                 pvc_vision_process_camera_frame(compressed_image_copy[0]);//将压缩图像输入到 PVC 检测算法中
@@ -153,12 +153,12 @@ int main(void)
                 // 4. 将 PVC 检测框直接画在 compressed_image_copy[0] 上，供 WIFI 发送显示
                 render_pvc_vision_to_image();//算法执行完毕后，将 PVC 检测框画在 image_copy 上,必须放在这！如果放在算法前面，画的黑线会破坏算法寻找白色的逻辑
             }
-            if(0)
+            if(0) // VisionIpc_Core1_ShouldRunBridge() ，测试时用 1 0
             {
                 bridge_vision_process_camera_frame(compressed_image_copy[0]);
                 render_bridge_vision_to_image();
             }
-            if(1)
+            if(1) // VisionIpc_Core1_ShouldRunBumpy() ，测试时用 1 0
             {
                 bumpy_vision_process_camera_frame(compressed_image_copy[0]);
                 render_bumpy_vision_to_image();
