@@ -7,11 +7,11 @@ extern uint8 g_special_action_trigger;
 // 旋转总角度下限（deg）；外部即使给得更小，也会被钳到这个值。
 #define SPIN_TARGET_ANGLE_MIN     MINEFIELD_SPIN_MIN_TOTAL_ANGLE
 // 旋转阶段的最大角速度指令（deg/s）。
-#define SPIN_MAX_SPEED            360.0f
+#define SPIN_MAX_SPEED            500.0f
 // 角速度爬升斜率；避免转圈动作起转过猛。
-#define SPIN_ACCEL_STEP           0.6f
+#define SPIN_ACCEL_STEP           1.2f
 // 减速区角度（deg）；进入最后这段角度后开始线性收速。
-#define SPIN_DECEL_ANGLE          90.0f
+#define SPIN_DECEL_ANGLE          120.0f
 // 旋转末段的最小角速度指令（deg/s）；避免末段因速度过低卡住。
 #define SPIN_MIN_SPEED            (SPIN_MAX_SPEED * 0.5f)
 // 旋转输出符号；用于统一适配底层角速度方向定义。

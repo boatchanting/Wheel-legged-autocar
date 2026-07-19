@@ -47,13 +47,13 @@
 #define NAV_POINT_START_HEADING_TOLERANCE       0.3f
 
 // 在线速度规划的快速巡航速度指令。
-#define NAV_POINT_SPEED_FAST                    (-320.0f)
+#define NAV_POINT_SPEED_FAST                    (-1013.0f)
 // 在线速度规划的慢速逼近速度指令。
-#define NAV_POINT_SPEED_SLOW                    (-80.0f)
+#define NAV_POINT_SPEED_SLOW                    (-120.0f)
 // 停车速度指令。
 #define NAV_POINT_SPEED_STOP                    (0.0f)
 // v^2 = 2ad 中的“指令域减速度”。
-#define NAV_POINT_SPEED_DECEL_CMD2_PER_MM       80.0f
+#define NAV_POINT_SPEED_DECEL_CMD2_PER_MM       110.0f
 // 编码器刹停预测的导航调用周期（s）；NavReplay_Process 当前约 10ms 调用一次。
 #define NAV_POINT_STOP_PREDICT_DT_S             0.010f
 // 预测刹停点相对目标边界的死区（mm）；小误差不调目标速度，避免来回抖。
