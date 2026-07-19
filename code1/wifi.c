@@ -765,10 +765,11 @@ void render_line_vision_to_image(void)
 #if VISION_IMAGE_RENDER_NUMERIC_ENABLE
 static void draw_bumpy_metric_label(int x, int y, uint8 metric, uint8 color)
 {
-    static const uint8 glyph[2][5] =
+    static const uint8 glyph[3][5] =
     {
         {6U, 5U, 6U, 5U, 5U},
-        {5U, 7U, 7U, 7U, 5U}
+        {5U, 7U, 7U, 7U, 5U},
+        {5U, 7U, 7U, 5U, 5U}
     };
 
     for (int row = 0; row < 5; row++)
@@ -819,6 +820,8 @@ void render_bumpy_vision_to_image(void)
         draw_bumpy_r_value(5, 2, r_x1000, 0U);
         draw_bumpy_metric_label(0, 9, 1U, 0U);
         (void)draw_uint3x5_on_image(5, 9, result.strong_count, 0U);
+        draw_bumpy_metric_label(0, 16, 2U, 0U);
+        (void)draw_uint3x5_on_image(5, 16, result.max_gradient_mag, 0U);
     }
 #endif
 

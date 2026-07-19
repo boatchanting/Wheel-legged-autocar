@@ -1,5 +1,5 @@
 /**
- * @file    vision_edge_detect.c
+ * @file    bumpy_vision.c
  * @brief   边缘方向检测 — 颠簸路段视觉导航 (极简封装实现)
  * @details 完整边缘检测流水线，全部内部状态自包含。
  *          对外仅暴露 EdgeDetect_Init() 和 EdgeDetect_Process()。
@@ -16,29 +16,18 @@
 /* ==========================================================================
  * 内部常量 (模块自包含, 不暴露到头文件)
  * ========================================================================== */
-#define EDGE_IMAGE_W        (96U)
-#define EDGE_IMAGE_H        (60U)
-#define EDGE_OUT_W          (185U)   /* W-3 */
-#define EDGE_RING_DEPTH     (4U)
 
-#undef EDGE_IMAGE_W
-#undef EDGE_IMAGE_H
-#undef EDGE_OUT_W
 #define EDGE_IMAGE_W        (BUMPY_IMAGE_W)
 #define EDGE_IMAGE_H        (BUMPY_IMAGE_H)
-#define EDGE_OUT_W          (EDGE_IMAGE_W - 3U)
+#define EDGE_OUT_W          (EDGE_IMAGE_W - 3U) /* W-3 */
 
 #define EDGE_FIXED_THR      (1500)   /* 固定阈值: |Gx|+|Gy| >= thr  一般不太会动 188*120 条件下是1500，1000这个测试不通过*/
-#define EDGE_R_SQ_BUMPY     (0.05f)  /* R² > 0.81 (对应 R > 0.9)     */ /*主要调这两个，滤除背景用*/
-#define EDGE_MIN_STRONG_N   (32)   /* 强边缘数 > 128 才判定        */ /*主要调这两个，判别面积用，体现在远近上*/
+#define EDGE_R_SQ_BUMPY     (0.043f)  /* R² > 0.81 (对应 R > 0.9)     */ /*主要调这两个，滤除背景用*/
+#define EDGE_MIN_STRONG_N   (300U)   /* 强边缘数 > 128 才判定        */ /*主要调这两个，判别面积用，体现在远近上*/
 
 /* ==========================================================================
  * DTCM 环形缓冲 (模块私有, 0 等待数据访问)
  * ========================================================================== */
-#undef EDGE_FIXED_THR
-#undef EDGE_MIN_STRONG_N
-#define EDGE_FIXED_THR      (1500)
-#define EDGE_MIN_STRONG_N   (1000U)
 
 DTCM_BSS static int16_t  edge_gx_ring[EDGE_RING_DEPTH][EDGE_OUT_W];
 DTCM_BSS static int16_t  edge_gy_ring[EDGE_RING_DEPTH][EDGE_OUT_W];
@@ -56,7 +45,8 @@ static float edge_sqrtf(float x)
 static uint64 bumpy_edge_accumulate_strong_energy(const int16_t *gx_row,
                                                    const int16_t *gy_row,
                                                    uint32 width,
-                                                   int32 threshold)
+                                                   int32 threshold,
+                                                   uint16 *max_gradient_mag)
 {
     uint64 energy = 0U;
 
@@ -66,8 +56,14 @@ static uint64 bumpy_edge_accumulate_strong_energy(const int16_t *gx_row,
         const int32 gy = gy_row[x];
         const int32 abs_gx = (gx < 0) ? -gx : gx;
         const int32 abs_gy = (gy < 0) ? -gy : gy;
+        const int32 gradient_mag = abs_gx + abs_gy;
 
-        if ((abs_gx >= threshold) || ((abs_gx + abs_gy) >= threshold))
+        if (gradient_mag > (int32)*max_gradient_mag)
+        {
+            *max_gradient_mag = (gradient_mag > 65535) ? 65535U : (uint16)gradient_mag;
+        }
+
+        if ((abs_gx >= threshold) || (gradient_mag >= threshold))
         {
             energy += (uint64)((int64)gx * gx + (int64)gy * gy);
         }
@@ -94,6 +90,7 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
     int ring_idx;
     int row;
     uint64 strong_energy = 0U;
+    uint16 max_gradient_mag = 0U;
     float r_sq, norm;
 
     /* ---- 初始化累加器 ---- */
@@ -154,7 +151,8 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
             strong_energy += bumpy_edge_accumulate_strong_energy(edge_gx_ring[i0],
                                                                    edge_gy_ring[i0],
                                                                    EDGE_OUT_W,
-                                                                   EDGE_FIXED_THR);
+                                                                   EDGE_FIXED_THR,
+                                                                   &max_gradient_mag);
         }
 
         ring_idx = (ring_idx + 1) & 3;
@@ -198,6 +196,7 @@ static void bumpy_edge_detect_process(const uint8_t *gray, bumpy_edge_detect_out
     out->coherence_r = edge_sqrtf(r_sq);
     out->strong_count = edge_accum.strong_count;
     out->total_pixels = edge_accum.total_pixels;
+    out->max_gradient_mag = max_gradient_mag;
 }
 
 volatile runtime_profiler_t g_bumpy_vision_cost_profiler = {0};
@@ -234,6 +233,7 @@ static void bumpy_vision_make_frame_result(const bumpy_edge_detect_output_t *edg
     result->coherence_r = edge->coherence_r;
     result->strong_count = edge->strong_count;
     result->total_pixels = edge->total_pixels;
+    result->max_gradient_mag = edge->max_gradient_mag;
 }
 
 void bumpy_vision_reset_filter(void)

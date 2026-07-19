@@ -72,7 +72,7 @@ static void CameraMenu_DrawStaticLayout(void)
     ips200_show_string(0, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "BMP D/S:");
     ips200_show_string(120, y + 6U * CAMERA_MENU_TEXT_Y_STEP, "R:");
     ips200_show_string(0, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "BMP N:");
-    ips200_show_string(120, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "C:");
+    ips200_show_string(120, y + 7U * CAMERA_MENU_TEXT_Y_STEP, "M:");
     ips200_show_string(0, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "B L:");
     ips200_show_string(78, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "A:");
     ips200_show_string(150, y + 8U * CAMERA_MENU_TEXT_Y_STEP, "X:");
@@ -193,7 +193,7 @@ void CameraMenu_Update(void)
     ips200_show_uint(96, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable_detected, 1);
     ips200_show_float(150, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.coherence_r, 1, 3);
     ips200_show_uint(54, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.strong_count, 5);
-    ips200_show_uint(138, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.confidence_u16, 4);
+    ips200_show_uint(138, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.max_gradient_mag, 5);
 
     ips200_show_uint(30, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.last_us, 5);
     ips200_show_uint(100, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.avg_us, 5);
