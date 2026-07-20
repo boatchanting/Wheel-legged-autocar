@@ -11,7 +11,11 @@ extern volatile uint8_t minefield_flag;
 #define MINEFIELD_SPIN_MIN_TOTAL_ANGLE            (MINEFIELD_SPIN_BASE_CIRCLE_ANGLE + MINEFIELD_SPIN_RESERVE_ANGLE)
 // 满足最小转圈角后，出口航向在该误差内即可释放，剩余偏差由导航边跑边修。
 #define MINEFIELD_SPIN_EXIT_RELEASE_YAW_TOLERANCE 35.0f
+#define MINEFIELD_SPIN_ABORT_NONE                 0U
+#define MINEFIELD_SPIN_ABORT_TIMEOUT              1U
+#define MINEFIELD_SPIN_ABORT_STALLED              2U
 extern uint8 vision_detected_marker;//雷区调用,测试用
+extern volatile uint8_t g_minefield_spin_abort_reason;
 /**
  * @brief 初始化/复位旋转控制的相关变量
  */

@@ -13,20 +13,6 @@
 
 // 普通路径点的通过半径（mm）；进入后直接推进索引，不停车。
 #define NAV_POINT_PATH_ARRIVE_RADIUS            70.0f
-// 特殊点落点预算：estimated_stop_dist = v^2 / (2 * STOP_DECEL)。
-// 调参顺序：
-// 1) 停太早、圈外刹死：调大 NAV_POINT_SPECIAL_STOP_DECEL_MM_S2。
-// 2) 冲过中心：调小 NAV_POINT_SPECIAL_STOP_DECEL_MM_S2。
-// 3) 还容易冲：加大 NAV_POINT_SPECIAL_BRAKE_SAFETY_MARGIN。
-// 4) 过于保守：减小 NAV_POINT_SPECIAL_BRAKE_SAFETY_MARGIN。
-// 5) 强刹忽大忽小、抽动：加大 NAV_POINT_SPECIAL_BRAKE_BLEND_DIST。
-// 6) 强刹反应慢：减小 NAV_POINT_SPECIAL_BRAKE_BLEND_DIST。
-// 7) 最后再调 EXECUTE_RADIUS 和 TRIGGER_SPEED。
-#define NAV_POINT_SPECIAL_STOP_DECEL_MM_S2      90.0f
-// 刹车安全余量（mm）；越大越保守，越早提高强停刹强度。
-#define NAV_POINT_SPECIAL_BRAKE_SAFETY_MARGIN   180.0f
-// 强停刹强度从弱到强的过渡距离（mm）；越大越平顺，越小越敏捷。
-#define NAV_POINT_SPECIAL_BRAKE_BLEND_DIST      600.0f
 // 特殊动作最终执行中心圈半径（mm）；小于雷区物理半径，避免边缘或外侧提前旋转。
 #define NAV_POINT_SPECIAL_EXECUTE_RADIUS        180.0f
 // 末端低速补中心范围（mm）；低速且未进执行圈时用爬行速度继续贴近中心。
@@ -35,6 +21,7 @@
 #define NAV_POINT_SPECIAL_CRAWL_SPEED           (-90.0f)
 // 执行动作允许的最大实际速度（mm/s）；必须同时满足执行圈和航向条件。
 #define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    80.0f
+#define NAV_POINT_SPECIAL_ENTRY_SPEED_MM_S      80.0f
 // 最后点通过结束半径（mm）：只判定完成，不强制精确停车。
 #define NAV_POINT_FINAL_PASS_RADIUS             350.0f
 // High-speed finish fallback: if the car crosses the last segment end line
@@ -67,6 +54,16 @@
 #define NAV_POINT_SPEED_STOP                    (0.0f)
 // v^2 = 2ad 中的“指令域减速度”。
 #define NAV_POINT_SPEED_DECEL_CMD2_PER_MM       80.0f
+// 编码器刹停预测的导航调用周期（s）；NavReplay_Process 当前约 10ms 调用一次。
+#define NAV_POINT_STOP_PREDICT_DT_S             0.010f
+// 预测刹停点相对目标边界的死区（mm）；小误差不调目标速度，避免来回抖。
+#define NAV_POINT_STOP_PREDICT_DEADBAND_MM      35.0f
+// 编码器减速度估计滤波系数；越大越跟手，越小越平稳。
+#define NAV_POINT_STOP_PREDICT_DECEL_ALPHA      0.25f
+// 编码器减速度估计下限，避免接近 0 时停车距离发散。
+#define NAV_POINT_STOP_PREDICT_DECEL_MIN        20.0f
+// 编码器减速度估计上限，避免瞬时编码器噪声让目标速度突然放大。
+#define NAV_POINT_STOP_PREDICT_DECEL_MAX        300.0f
 // 速度指令上升斜率。
 #define NAV_POINT_SPEED_ACCEL_STEP              18.0f
 // 速度指令正常减速斜率。
