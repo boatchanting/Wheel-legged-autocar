@@ -214,6 +214,84 @@ def select_clipped_outer_bottom_roles(
     return outer, inner
 
 
+def refine_segment_with_inliers(
+    segment: base.Segment,
+    edge_x: np.ndarray,
+    edge_y: np.ndarray,
+    shape: tuple[int, int],
+) -> base.Segment:
+    """Bridge-style exhaustive line fit, constrained to one Hough segment."""
+
+    dx = float(segment.x2 - segment.x1)
+    dy = float(segment.y2 - segment.y1)
+    length = float(np.hypot(dx, dy))
+    if length < 12.0 or abs(dx) < 4.0:
+        return segment
+
+    tangent_x, tangent_y = dx / length, dy / length
+    relative_x = edge_x.astype(np.float32) - float(segment.x1)
+    relative_y = edge_y.astype(np.float32) - float(segment.y1)
+    along = relative_x * tangent_x + relative_y * tangent_y
+    distance = np.abs(relative_x * tangent_y - relative_y * tangent_x)
+    local = (along >= -3.0) & (along <= length + 3.0) & (distance <= 2.2)
+    xs = edge_x[local].astype(np.float32)
+    ys = edge_y[local].astype(np.float32)
+    if xs.size < 10:
+        return segment
+
+    # Bound the pair count while preserving the full support range.
+    if xs.size > 80:
+        order = np.argsort(xs)
+        sample = order[np.linspace(0, len(order) - 1, 80).astype(np.int32)]
+        xs, ys = xs[sample], ys[sample]
+
+    original_slope = dy / dx
+    best_inliers: np.ndarray | None = None
+    best_score = -1e9
+    for first in range(xs.size - 1):
+        for second in range(first + 1, xs.size):
+            delta_x = float(xs[second] - xs[first])
+            if abs(delta_x) < 4.0:
+                continue
+            slope = float((ys[second] - ys[first]) / delta_x)
+            if abs(slope - original_slope) > 0.16:
+                continue
+            intercept = float(ys[first] - slope * xs[first])
+            residuals = np.abs(ys - (slope * xs + intercept))
+            inliers = residuals <= 1.15
+            count = int(inliers.sum())
+            if count < 8:
+                continue
+            span = float(xs[inliers].max() - xs[inliers].min())
+            if span < length * 0.55:
+                continue
+            score = count * 10.0 + span * 1.8 - float(residuals[inliers].mean()) * 6.0
+            if score > best_score:
+                best_score = score
+                best_inliers = inliers
+
+    if best_inliers is None:
+        return segment
+    slope, intercept = np.polyfit(xs[best_inliers], ys[best_inliers], 1)
+    y1 = float(slope * segment.x1 + intercept)
+    y2 = float(slope * segment.x2 + intercept)
+    refined = base.Segment(segment.x1, int(round(y1)), segment.x2, int(round(y2)))
+    endpoint_shift = (abs(refined.y1 - segment.y1) + abs(refined.y2 - segment.y2)) * 0.5
+    if endpoint_shift > 1.8:
+        return segment
+    if not (0 <= refined.y1 < shape[0] and 0 <= refined.y2 < shape[0]):
+        return segment
+    return refined
+
+
+def refine_segments_with_inliers(
+    segments: list[base.Segment],
+    edges: np.ndarray,
+) -> list[base.Segment]:
+    edge_y, edge_x = np.where(edges)
+    return [refine_segment_with_inliers(segment, edge_x, edge_y, edges.shape) for segment in segments]
+
+
 def detect_best_candidate(
     gray: np.ndarray,
     fixed_threshold: int | None = None,
@@ -222,6 +300,8 @@ def detect_best_candidate(
     gx, gy, magnitude, edges, response_threshold = base.gradient_edges(gray)
     clusters = base.hough_clusters(gx, gy, magnitude, edges)
     outer_segments, inner_segments = select_geometric_role_lines(clusters, gray.shape)
+    outer_segments = refine_segments_with_inliers(outer_segments, edges)
+    inner_segments = refine_segments_with_inliers(inner_segments, edges)
     all_segments = outer_segments + inner_segments
     if not all_segments:
         return None
