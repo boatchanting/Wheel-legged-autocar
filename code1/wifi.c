@@ -798,48 +798,37 @@ static void draw_bumpy_r_value(int x, int y, uint16 value, uint8 color)
 void render_bumpy_vision_to_image(void)
 {
     const volatile bumpy_vision_output_t *bumpy_out = &g_bumpy_vision_output;
-    bumpy_vision_frame_result_t result;
-
-    /* 1. 决定画稳定数据还是原始数据 */
-    if (bumpy_out->stable_detected)
-    {
-        result = bumpy_out->stable;
-    }
-    else
-    {
-        result = bumpy_out->raw;
-    }
 
 #if VISION_IMAGE_RENDER_ENABLE && VISION_IMAGE_RENDER_NUMERIC_ENABLE
     {
-        uint16 r_x1000 = (uint16)clamp_int_to_range((int)(result.coherence_r * 1000.0f),
-                                                     0,
-                                                     999);
+        const uint16 r_x1000 = (uint16)clamp_int_to_range((int)(bumpy_out->coherence_r * 1000.0f),
+                                                            0,
+                                                            999);
 
         draw_bumpy_metric_label(0, 2, 0U, 0U);
         draw_bumpy_r_value(5, 2, r_x1000, 0U);
         draw_bumpy_metric_label(0, 9, 1U, 0U);
-        (void)draw_uint3x5_on_image(5, 9, result.strong_count, 0U);
+        (void)draw_uint3x5_on_image(5, 9, bumpy_out->strong_count, 0U);
         draw_bumpy_metric_label(0, 16, 2U, 0U);
-        (void)draw_uint3x5_on_image(5, 16, result.max_gradient_mag, 0U);
+        (void)draw_uint3x5_on_image(5, 16, bumpy_out->max_gradient_mag, 0U);
     }
 #endif
 
-    if ((bumpy_out->stable_detected != 0U) || (bumpy_out->raw_detected != 0U))
+    if (bumpy_out->bumpy_detected != 0U)
     {
         const int center_x = PVC_IMAGE_W / 2;
         const int center_y = PVC_IMAGE_H / 2;
         const int line_length = (PVC_IMAGE_H * 46) / 100;
-        const int x0 = clamp_int_to_range(center_x - (int)(result.direction_x * line_length),
+        const int x0 = clamp_int_to_range(center_x - (int)(bumpy_out->direction_x * line_length),
                                           0,
                                           PVC_IMAGE_W - 1);
-        const int y0 = clamp_int_to_range(center_y - (int)(result.direction_y * line_length),
+        const int y0 = clamp_int_to_range(center_y - (int)(bumpy_out->direction_y * line_length),
                                           0,
                                           PVC_IMAGE_H - 1);
-        const int x1 = clamp_int_to_range(center_x + (int)(result.direction_x * line_length),
+        const int x1 = clamp_int_to_range(center_x + (int)(bumpy_out->direction_x * line_length),
                                           0,
                                           PVC_IMAGE_W - 1);
-        const int y1 = clamp_int_to_range(center_y + (int)(result.direction_y * line_length),
+        const int y1 = clamp_int_to_range(center_y + (int)(bumpy_out->direction_y * line_length),
                                           0,
                                           PVC_IMAGE_H - 1);
 

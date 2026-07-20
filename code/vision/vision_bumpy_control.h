@@ -25,8 +25,6 @@ extern "C" {
 
 /* 控制参数宏定义区 */
 #define VISION_BUMPY_STALE_TIMEOUT_TICKS       (120U)  // 数据包过期超时时间(2ms周期计数, 120=240ms)
-#define VISION_BUMPY_K_STEER_DEG_PER_PX        (-0.30f) // 像素到角度的转换系数(度/像素)
-#define VISION_BUMPY_CENTER_OFFSET_PX_X100     (1600)    // 中线补偿偏移(放大100倍的像素). 增大该值会把轨迹整体往右推一点
 #define VISION_BUMPY_MAX_ERR_DEG               (18.0f)   // 最大转向误差角度限制(度)
 #define VISION_BUMPY_DEADBAND_DEG              (0.20f)  // 转向误差死区(度), 小于此值的误差将被忽略
 #define VISION_BUMPY_PID_KP                    (1.00f)
@@ -66,15 +64,12 @@ typedef struct
 {
     uint8 enabled;                         // 控制使能标志(1:使能, 0:禁用)
     uint8 has_new_packet;                   // 新数据包标志(1:有新数据, 0:无新数据)
-    uint8 stable_detected;                  // 稳定检测标志(1:稳定检测到凹凸路面, 0:未稳定检测)
-    uint8 raw_detected;                    // 原始检测标志(1:检测到凹凸路面, 0:未检测)
-    uint8 phase;                           // 凹凸路面阶段(对应bumpy_vision.h中的BumpyPhase)
-    uint8 mode;                            // 控制模式(对应bumpy_vision.h中的BumpyControllerMode)
-    uint16 confidence_u16;                 // 检测置信度(0-65535)
+    uint8 bumpy_detected;                  // 当前帧颠簸路段检测结果
     uint16 stale_ticks;                    // 数据包过期计数器(2ms周期计数)
     uint32 last_seq;                       // 上次接收到的数据包序列号
     vision_bumpy_control_state_e state;    // 当前控制状态
-    int16 steer_error_px_x100;             // 转向误差像素值(放大100倍)
+    float direction_x;                     // 视觉方向向量 X 分量
+    float direction_y;                     // 视觉方向向量 Y 分量
     float err_degree_cmd;                  // 转向误差角度指令(度)
     vision_bumpy_pid_t pid;
 } vision_bumpy_control_status_t;

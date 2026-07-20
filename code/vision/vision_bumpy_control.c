@@ -5,6 +5,7 @@
  */
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_ipc_core0.h"
+#include <math.h>
 
 /* 全局变量定义区 */
 volatile vision_bumpy_control_status_t g_vision_bumpy_control_status = {0};  ///< 凹凸路面控制状态全局变量(供外部访问)
@@ -45,19 +46,16 @@ static float vision_bumpy_constrain_f(float value, float min_value, float max_va
 }
 
 /**
- * @brief   计算转向误差角度
+ * @brief   根据视觉方向向量计算转向误差角度
  * @param   packet 视觉数据包指针
  * @return  计算得到的转向误差角度(度)
- * @details 1. 将像素误差转换为角度误差
- *          2. 对角度误差进行限幅
- *          3. 应用死区处理
+ * @details 方向向量以图像下方为前向（+Y），X 为横向；其相对前向的夹角
+ *          直接作为方向 PID 的输入。
  */
 static float vision_bumpy_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
-    const float steer_px =
-        (float)(packet->bumpy_steer_error_px_x100 + VISION_BUMPY_CENTER_OFFSET_PX_X100) * 0.01f;
-    /* 先做中线偏移补偿，再还原为实际像素值 */
-    float err = steer_px * VISION_BUMPY_K_STEER_DEG_PER_PX;                  // 将像素误差转换为角度误差
+    const float rad_to_deg = 57.2957795f;
+    float err = -atan2f(packet->bumpy_direction_x, packet->bumpy_direction_y) * rad_to_deg;
 
     /* 方向控制仅基于视觉，不叠加惯导角度闭环；按图像误差直接映射。 */
     err = vision_bumpy_constrain_f(err, -VISION_BUMPY_MAX_ERR_DEG, VISION_BUMPY_MAX_ERR_DEG);  // 限制最大误差角度
@@ -199,12 +197,9 @@ void VisionBumpyControl_Update_2ms(void)
         (g_bumpy_ctrl_shadow.stale_ticks > VISION_BUMPY_STALE_TIMEOUT_TICKS))  // 数据包已过期
     {
         g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_STALE;       // 设置状态为数据过期
-        g_bumpy_ctrl_shadow.stable_detected = 0U;                   // 清零稳定检测标志
-        g_bumpy_ctrl_shadow.raw_detected = 0U;                      // 清零原始检测标志
-        g_bumpy_ctrl_shadow.phase = 0U;                             // 清零相位
-        g_bumpy_ctrl_shadow.mode = 0U;                              // 清零模式
-        g_bumpy_ctrl_shadow.confidence_u16 = 0U;                    // 清零置信度
-        g_bumpy_ctrl_shadow.steer_error_px_x100 = 0;               // 清零转向误差
+        g_bumpy_ctrl_shadow.bumpy_detected = 0U;
+        g_bumpy_ctrl_shadow.direction_x = 0.0f;
+        g_bumpy_ctrl_shadow.direction_y = 0.0f;
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                  // 清零误差指令
         vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
         g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;        // 更新全局状态
@@ -215,25 +210,17 @@ void VisionBumpyControl_Update_2ms(void)
     }
 
     /* 更新影子变量中的检测信息 */
-    g_bumpy_ctrl_shadow.stable_detected = packet->bumpy_stable_detected;  // 更新稳定检测标志
-    g_bumpy_ctrl_shadow.raw_detected = packet->bumpy_detected;             // 更新原始检测标志
-    g_bumpy_ctrl_shadow.phase = packet->bumpy_phase;                      // 更新相位
-    g_bumpy_ctrl_shadow.mode = packet->bumpy_mode;                        // 更新模式
-    g_bumpy_ctrl_shadow.confidence_u16 = packet->bumpy_confidence_u16;    // 更新置信度
-    g_bumpy_ctrl_shadow.steer_error_px_x100 = packet->bumpy_steer_error_px_x100;  // 更新转向误差
+    g_bumpy_ctrl_shadow.bumpy_detected = packet->bumpy_detected;
+    g_bumpy_ctrl_shadow.direction_x = packet->bumpy_direction_x;
+    g_bumpy_ctrl_shadow.direction_y = packet->bumpy_direction_y;
 
     /* 根据检测状态计算控制指令 */
-    if (packet->bumpy_stable_detected)                                 // 如果稳定检测到凹凸路面
+    if (packet->bumpy_detected)
     {
         g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_TRACK;          // 设置状态为跟踪
         g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_pid_calc(&g_bumpy_ctrl_shadow.pid, vision_bumpy_calc_err_degree(packet));  // 计算误差指令
     }
-    else if (packet->bumpy_detected)                                  // 如果检测到但不稳定
-    {
-        g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_SEARCH;         // 设置状态为搜索
-        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_pid_calc(&g_bumpy_ctrl_shadow.pid, vision_bumpy_calc_err_degree(packet) * 0.6f);  // 计算误差指令(降低增益)
-    }
-    else                                                              // 如果未检测到
+    else
     {
         g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_SEARCH;         // 设置状态为搜索
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                     // 清零误差指令

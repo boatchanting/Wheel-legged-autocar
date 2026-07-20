@@ -187,7 +187,6 @@ static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
                                         const volatile bumpy_vision_output_t *bumpy_output)
 {
     bumpy_vision_output_t bumpy;
-    const bumpy_vision_frame_result_t *ctrl;
 
     if ((bumpy_output == NULL) || (bumpy_output->frame_id == 0U))
     {
@@ -195,41 +194,15 @@ static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
     }
 
     bumpy = *bumpy_output;
-    ctrl = bumpy.stable_detected ? &bumpy.stable : &bumpy.raw;
 
     packet->valid_mask = (uint16)(packet->valid_mask | VISION_VALID_BUMPY | VISION_VALID_PROFILE);
     packet->frame_id = vision_max_u32(packet->frame_id, bumpy.frame_id);
     packet->frame_dt_us = (uint16)g_bumpy_vision_frame_profiler.last_us;
     packet->cost_us = (uint16)g_bumpy_vision_cost_profiler.last_us;
 
-    packet->bumpy_detected = bumpy.raw_detected;
-    packet->bumpy_stable_detected = bumpy.stable_detected;
-    packet->bumpy_confidence_u16 = ctrl->confidence_u16;
-    packet->bumpy_steer_error_px_x100 = ctrl->steer_error_px_x100;
-    packet->bumpy_target_x_px_x100 = ctrl->target_x_px_x100;
-    packet->bumpy_phase = ctrl->phase;
-    packet->bumpy_mode = ctrl->mode;
-    packet->bumpy_component_count = ctrl->component_count;
-    packet->bumpy_candidate_count = ctrl->candidate_count;
-    packet->bumpy_run_count = ctrl->run_count;
-    packet->bumpy_rib_count = ctrl->rib_count;
-    packet->bumpy_centerline_rows = ctrl->centerline_rows;
-    packet->bumpy_centerline_bottom_rows = ctrl->centerline_bottom_rows;
-    packet->bumpy_centerline_top_y = ctrl->centerline_top_y;
-    packet->bumpy_centerline_bottom_y = ctrl->centerline_bottom_y;
-    packet->bumpy_bbox_xmin = ctrl->bbox_xmin;
-    packet->bumpy_bbox_ymin = ctrl->bbox_ymin;
-    packet->bumpy_bbox_xmax = ctrl->bbox_xmax;
-    packet->bumpy_bbox_ymax = ctrl->bbox_ymax;
-    packet->bumpy_bbox_area = ctrl->bbox_area;
-    packet->bumpy_white_threshold_x10 = ctrl->white_threshold_x10;
-    packet->bumpy_dark_threshold_x10 = ctrl->dark_threshold_x10;
-    packet->bumpy_target_x_ipm_mm = ctrl->target_x_ipm_mm;
-    packet->bumpy_target_y_ipm_mm = ctrl->target_y_ipm_mm;
-    packet->bumpy_steer_error_ipm_mm = ctrl->steer_error_ipm_mm;
-    packet->bumpy_start_seen = bumpy.start_seen;
-    packet->bumpy_end_seen = bumpy.end_seen;
-    packet->bumpy_local_s_mm = ctrl->local_s_mm;
+    packet->bumpy_detected = bumpy.bumpy_detected;
+    packet->bumpy_direction_x = bumpy.direction_x;
+    packet->bumpy_direction_y = bumpy.direction_y;
 }
 
 void VisionIpc_Core1_Init(void)
@@ -537,15 +510,15 @@ void VisionIpc_Core1_PublishCurrent(void)
     }
     else if (packet.active_target == VISION_TARGET_BUMPY)
     {
-        packet.stable_detected = packet.bumpy_stable_detected;
-        packet.detected = packet.bumpy_stable_detected ? 1U : packet.bumpy_detected;
+        packet.stable_detected = packet.bumpy_detected;
+        packet.detected = packet.bumpy_detected;
         packet.raw_detected = packet.bumpy_detected;
-        packet.confidence_u16 = packet.bumpy_confidence_u16;
-        packet.forward_mm = (int16)packet.bumpy_local_s_mm;
-        packet.lateral_mm = packet.bumpy_steer_error_px_x100;
+        packet.confidence_u16 = packet.bumpy_detected ? 1000U : 0U;
+        packet.forward_mm = 0;
+        packet.lateral_mm = 0;
         packet.yaw_error_deg_x100 = 0;
 
-        if (packet.bumpy_stable_detected)
+        if (packet.bumpy_detected)
         {
             packet.stable_target = VISION_TARGET_BUMPY;
         }

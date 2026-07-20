@@ -154,35 +154,11 @@ typedef struct
 
     /* bridge end */
 
-    /* Bumpy road result. */
+    /* Bumpy road start */
     uint8 bumpy_detected;
-    uint8 bumpy_stable_detected;
-    uint16 bumpy_confidence_u16;
-    int16 bumpy_steer_error_px_x100;
-    int16 bumpy_target_x_px_x100;
-    uint8 bumpy_phase;
-    uint8 bumpy_mode;
-    uint8 bumpy_component_count;
-    uint8 bumpy_candidate_count;
-    uint8 bumpy_run_count;
-    uint8 bumpy_rib_count;
-    uint8 bumpy_centerline_rows;
-    uint8 bumpy_centerline_bottom_rows;
-    uint8 bumpy_centerline_top_y;
-    uint8 bumpy_centerline_bottom_y;
-    uint8 bumpy_bbox_xmin;
-    uint8 bumpy_bbox_ymin;
-    uint8 bumpy_bbox_xmax;
-    uint8 bumpy_bbox_ymax;
-    uint16 bumpy_bbox_area;
-    uint16 bumpy_white_threshold_x10;
-    uint16 bumpy_dark_threshold_x10;
-    int16 bumpy_target_x_ipm_mm;
-    int16 bumpy_target_y_ipm_mm;
-    int16 bumpy_steer_error_ipm_mm;
-    uint8 bumpy_start_seen;
-    uint8 bumpy_end_seen;
-    uint16 bumpy_local_s_mm;
+    float bumpy_direction_x;
+    float bumpy_direction_y;
+    /* Bumpy road end */
 
     /* Reserved: stairs. */
     uint8 stair_detected;

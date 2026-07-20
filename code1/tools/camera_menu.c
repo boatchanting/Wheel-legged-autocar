@@ -109,10 +109,10 @@ static void CameraMenu_PrintDebug(const pvc_vision_output_t *pvc,
            (unsigned int)bridge->bridge_stable_detected,
            (unsigned int)bridge->stable.state,
            (unsigned int)bridge->stable.geometry_valid,
-           (unsigned int)bumpy->raw_detected,
-           (unsigned int)bumpy->stable_detected,
-           (double)bumpy->stable.direction_x,
-           (double)bumpy->stable.direction_y,
+            (unsigned int)bumpy->bumpy_detected,
+            (unsigned int)bumpy->bumpy_detected,
+            (double)bumpy->direction_x,
+            (double)bumpy->direction_y,
            (unsigned long)g_bumpy_vision_cost_profiler.last_us);
 #else
     (void)pvc;
@@ -189,11 +189,9 @@ void CameraMenu_Update(void)
     ips200_show_uint(48, y + 5U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.geometry_valid, 1);
     ips200_show_int(138, y + 5U * CAMERA_MENU_TEXT_Y_STEP, bridge->stable.center_line_x1, 4);
 
-    ips200_show_uint(72, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->raw_detected, 1);
-    ips200_show_uint(96, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable_detected, 1);
-    ips200_show_float(150, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.coherence_r, 1, 3);
-    ips200_show_uint(54, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.strong_count, 5);
-    ips200_show_uint(138, y + 7U * CAMERA_MENU_TEXT_Y_STEP, bumpy->stable.max_gradient_mag, 5);
+    ips200_show_uint(72, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->bumpy_detected, 1);
+    ips200_show_float(112, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->direction_x, 1, 3);
+    ips200_show_float(150, y + 6U * CAMERA_MENU_TEXT_Y_STEP, bumpy->direction_y, 1, 3);
 
     ips200_show_uint(30, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.last_us, 5);
     ips200_show_uint(100, y + 8U * CAMERA_MENU_TEXT_Y_STEP, g_bumpy_vision_cost_profiler.avg_us, 5);

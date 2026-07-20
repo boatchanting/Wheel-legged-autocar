@@ -168,11 +168,11 @@ static void bumpy_edge_detect_process(const uint8_t *gray,
             strong_energy += bumpy_edge_accumulate_strong_energy(edge_gx_ring[i0],
                                                                    edge_gy_ring[i0],
                                                                    EDGE_OUT_W,
-                                                                   EDGE_FIXED_THR,
-                                                                   &strong_gx_sq,
-                                                                   &strong_gy_sq,
-                                                                   &strong_gx_gy,
-                                                                   &max_gradient_mag);
+                                                                    EDGE_FIXED_THR,
+                                                                    &strong_gx_sq,
+                                                                    &strong_gy_sq,
+                                                                    &strong_gx_gy,
+                                                                    &max_gradient_mag);
         }
 
         ring_idx = (ring_idx + 1) & 3;
@@ -295,40 +295,12 @@ static bumpy_vision_output_t g_bumpy_vision_output_shadow;
 static uint32 g_bumpy_last_frame_time_us = 0U;
 #endif
 
-static void bumpy_vision_clear_frame_result(bumpy_vision_frame_result_t *result)
-{
-    memset(result, 0, sizeof(*result));
-    result->bbox_xmin = 0xFFU;
-    result->bbox_ymin = 0xFFU;
-    result->bbox_xmax = 0xFFU;
-    result->bbox_ymax = 0xFFU;
-    result->centerline_top_y = 0xFFU;
-    result->centerline_bottom_y = 0xFFU;
-}
-
-static void bumpy_vision_make_frame_result(const bumpy_edge_detect_output_t *edge,
-                                           bumpy_vision_frame_result_t *result)
-{
-    bumpy_vision_clear_frame_result(result);
-    result->detected = edge->is_bumpy;
-    result->phase = edge->is_bumpy ? BUMPY_PHASE_INSIDE : BUMPY_PHASE_UNCERTAIN;
-    result->mode = edge->is_bumpy ? BUMPY_MODE_FOLLOW_CENTERLINE : BUMPY_MODE_FALLBACK_SEARCH;
-    result->confidence_u16 = edge->is_bumpy ? 1000U : 0U;
-    result->direction_x = edge->dir_x;
-    result->direction_y = edge->dir_y;
-    result->coherence_r = edge->coherence_r;
-    result->strong_count = edge->strong_count;
-    result->total_pixels = edge->total_pixels;
-    result->max_gradient_mag = edge->max_gradient_mag;
-}
-
 void bumpy_vision_reset_filter(void)
 {
     bumpy_vision_output_t empty;
 
     memset(&empty, 0, sizeof(empty));
-    bumpy_vision_clear_frame_result(&empty.raw);
-    bumpy_vision_clear_frame_result(&empty.stable);
+    empty.direction_y = 1.0f;
     g_bumpy_vision_output_shadow = empty;
     g_bumpy_vision_output_write_busy = 1U;
     g_bumpy_vision_output = empty;
@@ -375,23 +347,19 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
 #endif
 
     bumpy_edge_detect_process(gray,
-                              next.start_seen,
-                              next.stable.direction_x,
-                              next.stable.direction_y,
-                              &edge);
+                               (uint8)(next.frame_id != 0U),
+                               next.direction_x,
+                               next.direction_y,
+                               &edge);
 
     next.frame_id++;
-    bumpy_vision_make_frame_result(&edge, &next.raw);
-    next.raw_detected = edge.is_bumpy;
-    next.stable = next.raw;
-    next.stable_detected = edge.is_bumpy;
-    next.detected_streak = edge.is_bumpy ?
-        (uint8)((next.detected_streak < 255U) ? (next.detected_streak + 1U) : 255U) : 0U;
-    next.lost_streak = edge.is_bumpy ? 0U :
-        (uint8)((next.lost_streak < 255U) ? (next.lost_streak + 1U) : 255U);
-    next.start_seen = (uint8)(next.start_seen || edge.is_bumpy);
-    next.end_seen = (uint8)((g_bumpy_vision_output_shadow.stable_detected != 0U) &&
-                             (edge.is_bumpy == 0U));
+    next.bumpy_detected = edge.is_bumpy;
+    next.direction_x = edge.dir_x;
+    next.direction_y = edge.dir_y;
+    next.coherence_r = edge.coherence_r;
+    next.strong_count = edge.strong_count;
+    next.total_pixels = edge.total_pixels;
+    next.max_gradient_mag = edge.max_gradient_mag;
 
     g_bumpy_vision_output_write_busy = 1U;
     g_bumpy_vision_output = next;
