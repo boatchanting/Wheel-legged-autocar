@@ -20,8 +20,8 @@
 // 特殊点提前刹车按当前接近速度动态计算：执行圆 + 余量 + v^2/(2a)。
 #define NAV_POINT_SPECIAL_BRAKE_DECEL_MM_S2     170.0f
 #define NAV_POINT_SPECIAL_BRAKE_MARGIN_MM       180.0f
-#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MIN      4000.0f
-#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX      4000.0f
+#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MIN      3100.0f
+#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX      3100.0f
 // 普通刹车前馈尚未明显建压时，额外放大准备区，复用 stable tag 的稳定刹停节奏。
 #define NAV_POINT_SPECIAL_BRAKE_READY_PWM       1200.0f
 #define NAV_POINT_SPECIAL_BRAKE_WEAK_FF_MARGIN  180.0f

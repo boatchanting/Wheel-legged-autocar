@@ -4,19 +4,19 @@
 #include "nav_ram.h"
 
 // 由 tools/webview_nav_marker速度规划_科目二/csv_to_nav_table.py 自动生成
-// 源 CSV：D:/New_luntui/project3/project 3/tools/webview_nav_marker速度规划_科目二/nav_mark_points_20260720_221941.csv
-// 生成时间：2026-07-20 22:19:56
+// 源 CSV：D:/autocar/project3/project3/project/tools/webview_nav_marker速度规划_科目二/nav_mark_points_20260721_154110.csv
+// 生成时间：2026-07-21 15:41:40
 
 #define NAV_REPLAY_START_HEADING_VALID 0
-#define NAV_REPLAY_START_HEADING_DEG 107.359f
+#define NAV_REPLAY_START_HEADING_DEG 92.726f
 
 #define NAV_REPLAY_STATIC_ROUTE_COUNT 4
 
 static const NavRamPoint_t nav_replay_static_route_points[4] = {
-    {-5266.332f, -3730.951f, 54.417f, 156.416f, (uint8)1, 0.000f},
-    {-8648.837f, 1871.762f, -69.883f, 125.325f, (uint8)1, 0.000f},
-    {-15519.892f, -3197.369f, 63.324f, 151.535f, (uint8)1, 0.000f},
-    {340.146f, -4195.585f, -178.373f, 118.749f, (uint8)0, 0.000f},
+    {-4958.976f, -3423.630f, 44.798f, 136.842f, (uint8)1, 0.000f},
+    {-8305.968f, 1704.842f, -77.569f, 119.475f, (uint8)1, 0.000f},
+    {-14961.826f, -2856.744f, 48.386f, 150.628f, (uint8)1, 0.000f},
+    {126.760f, -4058.874f, 178.301f, 112.370f, (uint8)0, 0.000f},
 };
 
 #endif // _NAV_REPLAY_ROUTE_TABLE_H_

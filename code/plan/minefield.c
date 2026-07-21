@@ -11,7 +11,7 @@ extern uint8 g_special_action_trigger;
 // 角速度爬升斜率；避免转圈动作起转过猛。
 #define SPIN_ACCEL_STEP           1.2f
 // 减速区角度（deg）；进入最后这段角度后开始线性收速。
-#define SPIN_DECEL_ANGLE          120.0f
+#define SPIN_DECEL_ANGLE          150.0f
 // 旋转末段的最小角速度指令（deg/s）；避免末段因速度过低卡住。
 #define SPIN_MIN_SPEED            (SPIN_MAX_SPEED * 0.5f)
 // 旋转输出符号；用于统一适配底层角速度方向定义。
@@ -175,13 +175,10 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
     }
 
     // 采用“匀速 + 末段线性减速”的简单梯形速度思想。
+    // 最后 SPIN_DECEL_ANGLE 度不分段，直接从最大速度线性减速到 0。
     if (remaining < SPIN_DECEL_ANGLE)
     {
         target_speed = SPIN_MAX_SPEED * (remaining / SPIN_DECEL_ANGLE);
-        if (target_speed < SPIN_MIN_SPEED)
-        {
-            target_speed = SPIN_MIN_SPEED;
-        }
     }
     else
     {
