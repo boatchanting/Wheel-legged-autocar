@@ -346,19 +346,14 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // 按下记录按钮之前的惯性导航不可信==========================================================
     if(loop_counter % 10 == 1 && g_yaw_initialized)
     {
+        #if CURRENT_NAV_PLAN == 1
         if (jump_flag == 0)
+        #endif
+        #if CURRENT_NAV_PLAN == 2
+        if (jump_flag == 0 && Minefield_Is_Active() == 0)//科二中雷区屏蔽惯导
+        #endif  
         {
             // 调用导航更新函数
-            #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
-            InertialNav_Update(
-                euler_angle.yaw,                                 // 当前偏航角
-                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-                9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-                (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data,     // 右轮速
-                filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
-            );
-            #endif
             #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
             InertialNav_Update(
                 euler_angle.yaw,                                 // 当前偏航角
@@ -368,18 +363,6 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 (float)motor_value.receive_right_speed_data,     // 右轮速
                 filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
-            #endif
-            #if IMU_CATEGORY == 3 &&CAR_SELECT == 0//imu963ra 如果小车不同再对小车加&&加以区分
-            
-            InertialNav_Update(
-                euler_angle.yaw,                                 // 当前偏航角
-                9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-                9806.65*((float)imu_data.grav_x-(float)imu_data.acc_x/4098), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-                (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data,     // 右轮速
-                filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
-            );
-            
             #endif
             #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
             
