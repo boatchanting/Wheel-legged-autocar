@@ -475,7 +475,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
             // 2.2 全局刹车前馈
-            Brake_Feedforward_Update(target_speed_set, current_actual_speed, (uint8)((g_motor_enable != 0) && (!g_fallen)), jump_flag);
+            uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
+            if ((Minefield_Is_Active() != 0U) || (g_special_action_trigger != 0U))
+            {
+                brake_ff_enable = 0U;
+                Brake_Feedforward_Reset();
+            }
+            Brake_Feedforward_Update(target_speed_set, current_actual_speed, brake_ff_enable, jump_flag);
             {
                 uint8 accel_ff_replay_running = 0U;
                 uint8 accel_ff_inhibit = 0U;
@@ -496,6 +502,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 // 刹车前馈达到 BRAKE_ACCEL_INHIBIT_PWM 或特殊/视觉任务接管时，不再生成新的加速补偿；
                 // 小于该阈值的轻刹交给后面的最终仲裁处理，避免出弯瞬间加速前馈被完全清掉。
                 if ((g_is_push_mode == 1U) ||
+                    (NavReplay_SpecialPointZeroBrakeActive() != 0U) ||
                     (g_brake_active != 0U) ||
                     (g_reverse_brake_active != 0U) ||
                     (fabsf(brake_pwm_now) >= BRAKE_ACCEL_INHIBIT_PWM) ||

@@ -428,15 +428,58 @@ void wifi_protocol_send_data(void)
     // H. Slip Flag
     write_u8((uint8_t)inertial_nav.slip_flag);
 
-    // I. Debug logging values (20 bytes)
-    extern NavReplayState_e g_replay_state;
-    if (g_replay_state == REPLAY_RUNNING || g_manual_log_enabled) {
-        float t_speed = (float)target_speed_set;
-        write_u32_or_float(&t_speed);
-        write_u32_or_float(&inertial_nav.current_speed_L);
-        write_u32_or_float(&inertial_nav.current_speed_R);
-        write_u32_or_float(&inertial_nav.theoretical_yaw_rate);
-        write_u32_or_float(&inertial_nav.actual_yaw_rate);
+    // I. Base control debug values (20 bytes). Always send these so a replay
+    // that has already stopped can still be diagnosed from its CSV tail.
+    float t_speed = (float)target_speed_set;
+    write_u32_or_float(&t_speed);
+    write_u32_or_float(&inertial_nav.current_speed_L);
+    write_u32_or_float(&inertial_nav.current_speed_R);
+    write_u32_or_float(&inertial_nav.theoretical_yaw_rate);
+    write_u32_or_float(&inertial_nav.actual_yaw_rate);
+
+    // J. Plan-2 special-point diagnostic block (19 floats, 76 bytes).
+    // Keep this fixed-width and append-only; the host accepts older packets
+    // without it and records these fields only when this block is present.
+    {
+        float nav_replay_state = (float)g_replay_state;
+        float nav_special_action_trigger = (float)g_special_action_trigger;
+        float nav_current_point_type = (float)g_current_point_type;
+        float nav_special_target_idx = (float)g_nav_point_special_debug_target_idx;
+        float nav_special_target_x = g_nav_point_special_debug_target_x;
+        float nav_special_target_y = g_nav_point_special_debug_target_y;
+        float nav_special_dist_mm = g_nav_point_special_debug_dist_mm;
+        float nav_special_brake_radius_mm = g_nav_point_special_debug_brake_radius_mm;
+        float nav_special_speed_ref_mm_s = g_nav_point_special_debug_speed_ref_mm_s;
+        float nav_special_zero_brake_issued = (float)g_nav_point_special_debug_zero_brake_issued;
+        float nav_special_zero_brake_active = (float)NavReplay_SpecialPointZeroBrakeActive();
+        float nav_special_crawl_active = (float)NavReplay_SpecialPointCrawlActive();
+        float nav_special_prep_zero_latched = (float)NavReplay_SpecialPointPrepZeroBrakeLatched();
+        float brake_ff_pwm = Brake_Feedforward_GetPwm();
+        float accel_ff_pwm = Accel_Feedforward_GetPwm();
+        float motor_enable = (float)g_motor_enable;
+        float fallen = g_fallen ? 1.0f : 0.0f;
+        float remote_brake_active = (float)g_brake_active;
+        float remote_reverse_brake_active = (float)g_reverse_brake_active;
+
+        write_u32_or_float(&nav_replay_state);
+        write_u32_or_float(&nav_special_action_trigger);
+        write_u32_or_float(&nav_current_point_type);
+        write_u32_or_float(&nav_special_target_idx);
+        write_u32_or_float(&nav_special_target_x);
+        write_u32_or_float(&nav_special_target_y);
+        write_u32_or_float(&nav_special_dist_mm);
+        write_u32_or_float(&nav_special_brake_radius_mm);
+        write_u32_or_float(&nav_special_speed_ref_mm_s);
+        write_u32_or_float(&nav_special_zero_brake_issued);
+        write_u32_or_float(&nav_special_zero_brake_active);
+        write_u32_or_float(&nav_special_crawl_active);
+        write_u32_or_float(&nav_special_prep_zero_latched);
+        write_u32_or_float(&brake_ff_pwm);
+        write_u32_or_float(&accel_ff_pwm);
+        write_u32_or_float(&motor_enable);
+        write_u32_or_float(&fallen);
+        write_u32_or_float(&remote_brake_active);
+        write_u32_or_float(&remote_reverse_brake_active);
     }
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));

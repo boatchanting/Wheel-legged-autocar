@@ -100,6 +100,8 @@ tr.sel{background:#eaf2ff}
         <button id="bClrM">清空标记</button>
         <button id="bClrT">清空轨迹</button>
         <button id="bStartCar">开始发车</button>
+        <button id="bStartLog" class="primary">开始记录日志</button>
+        <button id="bStopLog" class="danger">结束记录日志</button>
         <div id="txState" class="tag warn">尚未回传</div>
       </div>
     </div>
@@ -133,13 +135,13 @@ const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#05
 const HOST_CTRL_CLEAR_TRAJECTORY=1;
 const HOST_CTRL_START_CAR=2;
 // 在 S 中加入 vx_body 变量
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,showRealDistance:true};
+const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,showRealDistance:true,logRecording:false,logPath:''};
 S.traces={ins:S.traj,gps:[],fusion:[]};
 S.traceVisible={ins:true,gps:false,fusion:false};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 const TRACE_STYLE={ins:{line:'#2f6fed',point:'#114da5'},gps:{line:'#16a34a',point:'#0f7a37'},fusion:{line:'#8b5cf6',point:'#6d28d9'}};
 // 在 E 元素绑定中加入 vxBody 节点映射
-const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,traceGps:traceGps,traceFusion:traceFusion,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,traceGps:traceGps,traceFusion:traceFusion,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStartLog:bStartLog,bStopLog:bStopLog,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -150,6 +152,7 @@ function traceColor(kind,point){const style=TRACE_STYLE[kind]||TRACE_STYLE.ins;i
 function tracePointColor(kind){const style=TRACE_STYLE[kind]||TRACE_STYLE.ins;return style.point}
 function addTracePoint(kind,x,y,meta){if(!S.traces[kind])S.traces[kind]=[];const pt={x:Number(x),y:Number(y)};if(meta&&Number.isFinite(meta.pid_mode))pt.pid_mode=Number(meta.pid_mode);if(meta&&Number.isFinite(meta.slip_flag))pt.slip_flag=Number(meta.slip_flag);S.traces[kind].push(pt);if(S.traces[kind].length>S.maxTraj)S.traces[kind].splice(0,S.traces[kind].length-S.maxTraj);if(kind==='ins')S.traj=S.traces.ins;return pt}
 function syncTraceControls(){E.traceIns.checked=!!S.traceVisible.ins;E.traceGps.checked=!!S.traceVisible.gps;E.traceFusion.checked=!!S.traceVisible.fusion;E.bTraceMenu.classList.toggle('active',traceVisibleKinds().length>0)}
+function syncLogButtons(){E.bStartLog.disabled=!!S.logRecording;E.bStopLog.disabled=!S.logRecording}
 function setTraceVisible(kind,visible){S.traceVisible[kind]=!!visible;syncTraceControls();draw()}
 function clampType(v){v=Number(v);if(Number.isNaN(v))return 0;return Math.max(0,Math.min(5,Math.round(v)))}
 function normalizeYaw(v){v=Number(v);if(!Number.isFinite(v))return 0;while(v>180)v-=360;while(v<=-180)v+=360;return v}
@@ -214,13 +217,34 @@ function feed(frames){
 
 async function pollData(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,120);return}try{const d=await window.pywebview.api.get_new_data();if(d&&d.length){setConn(true,'\u5df2\u8fde\u63a5','ok');feed(d)}}catch(_){setConn(false,'\u63a5\u53e3\u5f02\u5e38','err')}setTimeout(pollData,38)}
 let stTick=0;
-async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
+async function pollStatus(){
+  if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}
+  try{
+    const s=await window.pywebview.api.get_status();
+    if(s&&s.server_error)setConn(false,s.server_error,'err');
+    else if(s&&s.connected){
+      const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';
+      if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');
+      else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')
+    }else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');
+    if(s&&s.enable_slip_markers!==undefined)S.enableSlipMarkers=s.enable_slip_markers;
+    if(s&&s.wifi_log_recording!==undefined){
+      S.logRecording=!!s.wifi_log_recording;
+      S.logPath=s.wifi_log_path||'';
+      syncLogButtons();
+    }
+    stTick+=1;
+    if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')
+  }catch(_){ }
+  setTimeout(pollStatus,320)
+}
 function updateSelectedYaw(){const m=getSel();if(!m)return;const raw=Number(E.inpYaw.value);if(!Number.isFinite(raw))return;m.targetYaw=normalizeYaw(raw);syncSel();syncRows();draw()}
 function updateSelectedHeading(){const m=getSel();if(!m)return;const raw=Number(E.inpHeading.value);if(!Number.isFinite(raw))return;m.heading=normalizeHeading(raw);syncSel();syncRows();draw()}
 function initCanvas(){const c=E.cv;c.onmousedown=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;const m=hit(x,y);S.mx=x;S.my=y;if(m){S.sel=m.id;S.dragId=m.id;c.style.cursor='move'}else{S.pan=true;c.style.cursor='grabbing'}syncMarks();draw()};c.onmousemove=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;if(S.dragId!=null){const m=S.marks.find(v=>v.id===S.dragId);if(m){const p=s2w(x,y);m.x=p.x;m.y=p.y;syncSel();syncRows();draw()}return}if(S.pan){const dx=x-S.mx,dy=y-S.my;V.ox+=dx;V.oy+=dy;S.mx=x;S.my=y;V.follow=false;E.bFollow.classList.remove('active');draw()}};const stop=()=>{S.dragId=null;S.pan=false;c.style.cursor='grab'};c.onmouseup=stop;c.onmouseleave=stop;c.onwheel=(ev)=>{ev.preventDefault();const r=c.getBoundingClientRect(),sx=ev.clientX-r.left,sy=ev.clientY-r.top;const p=s2w(sx,sy);V.scale*=ev.deltaY>0?0.9:1.1;V.scale=Math.max(0.0015,Math.min(2.5,V.scale));const s=size();V.ox=sx-s.w*0.5-p.x*V.scale;V.oy=sy-s.h*0.5+p.y*V.scale;V.follow=false;E.bFollow.classList.remove('active');draw()};c.ondblclick=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top,p=s2w(x,y);const yaw=S.last?S.last.targetYaw:0;const heading=S.last?S.last.heading:0;addMark(p.x,p.y,Number(E.selType.value||0),'manual',yaw,heading);tip('\u5df2\u65b0\u589e\u6807\u8bb0\u70b9')}}
 function initBtns(){
 fillType(E.selType,0);
 syncTraceControls();
+syncLogButtons();
 E.traceIns.onchange=()=>setTraceVisible('ins',E.traceIns.checked);
 E.traceGps.onchange=()=>setTraceVisible('gps',E.traceGps.checked);
 E.traceFusion.onchange=()=>setTraceVisible('fusion',E.traceFusion.checked);
@@ -246,6 +270,21 @@ E.bStartCar.onclick=async()=>{
 const sendResult=await sendHostControl(HOST_CTRL_START_CAR);
 setTxStatus(sendResult.success?'ok':'err');
 tip(sendResult&&sendResult.msg?sendResult.msg:'\u5f00\u59cb\u53d1\u8f66\u547d\u4ee4\u5df2\u53d1\u9001')
+};
+E.bStartLog.onclick=async()=>{
+if(S.logRecording){tip('日志已经在记录中');return}
+if(!S.api||!window.pywebview||!window.pywebview.api){tip('后端 API 未就绪');return}
+try{
+const result=await window.pywebview.api.start_wifi_csv_recording();
+if(result&&result.success){S.logRecording=!!result.recording;S.logPath=result.path||'';syncLogButtons();tip(result.msg||'已开始记录日志')}else{tip(result&&result.msg?result.msg:'开始记录日志失败')}
+}catch(e){tip('开始记录日志失败:'+(e.message||e))}
+};
+E.bStopLog.onclick=async()=>{
+if(!S.api||!window.pywebview||!window.pywebview.api){tip('后端 API 未就绪');return}
+try{
+const result=await window.pywebview.api.stop_wifi_csv_recording();
+if(result&&result.success){S.logRecording=!!result.recording;S.logPath=result.path||'';syncLogButtons();tip(result.msg||'已结束记录日志')}else{tip(result&&result.msg?result.msg:'结束记录日志失败')}
+}catch(e){tip('结束记录日志失败:'+(e.message||e))}
 };
 E.bExport.onclick=async()=>{const p=exportPayload();if(!p.length){tip('\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u6807\u8bb0\u70b9');return}if(!S.api||!window.pywebview||!window.pywebview.api){tip('\u540e\u7aef API \u672a\u5c31\u7eea');return}try{const r=await window.pywebview.api.export_mark_points_csv(p);tip(r&&r.msg?r.msg:'\u5bfc\u51fa\u5b8c\u6210')}catch(e){tip('\u5bfc\u51fa\u5931\u8d25:'+(e.message||e))}}
 }
