@@ -25,6 +25,26 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #define NAV_REPLAY_START_HEADING_DEG 0.0f
 #endif
 
+#ifndef NAV_REPLAY_FINISH_LINE_VALID
+#define NAV_REPLAY_FINISH_LINE_VALID 0
+#endif
+
+#ifndef NAV_REPLAY_FINISH_LINE_X_MM
+#define NAV_REPLAY_FINISH_LINE_X_MM 0.0f
+#endif
+
+#ifndef NAV_REPLAY_FINISH_LINE_Y_MM
+#define NAV_REPLAY_FINISH_LINE_Y_MM 0.0f
+#endif
+
+#ifndef NAV_REPLAY_FINISH_LINE_NX
+#define NAV_REPLAY_FINISH_LINE_NX 0.0f
+#endif
+
+#ifndef NAV_REPLAY_FINISH_LINE_NY
+#define NAV_REPLAY_FINISH_LINE_NY 0.0f
+#endif
+
 #define LQR_DEG_TO_RAD 0.0174532925f
 
 #ifndef PLAN1_FAST_UTURN_ENABLE
@@ -86,6 +106,8 @@ static uint8 g_start_heading_aligned = 1;
 static float s_prev_err_degree = 0.0f;
 static float s_prev_speed_set = 0.0f;
 static uint8 s_prev_trigger = 0;
+static uint8 s_finish_stop_lock_active = 0U;
+static uint16 s_finish_stop_stable_count = 0U;
 static uint16 s_fast_uturn_action_idx = PLAN1_FAST_UTURN_INVALID_IDX;
 static uint16 s_fast_uturn_state_ticks = 0U;
 static uint16 s_fast_uturn_recover_ticks = 0U;
@@ -162,6 +184,72 @@ static float NavReplay_LerpBySpeed(float low_value, float high_value, float spee
     float t = (speed_mm_s - LQR_LOW_SPEED_MM_S) / (LQR_HIGH_SPEED_MM_S - LQR_LOW_SPEED_MM_S);
     t = Float_Constrain(t, 0.0f, 1.0f);
     return low_value + (high_value - low_value) * t;
+}
+
+static void NavReplay_ClearFinishStopLock(void)
+{
+    s_finish_stop_lock_active = 0U;
+    s_finish_stop_stable_count = 0U;
+}
+
+static uint8 NavReplay_FinishLineCrossed(void)
+{
+#if NAV_REPLAY_FINISH_LINE_VALID
+    float dx = inertial_nav.x - NAV_REPLAY_FINISH_LINE_X_MM;
+    float dy = inertial_nav.y - NAV_REPLAY_FINISH_LINE_Y_MM;
+    float progress = dx * NAV_REPLAY_FINISH_LINE_NX + dy * NAV_REPLAY_FINISH_LINE_NY;
+
+    return (uint8)(progress >= 0.0f);
+#else
+    return 0U;
+#endif
+}
+
+static void NavReplay_StartFinishStopLock(uint16 last_idx)
+{
+    s_finish_stop_lock_active = 1U;
+    s_finish_stop_stable_count = 0U;
+    g_target_idx = last_idx;
+    g_current_point_type = NAV_POINT_PATH;
+}
+
+static uint8 NavReplay_HandleFinishStopLock(uint16 last_idx)
+{
+    if (s_finish_stop_lock_active == 0U)
+    {
+        return 0U;
+    }
+
+    target_speed_set = NAV_SPEED_STOP;
+    err_degree = 0.0f;
+    s_prev_speed_set = NAV_SPEED_STOP;
+    s_prev_err_degree = 0.0f;
+    g_target_idx = last_idx;
+    g_current_point_type = NAV_POINT_PATH;
+
+    if (fabsf(current_actual_speed) <= NAV_FINISH_STOP_ACTUAL_SPEED_EPS)
+    {
+        if (s_finish_stop_stable_count < NAV_FINISH_STOP_STABLE_COUNT)
+        {
+            s_finish_stop_stable_count++;
+        }
+    }
+    else
+    {
+        s_finish_stop_stable_count = 0U;
+    }
+
+    if (s_finish_stop_stable_count >= NAV_FINISH_STOP_STABLE_COUNT)
+    {
+        g_replay_state = REPLAY_FINISHED;
+        NavReplay_ClearFinishStopLock();
+        if (g_plan1_fast_uturn_state != (uint8)PLAN1_FAST_UTURN_STATE_IDLE)
+        {
+            g_plan1_fast_uturn_state = (uint8)PLAN1_FAST_UTURN_STATE_DONE;
+        }
+    }
+
+    return 1U;
 }
 
 /**
@@ -560,6 +648,7 @@ static void NavReplay_ResetProcessState(void)
     s_prev_err_degree = 0.0f;
     s_prev_speed_set = 0.0f;
     s_prev_trigger = 0;
+    NavReplay_ClearFinishStopLock();
 }
 
 /**
@@ -1144,6 +1233,12 @@ void NavReplay_Process(void)
         return;
     }
 
+    last_idx = (uint16)(nav_ram_data.point_count - 1U);
+    if (NavReplay_HandleFinishStopLock(last_idx) != 0U)
+    {
+        return;
+    }
+
     if (s_fast_uturn_recover_ticks > 0U)
     {
         is_recovering = 1U;
@@ -1161,13 +1256,23 @@ void NavReplay_Process(void)
         return;
     }
 
-    last_idx = (uint16)(nav_ram_data.point_count - 1U);
+    if (NavReplay_FinishLineCrossed() != 0U)
+    {
+        NavReplay_StartFinishStopLock(last_idx);
+        (void)NavReplay_HandleFinishStopLock(last_idx);
+        return;
+    }
+
     stop_idx = NavReplay_FindStopBarrierIndex((uint16)base_idx, (uint16)(last_idx - (uint16)base_idx));
     dist_to_stop = CalcDistance(inertial_nav.x, inertial_nav.y,
                                 nav_ram_data.points[stop_idx].x, nav_ram_data.points[stop_idx].y);
 
     if ((stop_idx == last_idx) && (dist_to_stop <= NAV_DIST_ARRIVE))
     {
+#if NAV_REPLAY_FINISH_LINE_VALID
+        NavReplay_StartFinishStopLock(stop_idx);
+        (void)NavReplay_HandleFinishStopLock(stop_idx);
+#else
         g_replay_state = REPLAY_FINISHED;
         g_target_idx = stop_idx;
         target_speed_set = NAV_SPEED_STOP;
@@ -1178,6 +1283,7 @@ void NavReplay_Process(void)
         {
             g_plan1_fast_uturn_state = (uint8)PLAN1_FAST_UTURN_STATE_DONE;
         }
+#endif
         return;
     }
 

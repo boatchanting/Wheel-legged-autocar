@@ -81,6 +81,8 @@
 #define NAV_SPEED_SLEW_DOWN_FAST          800.0f
 #define NAV_SPEED_SLEW_DOWN_CROSS_ZERO    120.0f
 #define NAV_STOP_LOCK_SPEED_EPS             1.0f
+#define NAV_FINISH_STOP_ACTUAL_SPEED_EPS   50.0f
+#define NAV_FINISH_STOP_STABLE_COUNT       10U
 
 extern volatile float target_speed_set;
 extern volatile float err_degree;
