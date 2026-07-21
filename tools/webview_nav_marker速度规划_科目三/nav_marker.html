@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>科目二速度规划打点上位机</title>
+<title>科目三锚点补线打点上位机</title>
 <style>
 :root{--bg:#f5f7fb;--card:#fff;--bd:#d9e0ea;--txt:#1f2a37;--muted:#5f6c7d;--ok:#0e9f6e;--pri:#2f6fed;--warn:#c43d3d}
 *{box-sizing:border-box}
@@ -50,7 +50,7 @@ tr.sel{background:#eaf2ff}
 <body>
 <div class="top">
   <div class="left">
-    <div class="title">科目二速度规划打点上位机</div>
+    <div class="title">科目三锚点补线打点上位机</div>
     <div id="st" class="tag warn">等待数据</div>
     <div id="fps" class="tag">FPS:0</div>
     <div id="trajN" class="tag">轨迹:0</div>
@@ -100,6 +100,10 @@ tr.sel{background:#eaf2ff}
         <button id="bClrM">清空标记</button>
         <button id="bClrT">清空轨迹</button>
         <button id="bStartCar">开始发车</button>
+        <!-- 补点间距默认 250mm：数值越小路径越密但寻点更频繁；应与 plan3_route_builder.py 的默认值同步调整。 -->
+        <label title="默认 250mm；越小越密、寻点更频繁。">补点(mm)<input id="inpFillSpacing" type="number" min="2" step="10" value="250" /></label>
+        <button id="bBuildPlan3" class="primary">补点并生成路表</button>
+        <div id="routePreview" class="tag warn">最终路表：未生成</div>
         <button id="bStartLog" class="primary">开始记录日志</button>
         <button id="bStopLog" class="danger">结束记录日志</button>
         <div id="txState" class="tag warn">尚未回传</div>
@@ -134,14 +138,16 @@ const TYPES=[{value:0,label:'0 PATH'},{value:1,label:'1 CIRCLE'},{value:2,label:
 const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#059669'};
 const HOST_CTRL_CLEAR_TRAJECTORY=1;
 const HOST_CTRL_START_CAR=2;
+// 最终路线预览最多绘制的补点数：路线很长时按间隔抽样，避免 Canvas 因逐点绘制卡顿。
+const MAX_ROUTE_PREVIEW_POINTS=1200;
 // 在 S 中加入 vx_body 变量
-const S={api:false,traj:[],marks:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,showRealDistance:true,logRecording:false,logPath:''};
+const S={api:false,traj:[],marks:[],generatedRoute:[],nextId:1,sel:null,maxTraj:30000,maxMarks:1200,last:null,lastMarkLoop:null,lastTrigger:0,payload:'--',vx_body:'--',rx:0,fps:0,dragId:null,pan:false,mx:0,my:0,lastDataAt:0,showRealDistance:true,logRecording:false,logPath:''};
 S.traces={ins:S.traj,gps:[],fusion:[]};
 S.traceVisible={ins:true,gps:false,fusion:false};
 const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
 const TRACE_STYLE={ins:{line:'#2f6fed',point:'#114da5'},gps:{line:'#16a34a',point:'#0f7a37'},fusion:{line:'#8b5cf6',point:'#6d28d9'}};
 // 在 E 元素绑定中加入 vxBody 节点映射
-const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,traceGps:traceGps,traceFusion:traceFusion,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bStartLog:bStartLog,bStopLog:bStopLog,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
+const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,traceGps:traceGps,traceFusion:traceFusion,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,bBuildPlan3:bBuildPlan3,inpFillSpacing:inpFillSpacing,routePreview:routePreview,bStartLog:bStartLog,bStopLog:bStopLog,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -157,6 +163,8 @@ function setTraceVisible(kind,visible){S.traceVisible[kind]=!!visible;syncTraceC
 function clampType(v){v=Number(v);if(Number.isNaN(v))return 0;return Math.max(0,Math.min(5,Math.round(v)))}
 function normalizeYaw(v){v=Number(v);if(!Number.isFinite(v))return 0;while(v>180)v-=360;while(v<=-180)v+=360;return v}
 function normalizeHeading(v){v=Number(v);if(!Number.isFinite(v))return 0;v%=360;if(v<0)v+=360;return v}
+function syncRoutePreview(){const count=S.generatedRoute.length;E.routePreview.className='tag '+(count?'ok':'warn');E.routePreview.textContent=count?`最终路表：${count}点（橙色虚线）`:'最终路表：未生成'}
+function clearGeneratedRoute(){if(!S.generatedRoute.length)return;S.generatedRoute=[];syncRoutePreview()}
 function fillType(sel,v){sel.innerHTML=TYPES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');sel.value=String(clampType(v))}
 function size(){return{w:E.cv.clientWidth,h:E.cv.clientHeight}}
 function resize(){const dpr=window.devicePixelRatio||1;const s=size();E.cv.width=Math.max(1,Math.floor(s.w*dpr));E.cv.height=Math.max(1,Math.floor(s.h*dpr));ctx.setTransform(dpr,0,0,dpr,0,0);draw()}
@@ -164,22 +172,23 @@ function center(){const s=size();return{x:s.w*0.5+V.ox,y:s.h*0.5+V.oy}}
 function w2s(x,y){const c=center();return{x:c.x+x*V.scale,y:c.y-y*V.scale}}
 function s2w(x,y){const c=center();return{x:(x-c.x)/V.scale,y:-(y-c.y)/V.scale}}
 function getSel(){return S.marks.find(m=>m.id===S.sel)||null}
-function addMark(x,y,t,src,targetYaw,headingDeg){const m={id:S.nextId++,x:Number(x),y:Number(y),type:clampType(t),src:src||'manual',targetYaw:normalizeYaw(targetYaw),heading:normalizeHeading(headingDeg)};S.marks.push(m);if(S.marks.length>S.maxMarks)S.marks.splice(0,S.marks.length-S.maxMarks);S.sel=m.id;syncMarks();draw()}
-function rmSel(){if(S.sel==null)return;const n=S.marks.length;S.marks=S.marks.filter(m=>m.id!==S.sel);if(S.marks.length!==n){S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()}}
-function fitAll(){const pts=[];for(const kind of traceVisibleKinds()){for(const p of tracePoints(kind))pts.push({x:p.x,y:p.y})}for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
+function addMark(x,y,t,src,targetYaw,headingDeg){clearGeneratedRoute();const m={id:S.nextId++,x:Number(x),y:Number(y),type:clampType(t),src:src||'manual',targetYaw:normalizeYaw(targetYaw),heading:normalizeHeading(headingDeg)};S.marks.push(m);if(S.marks.length>S.maxMarks)S.marks.splice(0,S.marks.length-S.maxMarks);S.sel=m.id;syncMarks();draw()}
+function rmSel(){if(S.sel==null)return;const n=S.marks.length;S.marks=S.marks.filter(m=>m.id!==S.sel);if(S.marks.length!==n){clearGeneratedRoute();S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()}}
+function fitAll(){const pts=[];for(const kind of traceVisibleKinds()){for(const p of tracePoints(kind))pts.push({x:p.x,y:p.y})}for(const p of S.generatedRoute)pts.push({x:p.x,y:p.y});for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
 function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale}
 function hit(px,py){let best=null,bd=9999;for(const m of S.marks){const p=w2s(m.x,m.y);const d=Math.hypot(px-p.x,py-p.y);if(d<12&&d<bd){best=m;bd=d}}return best}
 function grid(w,h){const stepMm=1000;const sp=stepMm*V.scale;const c=center();ctx.strokeStyle='#e5ebf2';ctx.lineWidth=1;let xIndex=Math.ceil(-c.x/sp),x=c.x+xIndex*sp;for(;x<w;x+=sp,xIndex++){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,h);ctx.stroke()}let yIndex=Math.floor(c.y/sp),y=c.y-yIndex*sp;for(;y<h;y+=sp,yIndex--){ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}const labelY=Math.min(h-5,Math.max(14,c.y+14));const labelX=Math.min(w-5,Math.max(5,c.x+5));ctx.fillStyle='#6183a8';ctx.font='11px Microsoft YaHei';xIndex=Math.ceil(-c.x/sp);for(x=c.x+xIndex*sp;x<w;x+=sp,xIndex++){if(NavMarkerGridScale.shouldShowDistanceLabel(S.showRealDistance,xIndex))ctx.fillText(NavMarkerGridScale.formatGridCoordinate(xIndex*stepMm),x+3,labelY)}yIndex=Math.floor(c.y/sp);for(y=c.y-yIndex*sp;y<h;y+=sp,yIndex--){if(NavMarkerGridScale.shouldShowDistanceLabel(S.showRealDistance,yIndex))ctx.fillText(NavMarkerGridScale.formatGridCoordinate(yIndex*stepMm),labelX,y-4)}}
 function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
 function drawTrace(kind){if(!S.traceVisible[kind])return;const pts=tracePoints(kind);if(pts.length<2)return;ctx.lineWidth=2;for(let i=1;i<pts.length;i++){const p1=w2s(pts[i-1].x,pts[i-1].y);const p2=w2s(pts[i].x,pts[i].y);ctx.strokeStyle=traceColor(kind,pts[i]);ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke()}const last=pts[pts.length-1];const p=w2s(last.x,last.y);ctx.fillStyle=tracePointColor(kind,last);ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
 function drawTraces(){for(const kind of ['ins','gps','fusion'])drawTrace(kind)}
+function drawGeneratedRoute(){const pts=S.generatedRoute;if(pts.length<2)return;ctx.save();ctx.strokeStyle='#f97316';ctx.lineWidth=2.5;ctx.setLineDash([9,6]);ctx.beginPath();const first=w2s(pts[0].x,pts[0].y);ctx.moveTo(first.x,first.y);for(let i=1;i<pts.length;i++){const p=w2s(pts[i].x,pts[i].y);ctx.lineTo(p.x,p.y)}ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='rgba(249,115,22,0.55)';const stride=Math.max(1,Math.ceil(pts.length/MAX_ROUTE_PREVIEW_POINTS));for(let i=0;i<pts.length;i+=stride){const p=w2s(pts[i].x,pts[i].y);ctx.beginPath();ctx.arc(p.x,p.y,1.8,0,Math.PI*2);ctx.fill()}ctx.restore()}
 function drawArrow(px,py,yawDeg,color,selected){const rad=yawDeg*Math.PI/180;const len=selected?30:24;const dx=-Math.cos(rad);const dy=Math.sin(rad);const tailX=px-dx*len*0.35;const tailY=py-dy*len*0.35;const tipX=px+dx*len;const tipY=py+dy*len;ctx.strokeStyle=color;ctx.lineWidth=selected?3:2;ctx.beginPath();ctx.moveTo(tailX,tailY);ctx.lineTo(tipX,tipY);ctx.stroke();const head=7;const ang=Math.atan2(tipY-tailY,tipX-tailX);ctx.beginPath();ctx.moveTo(tipX,tipY);ctx.lineTo(tipX-head*Math.cos(ang-Math.PI/7),tipY-head*Math.sin(ang-Math.PI/7));ctx.lineTo(tipX-head*Math.cos(ang+Math.PI/7),tipY-head*Math.sin(ang+Math.PI/7));ctx.closePath();ctx.fillStyle=color;ctx.fill()}
 function drawMarks(){for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=COLORS[m.type]||'#374151';ctx.fillStyle=col;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();if(m.type!==0)drawArrow(p.x,p.y,m.targetYaw,col,sel);if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
-function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraces();drawMarks()}
+function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawGeneratedRoute();drawTraces();drawMarks()}
 // 渲染 vxBody 内容
 function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
 function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent='-';E.sy.textContent='-';E.syaw.textContent='-';E.sheading.textContent='-';E.ss.textContent='-';fillType(E.selType,0);E.inpYaw.value='';E.inpHeading.value='';return}const idx=S.marks.findIndex(v=>v.id===m.id);E.si.textContent=String(idx);E.sx.textContent=m.x.toFixed(1);E.sy.textContent=m.y.toFixed(1);E.syaw.textContent=m.targetYaw.toFixed(1);E.sheading.textContent=m.heading.toFixed(1);E.ss.textContent=m.src;fillType(E.selType,m.type);E.inpYaw.value=m.targetYaw.toFixed(1);E.inpHeading.value=m.heading.toFixed(1)}
-function syncRows(){E.rows.innerHTML=S.marks.map((m,i)=>{const opts=TYPES.map(t=>`<option value="${t.value}" ${m.type===t.value?'selected':''}>${t.value}</option>`).join('');return `<tr class="${m.id===S.sel?'sel':''}"><td>${i}</td><td>${m.x.toFixed(0)}</td><td>${m.y.toFixed(0)}</td><td>${m.targetYaw.toFixed(1)}</td><td>${m.heading.toFixed(1)}</td><td><select class="rt" data-id="${m.id}">${opts}</select></td><td><button class="rf" data-id="${m.id}">选中</button><button class="rd" data-id="${m.id}">删</button></td></tr>`}).join('');E.rows.querySelectorAll('.rf').forEach(b=>b.onclick=()=>{S.sel=Number(b.dataset.id);syncMarks();draw()});E.rows.querySelectorAll('.rd').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.id);S.marks=S.marks.filter(v=>v.id!==id);if(S.sel===id)S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()});E.rows.querySelectorAll('.rt').forEach(s=>s.onchange=()=>{const id=Number(s.dataset.id);const m=S.marks.find(v=>v.id===id);if(!m)return;m.type=clampType(s.value);if(S.sel===id)syncSel();draw()})}
+function syncRows(){E.rows.innerHTML=S.marks.map((m,i)=>{const opts=TYPES.map(t=>`<option value="${t.value}" ${m.type===t.value?'selected':''}>${t.value}</option>`).join('');return `<tr class="${m.id===S.sel?'sel':''}"><td>${i}</td><td>${m.x.toFixed(0)}</td><td>${m.y.toFixed(0)}</td><td>${m.targetYaw.toFixed(1)}</td><td>${m.heading.toFixed(1)}</td><td><select class="rt" data-id="${m.id}">${opts}</select></td><td><button class="rf" data-id="${m.id}">选中</button><button class="rd" data-id="${m.id}">删</button></td></tr>`}).join('');E.rows.querySelectorAll('.rf').forEach(b=>b.onclick=()=>{S.sel=Number(b.dataset.id);syncMarks();draw()});E.rows.querySelectorAll('.rd').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.id);const count=S.marks.length;S.marks=S.marks.filter(v=>v.id!==id);if(S.marks.length!==count)clearGeneratedRoute();if(S.sel===id)S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()});E.rows.querySelectorAll('.rt').forEach(s=>s.onchange=()=>{const id=Number(s.dataset.id);const m=S.marks.find(v=>v.id===id);if(!m)return;clearGeneratedRoute();m.type=clampType(s.value);if(S.sel===id)syncSel();draw()})}
 function syncMarks(){syncTop();syncSel();syncRows()}
 function setConn(ok,text,cls){E.st.className='tag '+cls;E.st.textContent=text;if(ok)S.lastDataAt=performance.now()}
 function setTxStatus(state,autoReset=true){if(state==='ok'){E.txState.className='tag ok';E.txState.textContent='回传成功'}else if(state==='err'){E.txState.className='tag err';E.txState.textContent='回传失败'}else{E.txState.className='tag warn';E.txState.textContent='尚未回传'}if(autoReset&&state!=='idle'){clearTimeout(txStatusTimer);txStatusTimer=setTimeout(()=>setTxStatus('idle',false),3000)}else if(state==='idle'){clearTimeout(txStatusTimer);txStatusTimer=null}}
@@ -219,9 +228,9 @@ async function pollData(){if(!S.api||!window.pywebview||!window.pywebview.api){s
 let stTick=0;
 async function pollLogStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollLogStatus,800);return}try{const s=await window.pywebview.api.get_status();if(s&&s.wifi_log_recording!==undefined){S.logRecording=!!s.wifi_log_recording;S.logPath=s.wifi_log_path||'';syncLogButtons()}}catch(_){ }setTimeout(pollLogStatus,800)}
 async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
-function updateSelectedYaw(){const m=getSel();if(!m)return;const raw=Number(E.inpYaw.value);if(!Number.isFinite(raw))return;m.targetYaw=normalizeYaw(raw);syncSel();syncRows();draw()}
-function updateSelectedHeading(){const m=getSel();if(!m)return;const raw=Number(E.inpHeading.value);if(!Number.isFinite(raw))return;m.heading=normalizeHeading(raw);syncSel();syncRows();draw()}
-function initCanvas(){const c=E.cv;c.onmousedown=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;const m=hit(x,y);S.mx=x;S.my=y;if(m){S.sel=m.id;S.dragId=m.id;c.style.cursor='move'}else{S.pan=true;c.style.cursor='grabbing'}syncMarks();draw()};c.onmousemove=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;if(S.dragId!=null){const m=S.marks.find(v=>v.id===S.dragId);if(m){const p=s2w(x,y);m.x=p.x;m.y=p.y;syncSel();syncRows();draw()}return}if(S.pan){const dx=x-S.mx,dy=y-S.my;V.ox+=dx;V.oy+=dy;S.mx=x;S.my=y;V.follow=false;E.bFollow.classList.remove('active');draw()}};const stop=()=>{S.dragId=null;S.pan=false;c.style.cursor='grab'};c.onmouseup=stop;c.onmouseleave=stop;c.onwheel=(ev)=>{ev.preventDefault();const r=c.getBoundingClientRect(),sx=ev.clientX-r.left,sy=ev.clientY-r.top;const p=s2w(sx,sy);V.scale*=ev.deltaY>0?0.9:1.1;V.scale=Math.max(0.0015,Math.min(2.5,V.scale));const s=size();V.ox=sx-s.w*0.5-p.x*V.scale;V.oy=sy-s.h*0.5+p.y*V.scale;V.follow=false;E.bFollow.classList.remove('active');draw()};c.ondblclick=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top,p=s2w(x,y);const yaw=S.last?S.last.targetYaw:0;const heading=S.last?S.last.heading:0;addMark(p.x,p.y,Number(E.selType.value||0),'manual',yaw,heading);tip('\u5df2\u65b0\u589e\u6807\u8bb0\u70b9')}}
+function updateSelectedYaw(){const m=getSel();if(!m)return;const raw=Number(E.inpYaw.value);if(!Number.isFinite(raw))return;clearGeneratedRoute();m.targetYaw=normalizeYaw(raw);syncSel();syncRows();draw()}
+function updateSelectedHeading(){const m=getSel();if(!m)return;const raw=Number(E.inpHeading.value);if(!Number.isFinite(raw))return;clearGeneratedRoute();m.heading=normalizeHeading(raw);syncSel();syncRows();draw()}
+function initCanvas(){const c=E.cv;c.onmousedown=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;const m=hit(x,y);S.mx=x;S.my=y;if(m){S.sel=m.id;S.dragId=m.id;c.style.cursor='move'}else{S.pan=true;c.style.cursor='grabbing'}syncMarks();draw()};c.onmousemove=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;if(S.dragId!=null){const m=S.marks.find(v=>v.id===S.dragId);if(m){const p=s2w(x,y);clearGeneratedRoute();m.x=p.x;m.y=p.y;syncSel();syncRows();draw()}return}if(S.pan){const dx=x-S.mx,dy=y-S.my;V.ox+=dx;V.oy+=dy;S.mx=x;S.my=y;V.follow=false;E.bFollow.classList.remove('active');draw()}};const stop=()=>{S.dragId=null;S.pan=false;c.style.cursor='grab'};c.onmouseup=stop;c.onmouseleave=stop;c.onwheel=(ev)=>{ev.preventDefault();const r=c.getBoundingClientRect(),sx=ev.clientX-r.left,sy=ev.clientY-r.top;const p=s2w(sx,sy);V.scale*=ev.deltaY>0?0.9:1.1;V.scale=Math.max(0.0015,Math.min(2.5,V.scale));const s=size();V.ox=sx-s.w*0.5-p.x*V.scale;V.oy=sy-s.h*0.5+p.y*V.scale;V.follow=false;E.bFollow.classList.remove('active');draw()};c.ondblclick=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top,p=s2w(x,y);const yaw=S.last?S.last.targetYaw:0;const heading=S.last?S.last.heading:0;addMark(p.x,p.y,Number(E.selType.value||0),'manual',yaw,heading);tip('\u5df2\u65b0\u589e\u6807\u8bb0\u70b9')}}
 function initBtns(){
 fillType(E.selType,0);
 syncTraceControls();
@@ -229,7 +238,7 @@ syncLogButtons();
 E.traceIns.onchange=()=>setTraceVisible('ins',E.traceIns.checked);
 E.traceGps.onchange=()=>setTraceVisible('gps',E.traceGps.checked);
 E.traceFusion.onchange=()=>setTraceVisible('fusion',E.traceFusion.checked);
-E.selType.onchange=()=>{const m=getSel();if(!m)return;m.type=clampType(E.selType.value);syncRows();draw()};
+E.selType.onchange=()=>{const m=getSel();if(!m)return;clearGeneratedRoute();m.type=clampType(E.selType.value);syncRows();draw()};
 E.inpYaw.onchange=updateSelectedYaw;
 E.inpHeading.onchange=updateSelectedHeading;
 E.bFollow.onclick=()=>{V.follow=!V.follow;E.bFollow.classList.toggle('active',V.follow);if(V.follow){follow();draw()}};
@@ -239,7 +248,7 @@ E.bFit.onclick=()=>{fitAll();draw()};
 E.bReset.onclick=()=>{V.scale=0.035;V.ox=0;V.oy=0;draw()};
 E.bAdd.onclick=()=>{if(!S.last){tip('\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u8f68\u8ff9\u70b9');return}addMark(S.last.x,S.last.y,Number(E.selType.value||S.last.pt||0),'manual',S.last.targetYaw,S.last.heading);tip('\u5df2\u6dfb\u52a0\u5f53\u524d\u70b9')};
 E.bDel.onclick=()=>{rmSel();tip('\u5df2\u5220\u9664\u9009\u4e2d\u70b9')};
-E.bClrM.onclick=()=>{S.marks=[];S.sel=null;syncMarks();draw();tip('\u5df2\u6e05\u7a7a\u6807\u8bb0\u70b9')};
+E.bClrM.onclick=()=>{clearGeneratedRoute();S.marks=[];S.sel=null;syncMarks();draw();tip('\u5df2\u6e05\u7a7a\u6807\u8bb0\u70b9')};
 E.bClrT.onclick=async()=>{
 S.traces.ins.length=0;S.traces.gps.length=0;S.traces.fusion.length=0;S.traj=S.traces.ins;S.last=null;S.lastMarkLoop=null;S.lastTrigger=0;
 if(S.api&&window.pywebview&&window.pywebview.api){try{await window.pywebview.api.clear_history()}catch(_){ }}
@@ -254,10 +263,11 @@ tip(sendResult&&sendResult.msg?sendResult.msg:'\u5f00\u59cb\u53d1\u8f66\u547d\u4
 };
 E.bExport.onclick=async()=>{const p=exportPayload();if(!p.length){tip('\u6ca1\u6709\u53ef\u5bfc\u51fa\u7684\u6807\u8bb0\u70b9');return}if(!S.api||!window.pywebview||!window.pywebview.api){tip('\u540e\u7aef API \u672a\u5c31\u7eea');return}try{const r=await window.pywebview.api.export_mark_points_csv(p);tip(r&&r.msg?r.msg:'\u5bfc\u51fa\u5b8c\u6210')}catch(e){tip('\u5bfc\u51fa\u5931\u8d25:'+(e.message||e))}}
 }
+function initPlan3BuildButton(){E.bBuildPlan3.onclick=async()=>{const points=exportPayload();if(points.length<2){tip('\u79d1\u76ee\u4e09\u81f3\u5c11\u9700\u8981\u4e24\u4e2a\u951a\u70b9');return}const spacing=Number(E.inpFillSpacing.value);if(!Number.isFinite(spacing)||spacing<=1){tip('\u8865\u70b9\u95f4\u8ddd\u5fc5\u987b\u5927\u4e8e 1mm');return}if(!S.api||!window.pywebview||!window.pywebview.api){tip('\u540e\u7aef API \u672a\u5c31\u7eea');return}try{const result=await window.pywebview.api.build_plan3_route(points,spacing);if(result&&result.success&&Array.isArray(result.route_points)){S.generatedRoute=result.route_points.map(point=>({x:Number(point.x),y:Number(point.y)})).filter(point=>Number.isFinite(point.x)&&Number.isFinite(point.y));syncRoutePreview();fitAll();draw()}tip(result&&result.msg?result.msg:'\u79d1\u76ee\u4e09\u8def\u7ebf\u5df2\u751f\u6210')}catch(e){tip('\u79d1\u76ee\u4e09\u8def\u7ebf\u751f\u6210\u5931\u8d25:'+(e.message||e))}}}
 function initLogButtons(){E.bStartLog.onclick=async()=>{if(S.logRecording){tip('\u65e5\u5fd7\u5df2\u7ecf\u5728\u8bb0\u5f55\u4e2d');return}if(!S.api||!window.pywebview||!window.pywebview.api){tip('\u540e\u7aef API \u672a\u5c31\u7eea');return}try{const result=await window.pywebview.api.start_wifi_csv_recording();if(result&&result.success){S.logRecording=!!result.recording;S.logPath=result.path||'';syncLogButtons();tip(result.msg||'\u5df2\u5f00\u59cb\u8bb0\u5f55\u65e5\u5fd7')}else tip(result&&result.msg?result.msg:'\u5f00\u59cb\u8bb0\u5f55\u65e5\u5fd7\u5931\u8d25')}catch(e){tip('\u5f00\u59cb\u8bb0\u5f55\u65e5\u5fd7\u5931\u8d25:'+(e.message||e))}};E.bStopLog.onclick=async()=>{if(!S.api||!window.pywebview||!window.pywebview.api){tip('\u540e\u7aef API \u672a\u5c31\u7eea');return}try{const result=await window.pywebview.api.stop_wifi_csv_recording();if(result&&result.success){S.logRecording=!!result.recording;S.logPath=result.path||'';syncLogButtons();tip(result.msg||'\u5df2\u7ed3\u675f\u8bb0\u5f55\u65e5\u5fd7')}else tip(result&&result.msg?result.msg:'\u7ed3\u675f\u8bb0\u5f55\u65e5\u5fd7\u5931\u8d25')}catch(e){tip('\u7ed3\u675f\u8bb0\u5f55\u65e5\u5fd7\u5931\u8d25:'+(e.message||e))}}}
 function initApi(){const ck=()=>{if(window.pywebview&&window.pywebview.api){S.api=true;return true}return false};window.addEventListener('pywebviewready',()=>{S.api=true});const t=setInterval(()=>{if(ck())clearInterval(t)},80)}
 function initFps(){setInterval(()=>{S.fps=S.rx;S.rx=0;syncTop()},1000)}
-function boot(){initBtns();initLogButtons();initCanvas();initApi();initFps();resize();syncMarks();setTxStatus('idle',false);pollData();pollStatus();pollLogStatus();window.addEventListener('resize',resize)}
+function boot(){initBtns();initPlan3BuildButton();initLogButtons();initCanvas();initApi();initFps();resize();syncMarks();setTxStatus('idle',false);pollData();pollStatus();pollLogStatus();window.addEventListener('resize',resize)}
 document.addEventListener('DOMContentLoaded',boot);
 </script>
 </body>

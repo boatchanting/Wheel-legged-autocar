@@ -6,8 +6,11 @@ import socket
 import struct
 import threading
 import time
+from pathlib import Path
 
 import webview
+
+from plan3_route_builder import DEFAULT_FILL_SPACING_MM, generate_route_artifacts
 
 # 上位机监听地址：须与热点网关地址一致；改用其他网段或有线网卡时在这里调整。
 HOST_IP = "192.168.137.1"
@@ -487,7 +490,7 @@ def _handle_debug_logging(data):
             except Exception as e:
                 print(f"[DEBUG LOG] 打开日志失败: {e}")
                 return
-
+        
         try:
             line = f"{data['time_str']},{data['target_speed']:.2f},{data['speed_L']:.2f},{data['speed_R']:.2f},{data['theoretical_yaw_rate']:.4f},{data['actual_yaw_rate']:.4f},{data['slip_flag']}\n"
             debug_log_file.write(line)
@@ -849,6 +852,32 @@ class Api:
     def stop_wifi_csv_recording(self):
         return self.telemetry_recorder.stop()
 
+    def build_plan3_route(self, points, fill_spacing_mm=DEFAULT_FILL_SPACING_MM):
+        """导出当前人工锚点，补普通路径点，并生成科目三 C 路表。"""
+        try:
+            spacing = float(fill_spacing_mm)
+        except (TypeError, ValueError):
+            return {"success": False, "msg": "补点间距必须是数字"}
+
+        export_result = self.export_mark_points_csv(points)
+        if not export_result.get("success"):
+            return export_result
+
+        try:
+            result = generate_route_artifacts(Path(export_result["path"]), fill_spacing_mm=spacing)
+        except Exception as exc:
+            return {"success": False, "msg": f"科目三补点/生成路表失败: {exc}"}
+
+        return {
+            "success": True,
+            "msg": f"已由 {result['anchor_count']} 个锚点生成 {result['route_count']} 点路线",
+            "anchor_csv": export_result["path"],
+            "completed_csv": result["completed_csv"],
+            "header_path": result["header_path"],
+            # 直接回传本次写入 completed CSV 的路线，供网页画布回显最终补点结果。
+            "route_points": result["route_points"],
+        }
+
     def export_mark_points_csv(self, points):
         try:
             if not isinstance(points, list) or not points:
@@ -917,7 +946,7 @@ if __name__ == "__main__":
 
     api = Api()
     window = webview.create_window(
-        title="科目二速度规划打点上位机 (WebView)",
+        title="科目三锚点补线打点上位机 (WebView)",
         url=html_path,
         js_api=api,
         width=1480,
