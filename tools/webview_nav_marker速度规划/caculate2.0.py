@@ -19,10 +19,11 @@ import csv as csv_mod
 import math
 import os
 import re
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -57,7 +58,7 @@ UTURN_OVER_LINE_MM = 400.0
 UTURN_APPROACH_DISTANCES_MM = (1200.0, 2000.0, 3200.0, 4800.0, 6500.0)
 UTURN_APPROACH_LATERAL_OFFSETS_MM = (-700.0, -350.0, 0.0, 350.0, 700.0)
 UTURN_OVERLINE_DISTANCES_MM = (800.0, 1200.0, 1800.0, 2600.0, 3600.0)
-UTURN_GUARD_RADIUS_OFFSETS_MM = (3000.0, 4400.0, 6200.0, 8200.0)
+UTURN_GUARD_RADIUS_OFFSETS_MM = (800.0, 1200.0, 1600.0, 2200.0, 3000.0)
 FINISH_OVER_LINE_MM = 700.0
 LINE_SAMPLE_COUNT = 11
 GAP_SAMPLE_COUNT = 9
@@ -75,6 +76,14 @@ MAX_FINAL_CANDIDATES = 96
 SMOOTH_TENSIONS = (7.75,)
 START_APPROACH_ANCHOR_FRACS = (0.2, 0.4, 0.6, 0.8)
 FINISH_EXIT_ANCHOR_FRACS = (0.33, 0.66)
+SPRINT_ENTRY_AFTER_LAST_CONE_MM = (500.0, 800.0, 1100.0, 1450.0, 1800.0, 2200.0, 2700.0)
+SPRINT_ENTRY_DISTANCE_FRACS = (0.35, 0.50, 0.65, 0.78)
+SPRINT_ENTRY_MIN_LINE_APPROACH_MM = 450.0
+SPRINT_ENTRY_LATERAL_OFFSETS_MM = (0.0, 560.0, 760.0, 980.0, 1250.0, 1550.0)
+SPRINT_TAIL_EXCESS_WEIGHT = 3.5
+SPRINT_TAIL_CHORD_WEIGHT = 0.18
+SPRINT_TAIL_CURVATURE_WEIGHT = 3.0e6
+SPRINT_TAIL_CURVATURE_RATE_WEIGHT = 1.6e9
 
 FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 
@@ -331,27 +340,8 @@ def _course_axis_from_markers_and_cones(
     finish_marker: RoutePoint,
 ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
     marker_dx = finish_marker.x - uturn_marker.x
-    marker_dy = finish_marker.y - uturn_marker.y
-    fallback = _unit_vec(marker_dx, marker_dy, fallback=(1.0, 0.0))
-
-    if len(cones) >= 2:
-        pts = np.array([(p.x, p.y) for p in cones], dtype=float)
-        centered = pts - np.mean(pts, axis=0)
-        cov = centered.T @ centered
-        values, vectors = np.linalg.eigh(cov)
-        axis = vectors[:, int(np.argmax(values))]
-        axis_x, axis_y = float(axis[0]), float(axis[1])
-        axis_x, axis_y = _unit_vec(axis_x, axis_y, fallback=fallback)
-    else:
-        axis_x, axis_y = fallback
-
-    if axis_x * marker_dx + axis_y * marker_dy < 0.0:
-        axis_x = -axis_x
-        axis_y = -axis_y
-
-    lateral_x = -axis_y
-    lateral_y = axis_x
-    return (axis_x, axis_y), (lateral_x, lateral_y)
+    axis_x = 1.0 if marker_dx >= 0.0 else -1.0
+    return (axis_x, 0.0), (0.0, axis_x)
 
 
 def _to_sl(
@@ -395,6 +385,21 @@ def _line_lateral_candidates(key_values: Sequence[float], count: int = LINE_SAMP
         mid = (low + high) * 0.5
         low = mid - 600.0
         high = mid + 600.0
+
+    values = list(np.linspace(low, high, count))
+    values.extend(key_values)
+    return _unique_sorted(values, min_gap=25.0)
+
+
+def _terminal_lateral_candidates(key_values: Sequence[float], count: int = LINE_SAMPLE_COUNT) -> List[float]:
+    if not key_values:
+        key_values = [0.0]
+    low = min(key_values) - MIN_CONE_CLEARANCE_MM * 0.7
+    high = max(key_values) + MIN_CONE_CLEARANCE_MM * 0.7
+    if high - low < 1000.0:
+        mid = (low + high) * 0.5
+        low = mid - 500.0
+        high = mid + 500.0
 
     values = list(np.linspace(low, high, count))
     values.extend(key_values)
@@ -448,12 +453,15 @@ def _pseudo_uturn_approach_candidates(
 
 def _pseudo_uturn_overline_candidates(
     start_s: float,
+    lateral_reference_l: float,
     origin_xy: Tuple[float, float],
     axis: Tuple[float, float],
     lateral: Tuple[float, float],
+    label: str = "uturn_overline",
 ) -> List[CandidatePoint]:
     start_side = _signed_side(start_s)
     beyond_side = -start_side
+    wrap_side = _signed_side(lateral_reference_l, fallback=1.0)
     candidates: List[CandidatePoint] = []
 
     for radius_offset in UTURN_GUARD_RADIUS_OFFSETS_MM:
@@ -462,11 +470,10 @@ def _pseudo_uturn_overline_candidates(
             if over_s >= radius - 20.0:
                 continue
             l_abs = math.sqrt(max(0.0, radius * radius - over_s * over_s))
-            for lateral_side in (-1.0, 1.0):
-                s_val = beyond_side * over_s
-                l_val = lateral_side * l_abs
-                x, y = _from_sl(s_val, l_val, origin_xy, axis, lateral)
-                candidates.append(CandidatePoint(float(x), float(y), "uturn_overline"))
+            s_val = beyond_side * over_s
+            l_val = wrap_side * l_abs
+            x, y = _from_sl(s_val, l_val, origin_xy, axis, lateral)
+            candidates.append(CandidatePoint(float(x), float(y), label))
 
     if not candidates:
         raise PathConstraintError("cannot build over-line candidates around pseudo u-turn cone")
@@ -515,6 +522,60 @@ def _gap_candidates(
         y = ay + (by - ay) * t
         candidates.append(CandidatePoint(float(x), float(y), f"gap{gap_index + 1}"))
     return candidates
+
+
+def _sprint_entry_candidates(
+    last_cone: RoutePoint,
+    finish_s: float,
+    finish_l: float,
+    origin_xy: Tuple[float, float],
+    axis: Tuple[float, float],
+    lateral: Tuple[float, float],
+) -> Tuple[List[CandidatePoint], List[float]]:
+    last_s, last_l = _to_sl(_point_xy(last_cone), origin_xy, axis, lateral)
+    finish_target_s = finish_s + abs(FINISH_OVER_LINE_MM)
+    max_entry_s = min(finish_s - SPRINT_ENTRY_MIN_LINE_APPROACH_MM, finish_target_s - 150.0)
+    min_entry_s = last_s + MIN_CONE_CLEARANCE_MM + 80.0
+    if max_entry_s <= min_entry_s:
+        max_entry_s = min_entry_s + 1.0
+
+    s_candidates: List[float] = []
+    for distance in SPRINT_ENTRY_AFTER_LAST_CONE_MM:
+        s_candidates.append(last_s + distance)
+
+    usable_span = max(0.0, finish_s - last_s)
+    for frac in SPRINT_ENTRY_DISTANCE_FRACS:
+        s_candidates.append(last_s + usable_span * frac)
+
+    s_values = _unique_sorted(
+        [min(max(s_val, min_entry_s), max_entry_s) for s_val in s_candidates],
+        min_gap=80.0,
+    )
+    if len(s_values) < 3 and max_entry_s - min_entry_s > 240.0:
+        s_values = _unique_sorted(
+            list(s_values) + list(np.linspace(min_entry_s, max_entry_s, 3)),
+            min_gap=80.0,
+        )
+
+    lateral_keys: List[float] = [last_l, finish_l]
+    for base_l in (last_l, finish_l):
+        for offset in SPRINT_ENTRY_LATERAL_OFFSETS_MM:
+            lateral_keys.append(base_l + offset)
+            if offset > 0.0:
+                lateral_keys.append(base_l - offset)
+
+    l_values = _terminal_lateral_candidates(lateral_keys, count=LINE_SAMPLE_COUNT)
+
+    candidates: List[CandidatePoint] = []
+    for s_val in s_values:
+        label = f"sprint_entry_{int(round(s_val - last_s))}"
+        for l_val in l_values:
+            x, y = _from_sl(s_val, l_val, origin_xy, axis, lateral)
+            candidates.append(CandidatePoint(float(x), float(y), label))
+
+    if not candidates:
+        raise PathConstraintError("cannot build finish sprint entry candidates")
+    return _dedupe_candidate_points(candidates), l_values
 
 
 def _rotate_vec(x_val: float, y_val: float, angle_deg: float) -> Tuple[float, float]:
@@ -600,17 +661,55 @@ def _clearance_cost(clearance_mm: float) -> float:
     return CLEARANCE_COST_WEIGHT / ((margin + 30.0) ** 1.3)
 
 
+def _is_sprint_entry_stage(stage: Sequence[CandidatePoint]) -> bool:
+    return bool(stage) and all(cand.label.startswith("sprint_entry") for cand in stage)
+
+
+def _select_diverse_search_states(
+    states: Sequence[Tuple[float, List[Tuple[float, float]], List[str]]],
+    limit: int,
+    group_key: Callable[[Tuple[float, List[Tuple[float, float]], List[str]]], str],
+) -> List[Tuple[float, List[Tuple[float, float]], List[str]]]:
+    if len(states) <= limit:
+        return list(states)
+
+    groups = {group_key(state) for state in states}
+    quota = max(2, limit // max(1, len(groups)))
+    counts: Dict[str, int] = {}
+    selected: List[Tuple[float, List[Tuple[float, float]], List[str]]] = []
+
+    for state in states:
+        key = group_key(state)
+        if counts.get(key, 0) >= quota:
+            continue
+        selected.append(state)
+        counts[key] = counts.get(key, 0) + 1
+        if len(selected) >= limit:
+            return selected
+
+    if len(selected) < limit:
+        used = {id(state) for state in selected}
+        for state in states:
+            if id(state) in used:
+                continue
+            selected.append(state)
+            if len(selected) >= limit:
+                break
+
+    return selected
+
+
 def _beam_search_routes(
     start_xy: Tuple[float, float],
     stages: Sequence[Sequence[CandidatePoint]],
     cones: Sequence[RoutePoint],
 ) -> List[Tuple[float, List[Tuple[float, float]]]]:
-    routes: List[Tuple[float, List[Tuple[float, float]]]] = [(0.0, [start_xy])]
+    routes: List[Tuple[float, List[Tuple[float, float]], List[str]]] = [(0.0, [start_xy], ["start"])]
 
     for stage_idx, stage in enumerate(stages):
         next_stage = stages[stage_idx + 1] if stage_idx + 1 < len(stages) else None
-        expanded: List[Tuple[float, List[Tuple[float, float]]]] = []
-        for current_cost, route in routes:
+        expanded: List[Tuple[float, List[Tuple[float, float]], List[str]]] = []
+        for current_cost, route, labels in routes:
             prev_xy = route[-1]
             prev_prev_xy = route[-2] if len(route) >= 2 else None
             for cand in stage:
@@ -629,14 +728,24 @@ def _beam_search_routes(
                     angle = _turn_angle_rad(prev_prev_xy, prev_xy, cand_xy)
                     turn_cost = TURN_COST_WEIGHT * angle * angle
                 total = current_cost + length_cost + turn_cost + _clearance_cost(clearance)
-                expanded.append((total, route + [cand_xy]))
+                expanded.append((total, route + [cand_xy], labels + [cand.label]))
 
         if not expanded:
             raise PathConstraintError("no candidate route can satisfy segment clearance")
         expanded.sort(key=lambda item: item[0])
-        routes = expanded[:BEAM_WIDTH]
+        if _is_sprint_entry_stage(stage):
+            routes = _select_diverse_search_states(expanded, BEAM_WIDTH, lambda item: item[2][-1])
+        elif (
+            stage
+            and all(cand.label == "finish" for cand in stage)
+            and stage_idx > 0
+            and _is_sprint_entry_stage(stages[stage_idx - 1])
+        ):
+            routes = _select_diverse_search_states(expanded, BEAM_WIDTH, lambda item: item[2][-2])
+        else:
+            routes = expanded[:BEAM_WIDTH]
 
-    return routes[:MAX_FINAL_CANDIDATES]
+    return [(cost, route) for cost, route, _labels in routes[:MAX_FINAL_CANDIDATES]]
 
 
 def _sample_hermite_path(
@@ -673,7 +782,9 @@ def _sample_hermite_path(
 
         u_vals = chord_s / total
         k = min(3, len(cleaned) - 1)
-        tck, _ = splprep([pts[:, 0], pts[:, 1]], u=u_vals, s=max(0.0, float(tension)), k=k)
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", RuntimeWarning)
+            tck, _ = splprep([pts[:, 0], pts[:, 1]], u=u_vals, s=max(0.0, float(tension)), k=k)
         dense_count = max(
             900,
             len(cleaned) * 80,
@@ -893,6 +1004,7 @@ def _score_final_path(
     points: Sequence[RoutePoint],
     cones: Sequence[RoutePoint],
     route_cost: float,
+    sprint_entry_xy: Optional[Tuple[float, float]] = None,
 ) -> Tuple[float, float]:
     s_vals = cumulative_arc_length(points)
     curvature = signed_curvature(points)
@@ -909,6 +1021,24 @@ def _score_final_path(
         + 4.0e9 * max_abs_rate
         + 40000.0 / (clearance_margin + 80.0)
     )
+
+    if sprint_entry_xy is not None and len(points) >= 4:
+        entry_idx = min(
+            range(len(points)),
+            key=lambda i: math.hypot(points[i].x - sprint_entry_xy[0], points[i].y - sprint_entry_xy[1]),
+        )
+        if entry_idx < len(points) - 3:
+            tail_length = float(s_vals[-1] - s_vals[entry_idx])
+            tail_chord = math.hypot(points[-1].x - points[entry_idx].x, points[-1].y - points[entry_idx].y)
+            tail_excess = max(0.0, tail_length - tail_chord)
+            tail_k = float(np.max(np.abs(curvature[entry_idx:]))) if len(curvature) else 0.0
+            tail_rate = float(np.max(np.abs(rate[entry_idx:]))) if len(rate) else 0.0
+            score += (
+                SPRINT_TAIL_EXCESS_WEIGHT * tail_excess
+                + SPRINT_TAIL_CHORD_WEIGHT * tail_chord
+                + SPRINT_TAIL_CURVATURE_WEIGHT * tail_k
+                + SPRINT_TAIL_CURVATURE_RATE_WEIGHT * tail_rate
+            )
     return score, clearance
 
 
@@ -946,10 +1076,29 @@ def build_candidate_stages(
 
     start_xy = (0.0, 0.0)
     start_s, start_l = _to_sl(start_xy, origin_xy, axis, lateral)
+    _first_cone_s, first_cone_l = _to_sl(_point_xy(sorted_real_cones[0]), origin_xy, axis, lateral)
+    entry_l = start_l
+    if _signed_side(entry_l, fallback=-first_cone_l) == _signed_side(first_cone_l, fallback=1.0):
+        entry_l = -first_cone_l
 
     traversal_stages: List[List[CandidatePoint]] = [
         _pseudo_uturn_approach_candidates(start_s, start_l, origin_xy, axis, lateral),
-        _pseudo_uturn_overline_candidates(start_s, origin_xy, axis, lateral),
+        _pseudo_uturn_overline_candidates(
+            start_s,
+            entry_l,
+            origin_xy,
+            axis,
+            lateral,
+            label="uturn_entry",
+        ),
+        _pseudo_uturn_overline_candidates(
+            start_s,
+            first_cone_l,
+            origin_xy,
+            axis,
+            lateral,
+            label="uturn_exit",
+        ),
     ]
 
     if len(sorted_real_cones) >= 2:
@@ -982,17 +1131,25 @@ def build_candidate_stages(
             _s, l_val = _to_sl((cand.x, cand.y), origin_xy, axis, lateral)
             gap_l_values.append(l_val)
 
-    lateral_keys = gap_l_values + [start_l, finish_l]
-    finish_l_candidates = _line_lateral_candidates(lateral_keys)
+    sprint_entry_stage, sprint_entry_l_values = _sprint_entry_candidates(
+        sorted_real_cones[-1],
+        finish_s,
+        finish_l,
+        origin_xy,
+        axis,
+        lateral,
+    )
 
     finish_target_s = finish_s + abs(FINISH_OVER_LINE_MM)
+    terminal_lateral_keys = sprint_entry_l_values + [finish_l]
+    finish_l_candidates = _terminal_lateral_candidates(terminal_lateral_keys)
 
     finish_stage = []
     for l_val in finish_l_candidates:
         x, y = _from_sl(finish_target_s, l_val, origin_xy, axis, lateral)
         finish_stage.append(CandidatePoint(x, y, "finish"))
 
-    return traversal_stages + [finish_stage], obstacle_cones, axis
+    return traversal_stages + [sprint_entry_stage, finish_stage], obstacle_cones, axis
 
 
 def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathResult:
@@ -1017,7 +1174,8 @@ def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathRe
                 out_x, out_y = resample_path(dense_x, dense_y, INTERPOLATE_DIST)
                 points = _route_points_from_xy(out_x, out_y)
                 validate_uturn_line_crossing(points, uturn_marker, real_cones, finish_marker)
-                score, clearance = _score_final_path(points, sorted_cones, route_cost)
+                sprint_entry_xy = route[-2] if len(route) >= 2 else None
+                score, clearance = _score_final_path(points, sorted_cones, route_cost, sprint_entry_xy)
             except PathConstraintError:
                 continue
 
@@ -1113,8 +1271,8 @@ def generate_route_plan(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float,
         final_points = final_points[1:]
 
     slalom_start_idx: Optional[int] = None
-    if len(result.raw_route) >= 4 and final_points:
-        slalom_xy = result.raw_route[3]
+    if len(result.raw_route) >= 5 and final_points:
+        slalom_xy = result.raw_route[4]
         slalom_start_idx = min(
             range(len(final_points)),
             key=lambda i: math.hypot(final_points[i].x - slalom_xy[0], final_points[i].y - slalom_xy[1]),
@@ -1306,6 +1464,18 @@ def plot_result(
                     linestyle=(0, (5, 5)),
                     linewidth=1.6,
                     label="掉头线",
+                    zorder=2,
+                )
+                finish_s, _finish_l = _to_sl(_point_xy(finish_marker), origin_xy, axis, lateral)
+                finish_line_a = _from_sl(finish_s, low_l, origin_xy, axis, lateral)
+                finish_line_b = _from_sl(finish_s, high_l, origin_xy, axis, lateral)
+                ax.plot(
+                    [finish_line_a[0], finish_line_b[0]],
+                    [finish_line_a[1], finish_line_b[1]],
+                    color="#7C3AED",
+                    linestyle=(0, (4, 4)),
+                    linewidth=1.5,
+                    label="终点线",
                     zorder=2,
                 )
 

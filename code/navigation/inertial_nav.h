@@ -12,7 +12,7 @@
 #define NAV_DT              0.01f   // 导航解算周期 (10ms)【提醒】这个要是改了中断里面也得改
 
 // --- 融合参数 (需要根据实际小车表现进行调优) ---
-#define NAV_ALPHA_VEL       0.9f   // 纵向速度融合系数 (0.9 表示90%信任轮速, 10%信任加速度积分)
+#define NAV_ALPHA_VEL       1.0f   // 纵向速度融合系数 (0.9 表示90%信任轮速, 10%信任加速度积分)
 #define YAW_RATE_DIFF_THRES 0.5f    // 理论角速度与IMU角速度的最大偏差(rad/s)，超过视为打滑
 #define NAV_LAT_ACC_DEADZONE 50.0f  // 横向加速度死区。小于此值视为传感器噪声, 不累积侧滑速度
 #define NAV_LON_ACC_ZERO_THRESHOLD 0.0f // 需要实验调整，防止空转时漂移
@@ -36,7 +36,7 @@
 
 #define NAV_DISTANCE_SCALE_FACTOR   1.0f // <--- 在这里填入你计算出的校准值，未调用【优化点】
 #define WHEEL_BASE_MM       175.0f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       4.936f//大致为车轮半径
+#define SPEED_TO_MM_S       4.79f//大致为车轮半径
 #endif
 
 // --- 坐标系数据结构 ---
