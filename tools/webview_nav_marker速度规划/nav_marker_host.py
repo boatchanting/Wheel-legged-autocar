@@ -1,3 +1,4 @@
+import atexit
 import csv
 import math
 import os
@@ -81,6 +82,31 @@ FIELD_NAMES_V1 = [
 ]
 
 FIELD_NAMES_V2 = FIELD_NAMES_V1 + ["mark_trigger", "point_type"]
+
+WIFI_TELEMETRY_LOG_FIELDS = [
+    "recorded_at",
+    "frame_index",
+    "frame_cmd",
+    "raw_frame_hex",
+] + FIELD_NAMES_V2 + [
+    "gps_x",
+    "gps_y",
+    "gps_valid",
+    "gps_origin_set",
+    "fusion_x",
+    "fusion_y",
+    "fusion_valid",
+    "pid_mode",
+    "slip_flag",
+    "target_speed",
+    "speed_L",
+    "speed_R",
+    "theoretical_yaw_rate",
+    "actual_yaw_rate",
+    "has_debug",
+    "payload_size",
+    "time_str",
+]
 
 MAX_HISTORY = 20000
 MAX_NEW_BUFFER = 4000
@@ -471,6 +497,145 @@ def _handle_debug_logging(data):
             print("[DEBUG LOG] 退出复刻，结束日志写入。")
 
 
+def _normalize_wifi_log_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return int(value)
+    return value
+
+
+def _build_wifi_log_filename():
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    return f"wifi_telemetry_{timestamp}_{time.time_ns()}.csv"
+
+
+class WifiTelemetryCsvRecorder:
+    def __init__(self, output_dir=None):
+        self.output_dir = output_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
+        self._lock = threading.Lock()
+        self._file = None
+        self._writer = None
+        self._path = ""
+        self._row_count = 0
+        self._started_at = None
+
+    def _is_recording_locked(self):
+        return self._file is not None and self._writer is not None
+
+    def start(self):
+        with self._lock:
+            if self._is_recording_locked():
+                return {
+                    "success": True,
+                    "recording": True,
+                    "path": self._path,
+                    "rows": self._row_count,
+                    "msg": f"日志已在记录中: {self._path}",
+                }
+
+            os.makedirs(self.output_dir, exist_ok=True)
+            filename = _build_wifi_log_filename()
+            path = os.path.join(self.output_dir, filename)
+
+            try:
+                file_obj = open(path, "w", newline="", encoding="utf-8-sig")
+            except Exception as exc:
+                return {"success": False, "recording": False, "path": "", "rows": 0, "msg": f"打开日志失败: {exc}"}
+
+            self._file = file_obj
+            self._writer = csv.DictWriter(file_obj, fieldnames=WIFI_TELEMETRY_LOG_FIELDS)
+            self._writer.writeheader()
+            self._path = path
+            self._row_count = 0
+            self._started_at = time.time()
+            return {
+                "success": True,
+                "recording": True,
+                "path": path,
+                "rows": 0,
+                "msg": f"已开始记录日志: {path}",
+            }
+
+    def record_telemetry_frame(self, data, raw_frame_bytes=None, frame_cmd=CMD_TELEMETRY):
+        with self._lock:
+            if not self._is_recording_locked():
+                return False
+
+            row = {field: "" for field in WIFI_TELEMETRY_LOG_FIELDS}
+            row["recorded_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            row["frame_index"] = self._row_count + 1
+            row["frame_cmd"] = f"0x{int(frame_cmd) & 0xFF:02X}"
+            row["raw_frame_hex"] = raw_frame_bytes.hex() if raw_frame_bytes is not None else ""
+            for field, value in data.items():
+                if field in row:
+                    row[field] = _normalize_wifi_log_value(value)
+
+            self._writer.writerow(row)
+            self._file.flush()
+            self._row_count += 1
+            return True
+
+    def stop(self):
+        with self._lock:
+            if not self._is_recording_locked():
+                return {"success": False, "recording": False, "path": "", "rows": 0, "msg": "当前没有正在记录的日志"}
+
+            path = self._path
+            rows = self._row_count
+            try:
+                self._file.flush()
+            except Exception:
+                pass
+            try:
+                self._file.close()
+            except Exception:
+                pass
+
+            self._file = None
+            self._writer = None
+            self._path = ""
+            self._row_count = 0
+            self._started_at = None
+            return {
+                "success": True,
+                "recording": False,
+                "path": path,
+                "rows": rows,
+                "msg": f"已结束记录日志: {path}",
+            }
+
+    def status(self):
+        with self._lock:
+            return {
+                "recording": self._is_recording_locked(),
+                "path": self._path,
+                "rows": self._row_count,
+                "started_at": self._started_at,
+            }
+
+    def close(self):
+        with self._lock:
+            if self._file is not None:
+                try:
+                    self._file.flush()
+                except Exception:
+                    pass
+                try:
+                    self._file.close()
+                except Exception:
+                    pass
+            self._file = None
+            self._writer = None
+            self._path = ""
+            self._row_count = 0
+            self._started_at = None
+
+
+_wifi_telemetry_recorder = WifiTelemetryCsvRecorder()
+atexit.register(_wifi_telemetry_recorder.close)
+
+
 def _push_data(data):
     global last_rx_time, last_payload_size
 
@@ -534,6 +699,7 @@ def _parse_frame_stream(raw_buffer):
 
         data = _decode_payload(payload)
         if data is not None:
+            _wifi_telemetry_recorder.record_telemetry_frame(data, raw_frame_bytes=bytes(raw_buffer[:frame_len]), frame_cmd=cmd)
             _handle_debug_logging(data)
             _push_data(data)
 
@@ -619,6 +785,9 @@ def tcp_server_thread():
 
 
 class Api:
+    def __init__(self, telemetry_recorder=None):
+        self.telemetry_recorder = telemetry_recorder or _wifi_telemetry_recorder
+
     def get_new_data(self):
         with state_lock:
             if not new_data_buffer:
@@ -633,6 +802,7 @@ class Api:
             connected = bool(peer_addr)
             data_fresh = (now - last_rx_time) < 1.2
             frame_fresh = (now - last_frame_time) < 1.2
+            log_status = self.telemetry_recorder.status()
             return {
                 "connected": connected,
                 "data_fresh": data_fresh,
@@ -644,6 +814,9 @@ class Api:
                 "host_ip": listen_ip,
                 "host_port": HOST_PORT,
                 "enable_slip_markers": ENABLE_SLIP_MARKERS,
+                "wifi_log_recording": log_status["recording"],
+                "wifi_log_path": log_status["path"],
+                "wifi_log_rows": log_status["rows"],
             }
 
     def clear_history(self):
@@ -662,6 +835,12 @@ class Api:
             return {"success": False, "msg": "control_code 超出范围"}
 
         return _send_control_to_vehicle(code)
+
+    def start_wifi_csv_recording(self):
+        return self.telemetry_recorder.start()
+
+    def stop_wifi_csv_recording(self):
+        return self.telemetry_recorder.stop()
 
     def export_mark_points_csv(self, points):
         try:
