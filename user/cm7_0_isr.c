@@ -346,19 +346,14 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // 按下记录按钮之前的惯性导航不可信==========================================================
     if(loop_counter % 10 == 1 && g_yaw_initialized)
     {
+        #if CURRENT_NAV_PLAN == 1
         if (jump_flag == 0)
+        #endif
+        #if CURRENT_NAV_PLAN == 2
+        if (jump_flag == 0 && Minefield_Is_Active() == 0)//科二中雷区屏蔽惯导
+        #endif  
         {
             // 调用导航更新函数
-            #if IMU_CATEGORY == 1&&CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
-            InertialNav_Update(
-                euler_angle.yaw,                                 // 当前偏航角
-                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-                9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-                (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data,     // 右轮速
-                filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
-            );
-            #endif
             #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
             InertialNav_Update(
                 euler_angle.yaw,                                 // 当前偏航角
@@ -368,18 +363,6 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 (float)motor_value.receive_right_speed_data,     // 右轮速
                 filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
-            #endif
-            #if IMU_CATEGORY == 3 &&CAR_SELECT == 0//imu963ra 如果小车不同再对小车加&&加以区分
-            
-            InertialNav_Update(
-                euler_angle.yaw,                                 // 当前偏航角
-                9806.65*((float)imu_data.acc_y/4098-(float)imu_data.grav_y),                                // 纵向加速度 (前+)
-                9806.65*((float)imu_data.grav_x-(float)imu_data.acc_x/4098), // 横向加速度 (左+) 9.80665是重力加速度，这里乘了1000倍是因为转换为mm/s^2，imu数据是4096位的，所以需要除4096
-                (float)motor_value.receive_left_speed_data,      // 左轮速
-                (float)motor_value.receive_right_speed_data,     // 右轮速
-                filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
-            );
-            
             #endif
             #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
             
@@ -475,7 +458,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
             // 2.2 全局刹车前馈
-            Brake_Feedforward_Update(target_speed_set, current_actual_speed, (uint8)((g_motor_enable != 0) && (!g_fallen)), jump_flag);
+            uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
+            if ((Minefield_Is_Active() != 0U) || (g_special_action_trigger != 0U))
+            {
+                brake_ff_enable = 0U;
+                Brake_Feedforward_Reset();
+            }
+            Brake_Feedforward_Update(target_speed_set, current_actual_speed, brake_ff_enable, jump_flag);
             {
                 uint8 accel_ff_replay_running = 0U;
                 uint8 accel_ff_inhibit = 0U;
@@ -496,6 +485,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 // 刹车前馈达到 BRAKE_ACCEL_INHIBIT_PWM 或特殊/视觉任务接管时，不再生成新的加速补偿；
                 // 小于该阈值的轻刹交给后面的最终仲裁处理，避免出弯瞬间加速前馈被完全清掉。
                 if ((g_is_push_mode == 1U) ||
+                    (NavReplay_SpecialPointZeroBrakeActive() != 0U) ||
                     (g_brake_active != 0U) ||
                     (g_reverse_brake_active != 0U) ||
                     (fabsf(brake_pwm_now) >= BRAKE_ACCEL_INHIBIT_PWM) ||

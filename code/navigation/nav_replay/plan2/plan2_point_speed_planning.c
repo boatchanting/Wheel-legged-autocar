@@ -19,15 +19,29 @@ volatile float g_nav_point_spin_debug_total_angle = 0.0f;
 volatile float g_nav_point_spin_debug_direction = 0.0f;
 volatile float g_nav_point_spin_debug_cw_total_angle = 0.0f;
 volatile float g_nav_point_spin_debug_ccw_total_angle = 0.0f;
+volatile uint16 g_nav_point_special_debug_target_idx = 0U;
+volatile float g_nav_point_special_debug_target_x = 0.0f;
+volatile float g_nav_point_special_debug_target_y = 0.0f;
+volatile float g_nav_point_special_debug_dist_mm = 0.0f;
+volatile float g_nav_point_special_debug_brake_radius_mm = 0.0f;
+volatile float g_nav_point_special_debug_speed_ref_mm_s = 0.0f;
+volatile uint8 g_nav_point_special_debug_zero_brake_issued = 0U;
+volatile uint8 g_nav_point_special_debug_zero_brake_active = 0U;
 
 static uint16 g_target_idx = 0U;
 static uint8 g_start_heading_aligned = 1U;
-static uint8 s_stop_stable_ticks = 0U;
 static uint8 s_special_execute_circle_entered = 0U;
+static uint8 s_special_zero_brake_issued = 0U;
+static uint8 s_special_zero_brake_active = 0U;
+static uint8 s_special_crawl_active = 0U;
+static uint8 s_special_prep_zero_brake_latched = 0U;
+static uint8 s_special_reverse_recover_active = 0U;
+static float s_special_capture_speed_ref_mag = 0.0f;
 static float s_prev_speed_cmd = 0.0f;
 static uint8 s_spin_exit_pending = 0U;
 static uint8 s_spin_exit_align_ticks = 0U;
 static uint8 s_stop_predict_has_prev = 0U;
+static uint8 s_stop_predict_decel_observed = 0U;
 static float s_stop_predict_prev_speed_mag = 0.0f;
 static float s_stop_predict_prev_speed_sign = 0.0f;
 static float s_stop_predict_decel_mm_s2 = NAV_POINT_SPEED_DECEL_CMD2_PER_MM;
@@ -63,8 +77,27 @@ static float CalcBearingDeg(float x1, float y1, float x2, float y2)
 
 static void ResetStopState(void)
 {
-    s_stop_stable_ticks = 0U;
     s_special_execute_circle_entered = 0U;
+    s_special_zero_brake_issued = 0U;
+    s_special_zero_brake_active = 0U;
+    s_special_crawl_active = 0U;
+    s_special_prep_zero_brake_latched = 0U;
+    s_special_reverse_recover_active = 0U;
+}
+
+uint8 NavReplay_SpecialPointZeroBrakeActive(void)
+{
+    return s_special_zero_brake_active;
+}
+
+uint8 NavReplay_SpecialPointCrawlActive(void)
+{
+    return s_special_crawl_active;
+}
+
+uint8 NavReplay_SpecialPointPrepZeroBrakeLatched(void)
+{
+    return s_special_prep_zero_brake_latched;
 }
 
 static void ResetSpinExitState(void)
@@ -85,84 +118,123 @@ static uint8 IsSpecialPointType(uint8 point_type)
 
 static float PositiveAngle360(float angle);
 static float CalcSpinTotalAngle(float current_yaw, float exit_yaw, float spin_sign);
+static void SelectSpecialForwardHeading(float point_yaw_deg, float *selected_err_deg, float *speed_sign);
+static void SelectSpecialPointHeading(float point_yaw_deg, float dist_to_point, float abs_vehicle_speed, float *selected_err_deg, float *speed_sign);
 static float PlanDistanceSpeedAbs(float dist_mm, float stop_radius_mm);
 static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float yaw_err_deg);
 static float PlanSpeedAbsAfterSpinExit(float dist_mm, float stop_radius_mm, float yaw_err_deg);
 static float GetApproachSpeedMag(float speed_sign);
+static float UpdateSpecialCaptureSpeedRef(float approach_speed_mag, float speed_sign);
 static void ResetEncoderStopPrediction(void);
 static void UpdateEncoderStopPrediction(float approach_speed_mag, float speed_sign);
 static float ApplyEncoderStopPrediction(float speed_mag, float dist_mm, float stop_radius_mm, float speed_sign);
-static float ApplyEncoderEntryPrediction(float speed_mag, float dist_mm, float entry_radius_mm, float entry_speed_mag, float speed_sign);
-static uint8 ShouldStartSpecialPointCapture(float dist_to_point);
-static float PlanSpecialApproachSpeed(float dist_to_point, float speed_sign);
-static void UpdateSpecialStopStableTicks(float speed_mag);
-static uint8 ShouldTriggerSpecialAction(void);
+static float CalcSpecialBrakeDecel(void);
+static float CalcSpecialBrakeRadius(float approach_speed_mag);
+static uint8 ShouldStartSpecialPointCapture(float dist_to_point, float brake_radius_mm);
+static float CalcSpecialCrawlReleaseDistance(float abs_vehicle_speed);
+static float PlanSpecialApproachSpeed(float dist_to_point, float speed_sign, float abs_vehicle_speed);
+static uint8 ShouldTriggerSpecialAction(float dist_to_point, float speed_mag);
 static uint8 ShouldFinishAtLastPoint(uint16 point_idx, float dist_to_point);
 static float PlanFinalPassSpeedAbs(float yaw_err_deg);
 
-static uint8 ShouldStartSpecialPointCapture(float dist_to_point)
+static float CalcSpecialBrakeDecel(void)
 {
-    return (uint8)(dist_to_point <= NAV_POINT_SPECIAL_CRAWL_RADIUS);
+    float decel = NAV_POINT_SPECIAL_BRAKE_DECEL_MM_S2;
+
+    if ((s_stop_predict_decel_observed != 0U) &&
+        (s_stop_predict_decel_mm_s2 < decel))
+    {
+        decel = s_stop_predict_decel_mm_s2;
+    }
+
+    return Float_Constrain(decel,
+                           NAV_POINT_STOP_PREDICT_DECEL_MIN,
+                           NAV_POINT_STOP_PREDICT_DECEL_MAX);
 }
 
-static float PlanSpecialApproachSpeed(float dist_to_point, float speed_sign)
+static float CalcSpecialBrakeRadius(float approach_speed_mag)
 {
-    float crawl_mag = fabsf(NAV_POINT_SPECIAL_CRAWL_SPEED);
-    float entry_speed_mag = fabsf(NAV_POINT_SPECIAL_ENTRY_SPEED_MM_S);
-    float approach_mag;
-    float predicted_mag;
-    uint8 in_crawl_band;
+    float speed_mag = fabsf(approach_speed_mag);
+    float brake_pwm_abs = fabsf(Brake_Feedforward_GetPwm());
+    float decel = CalcSpecialBrakeDecel();
+    float stop_dist = (speed_mag * speed_mag) / (2.0f * decel);
+    float brake_radius = NAV_POINT_SPECIAL_EXECUTE_RADIUS +
+                         NAV_POINT_SPECIAL_BRAKE_MARGIN_MM +
+                         stop_dist;
 
-    if (dist_to_point <= NAV_POINT_SPECIAL_EXECUTE_RADIUS)
+    brake_radius = Float_Constrain(brake_radius,
+                                   NAV_POINT_SPECIAL_BRAKE_RADIUS_MIN,
+                                   NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX);
+
+    if (brake_pwm_abs < NAV_POINT_SPECIAL_BRAKE_READY_PWM)
     {
-        return NAV_POINT_SPEED_STOP;
+        brake_radius += NAV_POINT_SPECIAL_BRAKE_WEAK_FF_MARGIN;
     }
 
-    in_crawl_band = (uint8)(dist_to_point <= NAV_POINT_SPECIAL_CRAWL_RADIUS);
-    if (in_crawl_band != 0U)
-    {
-        approach_mag = crawl_mag;
-    }
-    else
-    {
-        approach_mag = PlanSpeedAbsByDistance(dist_to_point,
-                                              NAV_POINT_SPECIAL_EXECUTE_RADIUS,
-                                              0.0f);
-    }
-
-    predicted_mag = ApplyEncoderEntryPrediction(approach_mag,
-                                                dist_to_point,
-                                                NAV_POINT_SPECIAL_EXECUTE_RADIUS,
-                                                entry_speed_mag,
-                                                speed_sign);
-    if ((in_crawl_band == 0U) || (predicted_mag < approach_mag))
-    {
-        approach_mag = predicted_mag;
-    }
-
-    return speed_sign * approach_mag;
+    return Float_Constrain(brake_radius,
+                           NAV_POINT_SPECIAL_BRAKE_RADIUS_MIN,
+                           NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX);
 }
 
-static void UpdateSpecialStopStableTicks(float speed_mag)
+static uint8 ShouldStartSpecialPointCapture(float dist_to_point, float brake_radius_mm)
 {
-    if ((s_special_execute_circle_entered != 0U) &&
-        (speed_mag <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S))
+    return (uint8)(dist_to_point <= brake_radius_mm);
+}
+
+static float CalcSpecialCrawlReleaseDistance(float abs_vehicle_speed)
+{
+    float decel = CalcSpecialBrakeDecel();
+    float stop_distance = (abs_vehicle_speed * abs_vehicle_speed) / (2.0f * decel);
+
+    return stop_distance + NAV_POINT_SPECIAL_CRAWL_RELEASE_MARGIN_MM;
+}
+
+static float PlanSpecialApproachSpeed(float dist_to_point, float speed_sign, float abs_vehicle_speed)
+{
+    float step_mag = fabsf(NAV_POINT_SPECIAL_STEP_IN_SPEED);
+    float remain_to_execute_circle = dist_to_point - NAV_POINT_SPECIAL_EXECUTE_RADIUS;
+
+    if (s_special_crawl_active != 0U)
     {
-        if (s_stop_stable_ticks < 255U)
+        if ((dist_to_point <= NAV_POINT_SPECIAL_PREP_STOP_RADIUS) &&
+            (s_special_prep_zero_brake_latched == 0U))
         {
-            s_stop_stable_ticks++;
+            s_special_prep_zero_brake_latched = 1U;
+            s_special_crawl_active = 0U;
+            s_special_zero_brake_active = 1U;
+            return NAV_POINT_SPEED_STOP;
+        }
+
+        if (dist_to_point > NAV_POINT_SPECIAL_EXECUTE_RADIUS)
+        {
+            return speed_sign * step_mag;
         }
     }
-    else
+
+    if ((dist_to_point <= NAV_POINT_SPECIAL_PREP_STOP_RADIUS) &&
+        (s_special_prep_zero_brake_latched == 0U))
     {
-        s_stop_stable_ticks = 0U;
+        s_special_prep_zero_brake_latched = 1U;
+        s_special_zero_brake_active = 1U;
     }
+
+    if ((s_special_zero_brake_active != 0U) &&
+        (abs_vehicle_speed <= NAV_POINT_SPECIAL_STEP_IN_START_SPEED_MM_S) &&
+        (remain_to_execute_circle > CalcSpecialCrawlReleaseDistance(abs_vehicle_speed)))
+    {
+        s_special_zero_brake_active = 0U;
+        s_special_crawl_active = 1U;
+        return speed_sign * step_mag;
+    }
+
+    return NAV_POINT_SPEED_STOP;
 }
 
-static uint8 ShouldTriggerSpecialAction(void)
+static uint8 ShouldTriggerSpecialAction(float dist_to_point, float speed_mag)
 {
     return (uint8)((s_special_execute_circle_entered != 0U) &&
-                   (s_stop_stable_ticks >= NAV_POINT_STOP_STABLE_TICKS));
+                   (dist_to_point <= NAV_POINT_SPECIAL_EXECUTE_RADIUS) &&
+                   (speed_mag <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S));
 }
 
 // 单周期速度斜率限制；普通巡航仍然平滑，但雷区停车阶段会直接绕过它给 0。
@@ -316,6 +388,42 @@ static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, flo
     }
 }
 
+static void SelectSpecialForwardHeading(float point_yaw_deg, float *selected_err_deg, float *speed_sign)
+{
+    *selected_err_deg = NormalizeAngle(point_yaw_deg - inertial_nav.relative_yaw);
+    *speed_sign = -1.0f;
+}
+
+static void SelectSpecialPointHeading(float point_yaw_deg,
+                                      float dist_to_point,
+                                      float abs_vehicle_speed,
+                                      float *selected_err_deg,
+                                      float *speed_sign)
+{
+    float err_forward = NormalizeAngle(point_yaw_deg - inertial_nav.relative_yaw);
+    float reverse_yaw = NormalizeAngle(point_yaw_deg + 180.0f);
+    float err_reverse = NormalizeAngle(reverse_yaw - inertial_nav.relative_yaw);
+    uint8 reverse_recover_ready;
+
+    *selected_err_deg = err_forward;
+    *speed_sign = -1.0f;
+
+    reverse_recover_ready =
+        (uint8)((s_special_zero_brake_issued != 0U) &&
+                (dist_to_point > NAV_POINT_SPECIAL_EXECUTE_RADIUS) &&
+                (abs_vehicle_speed <= NAV_POINT_SPECIAL_STEP_IN_START_SPEED_MM_S) &&
+                (fabsf(err_forward) >= NAV_POINT_SPECIAL_REVERSE_RECOVER_YAW_MIN) &&
+                ((fabsf(err_reverse) + NAV_POINT_REVERSE_SELECT_BIAS_DEG) < fabsf(err_forward)));
+
+    if ((s_special_reverse_recover_active != 0U) ||
+        (reverse_recover_ready != 0U))
+    {
+        s_special_reverse_recover_active = 1U;
+        *selected_err_deg = err_reverse;
+        *speed_sign = 1.0f;
+    }
+}
+
 // 按“离停车边界还剩多少距离”实时规划允许速度上限。
 static float PlanDistanceSpeedAbs(float dist_mm, float stop_radius_mm)
 {
@@ -368,12 +476,33 @@ static float GetApproachSpeedMag(float speed_sign)
     return approach_speed_mag;
 }
 
+static float UpdateSpecialCaptureSpeedRef(float approach_speed_mag, float speed_sign)
+{
+    float approach_cmd_mag = s_prev_speed_cmd * speed_sign;
+
+    if (approach_cmd_mag < 0.0f)
+    {
+        approach_cmd_mag = 0.0f;
+    }
+
+    approach_speed_mag = fmaxf(approach_speed_mag, approach_cmd_mag);
+    if ((s_special_zero_brake_issued == 0U) &&
+        (approach_speed_mag > s_special_capture_speed_ref_mag))
+    {
+        s_special_capture_speed_ref_mag = approach_speed_mag;
+    }
+
+    return fmaxf(s_special_capture_speed_ref_mag, approach_speed_mag);
+}
+
 static void ResetEncoderStopPrediction(void)
 {
     s_stop_predict_has_prev = 0U;
+    s_stop_predict_decel_observed = 0U;
     s_stop_predict_prev_speed_mag = 0.0f;
     s_stop_predict_prev_speed_sign = 0.0f;
     s_stop_predict_decel_mm_s2 = NAV_POINT_SPEED_DECEL_CMD2_PER_MM;
+    s_special_capture_speed_ref_mag = 0.0f;
 }
 
 static void UpdateEncoderStopPrediction(float approach_speed_mag, float speed_sign)
@@ -399,6 +528,7 @@ static void UpdateEncoderStopPrediction(float approach_speed_mag, float speed_si
         s_stop_predict_decel_mm_s2 =
             (NAV_POINT_STOP_PREDICT_DECEL_ALPHA * measured_decel) +
             ((1.0f - NAV_POINT_STOP_PREDICT_DECEL_ALPHA) * s_stop_predict_decel_mm_s2);
+        s_stop_predict_decel_observed = 1U;
     }
 
     s_stop_predict_prev_speed_mag = approach_speed_mag;
@@ -445,112 +575,90 @@ static float ApplyEncoderStopPrediction(float speed_mag, float dist_mm, float st
     return Float_Constrain(speed_mag, 0.0f, fabsf(NAV_POINT_SPEED_FAST));
 }
 
-static float ApplyEncoderEntryPrediction(float speed_mag, float dist_mm, float entry_radius_mm, float entry_speed_mag, float speed_sign)
-{
-    float remain = dist_mm - entry_radius_mm;
-    float approach_speed_mag = GetApproachSpeedMag(speed_sign);
-    float decel;
-    float predicted_slowdown_dist;
-    float allowed_speed_mag;
-
-    UpdateEncoderStopPrediction(approach_speed_mag, speed_sign);
-    decel = Float_Constrain(s_stop_predict_decel_mm_s2,
-                            NAV_POINT_STOP_PREDICT_DECEL_MIN,
-                            NAV_POINT_STOP_PREDICT_DECEL_MAX);
-    entry_speed_mag = Float_Constrain(entry_speed_mag, 0.0f, fabsf(NAV_POINT_SPEED_FAST));
-
-    if (remain <= 0.0f)
-    {
-        return 0.0f;
-    }
-
-    if (approach_speed_mag > entry_speed_mag)
-    {
-        predicted_slowdown_dist =
-            ((approach_speed_mag * approach_speed_mag) -
-             (entry_speed_mag * entry_speed_mag)) / (2.0f * decel);
-    }
-    else
-    {
-        predicted_slowdown_dist = 0.0f;
-    }
-
-    allowed_speed_mag = sqrtf((entry_speed_mag * entry_speed_mag) + (2.0f * decel * remain));
-    allowed_speed_mag = Float_Constrain(allowed_speed_mag, 0.0f, fabsf(NAV_POINT_SPEED_FAST));
-
-    if (predicted_slowdown_dist > (remain + NAV_POINT_STOP_PREDICT_DEADBAND_MM))
-    {
-        if (allowed_speed_mag < speed_mag)
-        {
-            speed_mag = allowed_speed_mag;
-        }
-    }
-    else if (predicted_slowdown_dist < (remain - NAV_POINT_STOP_PREDICT_DEADBAND_MM))
-    {
-        if (allowed_speed_mag > speed_mag)
-        {
-            speed_mag = allowed_speed_mag;
-        }
-    }
-
-    return Float_Constrain(speed_mag, 0.0f, fabsf(NAV_POINT_SPEED_FAST));
-}
-
 static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
                                               uint8 point_type,
                                               float dist_to_point,
+                                              float point_yaw_deg,
                                               float selected_err_deg,
                                               float speed_sign)
 {
     float abs_vehicle_speed = fabsf(current_actual_speed);
+    float approach_speed_mag;
+    float brake_radius_mm;
     float target_speed_cmd;
 
-    if (ShouldStartSpecialPointCapture(dist_to_point) == 0U)
+    SelectSpecialPointHeading(point_yaw_deg,
+                              dist_to_point,
+                              abs_vehicle_speed,
+                              &selected_err_deg,
+                              &speed_sign);
+    approach_speed_mag = UpdateSpecialCaptureSpeedRef(GetApproachSpeedMag(speed_sign), speed_sign);
+    brake_radius_mm = CalcSpecialBrakeRadius(approach_speed_mag);
+
+    g_nav_point_special_debug_target_idx = point_idx;
+    g_nav_point_special_debug_target_x = nav_ram_data.points[point_idx].x;
+    g_nav_point_special_debug_target_y = nav_ram_data.points[point_idx].y;
+    g_nav_point_special_debug_dist_mm = dist_to_point;
+    g_nav_point_special_debug_brake_radius_mm = brake_radius_mm;
+    g_nav_point_special_debug_speed_ref_mm_s = approach_speed_mag;
+    g_nav_point_special_debug_zero_brake_issued = s_special_zero_brake_issued;
+    g_nav_point_special_debug_zero_brake_active = NavReplay_SpecialPointZeroBrakeActive();
+
+    if ((s_special_zero_brake_issued == 0U) &&
+        (ShouldStartSpecialPointCapture(dist_to_point, brake_radius_mm) == 0U))
     {
         Brake_NavHardStop_Reset();
         ResetStopState();
         return 0U;
     }
 
+    UpdateEncoderStopPrediction(approach_speed_mag, speed_sign);
+
     if (dist_to_point <= NAV_POINT_SPECIAL_EXECUTE_RADIUS)
     {
         s_special_execute_circle_entered = 1U;
     }
-
-    Brake_NavHardStop_Reset();
-    if (s_special_execute_circle_entered != 0U)
+    else
     {
-        target_speed_cmd = NAV_POINT_SPEED_STOP;
-        target_speed_set = target_speed_cmd;
-        s_prev_speed_cmd = target_speed_cmd;
-        err_degree = 0.0f;
-        UpdateSpecialStopStableTicks(abs_vehicle_speed);
-
-        if (ShouldTriggerSpecialAction() != 0U)
-        {
-            if (IsSpinPointType(point_type))
-            {
-                ConfigureSpinPlanForPoint(point_idx);
-                minefield_flag = 1U;
-                s_spin_exit_pending = 1U;
-            }
-            else
-            {
-                ResetSpinExitState();
-            }
-
-            g_special_action_trigger = 1U;
-            Brake_NavHardStop_Reset();
-            ResetStopState();
-            return 2U;
-        }
-
-        return 1U;
+        s_special_execute_circle_entered = 0U;
     }
 
-    s_stop_stable_ticks = 0U;
-    err_degree = selected_err_deg;
-    target_speed_cmd = PlanSpecialApproachSpeed(dist_to_point, speed_sign);
+    if (ShouldTriggerSpecialAction(dist_to_point, abs_vehicle_speed) != 0U)
+    {
+        Brake_NavHardStop_Reset();
+        Brake_Feedforward_Reset();
+        target_speed_set = NAV_POINT_SPEED_STOP;
+        s_prev_speed_cmd = NAV_POINT_SPEED_STOP;
+
+        if (IsSpinPointType(point_type))
+        {
+            ConfigureSpinPlanForPoint(point_idx);
+            minefield_flag = 1U;
+            s_spin_exit_pending = 1U;
+        }
+        else
+        {
+            ResetSpinExitState();
+        }
+
+        g_special_action_trigger = 1U;
+        ResetStopState();
+        return 2U;
+    }
+
+    if (s_special_zero_brake_issued == 0U)
+    {
+        s_special_zero_brake_issued = 1U;
+        s_special_zero_brake_active = 1U;
+        g_nav_point_special_debug_zero_brake_issued = s_special_zero_brake_issued;
+        g_nav_point_special_debug_zero_brake_active = NavReplay_SpecialPointZeroBrakeActive();
+    }
+
+    target_speed_cmd = PlanSpecialApproachSpeed(dist_to_point, speed_sign, abs_vehicle_speed);
+    g_nav_point_special_debug_zero_brake_active = NavReplay_SpecialPointZeroBrakeActive();
+    Brake_NavHardStop_Reset();
+
+    err_degree = (s_special_execute_circle_entered != 0U) ? 0.0f : selected_err_deg;
     target_speed_set = target_speed_cmd;
     s_prev_speed_cmd = target_speed_cmd;
 
@@ -795,9 +903,13 @@ void NavReplay_Process(void)
 
     if (IsSpecialPointType(point_type))
     {
+        SelectSpecialForwardHeading(point_yaw_deg, &selected_err_deg, &speed_sign);
+        err_degree = selected_err_deg;
+
         uint8 special_result = HandleSpecialPointStopAndTrigger(g_target_idx,
                                                                 point_type,
                                                                 dist_to_point,
+                                                                point_yaw_deg,
                                                                 selected_err_deg,
                                                                 speed_sign);
         if (special_result != 0U)
