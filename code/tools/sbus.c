@@ -2,6 +2,7 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "../common.h"
 #include "../vision/vision_bridge_control.h"
+#include "../plan/minefield.h"
 
 // ==========================================
 // 1. 宏定义 (参数配置区)
@@ -424,7 +425,8 @@ void Remote_Control_Process(void)
        // vision_detected_jump_point = 1;//跳跃点调用,测试用
         //vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
         //vision_detected_bridge_point = 1; // 单边桥调用,测试用
-        robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
+        // robot_ctrl.mark_trigger = 1; // 打点触发标记，Main函数处理完需手动清零
+        minefield_flag = 1; // CH3跳变触发雷区旋转动作
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点
     // NAV_POINT_SLOPE = 2,    // 上坡点

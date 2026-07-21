@@ -20,6 +20,10 @@ extern uint8 g_special_action_trigger;
 #define MINEFIELD_SPIN_STALL_CMD_MIN_DPS    120.0f
 #define MINEFIELD_SPIN_STALL_GYRO_MIN_DPS   25.0f
 #define MINEFIELD_SPIN_STALL_MAX_DURATION_S 2.0f
+// 角度外环 PD 参数：将角度误差映射为角速度修正量。
+// kp: 角度误差 → 角速度修正（deg/s per deg）；kd: 阻尼，防止超调。
+#define SPIN_ANGLE_KP                       12.0f
+#define SPIN_ANGLE_KD                       0.5f
 
 volatile uint8_t minefield_flag = 0;
 static uint8_t  s_is_spinning = 0;
@@ -31,6 +35,8 @@ static float    s_exit_yaw_deg = 0.0f;
 static uint8_t  s_exit_release_enabled = 0;
 static float    s_spin_elapsed_s = 0.0f;
 static float    s_spin_stall_elapsed_s = 0.0f;
+static float    s_angle_cmd = 0.0f;
+static float    s_prev_angle_error = 0.0f;
 uint8_t vision_detected_marker = 0;
 volatile uint8_t g_minefield_spin_abort_reason = MINEFIELD_SPIN_ABORT_NONE;
 
@@ -48,6 +54,8 @@ static void Minefield_FinishSpin(uint8_t abort_reason)
     s_exit_release_enabled = 0;
     s_spin_elapsed_s = 0.0f;
     s_spin_stall_elapsed_s = 0.0f;
+    s_angle_cmd = 0.0f;
+    s_prev_angle_error = 0.0f;
     g_minefield_spin_abort_reason = abort_reason;
     g_special_action_trigger = 0;
 }
@@ -76,22 +84,6 @@ static uint8_t Minefield_ShouldFinishSpin(float current_yaw_deg)
     return (uint8_t)(s_accumulated_angle >= s_planned_total_angle);
 }
 
-// 浮点爬坡函数：将当前速度逐步逼近目标速度，而不是一步跳变。
-static float Minefield_RampFloat(float current, float target, float step)
-{
-    if (current < target)
-    {
-        current += step;
-        if (current > target) current = target;
-    }
-    else if (current > target)
-    {
-        current -= step;
-        if (current < target) current = target;
-    }
-    return current;
-}
-
 void Minefield_Init(void)
 {
     minefield_flag = 0;
@@ -104,6 +96,8 @@ void Minefield_Init(void)
     s_exit_release_enabled = 0;
     s_spin_elapsed_s = 0.0f;
     s_spin_stall_elapsed_s = 0.0f;
+    s_angle_cmd = 0.0f;
+    s_prev_angle_error = 0.0f;
     g_minefield_spin_abort_reason = MINEFIELD_SPIN_ABORT_NONE;
 }
 
@@ -149,6 +143,8 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
         s_current_speed_cmd = 0.0f;
         s_spin_elapsed_s = 0.0f;
         s_spin_stall_elapsed_s = 0.0f;
+        s_angle_cmd = 0.0f;
+        s_prev_angle_error = 0.0f;
         g_minefield_spin_abort_reason = MINEFIELD_SPIN_ABORT_NONE;
     }
 
@@ -174,8 +170,7 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
         return 0.0f;
     }
 
-    // 采用“匀速 + 末段线性减速”的简单梯形速度思想。
-    // 最后 SPIN_DECEL_ANGLE 度不分段，直接从最大速度线性减速到 0。
+    // 梯形速度规划（前馈）：匀速 + 末段线性减速到 0。
     if (remaining < SPIN_DECEL_ANGLE)
     {
         target_speed = SPIN_MAX_SPEED * (remaining / SPIN_DECEL_ANGLE);
@@ -185,7 +180,22 @@ float Minefield_Spin_Controller(float gyro_z_deg, float dt_s, float current_yaw_
         target_speed = SPIN_MAX_SPEED;
     }
 
-    s_current_speed_cmd = Minefield_RampFloat(s_current_speed_cmd, target_speed, SPIN_ACCEL_STEP);
+    // 将梯形角速度积分成角度指令，钳位到总角度防止超调。
+    s_angle_cmd += target_speed * dt_s;
+    if (s_angle_cmd > s_planned_total_angle)
+    {
+        s_angle_cmd = s_planned_total_angle;
+    }
+
+    // 角度外环 PD：角度误差 → 角速度修正量，叠加前馈速度。
+    // error > 0 表示还有角度要走，需要正向速度；error < 0 表示转过了，需要反向刹车。
+    {
+        float angle_error = s_angle_cmd - s_accumulated_angle;
+        float angle_error_rate = (angle_error - s_prev_angle_error) / dt_s;
+        float angle_pd = SPIN_ANGLE_KP * angle_error + SPIN_ANGLE_KD * angle_error_rate;
+        s_prev_angle_error = angle_error;
+        s_current_speed_cmd = angle_pd;
+    }
 
     if ((fabsf(s_current_speed_cmd) >= MINEFIELD_SPIN_STALL_CMD_MIN_DPS) &&
         (gyro_abs <= MINEFIELD_SPIN_STALL_GYRO_MIN_DPS))
