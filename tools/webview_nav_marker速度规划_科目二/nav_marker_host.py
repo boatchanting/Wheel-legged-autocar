@@ -13,6 +13,9 @@ import atexit
 HOST_IP = "192.168.137.1"
 HOST_PORT = 8086
 
+# 打滑检测标记绘制开关：1=启用，0=禁用
+ENABLE_SLIP_MARKERS = 1
+
 FRAME_HEAD1 = 0x5A
 FRAME_HEAD2 = 0xA5
 FRAME_TAIL = 0xED
@@ -557,6 +560,37 @@ def _resolve_trace_layout(size):
     }
 
 
+debug_log_file = None
+
+def _handle_debug_logging(data):
+    global debug_log_file
+    if data.get("has_debug"):
+        if debug_log_file is None:
+            filename = time.strftime("slip_debug_log_%Y%m%d_%H%M%S.txt")
+            try:
+                debug_log_file = open(filename, "w", encoding="utf-8")
+                debug_log_file.write("Time,TargetSpeed,SpeedL,SpeedR,TheoYawRate,ActualYawRate,SlipFlag\n")
+                print(f"[DEBUG LOG] 开始写入调试日志: {filename}")
+            except Exception as e:
+                print(f"[DEBUG LOG] 打开日志失败: {e}")
+                return
+        
+        try:
+            line = f"{data['time_str']},{data['target_speed']:.2f},{data['speed_L']:.2f},{data['speed_R']:.2f},{data['theoretical_yaw_rate']:.4f},{data['actual_yaw_rate']:.4f},{data['slip_flag']}\n"
+            debug_log_file.write(line)
+            debug_log_file.flush()
+        except Exception as e:
+            print(f"[DEBUG LOG] 写入日志失败: {e}")
+    else:
+        if debug_log_file is not None:
+            try:
+                debug_log_file.close()
+            except:
+                pass
+            debug_log_file = None
+            print("[DEBUG LOG] 退出复刻，结束日志写入。")
+
+
 def _decode_payload(payload_bytes):
     size = len(payload_bytes)
 
@@ -723,6 +757,7 @@ def _parse_frame_stream(raw_buffer):
         data = _decode_payload(payload)
         if data is not None:
             _wifi_telemetry_recorder.record_telemetry_frame(data, raw_frame_bytes=bytes(raw_buffer[:frame_len]), frame_cmd=cmd)
+            _handle_debug_logging(data)
             _push_data(data)
 
         del raw_buffer[:frame_len]
@@ -835,6 +870,7 @@ class Api:
                 "server_error": server_error,
                 "host_ip": listen_ip,
                 "host_port": HOST_PORT,
+                "enable_slip_markers": ENABLE_SLIP_MARKERS,
                 "wifi_log_recording": log_status["recording"],
                 "wifi_log_path": log_status["path"],
                 "wifi_log_rows": log_status["rows"],

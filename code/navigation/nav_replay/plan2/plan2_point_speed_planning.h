@@ -19,9 +19,9 @@
 #define NAV_POINT_SPECIAL_CRAWL_RELEASE_MARGIN_MM 80.0f
 // 特殊点提前刹车按当前接近速度动态计算：执行圆 + 余量 + v^2/(2a)。
 #define NAV_POINT_SPECIAL_BRAKE_DECEL_MM_S2     170.0f
-#define NAV_POINT_SPECIAL_BRAKE_MARGIN_MM       180.0f
-#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MIN      3100.0f
-#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX      3100.0f
+#define NAV_POINT_SPECIAL_BRAKE_MARGIN_MM       100.0f
+#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MIN      3200.0f
+#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX      3200.0f
 // 普通刹车前馈尚未明显建压时，额外放大准备区，复用 stable tag 的稳定刹停节奏。
 #define NAV_POINT_SPECIAL_BRAKE_READY_PWM       1200.0f
 #define NAV_POINT_SPECIAL_BRAKE_WEAK_FF_MARGIN  180.0f
@@ -43,7 +43,7 @@
 // 大角度偏差阈值（deg）；超过后直接停车原地修方向。
 #define NAV_POINT_YAW_SLOW_TOLERANCE            35.0f
 // 雷区旋转结束后的移动对准窗口周期数；窗口内允许边低速出发边修正航向。
-#define NAV_POINT_SPIN_EXIT_ALIGN_TICKS         40U
+#define NAV_POINT_SPIN_EXIT_ALIGN_TICKS         20U
 // 移动对准允许的最大残余航向误差（deg）；超过后仍然原地修正，避免方向明显错误时硬冲。
 #define NAV_POINT_SPIN_EXIT_MOVE_YAW_MAX        90.0f
 // 移动对准低速上限占正常速度的比例；0.5 表示最多按正常速度的一半出发。
@@ -54,7 +54,7 @@
 #define NAV_POINT_START_HEADING_TOLERANCE       0.3f
 
 // 在线速度规划的快速巡航速度指令。
-#define NAV_POINT_SPEED_FAST                    (-810.4f)
+#define NAV_POINT_SPEED_FAST                    (-800.0f)
 // 在线速度规划的慢速逼近速度指令。
 #define NAV_POINT_SPEED_SLOW                    (-120.0f)
 // 停车速度指令。
