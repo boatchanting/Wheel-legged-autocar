@@ -8,6 +8,17 @@
 #endif
 #define DEG2RAD(x)          ((x) * M_PI / 180.0f)
 
+// --- 雷区自转抗干扰参数 ---
+// 1. 加速度死区阈值 (mm/s^2)：用于过滤原地自转时的机械震动和离心力引起的虚假加速度。
+//    实车调试时，如果发现原地转时纵向速度仍然漂移增加，可适当调大该值（如 600, 800）。
+//    如果发现碰撞等真实物理位移被漏检，可适当调小该值（如 300）。
+#define MINEFIELD_ACC_DEADZONE  500.0f 
+
+// 2. 速度阻尼衰减系数 (ZUPT)：用于强迫残余的假速度迅速收敛到 0。
+//    实车调试时，值越小 (如 0.90) 衰减越快，定位越稳，但对真实碰撞位移的记录会缩水。
+//    值越大 (如 0.99) 保留的真实位移越足，但可能会漏掉一些漂移。0.95 表示每 10ms 衰减 5%。
+#define MINEFIELD_VEL_DAMPING   0.95f
+
 
 // --- 全局变量定义 ---
 // 定义在 .h 文件中声明的全局导航状态实例
@@ -67,8 +78,8 @@ void InertialNav_Update(float curr_yaw,
     // --- 自转状态判断（直接读取雷区旋转标志位） ---
     if (Minefield_Is_Active()) {
         inertial_nav.slip_flag = 3; // 雷区自转中
-        acc_lon_forward = 0;        // 自转时纵向加速度归零
-        inertial_nav.vy_body = 0;   // 自转时横向速度归零
+        // acc_lon_forward = 0;        // 自转时纵向加速度归零
+        // inertial_nav.vy_body = 0;   // 自转时横向速度归零
         inertial_nav.slip_timer_ms = 0;
     } else {
         inertial_nav.slip_flag = 0;
@@ -77,7 +88,8 @@ void InertialNav_Update(float curr_yaw,
     // --- 3. 横向速度观测器 ---
     // slip_flag 已在上方由 Minefield_Is_Active() 设定
     if (inertial_nav.slip_flag == 3) {
-        inertial_nav.vy_body = 0.0f;
+        // inertial_nav.vy_body = 0.0f;
+        inertial_nav.vy_body *= 0.8f; // 测试完整版惯导，不强制清零
     } else {
         inertial_nav.vy_body *= 0.8f; // 正常抓地时快速衰减
     }
@@ -90,8 +102,22 @@ void InertialNav_Update(float curr_yaw,
 
     // --- 4. 纵向速度融合 ---
     // 自转时减小轮速权重，信任 IMU 加速度积分；正常行驶时完全信任轮速
-    float alpha = (inertial_nav.slip_flag == 3) ? 0.1f : NAV_ALPHA_VEL;
+    float alpha = (inertial_nav.slip_flag == 3) ? 0.0f : NAV_ALPHA_VEL;
+    
+    // +++ 自转专属：加速度死区过滤 (抗震动与离心力串扰) +++
+    if (inertial_nav.slip_flag == 3) {
+        if (fabsf(acc_lon_forward) < MINEFIELD_ACC_DEADZONE) {
+            acc_lon_forward = 0.0f;
+        }
+    }
+    
     float v_pred = inertial_nav.vx_body + acc_lon_forward * NAV_DT;
+    
+    // +++ 自转专属：速度阻尼衰减 (Leaky Integrator) +++
+    if (inertial_nav.slip_flag == 3) {
+        v_pred *= MINEFIELD_VEL_DAMPING; 
+    }
+
     inertial_nav.vx_body = alpha * v_wheel_avg + (1.0f - alpha) * v_pred;
 
     // 旧的横向速度修正已在上方作为观测器实现，这里保留空行以对齐代码格式

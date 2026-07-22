@@ -76,6 +76,7 @@ static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣�
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
 static uint16 profile_switch_beep_ticks = 0U;      // 复刻PID切换蜂鸣剩余时间，1ms 递减
+static uint16 minefield_beep_ticks = 0U;           // 自转结束蜂鸣剩余时间，1ms 递减
 static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
@@ -351,7 +352,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         if (jump_flag == 0)
         #endif
         #if CURRENT_NAV_PLAN == 2
-        if (jump_flag == 0 && Minefield_Is_Active() == 0)//科二中雷区屏蔽惯导
+        if (jump_flag == 0 )//科二中雷区屏蔽惯导
         #endif  
         {
             // 调用导航更新函数
@@ -423,6 +424,22 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     };//【测试】抬高双腿
 
     Control_Profile_Update1ms();//pid参数调度更新
+
+    // 自转结束蜂鸣器提示
+    if (g_minefield_beep_request != 0U)
+    {
+        g_minefield_beep_request = 0U;
+        minefield_beep_ticks = 50U; // 蜂鸣50ms
+        gpio_set_level(BUZZER_PIN, GPIO_HIGH);
+    }
+    if (minefield_beep_ticks > 0U)
+    {
+        minefield_beep_ticks--;
+        if (minefield_beep_ticks == 0U)
+        {
+            gpio_set_level(BUZZER_PIN, GPIO_LOW);
+        }
+    }
 
     // 复刻模式下PID切换蜂鸣提示
     if (profile_switch_beep_request != 0U)

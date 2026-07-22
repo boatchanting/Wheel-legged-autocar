@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import math
 import os
 import socket
@@ -34,20 +34,12 @@ HOST_ACK_TIMEOUT_SEC = 1.5
 
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
-PAYLOAD_GPS_TRACE_FLOAT_BYTES = 8
-PAYLOAD_GPS_TRACE_FLAG_BYTES = 2
-PAYLOAD_GPS_TRACE_CTRL_BYTES = 2
+PAYLOAD_CTRL_BYTES = 3
 PAYLOAD_DEBUG_BYTES = 20
-PAYLOAD_NAV_DIAG_BYTES = 76
-PAYLOAD_FUSION_TRACE_FLOAT_BYTES = 8
-PAYLOAD_FUSION_TRACE_FLAG_BYTES = 1
-PAYLOAD_SIZE_GPS_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_GPS_TRACE_FLOAT_BYTES + PAYLOAD_GPS_TRACE_FLAG_BYTES
-PAYLOAD_SIZE_GPS_TRACE_CTRL = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
-PAYLOAD_SIZE_GPS_TRACE_DEBUG = PAYLOAD_SIZE_GPS_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
-PAYLOAD_SIZE_TRACE = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_FUSION_TRACE_FLOAT_BYTES + PAYLOAD_FUSION_TRACE_FLAG_BYTES
-PAYLOAD_SIZE_TRACE_CTRL = PAYLOAD_SIZE_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
-PAYLOAD_SIZE_TRACE_DEBUG = PAYLOAD_SIZE_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
-PAYLOAD_SIZE_TRACE_NAV_DIAG = PAYLOAD_SIZE_TRACE_DEBUG + PAYLOAD_NAV_DIAG_BYTES
+PAYLOAD_NAV_DIAG_BYTES = 100
+PAYLOAD_SIZE_CTRL = PAYLOAD_SIZE_V2 + PAYLOAD_CTRL_BYTES
+PAYLOAD_SIZE_CTRL_DEBUG = PAYLOAD_SIZE_CTRL + PAYLOAD_DEBUG_BYTES
+PAYLOAD_SIZE_CTRL_NAV_DIAG = PAYLOAD_SIZE_CTRL_DEBUG + PAYLOAD_NAV_DIAG_BYTES
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -92,15 +84,9 @@ WIFI_TELEMETRY_LOG_FIELDS = [
     "frame_cmd",
     "raw_frame_hex",
 ] + FIELD_NAMES_V2 + [
-    "gps_x",
-    "gps_y",
-    "gps_valid",
-    "gps_origin_set",
-    "fusion_x",
-    "fusion_y",
-    "fusion_valid",
     "pid_mode",
     "slip_flag",
+    "minefield_is_active",
     "target_speed",
     "speed_L",
     "speed_R",
@@ -125,6 +111,12 @@ WIFI_TELEMETRY_LOG_FIELDS = [
     "fallen",
     "remote_brake_active",
     "remote_reverse_brake_active",
+    "minefield_accumulated_angle",
+    "minefield_angle_cmd",
+    "minefield_feedforward_speed",
+    "minefield_current_speed_cmd",
+    "minefield_stall_elapsed_s",
+    "minefield_spin_abort_reason",
     "has_debug",
     "payload_size",
     "time_str",
@@ -469,94 +461,13 @@ def _estimate_start_heading():
 
 
 def _resolve_trace_layout(size):
-    if size >= PAYLOAD_SIZE_TRACE_DEBUG:
-        return {
-            "has_gps": True,
-            "has_fusion": True,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": True,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_TRACE,
-            "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
-        }
-
-    if size >= PAYLOAD_SIZE_GPS_TRACE_DEBUG:
-        return {
-            "has_gps": True,
-            "has_fusion": False,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": True,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
-            "debug_base": PAYLOAD_SIZE_GPS_TRACE_CTRL,
-        }
-
-    if size >= PAYLOAD_SIZE_TRACE_CTRL:
-        return {
-            "has_gps": True,
-            "has_fusion": True,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_TRACE,
-            "debug_base": None,
-        }
-
-    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
-        return {
-            "has_gps": True,
-            "has_fusion": False,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
-            "debug_base": None,
-        }
-
-    if size >= PAYLOAD_SIZE_TRACE:
-        return {
-            "has_gps": True,
-            "has_fusion": True,
-            "has_pid_mode": False,
-            "has_slip_flag": False,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": None,
-            "debug_base": None,
-        }
-
-    if size >= PAYLOAD_SIZE_GPS_TRACE:
-        return {
-            "has_gps": True,
-            "has_fusion": False,
-            "has_pid_mode": False,
-            "has_slip_flag": False,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": None,
-            "debug_base": None,
-        }
-
     return {
-        "has_gps": False,
-        "has_fusion": False,
-        "has_pid_mode": False,
-        "has_slip_flag": False,
-        "has_debug": False,
-        "gps_base": PAYLOAD_SIZE_V2,
-        "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-        "pid_base": None,
-        "debug_base": None,
+        "has_ctrl": size >= PAYLOAD_SIZE_CTRL,
+        "has_debug": size >= PAYLOAD_SIZE_CTRL_DEBUG,
+        "has_nav_diag": size >= PAYLOAD_SIZE_CTRL_NAV_DIAG,
+        "ctrl_base": PAYLOAD_SIZE_V2,
+        "debug_base": PAYLOAD_SIZE_CTRL,
+        "nav_diag_base": PAYLOAD_SIZE_CTRL_DEBUG,
     }
 
 
@@ -609,41 +520,15 @@ def _decode_payload(payload_bytes):
         data["mark_trigger"] = 0
         data["point_type"] = 0
 
-    if layout["has_gps"]:
-        gps_base = layout["gps_base"]
-        gps_x, gps_y = struct.unpack("<ff", payload_bytes[gps_base : gps_base + 8])
-        data["gps_x"] = gps_x
-        data["gps_y"] = gps_y
-        data["gps_valid"] = payload_bytes[gps_base + 8]
-        data["gps_origin_set"] = payload_bytes[gps_base + 9]
-    else:
-        data["gps_x"] = None
-        data["gps_y"] = None
-        data["gps_valid"] = 0
-        data["gps_origin_set"] = 0
-
-    if layout["has_fusion"]:
-        fusion_base = layout["fusion_base"]
-        fusion_x, fusion_y = struct.unpack("<ff", payload_bytes[fusion_base : fusion_base + 8])
-        data["fusion_x"] = fusion_x
-        data["fusion_y"] = fusion_y
-        data["fusion_valid"] = payload_bytes[fusion_base + 8]
-    else:
-        data["fusion_x"] = None
-        data["fusion_y"] = None
-        data["fusion_valid"] = 0
-
-    if layout["has_pid_mode"]:
-        pid_base = layout["pid_base"]
-        data["pid_mode"] = payload_bytes[pid_base]
+    if layout["has_ctrl"]:
+        ctrl_base = layout["ctrl_base"]
+        data["pid_mode"] = payload_bytes[ctrl_base]
+        data["slip_flag"] = payload_bytes[ctrl_base + 1]
+        data["minefield_is_active"] = payload_bytes[ctrl_base + 2]
     else:
         data["pid_mode"] = None
-
-    if layout["has_slip_flag"]:
-        pid_base = layout["pid_base"]
-        data["slip_flag"] = payload_bytes[pid_base + 1]
-    else:
         data["slip_flag"] = None
+        data["minefield_is_active"] = None
 
     debug_fields = [
         "target_speed",
@@ -678,11 +563,17 @@ def _decode_payload(payload_bytes):
         "fallen",
         "remote_brake_active",
         "remote_reverse_brake_active",
+        "minefield_accumulated_angle",
+        "minefield_angle_cmd",
+        "minefield_feedforward_speed",
+        "minefield_current_speed_cmd",
+        "minefield_stall_elapsed_s",
+        "minefield_spin_abort_reason",
     ]
-    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG:
+    if layout["has_nav_diag"]:
         nav_diag_values = struct.unpack(
-            "<19f",
-            payload_bytes[PAYLOAD_SIZE_TRACE_DEBUG : PAYLOAD_SIZE_TRACE_NAV_DIAG],
+            "<25f",
+            payload_bytes[layout["nav_diag_base"] : layout["nav_diag_base"] + PAYLOAD_NAV_DIAG_BYTES],
         )
         data.update(zip(nav_diag_fields, nav_diag_values))
     else:
