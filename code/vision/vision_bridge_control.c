@@ -9,6 +9,7 @@
  */
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_ipc_core0.h"
+#include "../../code1/vision/ipm_transform.h"
 #include "plan/bridge.h"
 #include "tools/sbus.h"
 
@@ -47,7 +48,6 @@ typedef struct
     uint8 center_filter_lost_frames;
     float filtered_lookahead_x;
     float filtered_heading_deg;
-    float lateral_integral_deg;
     float pending_lookahead_x;
     float pending_heading_deg;
     float start_x_mm;                 /* 上桥那一刻的 X 坐标（惯导） */
@@ -130,6 +130,10 @@ static uint8 vision_bridge_get_control_measurement(const volatile vision_ipc_pac
     float top_y;
     float forward_px;
     float interpolation;
+    IPM_Point_t target_point;
+    IPM_Point_t reference_point;
+    uint8_t lookahead_img_x;
+    const uint8_t lookahead_img_y = (uint8_t)VISION_BRIDGE_TASK_LOOKAHEAD_Y;
 
     if ((packet == NULL) || (packet->bridge_geometry_valid == 0U))
     {
@@ -153,15 +157,35 @@ static uint8 vision_bridge_get_control_measurement(const volatile vision_ipc_pac
 
     forward_px = bottom_y - top_y;
     if ((forward_px <= 0.0f) ||
-        (VISION_BRIDGE_TASK_LOOKAHEAD_Y < top_y) ||
-        (VISION_BRIDGE_TASK_LOOKAHEAD_Y > bottom_y))
+        ((float)VISION_BRIDGE_TASK_LOOKAHEAD_Y < top_y) ||
+        ((float)VISION_BRIDGE_TASK_LOOKAHEAD_Y > bottom_y) ||
+        (lookahead_img_y >= IPM_IMG_HEIGHT))
     {
         return 0U;
     }
 
-    interpolation = (bottom_y - VISION_BRIDGE_TASK_LOOKAHEAD_Y) / forward_px;
+    interpolation = (bottom_y - (float)VISION_BRIDGE_TASK_LOOKAHEAD_Y) / forward_px;
     *lookahead_x = bottom_x + (top_x - bottom_x) * interpolation;
-    *heading_deg = atan2f(top_x - bottom_x, forward_px) * 57.2957795f;
+    if ((*lookahead_x < 0.0f) || (*lookahead_x > (float)(IPM_IMG_WIDTH - 1U)))
+    {
+        return 0U;
+    }
+
+    lookahead_img_x = (uint8_t)(*lookahead_x + 0.5f);
+    target_point = IPM_GetPhysicalCoord(lookahead_img_x, lookahead_img_y);
+    reference_point = IPM_GetPhysicalCoord((uint8_t)VISION_BRIDGE_TASK_IMAGE_CENTER_X,
+                                           lookahead_img_y);
+    if ((!target_point.is_valid) || (!reference_point.is_valid) ||
+        (target_point.y_mm <= 0) || (reference_point.y_mm <= 0))
+    {
+        return 0U;
+    }
+
+    /* The LUT gives physical X (right) / Y (forward).  Subtract the calibrated
+     * straight-ahead ray so a line at IMAGE_CENTER_X produces exactly 0 deg. */
+    *heading_deg = vision_bridge_normalize_angle(
+        (atan2f((float)target_point.x_mm, (float)target_point.y_mm) -
+         atan2f((float)reference_point.x_mm, (float)reference_point.y_mm)) * 57.2957795f);
     return 1U;
 }
 
@@ -172,18 +196,6 @@ static uint8 vision_bridge_center_jump_is_confirmed(float lookahead_x,
                     VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_PX) &&
                    (vision_bridge_abs_f(heading_deg - s_bridge_task.pending_heading_deg) <=
                     VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_DEG));
-}
-
-static void vision_bridge_update_lateral_integral(void)
-{
-    const float lateral_px = s_bridge_task.filtered_lookahead_x -
-                             VISION_BRIDGE_TASK_IMAGE_CENTER_X;
-
-    s_bridge_task.lateral_integral_deg = vision_bridge_constrain_f(
-        s_bridge_task.lateral_integral_deg * VISION_BRIDGE_TASK_LAT_I_LEAK +
-        lateral_px * VISION_BRIDGE_TASK_K_LAT_I_DEG_PER_PX_FRAME,
-        -VISION_BRIDGE_TASK_LAT_I_MAX_DEG,
-        VISION_BRIDGE_TASK_LAT_I_MAX_DEG);
 }
 
 static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_t *packet)
@@ -211,7 +223,6 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
         if (s_bridge_task.center_filter_lost_frames >= VISION_BRIDGE_TASK_CENTER_LOST_FRAMES)
         {
             s_bridge_task.center_filter_valid = 0U;
-            s_bridge_task.lateral_integral_deg = 0.0f;
         }
         return;
     }
@@ -221,7 +232,6 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
     {
         s_bridge_task.filtered_lookahead_x = lookahead_x;
         s_bridge_task.filtered_heading_deg = heading_deg;
-        s_bridge_task.lateral_integral_deg = 0.0f;
         s_bridge_task.center_filter_valid = 1U;
         s_bridge_task.center_filter_pending_jump = 0U;
         return;
@@ -245,40 +255,30 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
 
     s_bridge_task.center_filter_pending_jump = 0U;
     s_bridge_task.filtered_lookahead_x += VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA *
-                                          (lookahead_x - s_bridge_task.filtered_lookahead_x);
+                                           (lookahead_x - s_bridge_task.filtered_lookahead_x);
     s_bridge_task.filtered_heading_deg += VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA *
-                                          (heading_deg - s_bridge_task.filtered_heading_deg);
-    vision_bridge_update_lateral_integral();
+                                           (heading_deg - s_bridge_task.filtered_heading_deg);
 }
 
 /* --- 控制核心辅助函数 --- */
 
 /**
- * @brief 根据 1 核传来的直线数据，算出方向盘该打多少度
+ * @brief 根据 IPM 查表得到的前视点，直接计算给底层航向环的差角
  *
  * @param packet 1 核传来的数据包
  * @return float 算出的方向盘打角（有最大值限制）
  *
- * @note 公式：误差 = 横向偏差 * 横向比例 + 角度偏差 * 角度比例
+ * @note IPM 前视点已将横向偏差和线方向合并为几何夹角，不能再叠加视觉侧 PID。
  */
 static float vision_bridge_calc_geometry_err_degree(const volatile vision_ipc_packet_t *packet)
 {
-    float lateral_px;
-    float yaw_deg;
-
     (void)packet;
     if (s_bridge_task.center_filter_valid == 0U)
     {
         return 0.0f;
     }
 
-    lateral_px = s_bridge_task.filtered_lookahead_x - VISION_BRIDGE_TASK_IMAGE_CENTER_X;
-    yaw_deg = s_bridge_task.filtered_heading_deg;
-    /* 算综合误差 */
-    const float err = VISION_BRIDGE_TASK_LINE_SIGN *
-                      (lateral_px * VISION_BRIDGE_TASK_K_LAT_DEG_PER_PX +
-                       yaw_deg * VISION_BRIDGE_TASK_K_YAW_DEG_PER_DEG +
-                       s_bridge_task.lateral_integral_deg);
+    const float err = VISION_BRIDGE_TASK_LINE_SIGN * s_bridge_task.filtered_heading_deg;
 
     /* 限制在最大允许的范围内，防止车子突然猛打方向 */
     return vision_bridge_constrain_f(err,
@@ -406,8 +406,6 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.center_filter_pending_jump = s_bridge_task.center_filter_pending_jump;
     status.filtered_lookahead_x = s_bridge_task.filtered_lookahead_x;
     status.filtered_heading_deg = s_bridge_task.filtered_heading_deg;
-    status.lateral_integral_deg = s_bridge_task.lateral_integral_deg;
-
     g_bridge_vision_task_status = status;
 }
 

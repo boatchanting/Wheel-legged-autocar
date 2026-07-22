@@ -1350,6 +1350,12 @@
         <group>
             <name>vision</name>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\ipm_transform.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\ipm_transform.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\vision\pvc_entry_control.h</name>
             </file>
             <file>
