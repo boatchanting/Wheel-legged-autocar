@@ -45,6 +45,7 @@ CAR_HALF_WIDTH_MM = 135.0
 PRE_UTURN_SPEED_MAX_MM_S = 5000.0
 PATH_SPEED_MAX_MM_S = 6500.0
 SPRINT_SPEED_MM_S = 3000.0
+UTURN_SPEED_MAX_MM_S = 4000.0
 ENABLE_FINISH_SPRINT = True
 MAX_ACCEL_MM_S2 = 1500.0
 MAX_DECEL_MM_S2 = 1500.0
@@ -59,6 +60,12 @@ UTURN_APPROACH_DISTANCES_MM = (1200.0, 2000.0, 3200.0, 4800.0, 6500.0)
 UTURN_APPROACH_LATERAL_OFFSETS_MM = (-700.0, -350.0, 0.0, 350.0, 700.0)
 UTURN_OVERLINE_DISTANCES_MM = (800.0, 1200.0, 1800.0, 2600.0, 3600.0)
 UTURN_GUARD_RADIUS_OFFSETS_MM = (800.0, 1200.0, 1600.0, 2200.0, 3000.0)
+UTURN_ARC_ENABLE = True
+UTURN_ARC_RADIUS_CANDIDATES_MM = (1800.0, 2000.0, 2200.0)
+UTURN_ARC_TARGET_ROUTE_INDICES = (4,)
+UTURN_ARC_MAX_SWEEP_RAD = math.radians(260.0)
+UTURN_ARC_LENGTH_PRIORITY_WEIGHT = 1.0
+UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS = 10
 FINISH_OVER_LINE_MM = 700.0
 LINE_SAMPLE_COUNT = 11
 GAP_SAMPLE_COUNT = 9
@@ -66,14 +73,14 @@ BEAM_WIDTH = 96
 
 TURN_COST_WEIGHT = 900.0
 CLEARANCE_COST_WEIGHT = 90000.0
-CLEARANCE_SOFT_MARGIN_MM = 260.0
-FIRST_GUARD_RADIUS_OFFSETS_MM = (1000.0, 2000.0, 3200.0, 4600.0)
+CLEARANCE_SOFT_MARGIN_MM = 80.0
+FIRST_GUARD_RADIUS_OFFSETS_MM = (800.0, 1200.0, 1600.0, 2000.0)
 FIRST_GUARD_ANGLE_OFFSETS_DEG = (-75.0, -55.0, -38.0, -22.0, 0.0, 22.0, 38.0, 55.0, 75.0)
 GUARD_RADIUS_OFFSETS_MM = (220.0, 400.0, 650.0, 900.0)
 GUARD_ANGLE_OFFSETS_DEG = (-50.0, -32.0, -16.0, 0.0, 16.0, 32.0, 50.0)
 MAX_FINAL_CANDIDATES = 96
 # A small positive smoothing factor keeps the path rounder without widening clearance.
-SMOOTH_TENSIONS = (7.75,)
+SMOOTH_TENSIONS = (3000.0,)
 START_APPROACH_ANCHOR_FRACS = (0.2, 0.4, 0.6, 0.8)
 FINISH_EXIT_ANCHOR_FRACS = (0.33, 0.66)
 SPRINT_ENTRY_AFTER_LAST_CONE_MM = (500.0, 800.0, 1100.0, 1450.0, 1800.0, 2200.0, 2700.0)
@@ -833,6 +840,200 @@ def _sample_hermite_path(
         return np.array(xs, dtype=float), np.array(ys, dtype=float)
 
 
+def _circle_tangent_points(
+    point_xy: Tuple[float, float],
+    center_xy: Tuple[float, float],
+    radius_mm: float,
+) -> List[Tuple[float, float, float]]:
+    px = point_xy[0] - center_xy[0]
+    py = point_xy[1] - center_xy[1]
+    dist = math.hypot(px, py)
+    if dist <= radius_mm + 1.0e-6:
+        return []
+
+    base_angle = math.atan2(py, px)
+    tangent_angle = math.acos(radius_mm / dist)
+    points: List[Tuple[float, float, float]] = []
+    for sign in (-1.0, 1.0):
+        theta = base_angle + sign * tangent_angle
+        points.append(
+            (
+                center_xy[0] + radius_mm * math.cos(theta),
+                center_xy[1] + radius_mm * math.sin(theta),
+                theta,
+            )
+        )
+    return points
+
+
+def _pick_lateral_tangent(
+    point_xy: Tuple[float, float],
+    center_xy: Tuple[float, float],
+    axis: Tuple[float, float],
+    lateral: Tuple[float, float],
+    radius_mm: float,
+    desired_lateral_side: float,
+) -> Optional[Tuple[float, float, float]]:
+    tangents = _circle_tangent_points(point_xy, center_xy, radius_mm)
+    if not tangents:
+        return None
+
+    side = _signed_side(desired_lateral_side, fallback=1.0)
+
+    def score(tangent: Tuple[float, float, float]) -> Tuple[float, float]:
+        _s_val, l_val = _to_sl((tangent[0], tangent[1]), center_xy, axis, lateral)
+        side_penalty = 0.0 if l_val * side > 0.0 else 100000.0
+        return side_penalty, -abs(l_val)
+
+    return min(tangents, key=score)
+
+
+def _signed_arc_delta(start_angle: float, end_angle: float, direction: float) -> float:
+    if direction > 0.0:
+        return (end_angle - start_angle) % (2.0 * math.pi)
+    return -((start_angle - end_angle) % (2.0 * math.pi))
+
+
+def _sample_circle_arc(
+    center_xy: Tuple[float, float],
+    radius_mm: float,
+    start_angle: float,
+    end_angle: float,
+    direction: float,
+    sample_step_mm: float,
+) -> List[Tuple[float, float]]:
+    delta = _signed_arc_delta(start_angle, end_angle, direction)
+    arc_len = abs(delta) * radius_mm
+    steps = max(8, int(math.ceil(arc_len / max(sample_step_mm, 1.0))))
+    return [
+        (
+            center_xy[0] + radius_mm * math.cos(start_angle + delta * (i / steps)),
+            center_xy[1] + radius_mm * math.sin(start_angle + delta * (i / steps)),
+        )
+        for i in range(steps + 1)
+    ]
+
+
+def _arc_crosses_uturn_line(
+    arc_points: Sequence[Tuple[float, float]],
+    center_xy: Tuple[float, float],
+    axis: Tuple[float, float],
+    lateral: Tuple[float, float],
+) -> bool:
+    return any(
+        _to_sl(point, center_xy, axis, lateral)[0] < -UTURN_OVER_LINE_MM
+        for point in arc_points
+    )
+
+
+def _polyline_sample_xy(
+    points: Sequence[Tuple[float, float]],
+    sample_step_mm: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if len(points) < 2:
+        raise PathConstraintError("not enough points for polyline sampling")
+    return resample_path(
+        np.array([p[0] for p in points], dtype=float),
+        np.array([p[1] for p in points], dtype=float),
+        sample_step_mm,
+    )
+
+
+def _sample_circular_uturn_variant(
+    route: Sequence[Tuple[float, float]],
+    uturn_marker: RoutePoint,
+    first_cone: RoutePoint,
+    radius_mm: float,
+    target_idx: int,
+    tension: float,
+    sample_step_mm: float,
+) -> Optional[Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]]:
+    if len(route) <= target_idx:
+        return None
+
+    center_xy = _point_xy(uturn_marker)
+    finish_side_hint = _point_xy(first_cone)
+    axis = (1.0, 0.0)
+    lateral = (0.0, 1.0)
+    if route[-1][0] < center_xy[0]:
+        axis = (-1.0, 0.0)
+        lateral = (0.0, -1.0)
+
+    start_s, start_l = _to_sl(route[0], center_xy, axis, lateral)
+    _first_s, first_l = _to_sl(finish_side_hint, center_xy, axis, lateral)
+    if abs(start_l) < 1.0e-6:
+        start_l = -first_l
+
+    start_tangent = _pick_lateral_tangent(route[0], center_xy, axis, lateral, radius_mm, start_l)
+    end_tangent = _pick_lateral_tangent(route[target_idx], center_xy, axis, lateral, radius_mm, first_l)
+    if start_tangent is None or end_tangent is None:
+        return None
+
+    arc_options: List[Tuple[float, List[Tuple[float, float]]]] = []
+    for direction in (-1.0, 1.0):
+        delta = _signed_arc_delta(start_tangent[2], end_tangent[2], direction)
+        if abs(delta) > UTURN_ARC_MAX_SWEEP_RAD:
+            continue
+        arc_points = _sample_circle_arc(
+            center_xy,
+            radius_mm,
+            start_tangent[2],
+            end_tangent[2],
+            direction,
+            sample_step_mm,
+        )
+        if not _arc_crosses_uturn_line(arc_points, center_xy, axis, lateral):
+            continue
+        arc_options.append((abs(delta), arc_points))
+
+    if not arc_options:
+        return None
+
+    _arc_delta, arc_points = min(arc_options, key=lambda item: item[0])
+    rest_route = [(end_tangent[0], end_tangent[1])] + list(route[target_idx:])
+    rest_sample_route = _add_terminal_anchor_points(rest_route)
+    rest_x, rest_y = _sample_hermite_path(rest_sample_route, tension, sample_step_mm)
+    line_x, line_y = _polyline_sample_xy([route[0], (start_tangent[0], start_tangent[1])], sample_step_mm)
+    arc_x = np.array([p[0] for p in arc_points], dtype=float)
+    arc_y = np.array([p[1] for p in arc_points], dtype=float)
+
+    dense_x = np.concatenate([line_x[:-1], arc_x, rest_x[1:]])
+    dense_y = np.concatenate([line_y[:-1], arc_y, rest_y[1:]])
+
+    mid_arc = arc_points[len(arc_points) // 2]
+    raw_route = [
+        route[0],
+        (start_tangent[0], start_tangent[1]),
+        mid_arc,
+        (end_tangent[0], end_tangent[1]),
+    ] + list(route[target_idx:])
+    return raw_route, dense_x, dense_y
+
+
+def _sample_circular_uturn_variants(
+    route: Sequence[Tuple[float, float]],
+    uturn_marker: RoutePoint,
+    first_cone: RoutePoint,
+    tension: float,
+    sample_step_mm: float,
+) -> List[Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]]:
+    variants: List[Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]] = []
+    for target_idx in UTURN_ARC_TARGET_ROUTE_INDICES:
+        for radius_mm in UTURN_ARC_RADIUS_CANDIDATES_MM:
+            variant = _sample_circular_uturn_variant(
+                route,
+                uturn_marker,
+                first_cone,
+                radius_mm,
+                target_idx,
+                tension,
+                sample_step_mm,
+            )
+            if variant is not None:
+                variants.append(variant)
+    return variants
+
+
 def _add_terminal_anchor_points(route: Sequence[Tuple[float, float]]) -> List[Tuple[float, float]]:
     if len(route) < 2:
         return list(route)
@@ -1166,10 +1367,48 @@ def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathRe
     route_candidates = _beam_search_routes(start_xy, stages, sorted_cones)
 
     best: Optional[OptimizedPathResult] = None
+    best_fallback: Optional[OptimizedPathResult] = None
     for route_cost, route in route_candidates:
-        sample_route = _add_terminal_anchor_points(route)
         for tension in SMOOTH_TENSIONS:
+            variants: List[Tuple[List[Tuple[float, float]], np.ndarray, np.ndarray]] = []
+            if UTURN_ARC_ENABLE and real_cones:
+                variants.extend(
+                    _sample_circular_uturn_variants(
+                        route,
+                        uturn_marker,
+                        real_cones[0],
+                        tension,
+                        PATH_DENSE_SAMPLE_MM,
+                    )
+                )
+
+            for variant_route, dense_x, dense_y in variants:
+                try:
+                    out_x, out_y = resample_path(dense_x, dense_y, INTERPOLATE_DIST)
+                    points = _route_points_from_xy(out_x, out_y)
+                    validate_uturn_line_crossing(points, uturn_marker, real_cones, finish_marker)
+                    sprint_entry_xy = variant_route[-2] if len(variant_route) >= 2 else None
+                    score, clearance = _score_final_path(points, sorted_cones, route_cost, sprint_entry_xy)
+                    score += UTURN_ARC_LENGTH_PRIORITY_WEIGHT * float(cumulative_arc_length(points)[-1])
+                except PathConstraintError:
+                    continue
+
+                action_xy = variant_route[2] if len(variant_route) > 2 else variant_route[-1]
+                result = OptimizedPathResult(
+                    raw_route=list(variant_route),
+                    final_points=points,
+                    action_xy=action_xy,
+                    min_clearance_mm=clearance,
+                    score=score,
+                )
+                if best is None or result.score < best.score:
+                    best = result
+
+            if best is not None:
+                continue
+
             try:
+                sample_route = _add_terminal_anchor_points(route)
                 dense_x, dense_y = _sample_hermite_path(sample_route, tension, PATH_DENSE_SAMPLE_MM)
                 out_x, out_y = resample_path(dense_x, dense_y, INTERPOLATE_DIST)
                 points = _route_points_from_xy(out_x, out_y)
@@ -1187,8 +1426,11 @@ def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathRe
                 min_clearance_mm=clearance,
                 score=score,
             )
-            if best is None or result.score < best.score:
-                best = result
+            if best_fallback is None or result.score < best_fallback.score:
+                best_fallback = result
+
+    if best is None:
+        best = best_fallback
 
     if best is None:
         raise PathConstraintError("no smoothed candidate path satisfies cone clearance")
@@ -1202,7 +1444,11 @@ def yaw_accel_speed_limit_mm_s(curvature_rate: float) -> float:
     return math.sqrt(MAX_PATH_YAW_ACCEL_RAD_S2 / curvature_rate)
 
 
-def apply_speed_plan(points: List[RoutePoint], slalom_start_idx: Optional[int] = None) -> None:
+def apply_speed_plan(
+    points: List[RoutePoint],
+    slalom_start_idx: Optional[int] = None,
+    uturn_slow_range: Optional[Tuple[int, int]] = None,
+) -> None:
     if not points:
         return
 
@@ -1210,6 +1456,13 @@ def apply_speed_plan(points: List[RoutePoint], slalom_start_idx: Optional[int] =
     curvature = signed_curvature(points)
     rate = curvature_rate_per_mm2(s_vals, curvature)
     speed_limit = np.full(len(points), PRE_UTURN_SPEED_MAX_MM_S, dtype=float)
+    uturn_relax_range: Optional[Tuple[int, int]] = None
+    if uturn_slow_range is not None:
+        relax_start, relax_end = sorted((int(uturn_slow_range[0]), int(uturn_slow_range[1])))
+        uturn_relax_range = (
+            max(0, relax_start - UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS),
+            min(len(points) - 1, relax_end + UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS),
+        )
 
     for i, kappa in enumerate(curvature):
         local_speed_max = (
@@ -1220,11 +1473,20 @@ def apply_speed_plan(points: List[RoutePoint], slalom_start_idx: Optional[int] =
         curve_limit = local_speed_max
         yaw_rate_limit = local_speed_max
         yaw_accel_limit = yaw_accel_speed_limit_mm_s(float(rate[i]))
+        if uturn_relax_range is not None and uturn_relax_range[0] <= i <= uturn_relax_range[1]:
+            yaw_accel_limit = local_speed_max
         if abs(kappa) > CURVATURE_EPS:
             curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / max(abs(kappa), CURVATURE_EPS))
             yaw_rate_limit = MAX_PATH_YAW_RATE_RAD_S / abs(kappa)
         speed_limit[i] = min(local_speed_max, curve_limit, yaw_rate_limit, yaw_accel_limit)
         points[i].curvature = float(kappa)
+
+    if uturn_slow_range is not None:
+        start_idx, end_idx = sorted((int(uturn_slow_range[0]), int(uturn_slow_range[1])))
+        start_idx = max(0, start_idx - 2)
+        end_idx = min(len(points) - 1, end_idx + 2)
+        for i in range(start_idx, end_idx + 1):
+            speed_limit[i] = min(speed_limit[i], UTURN_SPEED_MAX_MM_S)
 
     # The finish marker is a crossing target, not a stop line.
     if ENABLE_FINISH_SPRINT:
@@ -1278,7 +1540,22 @@ def generate_route_plan(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float,
             key=lambda i: math.hypot(final_points[i].x - slalom_xy[0], final_points[i].y - slalom_xy[1]),
         )
 
-    apply_speed_plan(final_points, slalom_start_idx=slalom_start_idx)
+    uturn_slow_range: Optional[Tuple[int, int]] = None
+    if len(result.raw_route) >= 4 and final_points:
+        uturn_start_xy = result.raw_route[1]
+        uturn_end_xy = result.raw_route[3]
+        uturn_slow_range = (
+            min(
+                range(len(final_points)),
+                key=lambda i: math.hypot(final_points[i].x - uturn_start_xy[0], final_points[i].y - uturn_start_xy[1]),
+            ),
+            min(
+                range(len(final_points)),
+                key=lambda i: math.hypot(final_points[i].x - uturn_end_xy[0], final_points[i].y - uturn_end_xy[1]),
+            ),
+        )
+
+    apply_speed_plan(final_points, slalom_start_idx=slalom_start_idx, uturn_slow_range=uturn_slow_range)
     control_points = list(result.raw_route)
     method = (
         "Plan1 Optimized 平滑避障绕桩 "
@@ -1332,6 +1609,7 @@ def generate_header(
         f.write(f"// Point spacing: about {INTERPOLATE_DIST:.1f}mm\n")
         f.write(
             f"// Speed plan: pre_uturn_vmax={PRE_UTURN_SPEED_MAX_MM_S:.1f}mm/s, "
+            f"uturn_vmax={UTURN_SPEED_MAX_MM_S:.1f}mm/s, "
             f"slalom_vmax={PATH_SPEED_MAX_MM_S:.1f}mm/s, "
             f"accel={MAX_ACCEL_MM_S2:.1f}mm/s^2, "
             f"decel={MAX_DECEL_MM_S2:.1f}mm/s^2, "
@@ -1667,6 +1945,7 @@ def main() -> int:
     print(
         "[output] speed plan: "
         f"pre_uturn_vmax={PRE_UTURN_SPEED_MAX_MM_S:.1f}mm/s, "
+        f"uturn_vmax={UTURN_SPEED_MAX_MM_S:.1f}mm/s, "
         f"slalom_vmax={PATH_SPEED_MAX_MM_S:.1f}mm/s, "
         f"accel={MAX_ACCEL_MM_S2:.1f}mm/s^2, "
         f"decel={MAX_DECEL_MM_S2:.1f}mm/s^2, "

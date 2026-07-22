@@ -45,6 +45,10 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #define NAV_REPLAY_FINISH_LINE_NY 0.0f
 #endif
 
+#ifndef NAV_FINISH_LINE_ARM_REMAINING_POINTS
+#define NAV_FINISH_LINE_ARM_REMAINING_POINTS 80U
+#endif
+
 #define LQR_DEG_TO_RAD 0.0174532925f
 
 #ifndef PLAN1_FAST_UTURN_ENABLE
@@ -192,15 +196,23 @@ static void NavReplay_ClearFinishStopLock(void)
     s_finish_stop_stable_count = 0U;
 }
 
-static uint8 NavReplay_FinishLineCrossed(void)
+static uint8 NavReplay_FinishLineCrossed(uint16 target_idx, uint16 last_idx)
 {
 #if NAV_REPLAY_FINISH_LINE_VALID
     float dx = inertial_nav.x - NAV_REPLAY_FINISH_LINE_X_MM;
     float dy = inertial_nav.y - NAV_REPLAY_FINISH_LINE_Y_MM;
     float progress = dx * NAV_REPLAY_FINISH_LINE_NX + dy * NAV_REPLAY_FINISH_LINE_NY;
 
+    if ((target_idx < last_idx) &&
+        ((uint16)(last_idx - target_idx) > (uint16)NAV_FINISH_LINE_ARM_REMAINING_POINTS))
+    {
+        return 0U;
+    }
+
     return (uint8)(progress >= 0.0f);
 #else
+    (void)target_idx;
+    (void)last_idx;
     return 0U;
 #endif
 }
@@ -1256,7 +1268,7 @@ void NavReplay_Process(void)
         return;
     }
 
-    if (NavReplay_FinishLineCrossed() != 0U)
+    if (NavReplay_FinishLineCrossed(g_target_idx, last_idx) != 0U)
     {
         NavReplay_StartFinishStopLock(last_idx);
         (void)NavReplay_HandleFinishStopLock(last_idx);
