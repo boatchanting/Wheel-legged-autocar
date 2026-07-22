@@ -444,22 +444,35 @@ void wifi_protocol_send_data(void)
         float nav_replay_state = (float)g_replay_state;
         float nav_special_action_trigger = (float)g_special_action_trigger;
         float nav_current_point_type = (float)g_current_point_type;
-        float nav_special_target_idx = (float)g_nav_point_special_debug_target_idx;
-        float nav_special_target_x = g_nav_point_special_debug_target_x;
-        float nav_special_target_y = g_nav_point_special_debug_target_y;
-        float nav_special_dist_mm = g_nav_point_special_debug_dist_mm;
-        float nav_special_brake_radius_mm = g_nav_point_special_debug_brake_radius_mm;
-        float nav_special_speed_ref_mm_s = g_nav_point_special_debug_speed_ref_mm_s;
-        float nav_special_zero_brake_issued = (float)g_nav_point_special_debug_zero_brake_issued;
-        float nav_special_zero_brake_active = (float)NavReplay_SpecialPointZeroBrakeActive();
-        float nav_special_crawl_active = (float)NavReplay_SpecialPointCrawlActive();
-        float nav_special_prep_zero_latched = (float)NavReplay_SpecialPointPrepZeroBrakeLatched();
+        float nav_special_target_idx = 0.0f;
+        float nav_special_target_x = 0.0f;
+        float nav_special_target_y = 0.0f;
+        float nav_special_dist_mm = 0.0f;
+        float nav_special_brake_radius_mm = 0.0f;
+        float nav_special_speed_ref_mm_s = 0.0f;
+        float nav_special_zero_brake_issued = 0.0f;
+        float nav_special_zero_brake_active = 0.0f;
+        float nav_special_crawl_active = 0.0f;
+        float nav_special_prep_zero_latched = 0.0f;
         float brake_ff_pwm = Brake_Feedforward_GetPwm();
         float accel_ff_pwm = Accel_Feedforward_GetPwm();
         float motor_enable = (float)g_motor_enable;
         float fallen = g_fallen ? 1.0f : 0.0f;
         float remote_brake_active = (float)g_brake_active;
         float remote_reverse_brake_active = (float)g_reverse_brake_active;
+
+#if (CURRENT_NAV_PLAN == 2) && (NAV_PLAN2_METHOD == PLAN2_POINT_SPEED_PLANNING)
+        nav_special_target_idx = (float)g_nav_point_special_debug_target_idx;
+        nav_special_target_x = g_nav_point_special_debug_target_x;
+        nav_special_target_y = g_nav_point_special_debug_target_y;
+        nav_special_dist_mm = g_nav_point_special_debug_dist_mm;
+        nav_special_brake_radius_mm = g_nav_point_special_debug_brake_radius_mm;
+        nav_special_speed_ref_mm_s = g_nav_point_special_debug_speed_ref_mm_s;
+        nav_special_zero_brake_issued = (float)g_nav_point_special_debug_zero_brake_issued;
+        nav_special_zero_brake_active = (float)NavReplay_SpecialPointZeroBrakeActive();
+        nav_special_crawl_active = (float)NavReplay_SpecialPointCrawlActive();
+        nav_special_prep_zero_latched = (float)NavReplay_SpecialPointPrepZeroBrakeLatched();
+#endif
 
         write_u32_or_float(&nav_replay_state);
         write_u32_or_float(&nav_special_action_trigger);

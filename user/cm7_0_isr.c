@@ -44,6 +44,7 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
+#include "navigation/nav_replay/nav_replay.h"
 
 // 声明外部函数
 
@@ -484,8 +485,14 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 // 加速前馈计算阶段的屏蔽条件：
                 // 刹车前馈达到 BRAKE_ACCEL_INHIBIT_PWM 或特殊/视觉任务接管时，不再生成新的加速补偿；
                 // 小于该阈值的轻刹交给后面的最终仲裁处理，避免出弯瞬间加速前馈被完全清掉。
+                uint8 nav_special_zero_brake_active = 0U;
+
+#if (CURRENT_NAV_PLAN == 2) && (NAV_PLAN2_METHOD == PLAN2_POINT_SPEED_PLANNING)
+                nav_special_zero_brake_active = NavReplay_SpecialPointZeroBrakeActive();
+#endif
+
                 if ((g_is_push_mode == 1U) ||
-                    (NavReplay_SpecialPointZeroBrakeActive() != 0U) ||
+                    (nav_special_zero_brake_active != 0U) ||
                     (g_brake_active != 0U) ||
                     (g_reverse_brake_active != 0U) ||
                     (fabsf(brake_pwm_now) >= BRAKE_ACCEL_INHIBIT_PWM) ||
