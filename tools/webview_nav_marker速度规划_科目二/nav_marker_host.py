@@ -39,6 +39,7 @@ PAYLOAD_GPS_TRACE_FLAG_BYTES = 2
 PAYLOAD_GPS_TRACE_CTRL_BYTES = 2
 PAYLOAD_DEBUG_BYTES = 20
 PAYLOAD_NAV_DIAG_BYTES = 76
+PAYLOAD_TELEMETRY_DIAG_BYTES = 44
 PAYLOAD_FUSION_TRACE_FLOAT_BYTES = 8
 PAYLOAD_FUSION_TRACE_FLAG_BYTES = 1
 PAYLOAD_SIZE_GPS_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_GPS_TRACE_FLOAT_BYTES + PAYLOAD_GPS_TRACE_FLAG_BYTES
@@ -48,6 +49,7 @@ PAYLOAD_SIZE_TRACE = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_FUSION_TRACE_FLOAT_BYTES +
 PAYLOAD_SIZE_TRACE_CTRL = PAYLOAD_SIZE_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
 PAYLOAD_SIZE_TRACE_DEBUG = PAYLOAD_SIZE_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
 PAYLOAD_SIZE_TRACE_NAV_DIAG = PAYLOAD_SIZE_TRACE_DEBUG + PAYLOAD_NAV_DIAG_BYTES
+PAYLOAD_SIZE_TRACE_NAV_DIAG_TELEMETRY_DIAG = PAYLOAD_SIZE_TRACE_NAV_DIAG + PAYLOAD_TELEMETRY_DIAG_BYTES
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -125,6 +127,17 @@ WIFI_TELEMETRY_LOG_FIELDS = [
     "fallen",
     "remote_brake_active",
     "remote_reverse_brake_active",
+    "euler_roll",
+    "euler_pitch",
+    "euler_yaw",
+    "servo_angle_0",
+    "servo_angle_1",
+    "servo_angle_2",
+    "servo_angle_3",
+    "err_degree",
+    "imu_gyro_x_rad_s",
+    "imu_gyro_y_rad_s",
+    "imu_gyro_z_rad_s",
     "has_debug",
     "payload_size",
     "time_str",
@@ -469,6 +482,40 @@ def _estimate_start_heading():
 
 
 def _resolve_trace_layout(size):
+    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG_TELEMETRY_DIAG:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": True,
+            "has_nav_diag": True,
+            "has_telemetry_diag": True,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_TRACE,
+            "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
+            "nav_diag_base": PAYLOAD_SIZE_TRACE_DEBUG,
+            "telemetry_diag_base": PAYLOAD_SIZE_TRACE_NAV_DIAG,
+        }
+
+    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": True,
+            "has_nav_diag": True,
+            "has_telemetry_diag": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_TRACE,
+            "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
+            "nav_diag_base": PAYLOAD_SIZE_TRACE_DEBUG,
+            "telemetry_diag_base": None,
+        }
+
     if size >= PAYLOAD_SIZE_TRACE_DEBUG:
         return {
             "has_gps": True,
@@ -476,10 +523,14 @@ def _resolve_trace_layout(size):
             "has_pid_mode": True,
             "has_slip_flag": True,
             "has_debug": True,
+            "has_nav_diag": False,
+            "has_telemetry_diag": False,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_TRACE,
             "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
+            "nav_diag_base": None,
+            "telemetry_diag_base": None,
         }
 
     if size >= PAYLOAD_SIZE_GPS_TRACE_DEBUG:
@@ -489,10 +540,14 @@ def _resolve_trace_layout(size):
             "has_pid_mode": True,
             "has_slip_flag": True,
             "has_debug": True,
+            "has_nav_diag": False,
+            "has_telemetry_diag": False,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_GPS_TRACE,
             "debug_base": PAYLOAD_SIZE_GPS_TRACE_CTRL,
+            "nav_diag_base": None,
+            "telemetry_diag_base": None,
         }
 
     if size >= PAYLOAD_SIZE_TRACE_CTRL:
@@ -502,10 +557,14 @@ def _resolve_trace_layout(size):
             "has_pid_mode": True,
             "has_slip_flag": True,
             "has_debug": False,
+            "has_nav_diag": False,
+            "has_telemetry_diag": False,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_TRACE,
             "debug_base": None,
+            "nav_diag_base": None,
+            "telemetry_diag_base": None,
         }
 
     if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
@@ -515,10 +574,14 @@ def _resolve_trace_layout(size):
             "has_pid_mode": True,
             "has_slip_flag": True,
             "has_debug": False,
+            "has_nav_diag": False,
+            "has_telemetry_diag": False,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_GPS_TRACE,
             "debug_base": None,
+            "nav_diag_base": None,
+            "telemetry_diag_base": None,
         }
 
     if size >= PAYLOAD_SIZE_TRACE:
@@ -528,10 +591,14 @@ def _resolve_trace_layout(size):
             "has_pid_mode": False,
             "has_slip_flag": False,
             "has_debug": False,
+            "has_nav_diag": False,
+            "has_telemetry_diag": False,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": None,
             "debug_base": None,
+            "nav_diag_base": None,
+            "telemetry_diag_base": None,
         }
 
     if size >= PAYLOAD_SIZE_GPS_TRACE:
@@ -541,10 +608,14 @@ def _resolve_trace_layout(size):
             "has_pid_mode": False,
             "has_slip_flag": False,
             "has_debug": False,
+            "has_nav_diag": False,
+            "has_telemetry_diag": False,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": None,
             "debug_base": None,
+            "nav_diag_base": None,
+            "telemetry_diag_base": None,
         }
 
     return {
@@ -553,10 +624,14 @@ def _resolve_trace_layout(size):
         "has_pid_mode": False,
         "has_slip_flag": False,
         "has_debug": False,
+        "has_nav_diag": False,
+        "has_telemetry_diag": False,
         "gps_base": PAYLOAD_SIZE_V2,
         "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
         "pid_base": None,
         "debug_base": None,
+        "nav_diag_base": None,
+        "telemetry_diag_base": None,
     }
 
 
@@ -679,14 +754,38 @@ def _decode_payload(payload_bytes):
         "remote_brake_active",
         "remote_reverse_brake_active",
     ]
-    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG:
+    if layout["has_nav_diag"]:
+        nav_diag_base = layout["nav_diag_base"]
         nav_diag_values = struct.unpack(
             "<19f",
-            payload_bytes[PAYLOAD_SIZE_TRACE_DEBUG : PAYLOAD_SIZE_TRACE_NAV_DIAG],
+            payload_bytes[nav_diag_base : nav_diag_base + PAYLOAD_NAV_DIAG_BYTES],
         )
         data.update(zip(nav_diag_fields, nav_diag_values))
     else:
         data.update({field: None for field in nav_diag_fields})
+
+    telemetry_diag_fields = [
+        "euler_roll",
+        "euler_pitch",
+        "euler_yaw",
+        "servo_angle_0",
+        "servo_angle_1",
+        "servo_angle_2",
+        "servo_angle_3",
+        "err_degree",
+        "imu_gyro_x_rad_s",
+        "imu_gyro_y_rad_s",
+        "imu_gyro_z_rad_s",
+    ]
+    if layout["has_telemetry_diag"]:
+        telemetry_diag_base = layout["telemetry_diag_base"]
+        telemetry_diag_values = struct.unpack(
+            "<11f",
+            payload_bytes[telemetry_diag_base : telemetry_diag_base + PAYLOAD_TELEMETRY_DIAG_BYTES],
+        )
+        data.update(zip(telemetry_diag_fields, telemetry_diag_values))
+    else:
+        data.update({field: None for field in telemetry_diag_fields})
 
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"

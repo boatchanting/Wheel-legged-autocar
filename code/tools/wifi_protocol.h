@@ -27,7 +27,7 @@
 #define WIFI_HOST_ACK_UNKNOWN_CMD         0x02
 #define WIFI_HOST_ACK_INVALID_PAYLOAD     0x03
 
-#define WIFI_TX_BUFFER_SIZE     256
+#define WIFI_TX_BUFFER_SIZE     320
 
 // Send telemetry frame to host
 void wifi_protocol_send_data(void);

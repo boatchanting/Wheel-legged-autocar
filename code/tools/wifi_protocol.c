@@ -1,8 +1,13 @@
 #include "wifi_protocol.h"
 #include "menu.h"
+#include "../calculate/ekf.h"
+#include "../calculate/matrix.h"
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
 #include "../navigation/nav_replay/nav_replay.h"
+#include "../servo/servo.h"
+
+extern volatile float err_degree;
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -68,6 +73,122 @@ static void write_double(const double *val_ptr)
             tx_buf[tx_idx++] = p[i];
         }
     }
+}
+
+static void write_gps_fields(void)
+{
+    write_u16(gnss.time.year);
+    write_u8(gnss.time.month);
+    write_u8(gnss.time.day);
+    write_u8(gnss.time.hour);
+    write_u8(gnss.time.minute);
+    write_u8(gnss.time.second);
+
+    write_u8(gnss.state);
+
+    write_u16(gnss.latitude_degree);
+    write_u16(gnss.latitude_cent);
+    write_u16(gnss.latitude_second);
+    write_u16(gnss.longitude_degree);
+    write_u16(gnss.longitude_cent);
+    write_u16(gnss.longitude_second);
+
+    write_double(&gnss.latitude);
+    write_double(&gnss.longitude);
+
+    write_i8(gnss.ns);
+    write_i8(gnss.ew);
+
+    write_u32_or_float(&gnss.speed);
+    write_u32_or_float(&gnss.direction);
+
+    write_u8(gnss.antenna_direction_state);
+    write_u32_or_float(&gnss.antenna_direction);
+
+    write_u8(gnss.satellite_used);
+    write_u32_or_float(&gnss.height);
+}
+
+static void write_zero_gps_fields(void)
+{
+    const double zero_double = 0.0;
+    const float zero_float = 0.0f;
+
+    write_u16(0U);
+    write_u8(0U);
+    write_u8(0U);
+    write_u8(0U);
+    write_u8(0U);
+    write_u8(0U);
+
+    write_u8(0U);
+
+    write_u16(0U);
+    write_u16(0U);
+    write_u16(0U);
+    write_u16(0U);
+    write_u16(0U);
+    write_u16(0U);
+
+    write_double(&zero_double);
+    write_double(&zero_double);
+
+    write_i8(0);
+    write_i8(0);
+
+    write_float_value(zero_float);
+    write_float_value(zero_float);
+
+    write_u8(0U);
+    write_float_value(zero_float);
+
+    write_u8(0U);
+    write_float_value(zero_float);
+}
+
+static void write_gps_trace_fields(void)
+{
+    write_float_value(gnss_trans.x * 1000.0f);
+    write_float_value(gnss_trans.y * 1000.0f);
+    write_u8(gnss_trans.is_valid);
+    write_u8(gnss_trans.is_origin_set);
+}
+
+static void write_zero_gps_trace_fields(void)
+{
+    const float zero_float = 0.0f;
+
+    write_float_value(zero_float);
+    write_float_value(zero_float);
+    write_u8(0U);
+    write_u8(0U);
+}
+
+static void write_telemetry_diagnostics(void)
+{
+    const float euler_roll = euler_angle.roll;
+    const float euler_pitch = euler_angle.pitch;
+    const float euler_yaw = euler_angle.yaw;
+    const float servo_angle_0 = get_servo_angle(0U);
+    const float servo_angle_1 = get_servo_angle(1U);
+    const float servo_angle_2 = get_servo_angle(2U);
+    const float servo_angle_3 = get_servo_angle(3U);
+    const float err_degree_snapshot = err_degree;
+    const float imu_gyro_x_rad_s = imu_data.gyro_x;
+    const float imu_gyro_y_rad_s = imu_data.gyro_y;
+    const float imu_gyro_z_rad_s = imu_data.gyro_z;
+
+    write_float_value(euler_roll);
+    write_float_value(euler_pitch);
+    write_float_value(euler_yaw);
+    write_float_value(servo_angle_0);
+    write_float_value(servo_angle_1);
+    write_float_value(servo_angle_2);
+    write_float_value(servo_angle_3);
+    write_float_value(err_degree_snapshot);
+    write_float_value(imu_gyro_x_rad_s);
+    write_float_value(imu_gyro_y_rad_s);
+    write_float_value(imu_gyro_z_rad_s);
 }
 
 static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
@@ -368,36 +489,11 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&inertial_nav.vy_body);
 
     // C. GNSS fields
-    write_u16(gnss.time.year);
-    write_u8(gnss.time.month);
-    write_u8(gnss.time.day);
-    write_u8(gnss.time.hour);
-    write_u8(gnss.time.minute);
-    write_u8(gnss.time.second);
-
-    write_u8(gnss.state);
-
-    write_u16(gnss.latitude_degree);
-    write_u16(gnss.latitude_cent);
-    write_u16(gnss.latitude_second);
-    write_u16(gnss.longitude_degree);
-    write_u16(gnss.longitude_cent);
-    write_u16(gnss.longitude_second);
-
-    write_double(&gnss.latitude);
-    write_double(&gnss.longitude);
-
-    write_i8(gnss.ns);
-    write_i8(gnss.ew);
-
-    write_u32_or_float(&gnss.speed);
-    write_u32_or_float(&gnss.direction);
-
-    write_u8(gnss.antenna_direction_state);
-    write_u32_or_float(&gnss.antenna_direction);
-
-    write_u8(gnss.satellite_used);
-    write_u32_or_float(&gnss.height);
+#if WIFI_SEND_GPS_TELEMETRY
+    write_gps_fields();
+#else
+    write_zero_gps_fields();
+#endif
 
 #if IMU_CATEGORY == 3
     float heading_to_send = heading;
@@ -412,10 +508,11 @@ void wifi_protocol_send_data(void)
     write_u8(robot_ctrl.point_type);
 
     // E. projected GNSS XY for pure GPS marker/replay (unit: mm)
-    write_float_value(gnss_trans.x * 1000.0f);
-    write_float_value(gnss_trans.y * 1000.0f);
-    write_u8(gnss_trans.is_valid);
-    write_u8(gnss_trans.is_origin_set);
+#if WIFI_SEND_GPS_TELEMETRY
+    write_gps_trace_fields();
+#else
+    write_zero_gps_trace_fields();
+#endif
 
     // F. reserved fusion trace (complement filter removed in this branch)
     write_float_value(0.0f);
@@ -494,6 +591,9 @@ void wifi_protocol_send_data(void)
         write_u32_or_float(&remote_brake_active);
         write_u32_or_float(&remote_reverse_brake_active);
     }
+
+    // K. Core telemetry diagnostics for CSV logging (11 floats, append-only).
+    write_telemetry_diagnostics();
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;
