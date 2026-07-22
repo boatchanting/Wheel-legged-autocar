@@ -1,5 +1,39 @@
 ﻿# 惯导打点 WebView 上位机
 
+## 加速刹车采集器
+
+独立采集器入口：
+
+```bash
+python tools/webview_nav_marker速度规划/accel_brake_collector_host.py
+```
+
+也可以双击：
+
+- `tools/webview_nav_marker速度规划/start_accel_brake_collector.bat`
+
+功能：
+
+- 设置目标速度。
+- 选择是否启用多预设 PID：加速阶段 `ACCEL`，保持阶段 `NORMAL`，刹车阶段 `BRAKE`；关闭时全程 `NORMAL`。
+- 点击开始后立刻下发目标速度，达到目标速度后保持 0.5s，再下发 0 速刹车。
+- 自动记录加速、保持和刹车阶段日志。
+- 日志输出到 `tools/webview_nav_marker速度规划/brake_logs/`。
+
+每次实验输出：
+
+- `accel_brake_*.csv`：逐帧数据。
+- `accel_brake_*.json`：本次摘要。
+- `brake_summary.csv`：所有实验的汇总表。
+
+采集字段包含惯导位置、车身速度、由速度差分得到的加速度、阶段时间、阶段距离、刹车距离、目标速度、PID 模式、左右轮速度、理论/实际 yaw rate、姿态角、处理后的三轴陀螺仪、低通加速度和重力分量。
+
+下位机新增控制码：
+
+- `WIFI_HOST_CTRL_SET_TARGET_SPEED = 0x20`
+- payload：`uint8 control_id + float target_speed + uint8 pid_mode + uint8 flags`
+- `pid_mode`：`0=NORMAL`，`1=ACCEL`，`2=BRAKE`
+
 ## 运行上位机
 
 ```bash

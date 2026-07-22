@@ -1,0 +1,801 @@
+import csv
+import json
+import math
+import os
+import struct
+import time
+from pathlib import Path
+
+
+FRAME_HEAD1 = 0x5A
+FRAME_HEAD2 = 0xA5
+FRAME_TAIL = 0xED
+FRAME_MIN_SIZE = 6
+
+CMD_TELEMETRY = 0x01
+CMD_HOST_CONTROL = 0x10
+CMD_HOST_ACK = 0x11
+
+HOST_CTRL_CLEAR_TRAJECTORY = 0x01
+HOST_CTRL_START_CAR = 0x02
+HOST_CTRL_START_LOG = 0x05
+HOST_CTRL_STOP_LOG = 0x06
+HOST_CTRL_SET_TARGET_SPEED = 0x20
+
+HOST_ACK_ACCEPTED = 0x00
+HOST_ACK_REJECTED = 0x01
+HOST_ACK_UNKNOWN_CMD = 0x02
+HOST_ACK_INVALID_PAYLOAD = 0x03
+
+CONTROL_MODE_NORMAL = 0
+CONTROL_MODE_ACCEL = 1
+CONTROL_MODE_BRAKE = 2
+
+STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
+
+FIELD_NAMES_V1 = [
+    "loop",
+    "nav_x",
+    "nav_y",
+    "vx_body",
+    "vy_body",
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "state",
+    "lat_deg",
+    "lat_cent",
+    "lat_sec",
+    "lon_deg",
+    "lon_cent",
+    "lon_sec",
+    "latitude",
+    "longitude",
+    "ns",
+    "ew",
+    "speed",
+    "direction",
+    "ant_state",
+    "ant_direction",
+    "sat_used",
+    "height",
+    "heading",
+    "relative_yaw",
+]
+
+FIELD_NAMES_V2 = FIELD_NAMES_V1 + ["mark_trigger", "point_type"]
+
+DEBUG_FIELD_NAMES = [
+    "target_speed",
+    "speed_L",
+    "speed_R",
+    "theoretical_yaw_rate",
+    "actual_yaw_rate",
+]
+
+PLAN_DEBUG_FIELD_NAMES = [
+    "nav_replay_state",
+    "nav_special_action_trigger",
+    "nav_current_point_type",
+    "nav_special_target_idx",
+    "nav_special_target_x",
+    "nav_special_target_y",
+    "nav_special_dist_mm",
+    "nav_special_brake_radius_mm",
+    "nav_special_speed_ref_mm_s",
+    "nav_special_zero_brake_issued",
+    "nav_special_zero_brake_active",
+    "nav_special_crawl_active",
+    "nav_special_prep_zero_latched",
+    "brake_ff_pwm",
+    "accel_ff_pwm",
+    "motor_enable",
+    "fallen",
+    "remote_brake_active",
+    "remote_reverse_brake_active",
+]
+
+MOTION_IMU_FIELD_NAMES = [
+    "att_roll",
+    "att_pitch",
+    "att_yaw",
+    "imu_gyro_x",
+    "imu_gyro_y",
+    "imu_gyro_z",
+    "imu_acc_x",
+    "imu_acc_y",
+    "imu_acc_z",
+    "imu_grav_x",
+    "imu_grav_y",
+    "imu_grav_z",
+]
+
+PAYLOAD_SIZE_V1 = struct.calcsize(STRUCT_FMT_V1)
+PAYLOAD_SIZE_V2 = PAYLOAD_SIZE_V1 + 2
+PAYLOAD_GPS_TRACE_FLOAT_BYTES = 8
+PAYLOAD_GPS_TRACE_FLAG_BYTES = 2
+PAYLOAD_GPS_TRACE_CTRL_BYTES = 2
+PAYLOAD_DEBUG_BYTES = 20
+PAYLOAD_FUSION_TRACE_FLOAT_BYTES = 8
+PAYLOAD_FUSION_TRACE_FLAG_BYTES = 1
+PAYLOAD_PLAN_DEBUG_BYTES = 19 * 4
+PAYLOAD_MOTION_IMU_BYTES = 12 * 4
+
+PAYLOAD_SIZE_GPS_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_GPS_TRACE_FLOAT_BYTES + PAYLOAD_GPS_TRACE_FLAG_BYTES
+PAYLOAD_SIZE_GPS_TRACE_CTRL = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
+PAYLOAD_SIZE_GPS_TRACE_DEBUG = PAYLOAD_SIZE_GPS_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
+PAYLOAD_SIZE_TRACE = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_FUSION_TRACE_FLOAT_BYTES + PAYLOAD_FUSION_TRACE_FLAG_BYTES
+PAYLOAD_SIZE_TRACE_CTRL = PAYLOAD_SIZE_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
+PAYLOAD_SIZE_TRACE_DEBUG = PAYLOAD_SIZE_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
+PAYLOAD_SIZE_TRACE_PLAN_DEBUG = PAYLOAD_SIZE_TRACE_DEBUG + PAYLOAD_PLAN_DEBUG_BYTES
+PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION = PAYLOAD_SIZE_TRACE_PLAN_DEBUG + PAYLOAD_MOTION_IMU_BYTES
+
+BASE_LOG_FIELDS = [
+    "recorded_at",
+    "elapsed_s",
+    "phase",
+    "phase_elapsed_s",
+    "requested_target_speed",
+    "commanded_target_speed",
+    "pid_mode",
+    "speed_abs",
+    "accel_from_vx",
+    "distance_from_start",
+    "phase_distance",
+]
+
+ACCEL_BRAKE_LOG_FIELDS = (
+    BASE_LOG_FIELDS
+    + FIELD_NAMES_V2
+    + [
+        "gps_x",
+        "gps_y",
+        "gps_valid",
+        "gps_origin_set",
+        "fusion_x",
+        "fusion_y",
+        "fusion_valid",
+        "slip_flag",
+    ]
+    + DEBUG_FIELD_NAMES
+    + PLAN_DEBUG_FIELD_NAMES
+    + MOTION_IMU_FIELD_NAMES
+    + [
+        "has_debug",
+        "has_plan_debug",
+        "has_motion_imu",
+        "payload_size",
+        "time_str",
+    ]
+)
+
+SUMMARY_FIELDS = [
+    "run_id",
+    "status",
+    "target_speed",
+    "multi_pid",
+    "started_at",
+    "finished_at",
+    "sample_count",
+    "accel_time_s",
+    "hold_time_s",
+    "brake_time_s",
+    "accel_distance_mm",
+    "hold_distance_mm",
+    "brake_distance_mm",
+    "total_distance_mm",
+    "csv_path",
+    "json_path",
+]
+
+
+def safe_float(value, default=None):
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(num):
+        return default
+    return num
+
+
+def build_frame(cmd, payload_bytes=b""):
+    payload_len = len(payload_bytes)
+    if payload_len > 255:
+        raise ValueError("payload too long")
+    frame = bytearray([FRAME_HEAD1, FRAME_HEAD2, cmd & 0xFF, payload_len & 0xFF])
+    frame.extend(payload_bytes)
+    frame.append(sum(frame) & 0xFF)
+    frame.append(FRAME_TAIL)
+    return bytes(frame)
+
+
+def build_set_target_speed_payload(target_speed, pid_mode=CONTROL_MODE_NORMAL, flags=0):
+    mode = int(pid_mode) & 0xFF
+    return struct.pack("<BfBB", HOST_CTRL_SET_TARGET_SPEED, float(target_speed), mode, int(flags) & 0xFF)
+
+
+def build_set_target_speed_frame(target_speed, pid_mode=CONTROL_MODE_NORMAL, flags=0):
+    return build_frame(CMD_HOST_CONTROL, build_set_target_speed_payload(target_speed, pid_mode, flags))
+
+
+def _resolve_trace_layout(size):
+    if size >= PAYLOAD_SIZE_TRACE_DEBUG:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": True,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_TRACE,
+            "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
+        }
+
+    if size >= PAYLOAD_SIZE_GPS_TRACE_DEBUG:
+        return {
+            "has_gps": True,
+            "has_fusion": False,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": True,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
+            "debug_base": PAYLOAD_SIZE_GPS_TRACE_CTRL,
+        }
+
+    if size >= PAYLOAD_SIZE_TRACE_CTRL:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_TRACE,
+            "debug_base": None,
+        }
+
+    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
+        return {
+            "has_gps": True,
+            "has_fusion": False,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
+            "debug_base": None,
+        }
+
+    if size >= PAYLOAD_SIZE_TRACE:
+        return {
+            "has_gps": True,
+            "has_fusion": True,
+            "has_pid_mode": False,
+            "has_slip_flag": False,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": None,
+            "debug_base": None,
+        }
+
+    if size >= PAYLOAD_SIZE_GPS_TRACE:
+        return {
+            "has_gps": True,
+            "has_fusion": False,
+            "has_pid_mode": False,
+            "has_slip_flag": False,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": None,
+            "debug_base": None,
+        }
+
+    return {
+        "has_gps": False,
+        "has_fusion": False,
+        "has_pid_mode": False,
+        "has_slip_flag": False,
+        "has_debug": False,
+        "gps_base": PAYLOAD_SIZE_V2,
+        "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+        "pid_base": None,
+        "debug_base": None,
+    }
+
+
+def decode_payload(payload_bytes):
+    size = len(payload_bytes)
+    if size < PAYLOAD_SIZE_V1:
+        return None
+
+    unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes[:PAYLOAD_SIZE_V1])
+    data = dict(zip(FIELD_NAMES_V1, unpacked))
+    layout = _resolve_trace_layout(size)
+
+    if size >= PAYLOAD_SIZE_V2:
+        data["mark_trigger"] = payload_bytes[PAYLOAD_SIZE_V1]
+        data["point_type"] = payload_bytes[PAYLOAD_SIZE_V1 + 1]
+    else:
+        data["mark_trigger"] = 0
+        data["point_type"] = 0
+
+    if layout["has_gps"]:
+        gps_base = layout["gps_base"]
+        gps_x, gps_y = struct.unpack("<ff", payload_bytes[gps_base : gps_base + 8])
+        data["gps_x"] = gps_x
+        data["gps_y"] = gps_y
+        data["gps_valid"] = payload_bytes[gps_base + 8]
+        data["gps_origin_set"] = payload_bytes[gps_base + 9]
+    else:
+        data["gps_x"] = None
+        data["gps_y"] = None
+        data["gps_valid"] = 0
+        data["gps_origin_set"] = 0
+
+    if layout["has_fusion"]:
+        fusion_base = layout["fusion_base"]
+        fusion_x, fusion_y = struct.unpack("<ff", payload_bytes[fusion_base : fusion_base + 8])
+        data["fusion_x"] = fusion_x
+        data["fusion_y"] = fusion_y
+        data["fusion_valid"] = payload_bytes[fusion_base + 8]
+    else:
+        data["fusion_x"] = None
+        data["fusion_y"] = None
+        data["fusion_valid"] = 0
+
+    data["pid_mode"] = payload_bytes[layout["pid_base"]] if layout["has_pid_mode"] else 0
+    data["slip_flag"] = payload_bytes[layout["pid_base"] + 1] if layout["has_slip_flag"] else 0
+
+    if layout["has_debug"]:
+        debug_floats = struct.unpack("<fffff", payload_bytes[layout["debug_base"] : layout["debug_base"] + PAYLOAD_DEBUG_BYTES])
+        data.update(dict(zip(DEBUG_FIELD_NAMES, debug_floats)))
+        data["has_debug"] = True
+    else:
+        for field in DEBUG_FIELD_NAMES:
+            data[field] = None
+        data["has_debug"] = False
+
+    if size >= PAYLOAD_SIZE_TRACE_PLAN_DEBUG:
+        plan_floats = struct.unpack(
+            "<" + "f" * len(PLAN_DEBUG_FIELD_NAMES),
+            payload_bytes[PAYLOAD_SIZE_TRACE_DEBUG : PAYLOAD_SIZE_TRACE_PLAN_DEBUG],
+        )
+        data.update(dict(zip(PLAN_DEBUG_FIELD_NAMES, plan_floats)))
+        data["has_plan_debug"] = True
+    else:
+        for field in PLAN_DEBUG_FIELD_NAMES:
+            data[field] = None
+        data["has_plan_debug"] = False
+
+    if size >= PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION:
+        motion_floats = struct.unpack(
+            "<" + "f" * len(MOTION_IMU_FIELD_NAMES),
+            payload_bytes[PAYLOAD_SIZE_TRACE_PLAN_DEBUG : PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION],
+        )
+        data.update(dict(zip(MOTION_IMU_FIELD_NAMES, motion_floats)))
+        data["has_motion_imu"] = True
+    else:
+        for field in MOTION_IMU_FIELD_NAMES:
+            data[field] = None
+        data["has_motion_imu"] = False
+
+    data["payload_size"] = size
+    data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
+    return data
+
+
+def _fmt(value):
+    if value is None:
+        return ""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return ""
+        return f"{value:.6f}"
+    return value
+
+
+def _distance_from(frame, start_x, start_y):
+    x = safe_float(frame.get("nav_x"))
+    y = safe_float(frame.get("nav_y"))
+    if x is None or y is None or start_x is None or start_y is None:
+        return 0.0
+    return math.hypot(x - start_x, y - start_y)
+
+
+class AccelBrakeRunLogger:
+    def __init__(self, output_dir=None):
+        base = Path(output_dir) if output_dir else Path(__file__).resolve().parent / "brake_logs"
+        self.output_dir = base
+        self.summary_path = self.output_dir / "brake_summary.csv"
+        self._file = None
+        self._writer = None
+        self._csv_path = None
+        self._json_path = None
+        self._run_id = ""
+        self._target_speed = 0.0
+        self._multi_pid = False
+        self._started_at = None
+        self._phase = "idle"
+        self._phase_started_at = None
+        self._phase_started_distance = 0.0
+        self._phase_stats = {}
+        self._sample_count = 0
+        self._start_x = None
+        self._start_y = None
+        self._prev_time = None
+        self._prev_vx = None
+        self._last_distance = 0.0
+
+    @property
+    def recording(self):
+        return self._file is not None and self._writer is not None
+
+    @property
+    def csv_path(self):
+        return "" if self._csv_path is None else str(self._csv_path)
+
+    def start(self, target_speed, multi_pid=False, now=None):
+        if self.recording:
+            return {"success": False, "msg": "run already recording", "csv_path": self.csv_path}
+
+        now = time.time() if now is None else float(now)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self._target_speed = float(target_speed)
+        self._multi_pid = bool(multi_pid)
+        self._started_at = now
+        self._phase = "idle"
+        self._phase_started_at = now
+        self._phase_started_distance = 0.0
+        self._phase_stats = {}
+        self._sample_count = 0
+        self._start_x = None
+        self._start_y = None
+        self._prev_time = None
+        self._prev_vx = None
+        self._last_distance = 0.0
+
+        speed_label = f"{self._target_speed:.1f}".replace("-", "neg").replace(".", "p")
+        mode_label = "multi_pid" if self._multi_pid else "normal_pid"
+        self._run_id = time.strftime("%Y%m%d_%H%M%S", time.localtime(now)) + f"_speed_{speed_label}_{mode_label}"
+        self._csv_path = self.output_dir / f"accel_brake_{self._run_id}.csv"
+        self._json_path = self.output_dir / f"accel_brake_{self._run_id}.json"
+        self._file = self._csv_path.open("w", newline="", encoding="utf-8-sig")
+        self._writer = csv.DictWriter(self._file, fieldnames=ACCEL_BRAKE_LOG_FIELDS)
+        self._writer.writeheader()
+        self._file.flush()
+        return {"success": True, "run_id": self._run_id, "csv_path": str(self._csv_path)}
+
+    def set_phase(self, phase, now=None):
+        if not self.recording:
+            return
+        now = time.time() if now is None else float(now)
+        self._close_phase(now)
+        self._phase = str(phase)
+        self._phase_started_at = now
+        self._phase_started_distance = self._last_distance
+
+    def _close_phase(self, now):
+        if self._phase in ("idle", ""):
+            return
+        stat = self._phase_stats.setdefault(self._phase, {"time_s": 0.0, "distance_mm": 0.0})
+        if self._phase_started_at is not None:
+            stat["time_s"] += max(0.0, float(now) - self._phase_started_at)
+        stat["distance_mm"] += max(0.0, self._last_distance - self._phase_started_distance)
+
+    def record_frame(self, frame, now=None, commanded_target_speed=None, pid_mode=None):
+        if not self.recording:
+            return False
+
+        now = time.time() if now is None else float(now)
+        x = safe_float(frame.get("nav_x"))
+        y = safe_float(frame.get("nav_y"))
+        if self._start_x is None and x is not None and y is not None:
+            self._start_x = x
+            self._start_y = y
+
+        distance = _distance_from(frame, self._start_x, self._start_y)
+        vx = safe_float(frame.get("vx_body"), 0.0)
+        if self._prev_time is None or self._prev_vx is None:
+            accel = 0.0
+        else:
+            dt = max(1e-6, now - self._prev_time)
+            accel = (vx - self._prev_vx) / dt
+
+        row = {field: "" for field in ACCEL_BRAKE_LOG_FIELDS}
+        row.update({field: _fmt(frame.get(field)) for field in FIELD_NAMES_V2})
+        for field in [
+            "gps_x",
+            "gps_y",
+            "gps_valid",
+            "gps_origin_set",
+            "fusion_x",
+            "fusion_y",
+            "fusion_valid",
+            "slip_flag",
+            "has_debug",
+            "has_plan_debug",
+            "has_motion_imu",
+            "payload_size",
+            "time_str",
+        ] + DEBUG_FIELD_NAMES + PLAN_DEBUG_FIELD_NAMES + MOTION_IMU_FIELD_NAMES:
+            row[field] = _fmt(frame.get(field))
+
+        phase_elapsed = 0.0 if self._phase_started_at is None else max(0.0, now - self._phase_started_at)
+        row.update(
+            {
+                "recorded_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
+                "elapsed_s": _fmt(now - self._started_at),
+                "phase": self._phase,
+                "phase_elapsed_s": _fmt(phase_elapsed),
+                "requested_target_speed": _fmt(self._target_speed),
+                "commanded_target_speed": _fmt(commanded_target_speed),
+                "pid_mode": "" if pid_mode is None else int(pid_mode),
+                "speed_abs": _fmt(abs(vx)),
+                "accel_from_vx": _fmt(accel),
+                "distance_from_start": _fmt(distance),
+                "phase_distance": _fmt(max(0.0, distance - self._phase_started_distance)),
+            }
+        )
+
+        self._writer.writerow(row)
+        self._file.flush()
+        self._sample_count += 1
+        self._prev_time = now
+        self._prev_vx = vx
+        self._last_distance = distance
+        return True
+
+    def finish(self, status="completed", now=None):
+        if not self.recording:
+            return {"success": False, "msg": "no active run"}
+
+        now = time.time() if now is None else float(now)
+        self._close_phase(now)
+        try:
+            self._file.flush()
+        finally:
+            self._file.close()
+
+        self._file = None
+        self._writer = None
+
+        summary = self._build_summary(status, now)
+        self._json_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._append_summary(summary)
+        return {
+            "success": True,
+            "summary": summary,
+            "csv_path": str(self._csv_path),
+            "json_path": str(self._json_path),
+            "summary_path": str(self.summary_path),
+        }
+
+    def _build_summary(self, status, finished_at):
+        return {
+            "run_id": self._run_id,
+            "status": status,
+            "target_speed": self._target_speed,
+            "multi_pid": self._multi_pid,
+            "started_at": self._started_at,
+            "finished_at": finished_at,
+            "sample_count": self._sample_count,
+            "accel_time_s": self._phase_stats.get("accel", {}).get("time_s", 0.0),
+            "hold_time_s": self._phase_stats.get("hold", {}).get("time_s", 0.0),
+            "brake_time_s": self._phase_stats.get("brake", {}).get("time_s", 0.0),
+            "accel_distance_mm": self._phase_stats.get("accel", {}).get("distance_mm", 0.0),
+            "hold_distance_mm": self._phase_stats.get("hold", {}).get("distance_mm", 0.0),
+            "brake_distance_mm": self._phase_stats.get("brake", {}).get("distance_mm", 0.0),
+            "total_distance_mm": self._last_distance,
+            "csv_path": str(self._csv_path),
+            "json_path": str(self._json_path),
+        }
+
+    def _append_summary(self, summary):
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        write_header = not self.summary_path.exists()
+        with self.summary_path.open("a", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=SUMMARY_FIELDS)
+            if write_header:
+                writer.writeheader()
+            row = {field: _fmt(summary.get(field)) for field in SUMMARY_FIELDS}
+            writer.writerow(row)
+
+    def status(self):
+        return {
+            "recording": self.recording,
+            "run_id": self._run_id,
+            "phase": self._phase,
+            "csv_path": self.csv_path,
+            "rows": self._sample_count,
+            "target_speed": self._target_speed,
+            "multi_pid": self._multi_pid,
+        }
+
+    def close(self):
+        if self._file is not None:
+            try:
+                self._file.flush()
+            except Exception:
+                pass
+            try:
+                self._file.close()
+            except Exception:
+                pass
+        self._file = None
+        self._writer = None
+
+
+class AccelBrakeExperimentController:
+    def __init__(
+        self,
+        logger,
+        send_target_speed,
+        reach_ratio=0.95,
+        hold_after_reach_s=0.5,
+        stop_speed_threshold=2.0,
+        stop_hold_s=0.3,
+        accel_timeout_s=8.0,
+        brake_timeout_s=5.0,
+    ):
+        self.logger = logger
+        self.send_target_speed = send_target_speed
+        self.reach_ratio = float(reach_ratio)
+        self.hold_after_reach_s = float(hold_after_reach_s)
+        self.stop_speed_threshold = float(stop_speed_threshold)
+        self.stop_hold_s = float(stop_hold_s)
+        self.accel_timeout_s = float(accel_timeout_s)
+        self.brake_timeout_s = float(brake_timeout_s)
+        self._active = False
+        self._phase = "idle"
+        self._target_speed = 0.0
+        self._multi_pid = False
+        self._started_at = None
+        self._hold_started_at = None
+        self._brake_started_at = None
+        self._stopped_since = None
+        self._last_error = ""
+        self._last_finish = None
+
+    def start(self, target_speed, multi_pid=False, now=None):
+        if self._active:
+            return {"success": False, "msg": "experiment already active"}
+
+        now = time.time() if now is None else float(now)
+        self._target_speed = float(target_speed)
+        self._multi_pid = bool(multi_pid)
+        self._started_at = now
+        self._hold_started_at = None
+        self._brake_started_at = None
+        self._stopped_since = None
+        self._last_error = ""
+        self._last_finish = None
+
+        start_result = self.logger.start(self._target_speed, self._multi_pid, now=now)
+        if not start_result.get("success"):
+            self._phase = "failed"
+            self._last_error = start_result.get("msg", "logger start failed")
+            return {"success": False, "msg": self._last_error}
+
+        self._active = True
+        self._phase = "accel"
+        self.logger.set_phase("accel", now=now)
+        send_result = self._send_target(self._target_speed, self._pid_for_phase("accel"))
+        if not send_result.get("success"):
+            return self._finish("failed", now, send_result.get("msg", "target speed command failed"))
+
+        return {"success": True, "phase": self._phase, "run": start_result}
+
+    def feed_frame(self, frame, now=None):
+        if not self._active:
+            return {"finished": False, "active": False}
+
+        now = time.time() if now is None else float(now)
+        self.logger.record_frame(
+            frame,
+            now=now,
+            commanded_target_speed=self._commanded_speed_for_phase(),
+            pid_mode=self._pid_for_phase(self._phase),
+        )
+
+        speed_abs = abs(safe_float(frame.get("vx_body"), 0.0))
+        target_abs = abs(self._target_speed)
+
+        if self._phase == "accel":
+            if self._started_at is not None and now - self._started_at > self.accel_timeout_s:
+                return self._finish("failed", now, "accel timeout")
+            if target_abs <= 1e-6 or speed_abs >= target_abs * self.reach_ratio:
+                self._phase = "hold"
+                self._hold_started_at = now
+                self.logger.set_phase("hold", now=now)
+
+        elif self._phase == "hold":
+            if self._hold_started_at is not None and now - self._hold_started_at >= self.hold_after_reach_s:
+                self._phase = "brake"
+                self._brake_started_at = now
+                self._stopped_since = None
+                send_result = self._send_target(0.0, self._pid_for_phase("brake"))
+                self.logger.set_phase("brake", now=now)
+                if not send_result.get("success"):
+                    return self._finish("failed", now, send_result.get("msg", "brake command failed"))
+
+        elif self._phase == "brake":
+            if self._brake_started_at is not None and now - self._brake_started_at > self.brake_timeout_s:
+                return self._finish("failed", now, "brake timeout")
+            if speed_abs <= self.stop_speed_threshold:
+                if self._stopped_since is None:
+                    self._stopped_since = now
+                elif now - self._stopped_since >= self.stop_hold_s:
+                    return self._finish("completed", now)
+            else:
+                self._stopped_since = None
+
+        return {"finished": False, "active": self._active, "phase": self._phase}
+
+    def cancel(self, now=None):
+        now = time.time() if now is None else float(now)
+        if self._active:
+            self._send_target(0.0, self._pid_for_phase("brake"))
+            return self._finish("cancelled", now)
+        return {"success": True, "finished": False, "active": False, "phase": self._phase}
+
+    def _finish(self, status, now, error=""):
+        if status == "failed" and self._active:
+            self._send_target(0.0, self._pid_for_phase("brake"))
+        finish_result = self.logger.finish(status=status, now=now) if self.logger.recording else {"success": True}
+        self._active = False
+        self._phase = "completed" if status == "completed" else status
+        self._last_error = error
+        self._last_finish = finish_result
+        return {
+            "success": finish_result.get("success", True),
+            "finished": True,
+            "active": False,
+            "phase": self._phase,
+            "status": status,
+            "error": error,
+            "result": finish_result,
+        }
+
+    def _send_target(self, speed, pid_mode):
+        return self.send_target_speed(float(speed), int(pid_mode)) or {"success": False, "msg": "empty send result"}
+
+    def _pid_for_phase(self, phase):
+        if not self._multi_pid:
+            return CONTROL_MODE_NORMAL
+        if phase == "accel":
+            return CONTROL_MODE_ACCEL
+        if phase == "brake":
+            return CONTROL_MODE_BRAKE
+        return CONTROL_MODE_NORMAL
+
+    def _commanded_speed_for_phase(self):
+        if self._phase == "brake":
+            return 0.0
+        return self._target_speed
+
+    def status(self):
+        status = self.logger.status()
+        status.update(
+            {
+                "active": self._active,
+                "phase": self._phase,
+                "target_speed": self._target_speed,
+                "multi_pid": self._multi_pid,
+                "last_error": self._last_error,
+                "last_finish": self._last_finish,
+            }
+        )
+        return status

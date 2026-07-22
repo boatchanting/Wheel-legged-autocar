@@ -20,6 +20,7 @@
 #define WIFI_HOST_CTRL_STOP_GPS_REPLAY    0x04
 #define WIFI_HOST_CTRL_START_LOG          0x05
 #define WIFI_HOST_CTRL_STOP_LOG           0x06
+#define WIFI_HOST_CTRL_SET_TARGET_SPEED   0x20
 
 // Host control ACK status
 #define WIFI_HOST_ACK_ACCEPTED            0x00
@@ -27,7 +28,7 @@
 #define WIFI_HOST_ACK_UNKNOWN_CMD         0x02
 #define WIFI_HOST_ACK_INVALID_PAYLOAD     0x03
 
-#define WIFI_TX_BUFFER_SIZE     256
+#define WIFI_TX_BUFFER_SIZE     320
 
 // Send telemetry frame to host
 void wifi_protocol_send_data(void);

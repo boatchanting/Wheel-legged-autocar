@@ -2,6 +2,8 @@
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
+#include "../calculate/ekf.h"
+#include "../calculate/matrix.h"
 #include "../navigation/nav_replay/nav_replay.h"
 
 // ------------------------------------------------------------------
@@ -70,6 +72,19 @@ static void write_double(const double *val_ptr)
     }
 }
 
+static float read_float_le(const uint8_t *src)
+{
+    union {
+        uint8_t b[4];
+        float f;
+    } value;
+    value.b[0] = src[0];
+    value.b[1] = src[1];
+    value.b[2] = src[2];
+    value.b[3] = src[3];
+    return value.f;
+}
+
 static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
 {
     uint8_t frame[WIFI_FRAME_MIN_SIZE + 16U];
@@ -113,7 +128,7 @@ static void wifi_protocol_send_host_ack(uint8_t control_id, uint8_t status)
 // ------------------------------------------------------------------
 // Host control command handling
 // ------------------------------------------------------------------
-static void wifi_protocol_apply_host_control(uint8_t control_id)
+static void wifi_protocol_apply_host_control(uint8_t control_id, const uint8_t *payload, uint8_t payload_len)
 {
     uint8_t ack_status = WIFI_HOST_ACK_UNKNOWN_CMD;
 
@@ -208,6 +223,31 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
         break;
     }
 
+    case WIFI_HOST_CTRL_SET_TARGET_SPEED:
+    {
+        if (payload_len < 7U)
+        {
+            ack_status = WIFI_HOST_ACK_INVALID_PAYLOAD;
+            break;
+        }
+
+        const float speed_cmd = read_float_le(&payload[1]);
+        const uint8_t mode = payload[5];
+        if (mode > (uint8_t)CONTROL_MODE_BRAKE)
+        {
+            ack_status = WIFI_HOST_ACK_INVALID_PAYLOAD;
+            break;
+        }
+
+        target_speed_set = speed_cmd;
+        Control_Profile_RequestMode((ControlMode_e)mode);
+        ack_status = WIFI_HOST_ACK_ACCEPTED;
+#if DEBUG_LOG_ENABLE
+        printf("[WIFI] Host cmd SET_TARGET_SPEED speed=%.2f mode=%u accepted.\r\n", speed_cmd, mode);
+#endif
+        break;
+    }
+
     default:
 #if DEBUG_LOG_ENABLE
         printf("[WIFI] Unknown host control cmd: 0x%02X\r\n", control_id);
@@ -224,7 +264,7 @@ static void wifi_protocol_handle_frame(uint8_t cmd, const uint8_t *payload, uint
     {
         if (payload_len >= 1U)
         {
-            wifi_protocol_apply_host_control(payload[0]);
+            wifi_protocol_apply_host_control(payload[0], payload, payload_len);
         }
         else
         {
@@ -494,6 +534,21 @@ void wifi_protocol_send_data(void)
         write_u32_or_float(&remote_brake_active);
         write_u32_or_float(&remote_reverse_brake_active);
     }
+
+    // K. Motion/attitude diagnostic block (12 floats, 48 bytes).
+    // Append-only for the accel/brake collector; older hosts ignore these bytes.
+    write_u32_or_float(&euler_angle.roll);
+    write_u32_or_float(&euler_angle.pitch);
+    write_u32_or_float(&euler_angle.yaw);
+    write_u32_or_float(&imu_data.gyro_x);
+    write_u32_or_float(&imu_data.gyro_y);
+    write_u32_or_float(&imu_data.gyro_z);
+    write_u32_or_float(&imu_data.acc_x);
+    write_u32_or_float(&imu_data.acc_y);
+    write_u32_or_float(&imu_data.acc_z);
+    write_u32_or_float(&imu_data.grav_x);
+    write_u32_or_float(&imu_data.grav_y);
+    write_u32_or_float(&imu_data.grav_z);
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;
