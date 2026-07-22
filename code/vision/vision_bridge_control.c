@@ -55,6 +55,7 @@ typedef struct
     float exit_start_x_mm;            /* 开始下桥那一刻的 X 坐标 */
     float exit_start_y_mm;            /* 开始下桥那一刻的 Y 坐标 */
     float locked_yaw_deg;             /* 上桥前锁定的车头朝向（如果桥上看不见线，就照着这个方向开） */
+    uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定当前航向 */
     int32 saved_acc_limit;            /* 备份原来的加速度限制，下桥后恢复 */
     int32 saved_dec_limit;            /* 备份原来的减速度限制，下桥后恢复 */
     uint8 saved_limits_valid;         /* 标记备份数据是否有效 */
@@ -363,6 +364,14 @@ static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
     s_bridge_task.state_ticks = 0U;
     s_bridge_task.align_ok_ticks = 0U;
 
+    if (next_state == VISION_BRIDGE_TASK_RUN)
+    {
+        /* RUN 距离从真正上桥的时刻开始计；到 1.2m 时再锁定当时的实际航向。 */
+        s_bridge_task.start_x_mm = inertial_nav.x;
+        s_bridge_task.start_y_mm = inertial_nav.y;
+        s_bridge_task.run_yaw_locked = 0U;
+    }
+
     if (next_state == VISION_BRIDGE_TASK_EXIT)
     {
         s_bridge_task.exit_start_x_mm = inertial_nav.x;
@@ -642,9 +651,6 @@ void VisionBridgeTask_Update_2ms(void)
             if (s_bridge_task.bridge_hold_ticks > 0U)
             {
                 vision_bridge_apply_high_posture(); /* 保持高底盘 */
-                err_cmd = s_bridge_task.center_filter_valid ?
-                          vision_bridge_calc_geometry_err_degree(packet) :
-                          vision_bridge_calc_yaw_hold_err();
                 speed_cmd = VISION_BRIDGE_TASK_BRIDGE_SPEED_SET; /* 桥上速度 */
             }
             else
@@ -654,15 +660,32 @@ void VisionBridgeTask_Update_2ms(void)
                 /* 如果能看到地上的线，就跟着线跑 */
                 if (s_bridge_task.center_filter_valid)
                 {
-                    err_cmd = vision_bridge_calc_geometry_err_degree(packet);
                     speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
                 }
                 else
                 {
                     /* 线也看不见，只能盲跑了 */
-                    err_cmd = vision_bridge_calc_yaw_hold_err();
                     speed_cmd = VISION_BRIDGE_TASK_BLIND_SPEED_SET;
                 }
+            }
+
+            if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
+            {
+                /* 上桥前 1.2m：有可靠中心线则继续使用 IPM 差角。 */
+                err_cmd = s_bridge_task.center_filter_valid ?
+                          vision_bridge_calc_geometry_err_degree(packet) :
+                          vision_bridge_calc_yaw_hold_err();
+            }
+            else
+            {
+                /* 超过 1.2m：锁住进入该阶段时的实际航向，视觉不再干预转向。 */
+                if (s_bridge_task.run_yaw_locked == 0U)
+                {
+                    s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                    s_bridge_task.run_yaw_locked = 1U;
+                }
+                err_cmd = vision_bridge_calc_yaw_hold_err();
+                speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;
             }
 
             err_degree = err_cmd;

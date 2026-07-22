@@ -28,6 +28,8 @@ extern "C" {
 #define VISION_BRIDGE_TASK_ALIGN_OK_TICKS            (60U)       /* 连续对齐好的帧数：大约 0.12秒 都稳定，认为对齐成功 */
 #define VISION_BRIDGE_TASK_RUN_MIN_MM                (1000.0f)   /* 上桥后，至少跑 1 米才允许判定下桥（防误判） */
 #define VISION_BRIDGE_TASK_RUN_MAX_MM                (3400.0f)   /* 桥上最多跑 3.4 米，跑到就强制下桥 */
+#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1200.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
+#define VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE        (2.0f)      /* 超过视觉控制距离后，速度提高倍率 */
 #define VISION_BRIDGE_TASK_EXIT_BUFFER_MM            (300.0f)    /* 下桥后，再往前缓冲 30 厘米才算任务彻底结束 */
 #define VISION_BRIDGE_TASK_EXIT_LOST_TICKS           (150U)      /* 连续 0.3 秒看不到桥，认为桥已经走完了 */
 #define VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS         (220U)      /* 看到桥梁黑块后，保持“桥梁模式”0.44秒，防抖 */
