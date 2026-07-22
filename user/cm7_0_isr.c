@@ -351,7 +351,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         if (jump_flag == 0)
         #endif
         #if CURRENT_NAV_PLAN == 2
-        if (jump_flag == 0 && Minefield_Is_Active() == 0)//科二中雷区屏蔽惯导
+        if (jump_flag == 0 )//科二中雷区屏蔽惯导
         #endif  
         {
             // 调用导航更新函数
