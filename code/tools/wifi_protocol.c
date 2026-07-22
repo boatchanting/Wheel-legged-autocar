@@ -3,6 +3,7 @@
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
 #include "../navigation/nav_replay/nav_replay.h"
+#include "../plan/minefield.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -411,22 +412,16 @@ void wifi_protocol_send_data(void)
     write_u8(robot_ctrl.mark_trigger);
     write_u8(robot_ctrl.point_type);
 
-    // E. projected GNSS XY for pure GPS marker/replay (unit: mm)
-    write_float_value(gnss_trans.x * 1000.0f);
-    write_float_value(gnss_trans.y * 1000.0f);
-    write_u8(gnss_trans.is_valid);
-    write_u8(gnss_trans.is_origin_set);
-
-    // F. reserved fusion trace (complement filter removed in this branch)
-    write_float_value(0.0f);
-    write_float_value(0.0f);
-    write_u8(0U);
+    // (GPS and Fusion traces removed as requested)
 
     // G. PID Control Mode
     write_u8((uint8_t)g_control_mode_applied);
     
     // H. Slip Flag
     write_u8((uint8_t)inertial_nav.slip_flag);
+    
+    // H2. Minefield Is Active
+    write_u8(Minefield_Is_Active());
 
     // I. Base control debug values (20 bytes). Always send these so a replay
     // that has already stopped can still be diagnosed from its CSV tail.
@@ -437,7 +432,7 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&inertial_nav.theoretical_yaw_rate);
     write_u32_or_float(&inertial_nav.actual_yaw_rate);
 
-    // J. Plan-2 special-point diagnostic block (19 floats, 76 bytes).
+    // J. Plan-2 special-point diagnostic block (25 floats, 100 bytes).
     // Keep this fixed-width and append-only; the host accepts older packets
     // without it and records these fields only when this block is present.
     {
@@ -480,6 +475,20 @@ void wifi_protocol_send_data(void)
         write_u32_or_float(&fallen);
         write_u32_or_float(&remote_brake_active);
         write_u32_or_float(&remote_reverse_brake_active);
+
+        float mf_acc = g_minefield_debug_accumulated_angle;
+        float mf_cmd = g_minefield_debug_angle_cmd;
+        float mf_ff  = g_minefield_debug_feedforward_speed;
+        float mf_cur = g_minefield_debug_current_speed_cmd;
+        float mf_stall = g_minefield_debug_stall_elapsed_s;
+        float mf_abort = (float)g_minefield_spin_abort_reason;
+
+        write_u32_or_float(&mf_acc);
+        write_u32_or_float(&mf_cmd);
+        write_u32_or_float(&mf_ff);
+        write_u32_or_float(&mf_cur);
+        write_u32_or_float(&mf_stall);
+        write_u32_or_float(&mf_abort);
     }
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
