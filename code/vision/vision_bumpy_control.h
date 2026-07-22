@@ -25,12 +25,11 @@ extern "C" {
 
 /* 控制参数宏定义区 */
 #define VISION_BUMPY_STALE_TIMEOUT_TICKS       (120U)  // 数据包过期超时时间(2ms周期计数, 120=240ms)
-#define VISION_BUMPY_MAX_ERR_DEG               (18.0f)   // 最大转向误差角度限制(度)
+#define VISION_BUMPY_MAX_ERR_DEG               (18.0f)  // 最大转向误差角度限制(度)
 #define VISION_BUMPY_DEADBAND_DEG              (0.20f)  // 转向误差死区(度), 小于此值的误差将被忽略
-#define VISION_BUMPY_PID_KP                    (1.00f)
-#define VISION_BUMPY_PID_KI                    (0.03f)
-#define VISION_BUMPY_PID_KD                    (0.05f)
-#define VISION_BUMPY_PID_I_LIMIT               (12.0f)
+#define VISION_BUMPY_MEDIAN_WINDOW             (3U)     // 中值滤波窗口大小(点数)
+#define VISION_BUMPY_LPF_ALPHA                 (0.15f)  // 一阶IIR低通滤波系数(0~1, 越小越平滑)
+#define VISION_BUMPY_OUTPUT_GAIN               (1.00f)  // 输出增益系数, 调节最终转向指令的整体强度
 
 /* 枚举类型定义区 */
 /**
@@ -43,17 +42,6 @@ typedef enum
     VISION_BUMPY_CTRL_TRACK,       // 跟踪状态(稳定跟踪凹凸路面)
     VISION_BUMPY_CTRL_STALE,       // 过期状态(数据包过期或无效)
 } vision_bumpy_control_state_e;
-
-typedef struct
-{
-    float Kp;
-    float Ki;
-    float Kd;
-    float error;
-    float last_error;
-    float integral;
-    float output;
-} vision_bumpy_pid_t;
 
 /* 结构体类型定义区 */
 /**
@@ -71,7 +59,10 @@ typedef struct
     float direction_x;                     // 视觉方向向量 X 分量
     float direction_y;                     // 视觉方向向量 Y 分量
     float err_degree_cmd;                  // 转向误差角度指令(度)
-    vision_bumpy_pid_t pid;
+    float raw_err_history[3];              // 3点中值滤波历史缓冲区(仅新帧到达时更新)
+    uint8 history_idx;                     // 中值滤波环形缓冲区写入索引(0~2)
+    uint8 filter_ready;                    // 滤波器就绪标志(首帧初始化后置1)
+    float lpf_state;                       // 一阶IIR低通滤波器状态(上次输出值)
 } vision_bumpy_control_status_t;
 
 /* 全局变量声明区 */

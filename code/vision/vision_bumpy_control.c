@@ -46,46 +46,78 @@ static float vision_bumpy_constrain_f(float value, float min_value, float max_va
 }
 
 /**
- * @brief   根据视觉方向向量计算转向误差角度
+ * @brief   根据视觉方向向量计算原始转向误差角度
  * @param   packet 视觉数据包指针
- * @return  计算得到的转向误差角度(度)
+ * @return  原始转向误差角度(度), 仅做 atan2 转换, 不做滤波/限幅/死区
  * @details 方向向量以图像下方为前向（+Y），X 为横向；其相对前向的夹角
- *          直接作为方向 PID 的输入。
+ *          作为后续滤波链的原始输入。
+ *          滤波、死区、限幅在 Update_2ms 的滤波链中统一处理。
  */
 static float vision_bumpy_calc_err_degree(const volatile vision_ipc_packet_t *packet)
 {
     const float rad_to_deg = 57.2957795f;
-    float err = -atan2f(packet->bumpy_direction_x, packet->bumpy_direction_y) * rad_to_deg;
-
-    /* 方向控制仅基于视觉，不叠加惯导角度闭环；按图像误差直接映射。 */
-    err = vision_bumpy_constrain_f(err, -VISION_BUMPY_MAX_ERR_DEG, VISION_BUMPY_MAX_ERR_DEG);  // 限制最大误差角度
-
-    if (vision_bumpy_abs_f(err) < VISION_BUMPY_DEADBAND_DEG)  // 死区处理
-    {
-        err = 0.0f;
-    }
-    return err;
+    return -atan2f(packet->bumpy_direction_x, packet->bumpy_direction_y) * rad_to_deg;
 }
 
-static void vision_bumpy_pid_reset(vision_bumpy_pid_t *pid)
+/**
+ * @brief   3点中值滤波
+ * @param   a, b, c 三个候选值
+ * @return  排序后的中值
+ * @details 用于剔除单帧脉冲离群噪声（反光、遮挡、误检等瞬时干扰）。
+ *          相比均值滤波，中值滤波对脉冲噪声是"完全剔除法"而非"稀释法"。
+ */
+static float vision_bumpy_median3(float a, float b, float c)
 {
-    pid->error = 0.0f;
-    pid->last_error = 0.0f;
-    pid->integral = 0.0f;
-    pid->output = 0.0f;
+    /* 3元素排序网络: 最多3次比较+交换即可得到中值 */
+    if (a > b) { float t = a; a = b; b = t; }
+    if (a > c) { float t = a; a = c; c = t; }
+    if (b > c) { float t = b; b = c; c = t; }
+    return b;
 }
 
-static float vision_bumpy_pid_calc(vision_bumpy_pid_t *pid, float error)
+/**
+ * @brief   一阶IIR低通滤波器步进
+ * @param   state 滤波器状态指针(保存上次输出值, 就地更新)
+ * @param   input 当前输入值
+ * @param   alpha 滤波系数(0~1, 越小越平滑, 0.15 → fc≈12Hz @2ms周期)
+ * @return  滤波后输出值
+ * @details 差分方程: y[n] = α·x[n] + (1-α)·y[n-1]
+ *          传递函数: H(z) = α / (1 - (1-α)z⁻¹)
+ */
+static float vision_bumpy_lpf_step(float *state, float input, float alpha)
 {
-    float derivative;
-    pid->error = error;
-    pid->integral += error;
-    pid->integral = vision_bumpy_constrain_f(pid->integral, -VISION_BUMPY_PID_I_LIMIT, VISION_BUMPY_PID_I_LIMIT);
-    derivative = pid->error - pid->last_error;
-    pid->output = pid->Kp * pid->error + pid->Ki * pid->integral + pid->Kd * derivative;
-    pid->last_error = pid->error;
-    pid->output = vision_bumpy_constrain_f(pid->output, -VISION_BUMPY_MAX_ERR_DEG, VISION_BUMPY_MAX_ERR_DEG);
-    return pid->output;
+    *state = alpha * input + (1.0f - alpha) * (*state);
+    return *state;
+}
+
+/**
+ * @brief   滤波器状态初始化(首次进入TRACK或状态转入时调用)
+ * @param   e_raw 首帧原始角度误差(度)
+ * @details 用首帧值填充中值历史缓冲区和LPF状态, 实现零延迟启动。
+ *          避免滤波器从0平滑到目标值的启动斜坡（否则首帧仅输出 α*e_raw）。
+ */
+static void vision_bumpy_filter_init(float e_raw)
+{
+    g_bumpy_ctrl_shadow.raw_err_history[0] = e_raw;
+    g_bumpy_ctrl_shadow.raw_err_history[1] = e_raw;
+    g_bumpy_ctrl_shadow.raw_err_history[2] = e_raw;
+    g_bumpy_ctrl_shadow.history_idx = 0;
+    g_bumpy_ctrl_shadow.filter_ready = 1U;
+    g_bumpy_ctrl_shadow.lpf_state = e_raw;
+}
+
+/**
+ * @brief   滤波器状态复位(退出TRACK时调用)
+ * @details 清零中值历史、LPF状态和就绪标志, 确保下次进入TRACK时干净启动
+ */
+static void vision_bumpy_filter_reset(void)
+{
+    g_bumpy_ctrl_shadow.raw_err_history[0] = 0.0f;
+    g_bumpy_ctrl_shadow.raw_err_history[1] = 0.0f;
+    g_bumpy_ctrl_shadow.raw_err_history[2] = 0.0f;
+    g_bumpy_ctrl_shadow.history_idx = 0;
+    g_bumpy_ctrl_shadow.filter_ready = 0U;
+    g_bumpy_ctrl_shadow.lpf_state = 0.0f;
 }
 
 /**
@@ -96,7 +128,7 @@ static void vision_bumpy_apply_idle_outputs(void)
 {
     g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_IDLE;  // 设置状态为空闲
     g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;           // 清零误差指令
-    vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
+    vision_bumpy_filter_reset();
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow; // 更新全局状态
 }
 
@@ -112,10 +144,7 @@ void VisionBumpyControl_Init(void)
     g_bumpy_control_enable = VISION_BUMPY_CONTROL_DEFAULT_ACTIVE;   // 设置默认使能状态
     g_bumpy_ctrl_shadow.enabled = g_bumpy_control_enable;           // 更新影子变量中的使能状态
     g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_IDLE;              // 设置初始状态为空闲
-    g_bumpy_ctrl_shadow.pid.Kp = VISION_BUMPY_PID_KP;
-    g_bumpy_ctrl_shadow.pid.Ki = VISION_BUMPY_PID_KI;
-    g_bumpy_ctrl_shadow.pid.Kd = VISION_BUMPY_PID_KD;
-    vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
+    vision_bumpy_filter_reset();
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;             // 更新全局状态
 
 #if VISION_BUMPY_CONTROL_PROFILE_ENABLE
@@ -201,7 +230,7 @@ void VisionBumpyControl_Update_2ms(void)
         g_bumpy_ctrl_shadow.direction_x = 0.0f;
         g_bumpy_ctrl_shadow.direction_y = 0.0f;
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                  // 清零误差指令
-        vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
+        vision_bumpy_filter_reset();
         g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;        // 更新全局状态
 #if VISION_BUMPY_CONTROL_PROFILE_ENABLE
         RUNTIME_PROFILE_END(&g_vision_bumpy_control_profiler, VISION_BUMPY_CONTROL_PROFILE_TIMER);  // 结束性能分析
@@ -217,14 +246,52 @@ void VisionBumpyControl_Update_2ms(void)
     /* 根据检测状态计算控制指令 */
     if (packet->bumpy_detected)
     {
-        g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_TRACK;          // 设置状态为跟踪
-        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_pid_calc(&g_bumpy_ctrl_shadow.pid, vision_bumpy_calc_err_degree(packet));  // 计算误差指令
+        float e_raw;
+        float e_med;
+        float e_filt;
+
+        /* 计算原始角度误差(仅 atan2 转换, 不做滤波/死区/限幅) */
+        e_raw = vision_bumpy_calc_err_degree(packet);
+
+        /* 首次进入 TRACK 或从其他状态转入: 初始化滤波器, 实现零延迟启动 */
+        if (g_bumpy_ctrl_shadow.state != VISION_BUMPY_CTRL_TRACK)
+        {
+            vision_bumpy_filter_init(e_raw);
+        }
+        else if (packet_new)
+        {
+            /* 仅在新帧到达时更新中值滤波历史(避免帧间重复填充相同值导致滤波失效) */
+            g_bumpy_ctrl_shadow.raw_err_history[g_bumpy_ctrl_shadow.history_idx] = e_raw;
+            g_bumpy_ctrl_shadow.history_idx = (uint8)((g_bumpy_ctrl_shadow.history_idx + 1U) % VISION_BUMPY_MEDIAN_WINDOW);
+        }
+
+        /* 第1级: 3点中值滤波 — 剔除单帧脉冲离群噪声 */
+        e_med = vision_bumpy_median3(
+            g_bumpy_ctrl_shadow.raw_err_history[0],
+            g_bumpy_ctrl_shadow.raw_err_history[1],
+            g_bumpy_ctrl_shadow.raw_err_history[2]);
+
+        /* 第2级: 一阶IIR低通滤波 — 抑制高频抖动, 平滑方向信号 */
+        e_filt = vision_bumpy_lpf_step(&g_bumpy_ctrl_shadow.lpf_state, e_med, VISION_BUMPY_LPF_ALPHA);
+
+        /* 第3级: 死区处理 — 消除微小角度振荡对下游转向PID的干扰 */
+        if (vision_bumpy_abs_f(e_filt) < VISION_BUMPY_DEADBAND_DEG)
+        {
+            e_filt = 0.0f;
+        }
+
+        /* 第4级: 输出增益 — 调节转向指令的整体强度 */
+        e_filt *= VISION_BUMPY_OUTPUT_GAIN;
+
+        /* 第5级: 输出限幅 — 防止异常大角度导致车体失控 */
+        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_constrain_f(e_filt, -VISION_BUMPY_MAX_ERR_DEG, VISION_BUMPY_MAX_ERR_DEG);
+        g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_TRACK;
     }
     else
     {
         g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_SEARCH;         // 设置状态为搜索
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                     // 清零误差指令
-        vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
+        vision_bumpy_filter_reset();
     }
 
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;              // 更新全局状态
