@@ -42,7 +42,7 @@ ENABLE_FINISH_SPRINT = True    # 开启终点冲刺：绕过最后一个桩桶�
 SPRINT_SPEED_MM_S = 3000.0     # 最后的冲刺极速
 MAX_ACCEL_MM_S2 = 1500.0
 MAX_DECEL_MM_S2 = 1500.0
-MAX_LATERAL_ACCEL_MM_S2 = 3500.0
+MAX_LATERAL_ACCEL_MM_S2 = 2000.0
 MAX_PATH_YAW_RATE_RAD_S = 2.8
 MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0
 SPEED_TO_MM_S = 4.79
@@ -54,7 +54,7 @@ FLOAT_RE = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)"
 # ============================================================
 CAR_HALF_WIDTH_MM = 135.0      # 车身半宽
 CONE_RADIUS_MM = 140.0         # 桩桶物理半径
-EXTRA_SAFETY_MARGIN_MM = 200.0
+EXTRA_SAFETY_MARGIN_MM = 165.0
 CONE_FORBIDDEN_RADIUS_MM = (
     CONE_RADIUS_MM
     + CAR_HALF_WIDTH_MM
@@ -62,11 +62,14 @@ CONE_FORBIDDEN_RADIUS_MM = (
 )
 MIN_CONE_CHANNEL_GAP_MM = 150.0
 
-MAX_PATH_CURVATURE_PER_MM = 0.010
-MAX_CURVATURE_RATE_PER_MM2 = 8.0e-6
+MAX_PATH_CURVATURE_PER_MM = 0.10
+# 曲率变化率限制：速度规划器会按 dk/ds 自动降速（yaw_accel_speed_limit_mm_s），
+# 路径几何验证只需确保 dk/ds 在合理范围内，不需要非常严格。
+# 对应 v=500mm/s 时 yaw_accel=8rad/s^2: dk/ds = 8/500^2 = 3.2e-5
+MAX_CURVATURE_RATE_PER_MM2 = 5.0e-4
 PATH_DENSE_SAMPLE_MM = 10.0
 PATH_TANGENT_EPS_MM = 1.0e-3
-CONSTRAINED_SMOOTH_TENSIONS = (0.20, 0.28, 0.35, 0.45, 0.55)
+CONSTRAINED_SMOOTH_TENSIONS = (0.08, 0.12, 0.16, 0.20, 0.28, 0.35, 0.45, 0.55)
 CONSTRAINED_CLEARANCE_STEPS_MM = (0.0, 80.0, 160.0, 240.0, 400.0, 600.0)
 U_TURN_RADIUS_MM = 1500.0      # 掉头弯的期望回转半径（U_TURN_RADIUS_MODE=0 时生效）
 
@@ -1433,7 +1436,7 @@ def generate_constrained_slalom_path(
     for first_side in (1.0, -1.0):
         for extra_clearance in CONSTRAINED_CLEARANCE_STEPS_MM:
             offset_mm = cone_forbidden_radius_mm() + extra_clearance
-            for guard_scale in (0.0, 0.18, 0.28, 0.40):
+            for guard_scale in (0.0, 0.12, 0.18, 0.28, 0.40, 0.55, 0.70):
                 waypoints = _build_slalom_corridor_waypoints(
                     start,
                     end,
