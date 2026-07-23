@@ -322,37 +322,62 @@ def _estimate_start_heading():
 
 
 def _resolve_trace_layout(size):
-    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG_TELEMETRY_DIAG:
+    if size >= 253:
+        return {
+            "has_gps": False,
+            "has_fusion": False,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_minefield": True,
+            "has_debug": True,
+            "has_nav_diag": True,
+            "has_telemetry_diag": True,
+            "pid_base": 86,
+            "slip_base": 87,
+            "minefield_base": 88,
+            "debug_base": 89,
+            "nav_diag_base": 109,
+            "telemetry_diag_base": 209,
+        }
+
+    # Fallbacks for older firmwares (247, 203, 127, 118, 107, 98, 105, 96)
+    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG_TELEMETRY_DIAG: # 247
         return {
             "has_gps": True,
             "has_fusion": True,
             "has_pid_mode": True,
             "has_slip_flag": True,
             "has_debug": True,
+            "has_nav_diag": True,
             "has_telemetry_diag": True,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_TRACE,
+            "slip_base": PAYLOAD_SIZE_TRACE + 1,
             "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
+            "nav_diag_base": PAYLOAD_SIZE_TRACE_DEBUG,
             "telemetry_diag_base": PAYLOAD_SIZE_TRACE_NAV_DIAG,
         }
 
-    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG:
+    if size >= PAYLOAD_SIZE_TRACE_NAV_DIAG: # 203
         return {
             "has_gps": True,
             "has_fusion": True,
             "has_pid_mode": True,
             "has_slip_flag": True,
             "has_debug": True,
+            "has_nav_diag": True,
             "has_telemetry_diag": False,
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_TRACE,
+            "slip_base": PAYLOAD_SIZE_TRACE + 1,
             "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
+            "nav_diag_base": PAYLOAD_SIZE_TRACE_DEBUG,
             "telemetry_diag_base": None,
         }
 
-    if size >= PAYLOAD_SIZE_TRACE_DEBUG:
+    if size >= PAYLOAD_SIZE_TRACE_DEBUG: # 127
         return {
             "has_gps": True,
             "has_fusion": True,
@@ -362,10 +387,11 @@ def _resolve_trace_layout(size):
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_TRACE,
+            "slip_base": PAYLOAD_SIZE_TRACE + 1,
             "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
         }
 
-    if size >= PAYLOAD_SIZE_GPS_TRACE_DEBUG:
+    if size >= PAYLOAD_SIZE_GPS_TRACE_DEBUG: # 118
         return {
             "has_gps": True,
             "has_fusion": False,
@@ -373,12 +399,13 @@ def _resolve_trace_layout(size):
             "has_slip_flag": True,
             "has_debug": True,
             "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "fusion_base": None,
             "pid_base": PAYLOAD_SIZE_GPS_TRACE,
+            "slip_base": PAYLOAD_SIZE_GPS_TRACE + 1,
             "debug_base": PAYLOAD_SIZE_GPS_TRACE_CTRL,
         }
 
-    if size >= PAYLOAD_SIZE_TRACE_CTRL:
+    if size >= PAYLOAD_SIZE_TRACE_CTRL: # 107
         return {
             "has_gps": True,
             "has_fusion": True,
@@ -388,10 +415,11 @@ def _resolve_trace_layout(size):
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": PAYLOAD_SIZE_TRACE,
+            "slip_base": PAYLOAD_SIZE_TRACE + 1,
             "debug_base": None,
         }
 
-    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
+    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL: # 98
         return {
             "has_gps": True,
             "has_fusion": False,
@@ -399,12 +427,13 @@ def _resolve_trace_layout(size):
             "has_slip_flag": True,
             "has_debug": False,
             "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "fusion_base": None,
             "pid_base": PAYLOAD_SIZE_GPS_TRACE,
+            "slip_base": PAYLOAD_SIZE_GPS_TRACE + 1,
             "debug_base": None,
         }
 
-    if size >= PAYLOAD_SIZE_TRACE:
+    if size >= PAYLOAD_SIZE_TRACE: # 105
         return {
             "has_gps": True,
             "has_fusion": True,
@@ -414,10 +443,11 @@ def _resolve_trace_layout(size):
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": None,
+            "slip_base": None,
             "debug_base": None,
         }
 
-    if size >= PAYLOAD_SIZE_GPS_TRACE:
+    if size >= PAYLOAD_SIZE_GPS_TRACE: # 96
         return {
             "has_gps": True,
             "has_fusion": False,
@@ -425,8 +455,9 @@ def _resolve_trace_layout(size):
             "has_slip_flag": False,
             "has_debug": False,
             "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "fusion_base": None,
             "pid_base": None,
+            "slip_base": None,
             "debug_base": None,
         }
 
@@ -437,8 +468,9 @@ def _resolve_trace_layout(size):
         "has_slip_flag": False,
         "has_debug": False,
         "gps_base": PAYLOAD_SIZE_V2,
-        "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+        "fusion_base": None,
         "pid_base": None,
+        "slip_base": None,
         "debug_base": None,
     }
 
@@ -491,9 +523,14 @@ def _decode_payload(payload_bytes):
         data["pid_mode"] = 0
 
     if layout["has_slip_flag"]:
-        data["slip_flag"] = payload_bytes[layout["pid_base"] + 1]
+        data["slip_flag"] = payload_bytes[layout["slip_base"]]
     else:
         data["slip_flag"] = 0
+        
+    if layout.get("has_minefield"):
+        data["minefield_active"] = payload_bytes[layout["minefield_base"]]
+    else:
+        data["minefield_active"] = 0
 
     if layout["has_debug"]:
         debug_floats = struct.unpack('<fffff', payload_bytes[layout["debug_base"] : layout["debug_base"] + 20])
@@ -529,16 +566,29 @@ def _decode_payload(payload_bytes):
     else:
         data.update({field: None for field in telemetry_diag_fields})
 
+    if layout.get("has_nav_diag"):
+        nav_diag_base = layout["nav_diag_base"]
+        data["nav_replay_state"] = struct.unpack("<f", payload_bytes[nav_diag_base : nav_diag_base + 4])[0]
+    else:
+        data["nav_replay_state"] = 0.0
+
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
     return data
 
 
 debug_log_file = None
+debug_log_flush_counter = 0
 
 def _handle_debug_logging(data):
-    global debug_log_file
-    if data.get("has_debug"):
+    global debug_log_file, debug_log_flush_counter
+    # 只有当在录制（自动记录开启）或者复刻状态激活时，才实际写文件，避免垃圾日志堆积
+    is_replaying = False
+    if "nav_replay_state" in data and data["nav_replay_state"] is not None:
+        if data["nav_replay_state"] > 0:
+            is_replaying = True
+
+    if data.get("has_debug") and is_replaying:
         if debug_log_file is None:
             filename = time.strftime("slip_debug_log_%Y%m%d_%H%M%S.txt")
             try:
@@ -552,12 +602,17 @@ def _handle_debug_logging(data):
         try:
             line = f"{data['time_str']},{data['target_speed']:.2f},{data['speed_L']:.2f},{data['speed_R']:.2f},{data['theoretical_yaw_rate']:.4f},{data['actual_yaw_rate']:.4f},{data['slip_flag']}\n"
             debug_log_file.write(line)
-            debug_log_file.flush()
+            debug_log_flush_counter += 1
+            # 减少 flush 频率到每 50 帧 (0.5秒) 一次，防止 I/O 阻塞导致 TCP 死锁
+            if debug_log_flush_counter >= 50:
+                debug_log_file.flush()
+                debug_log_flush_counter = 0
         except Exception as e:
             print(f"[DEBUG LOG] 写入日志失败: {e}")
     else:
         if debug_log_file is not None:
             try:
+                debug_log_file.flush()
                 debug_log_file.close()
             except:
                 pass
