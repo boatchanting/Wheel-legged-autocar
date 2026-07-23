@@ -51,11 +51,13 @@ th:first-child,td:first-child{text-align:left}
     <div class="title">加速刹车采集器</div>
     <div id="conn" class="tag warn">等待连接</div>
     <div id="payload" class="tag">Payload:--</div>
+    <div id="sampleTag" class="tag">采样:10ms</div>
     <div id="phaseTag" class="tag">阶段:idle</div>
     <div id="rowsTag" class="tag">样本:0</div>
   </div>
   <div class="right">
-    <label>目标速度 <input id="targetSpeed" type="number" step="1" value="-60" /></label>
+    <label>目标前进速度(mm/s) <input id="targetSpeed" type="number" step="10" min="1" value="500" /></label>
+    <label>刹车目标速度(mm/s) <input id="brakeTargetSpeed" type="number" step="10" value="0" /></label>
     <label><input id="multiPid" type="checkbox" checked /> 多 PID</label>
     <button id="startBtn" class="primary">开始</button>
     <button id="cancelBtn" class="danger">停止</button>
@@ -66,11 +68,11 @@ th:first-child,td:first-child{text-align:left}
 <div class="main">
   <div class="panel plot-panel">
     <div class="plot-head">
-      <div class="plot-title">实时速度 / 加速度</div>
+      <div class="plot-title">实时前进速度 / 加速度</div>
       <div class="left">
-        <div id="speedTag" class="tag">Vx:--</div>
-        <div id="accelTag" class="tag">Ax:--</div>
-        <div id="distTag" class="tag">Dist:--</div>
+        <div id="speedTag" class="tag">|Vx|:-- mm/s</div>
+        <div id="accelTag" class="tag">A:-- mm/s^2</div>
+        <div id="distTag" class="tag">XY:--</div>
       </div>
     </div>
     <canvas id="plot"></canvas>
@@ -81,8 +83,14 @@ th:first-child,td:first-child{text-align:left}
       <div class="grid">
         <div class="k">状态</div><div id="phase">-</div>
         <div class="k">日志</div><div id="logPath">-</div>
-        <div class="k">目标速度</div><div id="targetNow">-</div>
-        <div class="k">PID 模式</div><div id="pidNow">-</div>
+        <div class="k">目标前进速度</div><div id="targetNow">-</div>
+        <div class="k">车端速度命令</div><div id="vehicleNow">-</div>
+        <div class="k">刹车目标速度</div><div id="brakeTargetNow">-</div>
+        <div class="k">刹车车端命令</div><div id="brakeVehicleNow">-</div>
+        <div class="k">车端实时目标</div><div id="carTargetNow">-</div>
+        <div class="k">换算系数</div><div id="scaleNow">-</div>
+        <div class="k">预设 PID</div><div id="pidNow">-</div>
+        <div class="k">车端 PID</div><div id="telemetryPidNow">-</div>
         <div class="k">姿态角</div><div id="attNow">-</div>
         <div class="k">陀螺仪</div><div id="gyroNow">-</div>
       </div>
@@ -95,8 +103,8 @@ th:first-child,td:first-child{text-align:left}
         <thead>
           <tr>
             <th>阶段</th>
-            <th>Vx</th>
-            <th>Target</th>
+            <th>|Vx|(mm/s)</th>
+            <th>车端目标</th>
             <th>PID</th>
             <th>Roll</th>
             <th>Pitch</th>
@@ -111,7 +119,9 @@ th:first-child,td:first-child{text-align:left}
 <div id="toast" class="toast"></div>
 <script>
 const S={api:false,frames:[],maxFrames:420,last:null,status:null};
-const E={conn,payload,phaseTag,rowsTag,targetSpeed,multiPid,startBtn,cancelBtn,zeroBtn,clearBtn,plot,speedTag,accelTag,distTag,phase,logPath,targetNow,pidNow,attNow,gyroNow,lastAck,rows,toast};
+const POLL_DATA_MS=10;
+const POLL_STATUS_MS=320;
+const E={conn,payload,sampleTag,phaseTag,rowsTag,targetSpeed,brakeTargetSpeed,multiPid,startBtn,cancelBtn,zeroBtn,clearBtn,plot,speedTag,accelTag,distTag,phase,logPath,targetNow,vehicleNow,brakeTargetNow,brakeVehicleNow,carTargetNow,scaleNow,pidNow,telemetryPidNow,attNow,gyroNow,lastAck,rows,toast};
 const ctx=E.plot.getContext('2d');
 function tip(t){E.toast.textContent=t;E.toast.classList.add('show');clearTimeout(tip.t);tip.t=setTimeout(()=>E.toast.classList.remove('show'),3200)}
 function num(v,d=2){const n=Number(v);return Number.isFinite(n)?n.toFixed(d):'--'}
@@ -124,9 +134,11 @@ function feed(frames){
     const prev=S.last;
     const vx=Number(f.vx_body);
     const now=performance.now()/1000;
+    const forwardV=Number.isFinite(vx)?Math.abs(vx):0;
+    const currentPhase=(S.status&&S.status.experiment)?S.status.experiment.phase:'-';
     let ax=0;
-    if(prev&&Number.isFinite(vx)&&Number.isFinite(prev.vx)){const dt=Math.max(0.001,now-prev.t);ax=(vx-prev.vx)/dt}
-    const item={...f,t:now,vx:Number.isFinite(vx)?vx:0,ax};
+    if(prev&&Number.isFinite(forwardV)&&Number.isFinite(prev.forward_v)){const dt=Math.max(0.001,now-prev.t);ax=(forwardV-prev.forward_v)/dt}
+    const item={...f,t:now,vx:Number.isFinite(vx)?vx:0,forward_v:forwardV,ax,collector_phase:currentPhase};
     S.frames.push(item);
     S.last=item;
   }
@@ -137,15 +149,14 @@ function feed(frames){
 function syncLast(){
   const f=S.last;
   if(!f)return;
-  E.speedTag.textContent='Vx:'+num(f.vx_body,2);
-  E.accelTag.textContent='Ax:'+num(f.ax,2);
-  E.distTag.textContent='XY:'+num(f.nav_x,0)+','+num(f.nav_y,0);
-  E.targetNow.textContent=num(f.target_speed,2);
-  E.pidNow.textContent=String(f.pid_mode??'-');
+  E.speedTag.textContent='|Vx|:'+num(f.forward_v,2)+' mm/s';
+  E.accelTag.textContent='A:'+num(f.ax,2)+' mm/s^2';
+  E.distTag.textContent='XY(mm):'+num(f.nav_x,0)+','+num(f.nav_y,0);
+  E.carTargetNow.textContent=num(f.target_speed,2);
+  E.telemetryPidNow.textContent=String(f.pid_mode??'-');
   E.attNow.textContent=num(f.att_roll,1)+' / '+num(f.att_pitch,1)+' / '+num(f.att_yaw,1);
   E.gyroNow.textContent=num(f.imu_gyro_x,3)+' / '+num(f.imu_gyro_y,3)+' / '+num(f.imu_gyro_z,3);
-  const phase=(S.status&&S.status.experiment)?S.status.experiment.phase:'-';
-  const recent=S.frames.slice(-80).reverse().map(row=>`<tr><td>${phaseName(phase)}</td><td>${num(row.vx_body,1)}</td><td>${num(row.target_speed,1)}</td><td>${row.pid_mode??''}</td><td>${num(row.att_roll,1)}</td><td>${num(row.att_pitch,1)}</td><td>${num(row.att_yaw,1)}</td></tr>`).join('');
+  const recent=S.frames.slice(-80).reverse().map(row=>`<tr><td>${phaseName(row.collector_phase)}</td><td>${num(row.forward_v,1)}</td><td>${num(row.target_speed,1)}</td><td>${row.pid_mode??''}</td><td>${num(row.att_roll,1)}</td><td>${num(row.att_pitch,1)}</td><td>${num(row.att_yaw,1)}</td></tr>`).join('');
   E.rows.innerHTML=recent;
 }
 function drawGrid(w,h){
@@ -165,19 +176,19 @@ function draw(){
   ctx.clearRect(0,0,w,h);drawGrid(w,h);
   const vals=S.frames.slice(-S.maxFrames);
   if(!vals.length)return;
-  const speeds=vals.map(v=>v.vx);
+  const speeds=vals.map(v=>v.forward_v);
   const accels=vals.map(v=>v.ax);
   let min=Math.min(...speeds,...accels),max=Math.max(...speeds,...accels);
   if(Math.abs(max-min)<1){max+=1;min-=1}
-  ctx.fillStyle='#667085';ctx.font='12px Microsoft YaHei';ctx.fillText('speed',12,18);ctx.fillText('accel',70,18);
+  ctx.fillStyle='#667085';ctx.font='12px Microsoft YaHei';ctx.fillText('|Vx|',12,18);ctx.fillText('A',70,18);
   ctx.fillStyle='#2563eb';ctx.fillRect(54,11,10,3);ctx.fillStyle='#c43d3d';ctx.fillRect(116,11,10,3);
   drawSeries(speeds,'#2563eb',min,max,w,h);
   drawSeries(accels,'#c43d3d',min,max,w,h);
 }
 async function pollData(){
-  if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,120);return}
+  if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollData,POLL_DATA_MS);return}
   try{feed(await window.pywebview.api.get_new_data())}catch(_){}
-  setTimeout(pollData,45)
+  setTimeout(pollData,POLL_DATA_MS)
 }
 async function pollStatus(){
   if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,300);return}
@@ -185,20 +196,28 @@ async function pollStatus(){
     const s=await window.pywebview.api.get_status();S.status=s;
     if(s.server_error)cls(E.conn,'bad',s.server_error);else if(s.connected)cls(E.conn,(s.data_fresh||s.frame_fresh)?'ok':'warn',s.peer||'已连接');else cls(E.conn,'warn','等待连接');
     E.payload.textContent='Payload:'+(s.last_payload_size||'--');
+    E.sampleTag.textContent='采样:'+(s.host_sample_period_ms||POLL_DATA_MS)+'ms';
     const ex=s.experiment||{};
     E.phase.textContent=phaseName(ex.phase);
     E.phaseTag.textContent='阶段:'+phaseName(ex.phase);
     E.rowsTag.textContent='样本:'+(ex.rows||0);
     E.logPath.textContent=ex.csv_path||'-';
+    const hasRun=!!ex.run_id||!!ex.active||Number(ex.target_forward_speed_mm_s);
+    E.targetNow.textContent=hasRun?num(ex.target_forward_speed_mm_s,1)+' mm/s':'-';
+    E.vehicleNow.textContent=hasRun?num(ex.vehicle_speed_cmd,2):'-';
+    E.brakeTargetNow.textContent=hasRun?num(ex.brake_target_speed_mm_s,1)+' mm/s':'-';
+    E.brakeVehicleNow.textContent=hasRun?num(ex.brake_vehicle_speed_cmd,2):'-';
+    E.scaleNow.textContent=Number.isFinite(Number(ex.speed_to_mm_s))?num(ex.speed_to_mm_s,3)+' mm/s/cmd':'-';
+    E.pidNow.textContent=ex.multi_pid?'多 PID':'普通 PID';
     E.startBtn.disabled=!!ex.active;
     E.cancelBtn.disabled=!ex.active;
     if(s.acks&&s.acks.length){const a=s.acks[s.acks.length-1];E.lastAck.textContent='ACK:0x'+Number(a.control).toString(16).padStart(2,'0')+' / '+a.status}
   }catch(_){}
-  setTimeout(pollStatus,320)
+  setTimeout(pollStatus,POLL_STATUS_MS)
 }
 function initApi(){window.addEventListener('pywebviewready',()=>{S.api=true});const t=setInterval(()=>{if(window.pywebview&&window.pywebview.api){S.api=true;clearInterval(t)}},80)}
 function initButtons(){
-  E.startBtn.onclick=async()=>{try{const r=await window.pywebview.api.start_experiment(E.targetSpeed.value,E.multiPid.checked);tip(r&&r.msg?r.msg:(r&&r.success?'已开始':'开始失败'))}catch(e){tip('开始失败: '+(e.message||e))}};
+  E.startBtn.onclick=async()=>{try{const r=await window.pywebview.api.start_experiment(E.targetSpeed.value,E.multiPid.checked,E.brakeTargetSpeed.value);tip(r&&r.msg?r.msg:(r&&r.success?'已开始':'开始失败'))}catch(e){tip('开始失败: '+(e.message||e))}};
   E.cancelBtn.onclick=async()=>{try{const r=await window.pywebview.api.cancel_experiment();tip(r&&r.error?r.error:'已停止')}catch(e){tip('停止失败: '+(e.message||e))}};
   E.zeroBtn.onclick=async()=>{try{const r=await window.pywebview.api.send_zero_speed();tip(r&&r.msg?r.msg:'已发送零速')}catch(e){tip('发送失败: '+(e.message||e))}};
   E.clearBtn.onclick=async()=>{S.frames=[];S.last=null;E.rows.innerHTML='';draw();try{await window.pywebview.api.clear_history()}catch(_){}};

@@ -235,6 +235,7 @@ class Api:
                 "peer": peer_addr,
                 "host_ip": listen_ip,
                 "host_port": HOST_PORT,
+                "host_sample_period_ms": core.HOST_SAMPLE_PERIOD_MS,
                 "last_payload_size": last_payload_size,
                 "history_count": len(history_data),
                 "server_error": server_error,
@@ -243,16 +244,44 @@ class Api:
                     for seq, ctrl, ack_status, ts in acks
                 ],
             }
+        self.controller.tick(now=now)
         status["experiment"] = self.controller.status()
         return status
 
-    def start_experiment(self, target_speed, multi_pid):
+    def start_experiment(self, target_forward_speed_mm_s, multi_pid, brake_target_speed_mm_s=0.0):
         try:
-            speed = float(target_speed)
+            speed = abs(float(target_forward_speed_mm_s))
+            brake_target_speed = float(brake_target_speed_mm_s)
         except Exception:
-            return {"success": False, "msg": "目标速度非法"}
+            return {"success": False, "msg": "速度参数非法"}
+        if speed <= 0.0:
+            return {"success": False, "msg": "目标前进速度必须大于 0 mm/s"}
+        speed_to_mm_s = core.load_speed_to_mm_s()
+        vehicle_speed_cmd = core.forward_mm_s_to_vehicle_speed_cmd(speed, speed_to_mm_s)
+        brake_vehicle_speed_cmd = core.signed_mm_s_to_vehicle_speed_cmd(brake_target_speed, speed_to_mm_s)
         _send_simple_control(core.HOST_CTRL_START_CAR)
-        return self.controller.start(speed, bool(multi_pid), now=time.time())
+        result = self.controller.start(
+            target_forward_speed_mm_s=speed,
+            brake_target_speed_mm_s=brake_target_speed,
+            multi_pid=bool(multi_pid),
+            now=time.time(),
+            speed_to_mm_s=speed_to_mm_s,
+        )
+        if result.get("success"):
+            run = result.get("run", {})
+            result["msg"] = (
+                f"已开始: 加速 {speed:.0f} mm/s -> 车端 {vehicle_speed_cmd:.2f}; "
+                f"刹车目标 {brake_target_speed:.0f} mm/s -> 车端 {brake_vehicle_speed_cmd:.2f}"
+            )
+            result["run_id"] = run.get("run_id", "")
+            result["csv_path"] = run.get("csv_path", "")
+            result["json_path"] = run.get("json_path", "")
+            result["target_forward_speed_mm_s"] = speed
+            result["vehicle_speed_cmd"] = vehicle_speed_cmd
+            result["brake_target_speed_mm_s"] = brake_target_speed
+            result["brake_vehicle_speed_cmd"] = brake_vehicle_speed_cmd
+            result["speed_to_mm_s"] = speed_to_mm_s
+        return result
 
     def cancel_experiment(self):
         return self.controller.cancel(now=time.time())
@@ -260,13 +289,21 @@ class Api:
     def send_zero_speed(self):
         return _send_target_speed(0.0, core.CONTROL_MODE_BRAKE)
 
-    def send_target_speed(self, target_speed, pid_mode):
+    def send_target_speed(self, target_motion_speed_mm_s, pid_mode):
         try:
-            speed = float(target_speed)
+            speed = float(target_motion_speed_mm_s)
             mode = int(pid_mode)
         except Exception:
             return {"success": False, "msg": "参数非法"}
-        return _send_target_speed(speed, mode)
+        speed_to_mm_s = core.load_speed_to_mm_s()
+        vehicle_speed_cmd = core.signed_mm_s_to_vehicle_speed_cmd(speed, speed_to_mm_s)
+        result = _send_target_speed(vehicle_speed_cmd, mode)
+        result["target_motion_speed_mm_s"] = speed
+        result["vehicle_speed_cmd"] = vehicle_speed_cmd
+        result["speed_to_mm_s"] = speed_to_mm_s
+        if result.get("success"):
+            result["msg"] = f"命令已发送: {speed:.0f} mm/s -> 车端 {vehicle_speed_cmd:.2f}"
+        return result
 
     def clear_history(self):
         with state_lock:

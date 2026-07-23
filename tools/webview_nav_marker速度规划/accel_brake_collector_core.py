@@ -2,6 +2,7 @@ import csv
 import json
 import math
 import os
+import re
 import struct
 import time
 from pathlib import Path
@@ -30,6 +31,8 @@ HOST_ACK_INVALID_PAYLOAD = 0x03
 CONTROL_MODE_NORMAL = 0
 CONTROL_MODE_ACCEL = 1
 CONTROL_MODE_BRAKE = 2
+DEFAULT_SPEED_TO_MM_S = 4.79
+HOST_SAMPLE_PERIOD_MS = 10
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -136,10 +139,16 @@ PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION = PAYLOAD_SIZE_TRACE_PLAN_DEBUG + PAYLOAD_M
 BASE_LOG_FIELDS = [
     "recorded_at",
     "elapsed_s",
+    "frame_elapsed_ms",
     "phase",
     "phase_elapsed_s",
-    "requested_target_speed",
-    "commanded_target_speed",
+    "host_sample_period_ms",
+    "target_forward_speed_mm_s",
+    "vehicle_speed_cmd",
+    "brake_target_speed_mm_s",
+    "brake_vehicle_speed_cmd",
+    "commanded_vehicle_speed_cmd",
+    "speed_to_mm_s",
     "pid_mode",
     "speed_abs",
     "accel_from_vx",
@@ -175,7 +184,12 @@ ACCEL_BRAKE_LOG_FIELDS = (
 SUMMARY_FIELDS = [
     "run_id",
     "status",
-    "target_speed",
+    "target_forward_speed_mm_s",
+    "vehicle_speed_cmd",
+    "brake_target_speed_mm_s",
+    "brake_vehicle_speed_cmd",
+    "speed_to_mm_s",
+    "host_sample_period_ms",
     "multi_pid",
     "started_at",
     "finished_at",
@@ -200,6 +214,70 @@ def safe_float(value, default=None):
     if not math.isfinite(num):
         return default
     return num
+
+
+def forward_mm_s_to_vehicle_speed_cmd(forward_mm_s, speed_to_mm_s=DEFAULT_SPEED_TO_MM_S):
+    speed_to_mm_s = float(speed_to_mm_s)
+    if speed_to_mm_s <= 0.0:
+        raise ValueError("speed_to_mm_s must be positive")
+    return -abs(float(forward_mm_s)) / speed_to_mm_s
+
+
+def vehicle_speed_cmd_to_forward_mm_s(vehicle_speed_cmd, speed_to_mm_s=DEFAULT_SPEED_TO_MM_S):
+    speed_to_mm_s = float(speed_to_mm_s)
+    if speed_to_mm_s <= 0.0:
+        raise ValueError("speed_to_mm_s must be positive")
+    return abs(float(vehicle_speed_cmd)) * speed_to_mm_s
+
+
+def signed_mm_s_to_vehicle_speed_cmd(speed_mm_s, speed_to_mm_s=DEFAULT_SPEED_TO_MM_S):
+    speed_to_mm_s = float(speed_to_mm_s)
+    if speed_to_mm_s <= 0.0:
+        raise ValueError("speed_to_mm_s must be positive")
+    return -float(speed_mm_s) / speed_to_mm_s
+
+
+def vehicle_speed_cmd_to_signed_mm_s(vehicle_speed_cmd, speed_to_mm_s=DEFAULT_SPEED_TO_MM_S):
+    speed_to_mm_s = float(speed_to_mm_s)
+    if speed_to_mm_s <= 0.0:
+        raise ValueError("speed_to_mm_s must be positive")
+    return -float(vehicle_speed_cmd) * speed_to_mm_s
+
+
+def _safe_eval_speed_factor(expr):
+    expr = expr.replace("f", "").replace("F", "")
+    if not re.fullmatch(r"[0-9+\-*/().\s]+", expr):
+        raise ValueError(f"unsafe speed factor expression: {expr}")
+    return float(eval(expr, {"__builtins__": {}}, {}))
+
+
+def load_speed_to_mm_s(project_root=None):
+    root = Path(project_root) if project_root else Path(__file__).resolve().parents[2]
+    car_select_path = root / "code" / "config" / "car_select.h"
+    inertial_nav_path = root / "code" / "navigation" / "inertial_nav.h"
+
+    try:
+        car_text = car_select_path.read_text(encoding="utf-8", errors="ignore")
+        nav_text = inertial_nav_path.read_text(encoding="utf-8", errors="ignore")
+        car_match = re.search(r"#define\s+CAR_SELECT\s+(\d+)", car_text)
+        if not car_match:
+            return DEFAULT_SPEED_TO_MM_S
+        car_select = car_match.group(1)
+
+        block_match = re.search(
+            rf"#if\s+CAR_SELECT\s*==\s*{re.escape(car_select)}\b(?P<body>.*?)(?=#endif)",
+            nav_text,
+            re.S,
+        )
+        if not block_match:
+            return DEFAULT_SPEED_TO_MM_S
+
+        speed_match = re.search(r"#define\s+SPEED_TO_MM_S\s+([^\r\n/]+)", block_match.group("body"))
+        if not speed_match:
+            return DEFAULT_SPEED_TO_MM_S
+        return _safe_eval_speed_factor(speed_match.group(1).strip())
+    except Exception:
+        return DEFAULT_SPEED_TO_MM_S
 
 
 def build_frame(cmd, payload_bytes=b""):
@@ -425,7 +503,11 @@ class AccelBrakeRunLogger:
         self._csv_path = None
         self._json_path = None
         self._run_id = ""
-        self._target_speed = 0.0
+        self._target_forward_speed_mm_s = 0.0
+        self._vehicle_speed_cmd = 0.0
+        self._brake_target_speed_mm_s = 0.0
+        self._brake_vehicle_speed_cmd = 0.0
+        self._speed_to_mm_s = DEFAULT_SPEED_TO_MM_S
         self._multi_pid = False
         self._started_at = None
         self._phase = "idle"
@@ -438,6 +520,7 @@ class AccelBrakeRunLogger:
         self._prev_time = None
         self._prev_vx = None
         self._last_distance = 0.0
+        self._last_logged_sample_period_ms = None
 
     @property
     def recording(self):
@@ -447,13 +530,34 @@ class AccelBrakeRunLogger:
     def csv_path(self):
         return "" if self._csv_path is None else str(self._csv_path)
 
-    def start(self, target_speed, multi_pid=False, now=None):
+    def start(
+        self,
+        target_forward_speed_mm_s,
+        vehicle_speed_cmd=None,
+        brake_target_speed_mm_s=0.0,
+        brake_vehicle_speed_cmd=None,
+        multi_pid=False,
+        now=None,
+        speed_to_mm_s=DEFAULT_SPEED_TO_MM_S,
+    ):
         if self.recording:
             return {"success": False, "msg": "run already recording", "csv_path": self.csv_path}
 
         now = time.time() if now is None else float(now)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self._target_speed = float(target_speed)
+        self._target_forward_speed_mm_s = abs(float(target_forward_speed_mm_s))
+        self._speed_to_mm_s = float(speed_to_mm_s)
+        self._vehicle_speed_cmd = (
+            float(vehicle_speed_cmd)
+            if vehicle_speed_cmd is not None
+            else forward_mm_s_to_vehicle_speed_cmd(self._target_forward_speed_mm_s, self._speed_to_mm_s)
+        )
+        self._brake_target_speed_mm_s = float(brake_target_speed_mm_s)
+        self._brake_vehicle_speed_cmd = (
+            float(brake_vehicle_speed_cmd)
+            if brake_vehicle_speed_cmd is not None
+            else signed_mm_s_to_vehicle_speed_cmd(self._brake_target_speed_mm_s, self._speed_to_mm_s)
+        )
         self._multi_pid = bool(multi_pid)
         self._started_at = now
         self._phase = "idle"
@@ -466,17 +570,38 @@ class AccelBrakeRunLogger:
         self._prev_time = None
         self._prev_vx = None
         self._last_distance = 0.0
+        self._last_logged_sample_period_ms = None
 
-        speed_label = f"{self._target_speed:.1f}".replace("-", "neg").replace(".", "p")
+        speed_label = f"{self._target_forward_speed_mm_s:.0f}mmps".replace(".", "p")
         mode_label = "multi_pid" if self._multi_pid else "normal_pid"
-        self._run_id = time.strftime("%Y%m%d_%H%M%S", time.localtime(now)) + f"_speed_{speed_label}_{mode_label}"
-        self._csv_path = self.output_dir / f"accel_brake_{self._run_id}.csv"
-        self._json_path = self.output_dir / f"accel_brake_{self._run_id}.json"
+        base_run_id = time.strftime("%Y%m%d_%H%M%S", time.localtime(now)) + f"_speed_{speed_label}_{mode_label}"
+        self._run_id, self._csv_path, self._json_path = self._allocate_run_paths(base_run_id)
         self._file = self._csv_path.open("w", newline="", encoding="utf-8-sig")
         self._writer = csv.DictWriter(self._file, fieldnames=ACCEL_BRAKE_LOG_FIELDS)
         self._writer.writeheader()
         self._file.flush()
-        return {"success": True, "run_id": self._run_id, "csv_path": str(self._csv_path)}
+        return {
+            "success": True,
+            "run_id": self._run_id,
+            "csv_path": str(self._csv_path),
+            "json_path": str(self._json_path),
+            "target_forward_speed_mm_s": self._target_forward_speed_mm_s,
+            "vehicle_speed_cmd": self._vehicle_speed_cmd,
+            "brake_target_speed_mm_s": self._brake_target_speed_mm_s,
+            "brake_vehicle_speed_cmd": self._brake_vehicle_speed_cmd,
+            "speed_to_mm_s": self._speed_to_mm_s,
+            "host_sample_period_ms": HOST_SAMPLE_PERIOD_MS,
+        }
+
+    def _allocate_run_paths(self, base_run_id):
+        suffix = 0
+        while True:
+            run_id = base_run_id if suffix == 0 else f"{base_run_id}_{suffix:03d}"
+            csv_path = self.output_dir / f"accel_brake_{run_id}.csv"
+            json_path = self.output_dir / f"accel_brake_{run_id}.json"
+            if not csv_path.exists() and not json_path.exists():
+                return run_id, csv_path, json_path
+            suffix += 1
 
     def set_phase(self, phase, now=None):
         if not self.recording:
@@ -495,7 +620,14 @@ class AccelBrakeRunLogger:
             stat["time_s"] += max(0.0, float(now) - self._phase_started_at)
         stat["distance_mm"] += max(0.0, self._last_distance - self._phase_started_distance)
 
-    def record_frame(self, frame, now=None, commanded_target_speed=None, pid_mode=None):
+    def record_frame(
+        self,
+        frame,
+        now=None,
+        commanded_vehicle_speed_cmd=None,
+        pid_mode=None,
+        commanded_target_speed=None,
+    ):
         if not self.recording:
             return False
 
@@ -534,14 +666,29 @@ class AccelBrakeRunLogger:
             row[field] = _fmt(frame.get(field))
 
         phase_elapsed = 0.0 if self._phase_started_at is None else max(0.0, now - self._phase_started_at)
+        elapsed_s = max(0.0, now - self._started_at)
+        sample_period_cell = ""
+        if self._last_logged_sample_period_ms != HOST_SAMPLE_PERIOD_MS:
+            sample_period_cell = _fmt(HOST_SAMPLE_PERIOD_MS)
+            self._last_logged_sample_period_ms = HOST_SAMPLE_PERIOD_MS
         row.update(
             {
                 "recorded_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now)),
-                "elapsed_s": _fmt(now - self._started_at),
+                "elapsed_s": _fmt(elapsed_s),
+                "frame_elapsed_ms": _fmt(elapsed_s * 1000.0),
                 "phase": self._phase,
                 "phase_elapsed_s": _fmt(phase_elapsed),
-                "requested_target_speed": _fmt(self._target_speed),
-                "commanded_target_speed": _fmt(commanded_target_speed),
+                "host_sample_period_ms": sample_period_cell,
+                "target_forward_speed_mm_s": _fmt(self._target_forward_speed_mm_s),
+                "vehicle_speed_cmd": _fmt(self._vehicle_speed_cmd),
+                "brake_target_speed_mm_s": _fmt(self._brake_target_speed_mm_s),
+                "brake_vehicle_speed_cmd": _fmt(self._brake_vehicle_speed_cmd),
+                "commanded_vehicle_speed_cmd": _fmt(
+                    commanded_vehicle_speed_cmd
+                    if commanded_vehicle_speed_cmd is not None
+                    else commanded_target_speed
+                ),
+                "speed_to_mm_s": _fmt(self._speed_to_mm_s),
                 "pid_mode": "" if pid_mode is None else int(pid_mode),
                 "speed_abs": _fmt(abs(vx)),
                 "accel_from_vx": _fmt(accel),
@@ -587,7 +734,12 @@ class AccelBrakeRunLogger:
         return {
             "run_id": self._run_id,
             "status": status,
-            "target_speed": self._target_speed,
+            "target_forward_speed_mm_s": self._target_forward_speed_mm_s,
+            "vehicle_speed_cmd": self._vehicle_speed_cmd,
+            "brake_target_speed_mm_s": self._brake_target_speed_mm_s,
+            "brake_vehicle_speed_cmd": self._brake_vehicle_speed_cmd,
+            "speed_to_mm_s": self._speed_to_mm_s,
+            "host_sample_period_ms": HOST_SAMPLE_PERIOD_MS,
             "multi_pid": self._multi_pid,
             "started_at": self._started_at,
             "finished_at": finished_at,
@@ -620,7 +772,12 @@ class AccelBrakeRunLogger:
             "phase": self._phase,
             "csv_path": self.csv_path,
             "rows": self._sample_count,
-            "target_speed": self._target_speed,
+            "target_forward_speed_mm_s": self._target_forward_speed_mm_s,
+            "vehicle_speed_cmd": self._vehicle_speed_cmd,
+            "brake_target_speed_mm_s": self._brake_target_speed_mm_s,
+            "brake_vehicle_speed_cmd": self._brake_vehicle_speed_cmd,
+            "speed_to_mm_s": self._speed_to_mm_s,
+            "host_sample_period_ms": HOST_SAMPLE_PERIOD_MS,
             "multi_pid": self._multi_pid,
         }
 
@@ -649,6 +806,9 @@ class AccelBrakeExperimentController:
         stop_hold_s=0.3,
         accel_timeout_s=8.0,
         brake_timeout_s=5.0,
+        zero_lock_interval_s=0.1,
+        telemetry_timeout_s=1.5,
+        brake_target_tolerance_mm_s=10.0,
     ):
         self.logger = logger
         self.send_target_speed = send_target_speed
@@ -658,32 +818,71 @@ class AccelBrakeExperimentController:
         self.stop_hold_s = float(stop_hold_s)
         self.accel_timeout_s = float(accel_timeout_s)
         self.brake_timeout_s = float(brake_timeout_s)
+        self.zero_lock_interval_s = max(0.0, float(zero_lock_interval_s))
+        self.telemetry_timeout_s = max(0.0, float(telemetry_timeout_s))
+        self.brake_target_tolerance_mm_s = max(0.0, float(brake_target_tolerance_mm_s))
         self._active = False
         self._phase = "idle"
-        self._target_speed = 0.0
+        self._target_forward_speed_mm_s = 0.0
+        self._vehicle_speed_cmd = 0.0
+        self._brake_target_speed_mm_s = 0.0
+        self._brake_vehicle_speed_cmd = 0.0
+        self._speed_to_mm_s = DEFAULT_SPEED_TO_MM_S
         self._multi_pid = False
         self._started_at = None
+        self._last_frame_at = None
         self._hold_started_at = None
         self._brake_started_at = None
+        self._last_zero_lock_at = None
         self._stopped_since = None
         self._last_error = ""
         self._last_finish = None
 
-    def start(self, target_speed, multi_pid=False, now=None):
+    def start(
+        self,
+        target_forward_speed_mm_s,
+        multi_pid=False,
+        now=None,
+        speed_to_mm_s=DEFAULT_SPEED_TO_MM_S,
+        brake_target_speed_mm_s=0.0,
+        target_speed=None,
+    ):
         if self._active:
             return {"success": False, "msg": "experiment already active"}
 
         now = time.time() if now is None else float(now)
-        self._target_speed = float(target_speed)
+        if target_speed is not None:
+            target_forward_speed_mm_s = target_speed
+        self._target_forward_speed_mm_s = abs(float(target_forward_speed_mm_s))
+        self._speed_to_mm_s = float(speed_to_mm_s)
+        self._vehicle_speed_cmd = forward_mm_s_to_vehicle_speed_cmd(
+            self._target_forward_speed_mm_s,
+            self._speed_to_mm_s,
+        )
+        self._brake_target_speed_mm_s = float(brake_target_speed_mm_s)
+        self._brake_vehicle_speed_cmd = signed_mm_s_to_vehicle_speed_cmd(
+            self._brake_target_speed_mm_s,
+            self._speed_to_mm_s,
+        )
         self._multi_pid = bool(multi_pid)
         self._started_at = now
+        self._last_frame_at = now
         self._hold_started_at = None
         self._brake_started_at = None
+        self._last_zero_lock_at = None
         self._stopped_since = None
         self._last_error = ""
         self._last_finish = None
 
-        start_result = self.logger.start(self._target_speed, self._multi_pid, now=now)
+        start_result = self.logger.start(
+            self._target_forward_speed_mm_s,
+            vehicle_speed_cmd=self._vehicle_speed_cmd,
+            brake_target_speed_mm_s=self._brake_target_speed_mm_s,
+            brake_vehicle_speed_cmd=self._brake_vehicle_speed_cmd,
+            multi_pid=self._multi_pid,
+            now=now,
+            speed_to_mm_s=self._speed_to_mm_s,
+        )
         if not start_result.get("success"):
             self._phase = "failed"
             self._last_error = start_result.get("msg", "logger start failed")
@@ -692,7 +891,7 @@ class AccelBrakeExperimentController:
         self._active = True
         self._phase = "accel"
         self.logger.set_phase("accel", now=now)
-        send_result = self._send_target(self._target_speed, self._pid_for_phase("accel"))
+        send_result = self._send_target(self._vehicle_speed_cmd, self._pid_for_phase("accel"))
         if not send_result.get("success"):
             return self._finish("failed", now, send_result.get("msg", "target speed command failed"))
 
@@ -703,15 +902,17 @@ class AccelBrakeExperimentController:
             return {"finished": False, "active": False}
 
         now = time.time() if now is None else float(now)
+        self._last_frame_at = now
         self.logger.record_frame(
             frame,
             now=now,
-            commanded_target_speed=self._commanded_speed_for_phase(),
+            commanded_vehicle_speed_cmd=self._commanded_speed_for_phase(),
             pid_mode=self._pid_for_phase(self._phase),
         )
 
         speed_abs = abs(safe_float(frame.get("vx_body"), 0.0))
-        target_abs = abs(self._target_speed)
+        signed_forward_speed = -safe_float(frame.get("vx_body"), 0.0)
+        target_abs = self._target_forward_speed_mm_s
 
         if self._phase == "accel":
             if self._started_at is not None and now - self._started_at > self.accel_timeout_s:
@@ -720,27 +921,64 @@ class AccelBrakeExperimentController:
                 self._phase = "hold"
                 self._hold_started_at = now
                 self.logger.set_phase("hold", now=now)
+                send_result = self._send_target(self._vehicle_speed_cmd, self._pid_for_phase("hold"))
+                if not send_result.get("success"):
+                    return self._finish("failed", now, send_result.get("msg", "hold command failed"))
 
         elif self._phase == "hold":
-            if self._hold_started_at is not None and now - self._hold_started_at >= self.hold_after_reach_s:
+            if target_abs > 1e-6 and speed_abs < target_abs * self.reach_ratio:
+                self._phase = "accel"
+                self._hold_started_at = None
+                self.logger.set_phase("accel", now=now)
+                send_result = self._send_target(self._vehicle_speed_cmd, self._pid_for_phase("accel"))
+                if not send_result.get("success"):
+                    return self._finish("failed", now, send_result.get("msg", "accel command failed"))
+            elif self._hold_started_at is not None and now - self._hold_started_at >= self.hold_after_reach_s:
                 self._phase = "brake"
                 self._brake_started_at = now
                 self._stopped_since = None
-                send_result = self._send_target(0.0, self._pid_for_phase("brake"))
+                send_result = self._send_brake_target_lock(now)
                 self.logger.set_phase("brake", now=now)
                 if not send_result.get("success"):
                     return self._finish("failed", now, send_result.get("msg", "brake command failed"))
 
         elif self._phase == "brake":
+            send_result = self._maybe_send_brake_target_lock(now)
+            if send_result is not None and not send_result.get("success"):
+                return self._finish("failed", now, send_result.get("msg", "brake target command failed"))
             if self._brake_started_at is not None and now - self._brake_started_at > self.brake_timeout_s:
                 return self._finish("failed", now, "brake timeout")
-            if speed_abs <= self.stop_speed_threshold:
+            if self._brake_target_reached(speed_abs, signed_forward_speed):
                 if self._stopped_since is None:
                     self._stopped_since = now
                 elif now - self._stopped_since >= self.stop_hold_s:
                     return self._finish("completed", now)
             else:
                 self._stopped_since = None
+
+        return {"finished": False, "active": self._active, "phase": self._phase}
+
+    def tick(self, now=None):
+        if not self._active:
+            return {"finished": False, "active": False, "phase": self._phase}
+
+        now = time.time() if now is None else float(now)
+        if (
+            self.telemetry_timeout_s > 0.0
+            and self._last_frame_at is not None
+            and now - self._last_frame_at > self.telemetry_timeout_s
+        ):
+            return self._finish("failed", now, "telemetry timeout")
+
+        if self._phase == "accel":
+            if self._started_at is not None and now - self._started_at > self.accel_timeout_s:
+                return self._finish("failed", now, "accel timeout")
+        elif self._phase == "brake":
+            send_result = self._maybe_send_brake_target_lock(now)
+            if send_result is not None and not send_result.get("success"):
+                return self._finish("failed", now, send_result.get("msg", "brake target command failed"))
+            if self._brake_started_at is not None and now - self._brake_started_at > self.brake_timeout_s:
+                return self._finish("failed", now, "brake timeout")
 
         return {"finished": False, "active": self._active, "phase": self._phase}
 
@@ -753,6 +991,8 @@ class AccelBrakeExperimentController:
 
     def _finish(self, status, now, error=""):
         if status == "failed" and self._active:
+            self._send_target(0.0, self._pid_for_phase("brake"))
+        elif status == "completed" and self._active and abs(self._brake_vehicle_speed_cmd) > 1e-6:
             self._send_target(0.0, self._pid_for_phase("brake"))
         finish_result = self.logger.finish(status=status, now=now) if self.logger.recording else {"success": True}
         self._active = False
@@ -772,6 +1012,22 @@ class AccelBrakeExperimentController:
     def _send_target(self, speed, pid_mode):
         return self.send_target_speed(float(speed), int(pid_mode)) or {"success": False, "msg": "empty send result"}
 
+    def _send_brake_target_lock(self, now):
+        self._last_zero_lock_at = float(now)
+        return self._send_target(self._brake_vehicle_speed_cmd, self._pid_for_phase("brake"))
+
+    def _maybe_send_brake_target_lock(self, now):
+        if self.zero_lock_interval_s <= 0.0:
+            return None
+        if self._last_zero_lock_at is None or float(now) - self._last_zero_lock_at >= self.zero_lock_interval_s:
+            return self._send_brake_target_lock(now)
+        return None
+
+    def _brake_target_reached(self, speed_abs, signed_forward_speed):
+        if self._brake_target_speed_mm_s <= 0.0:
+            return speed_abs <= self.stop_speed_threshold
+        return signed_forward_speed <= self._brake_target_speed_mm_s + self.brake_target_tolerance_mm_s
+
     def _pid_for_phase(self, phase):
         if not self._multi_pid:
             return CONTROL_MODE_NORMAL
@@ -783,8 +1039,8 @@ class AccelBrakeExperimentController:
 
     def _commanded_speed_for_phase(self):
         if self._phase == "brake":
-            return 0.0
-        return self._target_speed
+            return self._brake_vehicle_speed_cmd
+        return self._vehicle_speed_cmd
 
     def status(self):
         status = self.logger.status()
@@ -792,7 +1048,11 @@ class AccelBrakeExperimentController:
             {
                 "active": self._active,
                 "phase": self._phase,
-                "target_speed": self._target_speed,
+                "target_forward_speed_mm_s": self._target_forward_speed_mm_s,
+                "vehicle_speed_cmd": self._vehicle_speed_cmd,
+                "brake_target_speed_mm_s": self._brake_target_speed_mm_s,
+                "brake_vehicle_speed_cmd": self._brake_vehicle_speed_cmd,
+                "speed_to_mm_s": self._speed_to_mm_s,
                 "multi_pid": self._multi_pid,
                 "last_error": self._last_error,
                 "last_finish": self._last_finish,
