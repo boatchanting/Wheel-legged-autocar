@@ -930,20 +930,27 @@ void render_stair_vision_to_image(void)
     }
 
 #if VISION_IMAGE_RENDER_ENABLE
+    /* 台阶状态徽章: 4x4 白底 + 中心 2x2 黑块(检测到)/白块(未检测到) */
+    {
+        const int bx = PVC_IMAGE_W - 6;
+        const int by = 1;
+        const uint8 center_color = result.detected ? 0U : 255U;
+        int dx, dy;
+        /* 4x4 白底 */
+        for (dy = 0; dy < 4; dy++)
+            for (dx = 0; dx < 4; dx++)
+                draw_point_on_image(bx + dx, by + dy, 255U);
+        /* 中心 2x2 */
+        for (dy = 1; dy < 3; dy++)
+            for (dx = 1; dx < 3; dx++)
+                draw_point_on_image(bx + dx, by + dy, center_color);
+    }
+
     /* 顶部状态指示灯: raw/stable 检测状态 */
     render_common_status_strip(result.detected,
                                stair_out->stable_detected,
                                0U,
                                0U);
-    /* 台阶文本标识 */
-    {
-        /* "S" 标记在右上角 */
-        draw_point_on_image(PVC_IMAGE_W - 3, 2, result.detected ? 0U : 180U);
-        draw_point_on_image(PVC_IMAGE_W - 2, 2, result.detected ? 0U : 180U);
-        draw_point_on_image(PVC_IMAGE_W - 3, 3, result.detected ? 0U : 180U);
-        draw_point_on_image(PVC_IMAGE_W - 2, 3, result.detected ? 0U : 180U);
-    }
-#endif
 
     if ((result.detected == 0U) || (result.crease_y < 0))
     {
@@ -956,42 +963,33 @@ void render_stair_vision_to_image(void)
         crease_y = (int16)(PVC_IMAGE_H - 1U);
     }
 
-    /* ---- 中线渲染 (Hough 角平分线 ax+by+c=0) ---- */
-    if ((result.center_a != 0.0f) || (result.center_b != 0.0f))
+    /* ---- 左右边界线渲染 (Hough ρ/θ 直接转图像坐标) ---- */
+    /* Gx 空间 → 图像空间: 偏移约 (+1.5列, +1行), 取整为 +2 */
+    #define HOUGH_TO_IMG_X(gx_x)  ((int)((gx_x) + 2.0f + 0.5f))
+    #define HOUGH_TO_IMG_Y(gx_y)  ((int)((gx_y) + 1.0f + 0.5f))
+
+    /* 左边界 */
+    if (result.left_theta != 0.0f || result.left_rho != 0.0f)
     {
-        /* Hough 空间 (57×91) → 图像空间 (60×94) 偏移约 +2 px */
-        const int hough_offset_x = 2;
-        const int hough_offset_y = 2;
-        float a = result.center_a;
-        float b = result.center_b;
-        float c = result.center_c;
-        int x0, y0_img, x1, y1_img;
-
-        /* 在图像顶部 (y=0) 和 crease 行分别求 x */
-        if (fabsf(a) > 1e-6f)
+        float cL = cosf(result.left_theta), sL = sinf(result.left_theta);
+        if (fabsf(cL) > 0.05f)
         {
-            x0 = (int)((-c - b * (float)(-hough_offset_y)) / a + 0.5f) + hough_offset_x;
-            x1 = (int)((-c - b * (float)(crease_y - hough_offset_y)) / a + 0.5f) + hough_offset_x;
+            int x0 = HOUGH_TO_IMG_X(result.left_rho / cL);
+            int x1 = HOUGH_TO_IMG_X((result.left_rho - sL * 55.0f) / cL);
+            draw_line_on_image(x0, 0, x1, PVC_IMAGE_H - 1, 180U);
         }
-        else if (fabsf(b) > 1e-6f)
+    }
+
+    /* 右边界 */
+    if (result.right_theta != 0.0f || result.right_rho != 0.0f)
+    {
+        float cR = cosf(result.right_theta), sR = sinf(result.right_theta);
+        if (fabsf(cR) > 0.05f)
         {
-            /* 水平线: 在图像中心画 */
-            x0 = PVC_IMAGE_W / 2;
-            x1 = PVC_IMAGE_W / 2;
+            int x0 = HOUGH_TO_IMG_X(result.right_rho / cR);
+            int x1 = HOUGH_TO_IMG_X((result.right_rho - sR * 55.0f) / cR);
+            draw_line_on_image(x0, 0, x1, PVC_IMAGE_H - 1, 180U);
         }
-        else
-        {
-            x0 = x1 = PVC_IMAGE_W / 2;
-        }
-
-        y0_img = 0;
-        y1_img = (int)crease_y;
-
-        x0 = clamp_int_to_range(x0, 0, PVC_IMAGE_W - 1);
-        x1 = clamp_int_to_range(x1, 0, PVC_IMAGE_W - 1);
-
-        /* 虚线绘制中线 */
-        draw_line_on_image(x0, y0_img, x1, y1_img, 0U);
     }
 
     /* 在 crease 行画水平横线标记上方尖峰位置 */
