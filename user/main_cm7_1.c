@@ -42,6 +42,7 @@
 #include "../code1/vision/bridge_vision.h"
 #include "../code1/vision/pvc_vision.h"
 #include "../code1/vision/bumpy_vision.h"
+#include "../code1/vision/stair_vision.h"
 #include "../code1/vision/vision_ipc_core1.h"
 #include "../code1/vision/telemetry_ipc_core1.h"
 // 打开新的工程或者工程移动了位置务必执行以下操作
@@ -90,6 +91,7 @@ int main(void)
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
     bridge_vision_init();                                                       // 初始化单边桥视觉检测
     bumpy_vision_init();                                                        // 初始化颠簸路段视觉检测
+    stair_vision_init();                                                        // 初始化V9台阶视觉检测
     VisionIpc_Core1_Init();                                                     // 初始化1核视觉共享内存结果发布
     pit_ms_init(VISION_IPC_PIT_NUM, 2);                                          // 2ms 中断中处理0/1核视觉通信
     interrupt_global_enable(0);
@@ -163,6 +165,10 @@ int main(void)
                 bumpy_vision_process_camera_frame(image_copy[0]);
                 render_bumpy_vision_to_image();
             }
+
+            /* Phase 1: V9 台阶检测硬编码开启 (IPC接入后改为 ShouldRunStair 控制) */
+            stair_vision_process_camera_frame(compressed_image_copy[0]);
+            render_stair_vision_to_image();
 #endif
 
             // 跳帧控制：视觉算法满帧运行(100fps)，只限制 WiFi 发送速率(~25fps)

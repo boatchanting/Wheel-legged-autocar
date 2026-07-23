@@ -913,3 +913,35 @@ void render_bumpy_vision_to_image(void)
     }
 #endif
 }
+
+void render_stair_vision_to_image(void)
+{
+    const volatile stair_vision_output_t *stair_out = stair_vision_get_output();
+    stair_vision_frame_result_t result;
+    int16 crease_y;
+
+    if (stair_out->stable_detected)
+    {
+        result = stair_out->stable;
+    }
+    else
+    {
+        result = stair_out->raw;
+    }
+
+    if ((result.detected == 0U) || (result.crease_y < 0))
+    {
+        return;
+    }
+
+    crease_y = result.crease_y;
+    if (crease_y >= PVC_IMAGE_H)
+    {
+        crease_y = (int16)(PVC_IMAGE_H - 1U);
+    }
+
+    /* 在 crease 行画水平横线标记上方尖峰位置 */
+    draw_hline_on_image(0, PVC_IMAGE_W - 1, (int)crease_y, 0U);
+    /* 在图像中心画十字标记 */
+    draw_cross_on_image(PVC_IMAGE_W / 2, (int)crease_y, 3, 0U);
+}

@@ -1178,6 +1178,24 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\edge_conv_asm.c</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v9_stair_conv_asm.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v9_stair_conv_asm.s</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v9_stair_postprocess.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v9_stair_postprocess.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\stair_vision.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\stair_vision.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\tcm.h</name>
             </file>
             <file>
