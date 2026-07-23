@@ -2,6 +2,8 @@
 #include "../config/sys_options.h"
 #include "../plan/minefield.h"
 
+extern int g_motor_enable; // 获取电机使能状态
+
 // --- 宏定义 ---
 #ifndef M_PI
 #define M_PI                3.1415926535f
@@ -104,17 +106,23 @@ void InertialNav_Update(float curr_yaw,
     // 自转时减小轮速权重，信任 IMU 加速度积分；正常行驶时完全信任轮速
     float alpha = (inertial_nav.slip_flag == 3) ? 0.0f : NAV_ALPHA_VEL;
     
-    // +++ 自转专属：加速度死区过滤 (抗震动与离心力串扰) +++
+    // +++ 加速度死区过滤 (抗震动与离心力串扰) +++
     if (inertial_nav.slip_flag == 3) {
         if (fabsf(acc_lon_forward) < MINEFIELD_ACC_DEADZONE) {
+            acc_lon_forward = 0.0f;
+        }
+    } else {
+        if (fabsf(acc_lon_forward) < NAV_LON_ACC_ZERO_THRESHOLD) {
             acc_lon_forward = 0.0f;
         }
     }
     
     float v_pred = inertial_nav.vx_body + acc_lon_forward * NAV_DT;
     
-    // +++ 自转专属：速度阻尼衰减 (Leaky Integrator) +++
-    if (inertial_nav.slip_flag == 3) {
+    // +++ 速度阻尼衰减 (Leaky Integrator) 与 零速更新 ZUPT +++
+    if (fabsf(v_wheel_avg) < 5.0f || g_motor_enable == 0) {
+        v_pred = 0.0f; 
+    } else if (inertial_nav.slip_flag == 3) {
         v_pred *= MINEFIELD_VEL_DAMPING; 
     }
 

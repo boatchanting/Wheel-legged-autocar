@@ -15,7 +15,7 @@
 #define NAV_ALPHA_VEL       1.0f   // 纵向速度融合系数 (0.9 表示90%信任轮速, 10%信任加速度积分)
 #define YAW_RATE_DIFF_THRES 0.5f    // 理论角速度与IMU角速度的最大偏差(rad/s)，超过视为打滑
 #define NAV_LAT_ACC_DEADZONE 50.0f  // 横向加速度死区。小于此值视为传感器噪声, 不累积侧滑速度
-#define NAV_LON_ACC_ZERO_THRESHOLD 0.0f // 需要实验调整，防止空转时漂移
+#define NAV_LON_ACC_ZERO_THRESHOLD 50.0f // 需要实验调整，防止空转时漂移，过滤传感器细微零偏
 
 // --- 【换车或者修车需要更换】里程计校准系数 ---
 // 通过实验确定此值: 系数 = 实际行驶距离 / 程序计算距离
