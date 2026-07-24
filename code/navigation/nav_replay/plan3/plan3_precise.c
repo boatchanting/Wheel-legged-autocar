@@ -22,10 +22,11 @@ volatile uint8 exit_beep_request = 0U;
 static uint8 g_start_heading_aligned = 1;
 // 单边桥入口已交给视觉任务后，等待视觉任务结束并消费紧邻的 40 退出锚点。
 static uint8 s_bridge_exit_pending = 0U;
+static uint8 s_bumpy_exit_pending = 0U;
 #define NAV_BRIDGE_HANDOFF_TICKS            (10U)  // 100ms：视觉退出控制平滑切换至 Plan3
 #define NAV_BRIDGE_HANDOFF_SPEED_STEP        (3.0f) // 每 10ms 最大速度目标变化
 #define NAV_BRIDGE_HANDOFF_ERR_STEP_DEG      (0.5f) // 每 10ms 最大转向误差变化
-static uint8 s_bridge_handoff_ticks = 0U;
+static uint8 s_special_handoff_ticks = 0U;
 
 #if IMU_CATEGORY == 3
 static uint8 s_start_heading_stable_count = 0;
@@ -78,6 +79,12 @@ static uint8 NavReplay_IsBridgeExitPoint(uint16 point_idx)
                    (nav_ram_data.points[point_idx].point_type == NAV_POINT_BRIDGE_EXIT));
 }
 
+static uint8 NavReplay_IsBumpyExitPoint(uint16 point_idx)
+{
+    return (uint8)((point_idx < nav_ram_data.point_count) &&
+                   (nav_ram_data.points[point_idx].point_type == NAV_POINT_BUMP_EXIT));
+}
+
 static void NavReplay_CompleteVisionBridgeExit(void)
 {
     // 40 只是视觉桥任务的退出锚点，不能再次作为普通特殊点触发状态机。
@@ -93,7 +100,26 @@ static void NavReplay_CompleteVisionBridgeExit(void)
     }
 
     s_bridge_exit_pending = 0U;
-    s_bridge_handoff_ticks = NAV_BRIDGE_HANDOFF_TICKS;
+    s_special_handoff_ticks = NAV_BRIDGE_HANDOFF_TICKS;
+    g_special_action_trigger = 0U;
+}
+
+static void NavReplay_CompleteVisionBumpyExit(void)
+{
+    // 50 是颠簸视觉任务的退出锚点，只在视觉确认出口时用于重定位。
+    if (NavReplay_IsBumpyExitPoint(g_target_idx))
+    {
+        if (BumpyRoad_GetExitReason() == BUMPY_ROAD_EXIT_VISUAL_CONFIRMED)
+        {
+            nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
+            nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
+            exit_beep_request = 1U;
+        }
+        g_target_idx++;
+    }
+
+    s_bumpy_exit_pending = 0U;
+    s_special_handoff_ticks = NAV_BRIDGE_HANDOFF_TICKS;
     g_special_action_trigger = 0U;
 }
 
@@ -137,7 +163,8 @@ void NavReplay_Start(void)
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
     s_bridge_exit_pending = 0U;
-    s_bridge_handoff_ticks = 0U;
+    s_bumpy_exit_pending = 0U;
+    s_special_handoff_ticks = 0U;
     entry_beep_request = 0U;
     exit_beep_request = 0U;
 #if IMU_CATEGORY == 3
@@ -164,7 +191,8 @@ void NavReplay_Stop(void)
     err_degree = 0.0f;
     g_special_action_trigger = 0;
     s_bridge_exit_pending = 0U;
-    s_bridge_handoff_ticks = 0U;
+    s_bumpy_exit_pending = 0U;
+    s_special_handoff_ticks = 0U;
     g_start_heading_aligned = 1;
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
@@ -220,6 +248,21 @@ void NavReplay_Process(void)
         }
     }
 
+    // 颠簸状态机结束后，将 50 退出锚点消费掉；视觉异常自动结束时不重定位。
+    if (s_bumpy_exit_pending)
+    {
+        if (!BumpyRoad_Is_Active())
+        {
+            NavReplay_CompleteVisionBumpyExit();
+            s_prev_err_degree = 0.0f;
+            s_is_aligning = 0U;
+        }
+        else
+        {
+            return;
+        }
+    }
+
     if (g_special_action_trigger == 1)
     {
         s_prev_err_degree = 0.0f;
@@ -228,7 +271,7 @@ void NavReplay_Process(void)
     }
 
     // 视觉状态机结束后，先以最后的视觉控制量向下一个点平滑过渡，避免速度/转向突变。
-    if (s_bridge_handoff_ticks > 0U)
+    if (s_special_handoff_ticks > 0U)
     {
         float nav_x = nav_vision_fusion_x;
         float nav_y = nav_vision_fusion_y;
@@ -241,7 +284,7 @@ void NavReplay_Process(void)
 
         if (g_target_idx >= nav_ram_data.point_count)
         {
-            s_bridge_handoff_ticks = 0U;
+            s_special_handoff_ticks = 0U;
             target_speed_set = NAV_SPEED_STOP;
             err_degree = 0.0f;
             return;
@@ -276,7 +319,7 @@ void NavReplay_Process(void)
         err_degree = NavReplay_RampFloat(err_degree, desired_err, NAV_BRIDGE_HANDOFF_ERR_STEP_DEG);
         target_speed_set = NavReplay_RampFloat(target_speed_set, desired_speed, NAV_BRIDGE_HANDOFF_SPEED_STEP);
         s_prev_err_degree = err_degree;
-        s_bridge_handoff_ticks--;
+        s_special_handoff_ticks--;
         return;
     }
 
@@ -366,7 +409,12 @@ void NavReplay_Process(void)
                     s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
                     VisionBridgeTask_Start();
                 }
-                else if (g_current_point_type == NAV_POINT_BUMP) BumpyRoad_Trigger();
+                else if (g_current_point_type == NAV_POINT_BUMP)
+                {
+                    entry_beep_request = 1U;
+                    s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
+                    BumpyRoad_Trigger();
+                }
                 
                 g_special_action_trigger = 1;
                 g_target_idx++;     // 切向下一个点

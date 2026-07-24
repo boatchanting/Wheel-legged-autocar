@@ -19,6 +19,13 @@ typedef enum
     BUMPY_ROAD_STATE_FINISH       // 收尾态
 } BumpyRoadState_e;
 
+typedef enum
+{
+    BUMPY_ROAD_EXIT_NONE = 0,
+    BUMPY_ROAD_EXIT_VISUAL_CONFIRMED,
+    BUMPY_ROAD_EXIT_AUTO_DISTANCE
+} BumpyRoadExitReason_e;
+
 extern volatile uint8_t vision_detected_bumpy_point;
 /**
  * @brief 颠簸路段状态机初始化
@@ -57,5 +64,10 @@ BumpyRoadState_e BumpyRoad_GetState(void);
  * @brief 获取已累计行驶距离（单位：mm，调试用）
  */
 float BumpyRoad_GetDistanceMm(void);
+
+/**
+ * @brief 获取最近一次颠簸路段的脱出原因
+ */
+BumpyRoadExitReason_e BumpyRoad_GetExitReason(void);
 
 #endif // __BUMPY_ROAD_H__

@@ -31,6 +31,7 @@ extern "C" {
 #define VISION_BUMPY_PID_KI                    (0.03f)
 #define VISION_BUMPY_PID_KD                    (0.05f)
 #define VISION_BUMPY_PID_I_LIMIT               (12.0f)
+#define VISION_BUMPY_EXIT_MISS_FRAMES          (5U)     // 连续 5 个新视觉帧未检测到颠簸，确认视觉出口
 
 /* 枚举类型定义区 */
 /**
@@ -65,8 +66,11 @@ typedef struct
     uint8 enabled;                         // 控制使能标志(1:使能, 0:禁用)
     uint8 has_new_packet;                   // 新数据包标志(1:有新数据, 0:无新数据)
     uint8 bumpy_detected;                  // 当前帧颠簸路段检测结果
+    uint8 exit_confirmed;                  // 连续未检测达到阈值后的视觉出口确认
+    uint8 miss_frame_count;                // 连续未检测到颠簸的新视觉帧数量
     uint16 stale_ticks;                    // 数据包过期计数器(2ms周期计数)
     uint32 last_seq;                       // 上次接收到的数据包序列号
+    uint32 last_frame_id;                  // 已统计的最后一个视觉帧编号
     vision_bumpy_control_state_e state;    // 当前控制状态
     float direction_x;                     // 视觉方向向量 X 分量
     float direction_y;                     // 视觉方向向量 Y 分量
@@ -115,6 +119,16 @@ void VisionBumpyControl_Update_2ms(void);
  * @return  当前转向误差指令(度)
  */
 float VisionBumpyControl_GetErrDegreeCmd(void);
+
+/**
+ * @brief   清空颠簸视觉出口判定历史（进入颠簸任务时调用）
+ */
+void VisionBumpyControl_ResetExitDetection(void);
+
+/**
+ * @brief   查询是否已经连续 5 帧未检测到颠簸
+ */
+uint8 VisionBumpyControl_IsExitConfirmed(void);
 
 #ifdef __cplusplus
 }
