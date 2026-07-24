@@ -118,6 +118,16 @@ MOTION_IMU_FIELD_NAMES = [
     "imu_grav_z",
 ]
 
+SERVO_FIELD_NAMES = [
+    "servo_speed_target",
+    "servo_speed_actual",
+    "servo_speed_output",
+    "servo_speed_error",
+    "servo_pwm_speed_adj",
+    "servo_pwm_high",
+    "servo_pwm_angle_adj",
+]
+
 PAYLOAD_SIZE_V1 = struct.calcsize(STRUCT_FMT_V1)
 PAYLOAD_SIZE_V2 = PAYLOAD_SIZE_V1 + 2
 PAYLOAD_GPS_TRACE_FLOAT_BYTES = 8
@@ -128,6 +138,7 @@ PAYLOAD_FUSION_TRACE_FLOAT_BYTES = 8
 PAYLOAD_FUSION_TRACE_FLAG_BYTES = 1
 PAYLOAD_PLAN_DEBUG_BYTES = 19 * 4
 PAYLOAD_MOTION_IMU_BYTES = 12 * 4
+PAYLOAD_SERVO_BYTES = 7 * 4
 
 PAYLOAD_SIZE_GPS_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_GPS_TRACE_FLOAT_BYTES + PAYLOAD_GPS_TRACE_FLAG_BYTES
 PAYLOAD_SIZE_GPS_TRACE_CTRL = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
@@ -137,6 +148,7 @@ PAYLOAD_SIZE_TRACE_CTRL = PAYLOAD_SIZE_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
 PAYLOAD_SIZE_TRACE_DEBUG = PAYLOAD_SIZE_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
 PAYLOAD_SIZE_TRACE_PLAN_DEBUG = PAYLOAD_SIZE_TRACE_DEBUG + PAYLOAD_PLAN_DEBUG_BYTES
 PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION = PAYLOAD_SIZE_TRACE_PLAN_DEBUG + PAYLOAD_MOTION_IMU_BYTES
+PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION_SERVO = PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION + PAYLOAD_SERVO_BYTES
 
 BASE_LOG_FIELDS = [
     "recorded_at",
@@ -175,10 +187,12 @@ ACCEL_BRAKE_LOG_FIELDS = (
     + DEBUG_FIELD_NAMES
     + PLAN_DEBUG_FIELD_NAMES
     + MOTION_IMU_FIELD_NAMES
+    + SERVO_FIELD_NAMES
     + [
         "has_debug",
         "has_plan_debug",
         "has_motion_imu",
+        "has_servo",
         "payload_size",
         "time_str",
     ]
@@ -472,6 +486,18 @@ def decode_payload(payload_bytes):
             data[field] = None
         data["has_motion_imu"] = False
 
+    if size >= PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION_SERVO:
+        servo_floats = struct.unpack(
+            "<" + "f" * len(SERVO_FIELD_NAMES),
+            payload_bytes[PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION : PAYLOAD_SIZE_TRACE_PLAN_DEBUG_MOTION_SERVO],
+        )
+        data.update(dict(zip(SERVO_FIELD_NAMES, servo_floats)))
+        data["has_servo"] = True
+    else:
+        for field in SERVO_FIELD_NAMES:
+            data[field] = None
+        data["has_servo"] = False
+
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
     return data
@@ -668,9 +694,10 @@ class AccelBrakeRunLogger:
             "has_debug",
             "has_plan_debug",
             "has_motion_imu",
+            "has_servo",
             "payload_size",
             "time_str",
-        ] + DEBUG_FIELD_NAMES + PLAN_DEBUG_FIELD_NAMES + MOTION_IMU_FIELD_NAMES:
+        ] + DEBUG_FIELD_NAMES + PLAN_DEBUG_FIELD_NAMES + MOTION_IMU_FIELD_NAMES + SERVO_FIELD_NAMES:
             row[field] = _fmt(frame.get(field))
 
         phase_elapsed = 0.0 if self._phase_started_at is None else max(0.0, now - self._phase_started_at)
