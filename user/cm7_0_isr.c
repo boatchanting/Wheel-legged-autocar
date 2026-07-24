@@ -348,12 +348,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // 按下记录按钮之前的惯性导航不可信==========================================================
     if(loop_counter % 10 == 1 && g_yaw_initialized)
     {
-        #if CURRENT_NAV_PLAN == 1
         if (jump_flag == 0)
-        #endif
-        #if CURRENT_NAV_PLAN == 2
-        if (jump_flag == 0 )//科二中雷区屏蔽惯导
-        #endif  
         {
             // 调用导航更新函数
             #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
