@@ -5,6 +5,7 @@
 #include "../calculate/ekf.h"
 #include "../calculate/matrix.h"
 #include "../navigation/nav_replay/nav_replay.h"
+#include "../servo/servo_executor.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -549,6 +550,24 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&imu_data.grav_x);
     write_u32_or_float(&imu_data.grav_y);
     write_u32_or_float(&imu_data.grav_z);
+
+    // L. Servo speed loop diagnostic block (7 floats, 28 bytes)
+    // Append-only for the accel/brake collector; older hosts ignore these bytes.
+    float servo_speed_target = (float)target_speed_set;
+    float servo_speed_actual = (float)current_actual_speed;
+    float servo_speed_output = (float)pid_servo_speed.output;
+    float servo_speed_error = (float)pid_servo_speed.error;
+    float servo_pwm_speed_adj = (float)g_target_pwm_speed_adj;
+    float servo_pwm_high = (float)g_target_pwm_high;
+    float servo_pwm_angle_adj = (float)g_target_pwm_angle_adj;
+
+    write_u32_or_float(&servo_speed_target);
+    write_u32_or_float(&servo_speed_actual);
+    write_u32_or_float(&servo_speed_output);
+    write_u32_or_float(&servo_speed_error);
+    write_u32_or_float(&servo_pwm_speed_adj);
+    write_u32_or_float(&servo_pwm_high);
+    write_u32_or_float(&servo_pwm_angle_adj);
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;
