@@ -918,7 +918,7 @@ void render_bumpy_vision_to_image(void)
 void render_stair_vision_to_image(void)
 {
     const volatile stair_vision_output_t *out = stair_vision_get_output();
-    const v10_stair_result_t *r = &out->result;
+    const volatile v10_stair_result_t *r = &out->result;
     int hw, uy, ly;
 
     if (out->detected == 0 || r->has_stairs == 0) return;

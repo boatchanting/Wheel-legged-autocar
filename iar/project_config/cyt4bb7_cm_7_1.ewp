@@ -1145,6 +1145,24 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\bumpy_vision.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v10_stair_conv_asm.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v10_stair_conv_asm.s</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v10_stair_postprocess.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\v10_stair_postprocess.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\stair_vision.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\stair_vision.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\ipm_transform.c</name>
             </file>
             <file>

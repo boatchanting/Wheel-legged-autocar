@@ -166,8 +166,8 @@ int main(void)
                 render_bumpy_vision_to_image();
             }
 
-            stair_vision_process_camera_frame(image_copy[0]);
-            render_stair_vision_to_image();
+            //stair_vision_process_camera_frame(image_copy[0]);
+            //render_stair_vision_to_image();
 #endif
 
             // 跳帧控制：视觉算法满帧运行(100fps)，只限制 WiFi 发送速率(~25fps)
