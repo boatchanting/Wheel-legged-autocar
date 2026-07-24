@@ -32,6 +32,7 @@ ack_seq = 0
 ack_events = []
 new_data_buffer = []
 history_data = []
+latest_control_debug = {}
 receiver_thread_id = None
 
 
@@ -178,7 +179,7 @@ def _bind_server_socket(server_socket):
 
 
 def _parse_frame_stream(raw_buffer, controller):
-    global last_frame_time, last_payload_size
+    global last_frame_time, last_payload_size, last_rx_time, latest_control_debug
     while len(raw_buffer) >= core.FRAME_MIN_SIZE:
         if raw_buffer[0] != core.FRAME_HEAD1 or raw_buffer[1] != core.FRAME_HEAD2:
             del raw_buffer[0]
@@ -208,13 +209,26 @@ def _parse_frame_stream(raw_buffer, controller):
             del raw_buffer[:frame_len]
             continue
 
+        if cmd == core.CMD_CONTROL_DEBUG:
+            now = time.time()
+            debug = core.decode_control_debug_payload(payload)
+            if debug is not None:
+                debug["_received_at"] = now
+                with state_lock:
+                    latest_control_debug = debug
+                    last_rx_time = now
+            del raw_buffer[:frame_len]
+            continue
+
         if cmd == core.CMD_TELEMETRY:
             now = time.time()
             with state_lock:
                 last_frame_time = now
                 last_payload_size = payload_len
+                control_debug = dict(latest_control_debug)
             data = core.decode_payload(payload)
             if data is not None:
+                core.attach_control_debug(data, control_debug, now=now)
                 _push_data(data)
                 controller.feed_frame(data, now=now)
 

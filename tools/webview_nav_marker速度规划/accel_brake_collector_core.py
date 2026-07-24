@@ -16,6 +16,7 @@ FRAME_MIN_SIZE = 6
 CMD_TELEMETRY = 0x01
 CMD_HOST_CONTROL = 0x10
 CMD_HOST_ACK = 0x11
+CMD_CONTROL_DEBUG = 0x12
 
 HOST_CTRL_CLEAR_TRAJECTORY = 0x01
 HOST_CTRL_START_CAR = 0x02
@@ -128,6 +129,16 @@ SERVO_FIELD_NAMES = [
     "servo_pwm_angle_adj",
 ]
 
+TURN_DEBUG_FIELD_NAMES = [
+    "err_degree",
+    "turn_angle_loop_out",
+    "turn_gyro_loop_out",
+    "final_pwm_left",
+    "final_pwm_right",
+]
+
+CONTROL_DEBUG_FIELD_NAMES = SERVO_FIELD_NAMES + TURN_DEBUG_FIELD_NAMES
+
 PAYLOAD_SIZE_V1 = struct.calcsize(STRUCT_FMT_V1)
 PAYLOAD_SIZE_V2 = PAYLOAD_SIZE_V1 + 2
 PAYLOAD_GPS_TRACE_FLOAT_BYTES = 8
@@ -139,6 +150,7 @@ PAYLOAD_FUSION_TRACE_FLAG_BYTES = 1
 PAYLOAD_PLAN_DEBUG_BYTES = 19 * 4
 PAYLOAD_MOTION_IMU_BYTES = 12 * 4
 PAYLOAD_SERVO_BYTES = 7 * 4
+PAYLOAD_CONTROL_DEBUG_BYTES = len(CONTROL_DEBUG_FIELD_NAMES) * 4
 
 PAYLOAD_SIZE_GPS_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_GPS_TRACE_FLOAT_BYTES + PAYLOAD_GPS_TRACE_FLAG_BYTES
 PAYLOAD_SIZE_GPS_TRACE_CTRL = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
@@ -163,6 +175,7 @@ BASE_LOG_FIELDS = [
     "brake_target_speed_mm_s",
     "brake_vehicle_speed_cmd",
     "commanded_vehicle_speed_cmd",
+    "brake_trigger",
     "speed_to_mm_s",
     "pid_mode",
     "speed_abs",
@@ -188,11 +201,16 @@ ACCEL_BRAKE_LOG_FIELDS = (
     + PLAN_DEBUG_FIELD_NAMES
     + MOTION_IMU_FIELD_NAMES
     + SERVO_FIELD_NAMES
+    + TURN_DEBUG_FIELD_NAMES
     + [
         "has_debug",
         "has_plan_debug",
         "has_motion_imu",
         "has_servo",
+        "has_turn_debug",
+        "has_control_debug",
+        "control_debug_payload_size",
+        "control_debug_age_ms",
         "payload_size",
         "time_str",
     ]
@@ -206,6 +224,7 @@ SUMMARY_FIELDS = [
     "vehicle_speed_cmd",
     "brake_target_speed_mm_s",
     "brake_vehicle_speed_cmd",
+    "brake_trigger",
     "speed_to_mm_s",
     "host_sample_period_ms",
     "multi_pid",
@@ -500,7 +519,54 @@ def decode_payload(payload_bytes):
 
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
+    for field in TURN_DEBUG_FIELD_NAMES:
+        data[field] = None
+    data["has_turn_debug"] = False
+    data["has_control_debug"] = False
+    data["control_debug_payload_size"] = None
+    data["control_debug_age_ms"] = None
     return data
+
+
+def decode_control_debug_payload(payload_bytes):
+    size = len(payload_bytes)
+    if size < PAYLOAD_CONTROL_DEBUG_BYTES:
+        return None
+
+    values = struct.unpack(
+        "<" + "f" * len(CONTROL_DEBUG_FIELD_NAMES),
+        payload_bytes[:PAYLOAD_CONTROL_DEBUG_BYTES],
+    )
+    data = dict(zip(CONTROL_DEBUG_FIELD_NAMES, values))
+    data["has_servo"] = True
+    data["has_turn_debug"] = True
+    data["has_control_debug"] = True
+    data["control_debug_payload_size"] = size
+    data["control_debug_age_ms"] = None
+    return data
+
+
+def attach_control_debug(frame, control_debug, now=None):
+    for field in TURN_DEBUG_FIELD_NAMES:
+        frame.setdefault(field, None)
+    frame.setdefault("has_turn_debug", False)
+    frame.setdefault("has_control_debug", False)
+    frame.setdefault("control_debug_payload_size", None)
+    frame.setdefault("control_debug_age_ms", None)
+
+    if not control_debug:
+        return frame
+
+    for field in CONTROL_DEBUG_FIELD_NAMES:
+        frame[field] = control_debug.get(field)
+    frame["has_servo"] = bool(control_debug.get("has_servo"))
+    frame["has_turn_debug"] = bool(control_debug.get("has_turn_debug"))
+    frame["has_control_debug"] = bool(control_debug.get("has_control_debug"))
+    frame["control_debug_payload_size"] = control_debug.get("control_debug_payload_size")
+    received_at = control_debug.get("_received_at")
+    if now is not None and received_at is not None:
+        frame["control_debug_age_ms"] = max(0.0, (float(now) - float(received_at)) * 1000.0)
+    return frame
 
 
 def _fmt(value):
@@ -538,6 +604,7 @@ class AccelBrakeRunLogger:
         self._vehicle_speed_cmd = 0.0
         self._brake_target_speed_mm_s = 0.0
         self._brake_vehicle_speed_cmd = 0.0
+        self._brake_trigger = ""
         self._speed_to_mm_s = DEFAULT_SPEED_TO_MM_S
         self._multi_pid = False
         self._started_at = None
@@ -590,6 +657,7 @@ class AccelBrakeRunLogger:
             if brake_vehicle_speed_cmd is not None
             else signed_mm_s_to_vehicle_speed_cmd(self._brake_target_speed_mm_s, self._speed_to_mm_s)
         )
+        self._brake_trigger = ""
         self._multi_pid = bool(multi_pid)
         self._started_at = now
         self._phase = "idle"
@@ -646,6 +714,13 @@ class AccelBrakeRunLogger:
         self._phase_started_at = now
         self._phase_started_distance = self._last_distance
 
+    def set_brake_target(self, brake_target_speed_mm_s, brake_vehicle_speed_cmd):
+        self._brake_target_speed_mm_s = float(brake_target_speed_mm_s)
+        self._brake_vehicle_speed_cmd = float(brake_vehicle_speed_cmd)
+
+    def set_brake_trigger(self, brake_trigger):
+        self._brake_trigger = "" if brake_trigger is None else str(brake_trigger)
+
     def _close_phase(self, now):
         if self._phase in ("idle", ""):
             return
@@ -661,6 +736,7 @@ class AccelBrakeRunLogger:
         commanded_vehicle_speed_cmd=None,
         pid_mode=None,
         commanded_target_speed=None,
+        brake_trigger=None,
     ):
         if not self.recording:
             return False
@@ -695,9 +771,13 @@ class AccelBrakeRunLogger:
             "has_plan_debug",
             "has_motion_imu",
             "has_servo",
+            "has_turn_debug",
+            "has_control_debug",
+            "control_debug_payload_size",
+            "control_debug_age_ms",
             "payload_size",
             "time_str",
-        ] + DEBUG_FIELD_NAMES + PLAN_DEBUG_FIELD_NAMES + MOTION_IMU_FIELD_NAMES + SERVO_FIELD_NAMES:
+        ] + DEBUG_FIELD_NAMES + PLAN_DEBUG_FIELD_NAMES + MOTION_IMU_FIELD_NAMES + SERVO_FIELD_NAMES + TURN_DEBUG_FIELD_NAMES:
             row[field] = _fmt(frame.get(field))
 
         phase_elapsed = 0.0 if self._phase_started_at is None else max(0.0, now - self._phase_started_at)
@@ -724,6 +804,7 @@ class AccelBrakeRunLogger:
                     if commanded_vehicle_speed_cmd is not None
                     else commanded_target_speed
                 ),
+                "brake_trigger": _fmt(self._brake_trigger if brake_trigger is None else brake_trigger),
                 "speed_to_mm_s": _fmt(self._speed_to_mm_s),
                 "pid_mode": "" if pid_mode is None else int(pid_mode),
                 "speed_abs": _fmt(abs(vx)),
@@ -775,6 +856,7 @@ class AccelBrakeRunLogger:
             "vehicle_speed_cmd": self._vehicle_speed_cmd,
             "brake_target_speed_mm_s": self._brake_target_speed_mm_s,
             "brake_vehicle_speed_cmd": self._brake_vehicle_speed_cmd,
+            "brake_trigger": self._brake_trigger,
             "speed_to_mm_s": self._speed_to_mm_s,
             "host_sample_period_ms": HOST_SAMPLE_PERIOD_MS,
             "multi_pid": self._multi_pid,
@@ -814,6 +896,7 @@ class AccelBrakeRunLogger:
             "vehicle_speed_cmd": self._vehicle_speed_cmd,
             "brake_target_speed_mm_s": self._brake_target_speed_mm_s,
             "brake_vehicle_speed_cmd": self._brake_vehicle_speed_cmd,
+            "brake_trigger": self._brake_trigger,
             "speed_to_mm_s": self._speed_to_mm_s,
             "host_sample_period_ms": HOST_SAMPLE_PERIOD_MS,
             "multi_pid": self._multi_pid,
@@ -896,6 +979,7 @@ class AccelBrakeExperimentController:
         self._last_error = ""
         self._last_finish = None
         self._last_reach_reason = ""
+        self._brake_trigger = ""
 
     def start(
         self,
@@ -935,6 +1019,7 @@ class AccelBrakeExperimentController:
         self._last_error = ""
         self._last_finish = None
         self._last_reach_reason = ""
+        self._brake_trigger = ""
 
         start_result = self.logger.start(
             self._target_motion_speed_mm_s,
@@ -965,11 +1050,18 @@ class AccelBrakeExperimentController:
 
         now = time.time() if now is None else float(now)
         self._last_frame_at = now
+
+        if self._frame_remote_ch5_brake_requested(frame):
+            ch5_result = self._enter_ch5_brake_phase(now)
+            if ch5_result.get("finished") or not ch5_result.get("success", True):
+                return ch5_result
+
         self.logger.record_frame(
             frame,
             now=now,
             commanded_vehicle_speed_cmd=self._commanded_speed_for_phase(),
             pid_mode=self._pid_for_phase(self._phase),
+            brake_trigger=self._brake_trigger,
         )
 
         speed_abs = abs(safe_float(frame.get("vx_body"), 0.0))
@@ -1124,6 +1216,13 @@ class AccelBrakeExperimentController:
         self._reach_window = [(ts, speed) for ts, speed in self._reach_window if ts >= cutoff]
 
     def _enter_brake_phase(self, now, reason=""):
+        if reason == "remote_ch5":
+            self._brake_trigger = "remote_ch5"
+        elif reason == "manual":
+            self._brake_trigger = "manual"
+        elif not self._brake_trigger:
+            self._brake_trigger = "auto"
+        self.logger.set_brake_trigger(self._brake_trigger)
         self._phase = "brake"
         self._brake_started_at = float(now)
         self._stopped_since = None
@@ -1132,6 +1231,22 @@ class AccelBrakeExperimentController:
         if not send_result.get("success"):
             return self._finish("failed", now, send_result.get("msg", "brake command failed"))
         return {"success": True, "finished": False, "active": True, "phase": self._phase, "reason": reason}
+
+    def _enter_ch5_brake_phase(self, now):
+        if abs(self._brake_target_speed_mm_s) > 1e-6 or abs(self._brake_vehicle_speed_cmd) > 1e-6:
+            self._brake_target_speed_mm_s = 0.0
+            self._brake_vehicle_speed_cmd = 0.0
+            self.logger.set_brake_target(0.0, 0.0)
+
+        self._brake_trigger = "remote_ch5"
+        self.logger.set_brake_trigger(self._brake_trigger)
+        if self._phase != "brake":
+            return self._enter_brake_phase(now, reason="remote_ch5")
+
+        send_result = self._send_brake_target_lock(now)
+        if not send_result.get("success"):
+            return self._finish("failed", now, send_result.get("msg", "remote CH5 brake command failed"))
+        return {"success": True, "finished": False, "active": True, "phase": self._phase, "reason": "remote_ch5"}
 
     def _reach_ready_reason(self, now):
         if self._reach_speed_is_stable(now):
@@ -1203,18 +1318,19 @@ class AccelBrakeExperimentController:
     def _frame_safety_stop_reason(self, frame):
         motor_enable = safe_float(frame.get("motor_enable"))
         fallen = safe_float(frame.get("fallen"))
-        remote_brake = safe_float(frame.get("remote_brake_active"))
         remote_reverse_brake = safe_float(frame.get("remote_reverse_brake_active"))
 
         if motor_enable is not None and motor_enable <= 0.5:
             return "motor disabled"
         if fallen is not None and fallen > 0.5:
             return "fallen"
-        if remote_brake is not None and remote_brake > 0.5:
-            return "remote CH5 brake"
         if remote_reverse_brake is not None and remote_reverse_brake > 0.5:
             return "remote reverse brake"
         return ""
+
+    def _frame_remote_ch5_brake_requested(self, frame):
+        remote_brake = safe_float(frame.get("remote_brake_active"))
+        return remote_brake is not None and remote_brake > 0.5
 
     def _pid_for_phase(self, phase):
         if not self._multi_pid:
@@ -1241,6 +1357,7 @@ class AccelBrakeExperimentController:
                 "vehicle_speed_cmd": self._vehicle_speed_cmd,
                 "brake_target_speed_mm_s": self._brake_target_speed_mm_s,
                 "brake_vehicle_speed_cmd": self._brake_vehicle_speed_cmd,
+                "brake_trigger": self._brake_trigger,
                 "speed_to_mm_s": self._speed_to_mm_s,
                 "multi_pid": self._multi_pid,
                 "reach_ratio": self.reach_ratio,

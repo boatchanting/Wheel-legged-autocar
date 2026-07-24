@@ -72,6 +72,8 @@ volatile struct {
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴角速度，用于转向角速度环和示波器观测
+volatile float g_debug_pwm_left = 0.0f;
+volatile float g_debug_pwm_right = 0.0f;
 uint32_t loop_counter = 0;
 static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
@@ -609,7 +611,12 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
              // 只有在偏航角成功初始化后，才执行航向保持控制
             // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
-            if ((g_yaw_initialized != 0U) &&
+            if (WifiHostSpeedTest_IsActive() != 0U)
+            {
+                err_degree = 0.0f;
+                turn_angle_loop_out = 0.0f;
+            }
+            else if ((g_yaw_initialized != 0U) &&
                 (Minefield_Is_Active() == 0U) &&
                 (g_special_action_trigger == 0U))
             {
@@ -706,7 +713,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;
         
-        if (Minefield_Is_Active()) 
+        if (WifiHostSpeedTest_IsActive() != 0U)
+        {
+            err_degree = 0.0f;
+            turn_angle_loop_out = 0.0f;
+            final_turn_cmd = 0.0f;
+        }
+        else if (Minefield_Is_Active())
         {
             final_turn_cmd = spin_cmd; // 使用平滑的旋转指令
         }
@@ -720,7 +733,14 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         }
         //==================== [雷区旋转调用结束] =================
         // 将雷区旋转指令或者正常转向角速度指令送入内环PID
-        turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+        if (WifiHostSpeedTest_IsActive() != 0U)
+        {
+            turn_gyro_loop_out = 0.0f;
+        }
+        else
+        {
+            turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+        }
     }
 
     // ==========================================================
@@ -767,6 +787,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                                             ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
                                             (g_is_push_mode != 0U) ||
                                             (Minefield_Is_Active() != 0U) ||
+                                            (WifiHostSpeedTest_IsActive() != 0U) ||
                                             (g_special_action_trigger != 0U) ||
                                             (BumpyRoad_Is_Active() != 0U) ||
                                             (VisionThreeStageControl_IsActive() != 0U) ||
@@ -932,6 +953,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             pwm_left = 0;
             pwm_right = 0;
         }
+        g_debug_pwm_left = (float)pwm_left;
+        g_debug_pwm_right = (float)pwm_right;
         // 直接输出即可
         
          // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
@@ -1003,7 +1026,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     // 步骤 9: 系统心跳
     // ==========================================================
-    if(loop_counter % 50 == 11) 
+    if(loop_counter % 10 == 1)
     {
         pit_state = 1; 
     }

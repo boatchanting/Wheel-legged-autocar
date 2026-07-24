@@ -12,6 +12,7 @@
 #define WIFI_CMD_DATA_PACKET    0x01    // MCU -> host telemetry
 #define WIFI_CMD_HOST_CONTROL   0x10    // Host -> MCU control
 #define WIFI_CMD_HOST_ACK       0x11    // MCU -> host control ACK
+#define WIFI_CMD_CONTROL_DEBUG  0x12    // MCU -> host compact control diagnostics
 
 // Host control payload command IDs
 #define WIFI_HOST_CTRL_CLEAR_TRAJECTORY   0x01

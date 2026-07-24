@@ -22,6 +22,8 @@ volatile uint8_t g_wifi_host_beep_request = 0U;
 #define WIFI_FRAME_MIN_SIZE  6U
 #define WIFI_ACK_PAYLOAD_LEN 2U
 #define WIFI_SPEED_CMD_ZERO_EPS 0.001f
+#define WIFI_CONTROL_DEBUG_FLOAT_COUNT 12U
+#define WIFI_CONTROL_DEBUG_PAYLOAD_LEN (WIFI_CONTROL_DEBUG_FLOAT_COUNT * 4U)
 
 static uint8_t rx_stream[WIFI_RX_STREAM_SIZE];
 static uint16_t rx_len = 0;
@@ -31,6 +33,10 @@ static uint8_t s_host_speed_test_mode = (uint8_t)CONTROL_MODE_NORMAL;
 static float s_last_host_speed_cmd = 0.0f;
 static uint8_t s_last_host_speed_mode = (uint8_t)CONTROL_MODE_NORMAL;
 static uint8_t s_last_host_speed_valid = 0U;
+
+extern volatile float err_degree;
+extern volatile float g_debug_pwm_left;
+extern volatile float g_debug_pwm_right;
 
 // ------------------------------------------------------------------
 // Serialization helpers (little-endian)
@@ -124,6 +130,13 @@ static void wifi_protocol_request_host_beep(void)
     g_wifi_host_beep_request = 1U;
 }
 
+static void wifi_protocol_force_straight_steering(void)
+{
+    err_degree = 0.0f;
+    turn_angle_loop_out = 0.0f;
+    turn_gyro_loop_out = 0.0f;
+}
+
 uint8_t WifiHostSpeedTest_IsActive(void)
 {
     return s_host_speed_test_active;
@@ -159,6 +172,8 @@ uint8_t WifiHostSpeedTest_Arm(void)
     s_host_speed_test_mode = (uint8_t)CONTROL_MODE_NORMAL;
     s_last_host_speed_valid = 0U;
     target_speed_set = 0.0f;
+    wifi_protocol_force_straight_steering();
+    Turn_Control_Reset();
     Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
     wifi_protocol_request_host_beep();
     return 1U;
@@ -184,6 +199,8 @@ uint8_t WifiHostSpeedTest_SetTarget(float speed_cmd, uint8_t mode)
     s_host_speed_test_cmd = speed_cmd;
     s_host_speed_test_mode = mode;
     target_speed_set = speed_cmd;
+    wifi_protocol_force_straight_steering();
+    Turn_Control_Reset();
     Control_Profile_RequestMode((ControlMode_e)mode);
 
     if (wifi_protocol_target_changed(speed_cmd, mode) != 0U)
@@ -203,6 +220,8 @@ void WifiHostSpeedTest_Stop(void)
     s_host_speed_test_mode = (uint8_t)CONTROL_MODE_NORMAL;
     s_last_host_speed_valid = 0U;
     target_speed_set = 0.0f;
+    wifi_protocol_force_straight_steering();
+    Turn_Control_Reset();
     Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
     wifi_protocol_request_host_beep();
 }
@@ -214,13 +233,24 @@ void WifiHostSpeedTest_Update1ms(void)
         return;
     }
 
-    if ((g_motor_enable == 0) || (g_fallen) || (g_brake_active != 0U) || (g_reverse_brake_active != 0U))
+    if ((g_motor_enable == 0) || (g_fallen) || (g_reverse_brake_active != 0U))
     {
         WifiHostSpeedTest_Stop();
         return;
     }
 
+    if (g_brake_active != 0U)
+    {
+        s_host_speed_test_cmd = 0.0f;
+        s_host_speed_test_mode = (uint8_t)CONTROL_MODE_BRAKE;
+        target_speed_set = 0.0f;
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+        wifi_protocol_force_straight_steering();
+        return;
+    }
+
     target_speed_set = s_host_speed_test_cmd;
+    wifi_protocol_force_straight_steering();
 }
 
 static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
@@ -567,6 +597,61 @@ void wifi_protocol_poll_rx(void)
     wifi_protocol_parse_stream();
 }
 
+static void wifi_protocol_send_control_debug_frame(void)
+{
+    tx_idx = 0;
+
+    write_u8(WIFI_FRAME_HEAD1);
+    write_u8(WIFI_FRAME_HEAD2);
+    write_u8(WIFI_CMD_CONTROL_DEBUG);
+
+    const uint16_t len_pos = tx_idx;
+    write_u8(0x00);
+
+    float servo_speed_target = (float)target_speed_set;
+    float servo_speed_actual = (float)current_actual_speed;
+    float servo_speed_output = (float)pid_servo_speed.output;
+    float servo_speed_error = (float)pid_servo_speed.error;
+    float servo_pwm_speed_adj = (float)g_target_pwm_speed_adj;
+    float servo_pwm_high = (float)g_target_pwm_high;
+    float servo_pwm_angle_adj = (float)g_target_pwm_angle_adj;
+    float turn_err_degree = (float)err_degree;
+    float turn_angle_out = (float)turn_angle_loop_out;
+    float turn_gyro_out = (float)turn_gyro_loop_out;
+    float final_pwm_left = (float)g_debug_pwm_left;
+    float final_pwm_right = (float)g_debug_pwm_right;
+
+    write_u32_or_float(&servo_speed_target);
+    write_u32_or_float(&servo_speed_actual);
+    write_u32_or_float(&servo_speed_output);
+    write_u32_or_float(&servo_speed_error);
+    write_u32_or_float(&servo_pwm_speed_adj);
+    write_u32_or_float(&servo_pwm_high);
+    write_u32_or_float(&servo_pwm_angle_adj);
+    write_u32_or_float(&turn_err_degree);
+    write_u32_or_float(&turn_angle_out);
+    write_u32_or_float(&turn_gyro_out);
+    write_u32_or_float(&final_pwm_left);
+    write_u32_or_float(&final_pwm_right);
+
+    const uint16_t payload_len_u16 = tx_idx - (len_pos + 1U);
+    if (payload_len_u16 > 255U)
+    {
+        return;
+    }
+    tx_buf[len_pos] = (uint8_t)payload_len_u16;
+
+    uint8_t check_sum = 0U;
+    for (uint16_t i = 0U; i < tx_idx; i++)
+    {
+        check_sum = (uint8_t)(check_sum + tx_buf[i]);
+    }
+    write_u8(check_sum);
+    write_u8(WIFI_FRAME_TAIL);
+
+    wifi_spi_send_buffer(tx_buf, tx_idx);
+}
+
 // ------------------------------------------------------------------
 // Telemetry TX (MCU -> host)
 // ------------------------------------------------------------------
@@ -574,6 +659,7 @@ void wifi_protocol_send_data(void)
 {
     // Poll host command first. This runs in the same 10 ms cycle as telemetry.
     wifi_protocol_poll_rx();
+    wifi_protocol_send_control_debug_frame();
 
     tx_idx = 0;
 
@@ -736,26 +822,12 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&imu_data.grav_y);
     write_u32_or_float(&imu_data.grav_z);
 
-    // L. Servo speed loop diagnostic block (7 floats, 28 bytes)
-    // Append-only for the accel/brake collector; older hosts ignore these bytes.
-    float servo_speed_target = (float)target_speed_set;
-    float servo_speed_actual = (float)current_actual_speed;
-    float servo_speed_output = (float)pid_servo_speed.output;
-    float servo_speed_error = (float)pid_servo_speed.error;
-    float servo_pwm_speed_adj = (float)g_target_pwm_speed_adj;
-    float servo_pwm_high = (float)g_target_pwm_high;
-    float servo_pwm_angle_adj = (float)g_target_pwm_angle_adj;
-
-    write_u32_or_float(&servo_speed_target);
-    write_u32_or_float(&servo_speed_actual);
-    write_u32_or_float(&servo_speed_output);
-    write_u32_or_float(&servo_speed_error);
-    write_u32_or_float(&servo_pwm_speed_adj);
-    write_u32_or_float(&servo_pwm_high);
-    write_u32_or_float(&servo_pwm_angle_adj);
-
-    const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
-    tx_buf[len_pos] = payload_len;
+    const uint16_t payload_len_u16 = tx_idx - (len_pos + 1U);
+    if (payload_len_u16 > 255U)
+    {
+        return;
+    }
+    tx_buf[len_pos] = (uint8_t)payload_len_u16;
 
     uint8_t check_sum = 0U;
     for (uint16_t i = 0; i < tx_idx; i++)

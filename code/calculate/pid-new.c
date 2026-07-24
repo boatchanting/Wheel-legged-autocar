@@ -1197,6 +1197,20 @@ void PID_Param_Init(void) {
 /**
  * @brief 重置pid数据
  */
+void Turn_Control_Reset(void) {
+    pid_turn_angle.error = 0;
+    pid_turn_angle.last_error = 0;
+    pid_turn_angle.prev_error = 0;
+    pid_turn_angle.error_integral = 0;
+    pid_turn_angle.output = 0;
+
+    pid_turn_gyro.error = 0;
+    pid_turn_gyro.last_error = 0;
+    pid_turn_gyro.prev_error = 0;
+    pid_turn_gyro.error_integral = 0;
+    pid_turn_gyro.output = 0;
+}
+
 void PID_Data_Reset(void) {
     // 只清运行态，不破坏当前 profile 下的参数
     pid_servo_speed.error = 0;

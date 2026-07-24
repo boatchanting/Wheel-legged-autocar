@@ -353,6 +353,7 @@ void Control_Profile_Update1ms(void);//1ms 平滑参数更新器：当前生效�
 void PID_Param_Init(void);//pid参数初始化，同时也可以用于倒地保护
 void PID_Data_Reset(void);//pid运算相关数据重置，参数不重置
 void PID_Data_Clean_All(void);//pid运算相关数据全重置，参数也重置为0，即所有数据全部清空
+void Turn_Control_Reset(void);//只重置转向角度环/角速度环运行态
 float Float_Constrain(float val, float min, float max);//限幅函数
 
 float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
