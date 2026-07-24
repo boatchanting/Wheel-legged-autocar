@@ -56,10 +56,11 @@ th:first-child,td:first-child{text-align:left}
     <div id="rowsTag" class="tag">样本:0</div>
   </div>
   <div class="right">
-    <label>目标前进速度(mm/s) <input id="targetSpeed" type="number" step="10" min="1" value="500" /></label>
+    <label>目标速度(mm/s,+前/-反) <input id="targetSpeed" type="number" step="10" value="500" /></label>
     <label>刹车目标速度(mm/s) <input id="brakeTargetSpeed" type="number" step="10" value="0" /></label>
     <label><input id="multiPid" type="checkbox" checked /> 多 PID</label>
     <button id="startBtn" class="primary">开始</button>
+    <button id="forceBrakeBtn">开始刹车</button>
     <button id="cancelBtn" class="danger">停止</button>
     <button id="zeroBtn">零速</button>
     <button id="clearBtn">清屏</button>
@@ -83,7 +84,7 @@ th:first-child,td:first-child{text-align:left}
       <div class="grid">
         <div class="k">状态</div><div id="phase">-</div>
         <div class="k">日志</div><div id="logPath">-</div>
-        <div class="k">目标前进速度</div><div id="targetNow">-</div>
+        <div class="k">目标速度</div><div id="targetNow">-</div>
         <div class="k">车端速度命令</div><div id="vehicleNow">-</div>
         <div class="k">刹车目标速度</div><div id="brakeTargetNow">-</div>
         <div class="k">刹车车端命令</div><div id="brakeVehicleNow">-</div>
@@ -121,7 +122,7 @@ th:first-child,td:first-child{text-align:left}
 const S={api:false,frames:[],maxFrames:420,last:null,status:null};
 const POLL_DATA_MS=10;
 const POLL_STATUS_MS=320;
-const E={conn,payload,sampleTag,phaseTag,rowsTag,targetSpeed,brakeTargetSpeed,multiPid,startBtn,cancelBtn,zeroBtn,clearBtn,plot,speedTag,accelTag,distTag,phase,logPath,targetNow,vehicleNow,brakeTargetNow,brakeVehicleNow,carTargetNow,scaleNow,pidNow,telemetryPidNow,attNow,gyroNow,lastAck,rows,toast};
+const E={conn,payload,sampleTag,phaseTag,rowsTag,targetSpeed,brakeTargetSpeed,multiPid,startBtn,forceBrakeBtn,cancelBtn,zeroBtn,clearBtn,plot,speedTag,accelTag,distTag,phase,logPath,targetNow,vehicleNow,brakeTargetNow,brakeVehicleNow,carTargetNow,scaleNow,pidNow,telemetryPidNow,attNow,gyroNow,lastAck,rows,toast};
 const ctx=E.plot.getContext('2d');
 function tip(t){E.toast.textContent=t;E.toast.classList.add('show');clearTimeout(tip.t);tip.t=setTimeout(()=>E.toast.classList.remove('show'),3200)}
 function num(v,d=2){const n=Number(v);return Number.isFinite(n)?n.toFixed(d):'--'}
@@ -203,13 +204,15 @@ async function pollStatus(){
     E.rowsTag.textContent='样本:'+(ex.rows||0);
     E.logPath.textContent=ex.csv_path||'-';
     const hasRun=!!ex.run_id||!!ex.active||Number(ex.target_forward_speed_mm_s);
-    E.targetNow.textContent=hasRun?num(ex.target_forward_speed_mm_s,1)+' mm/s':'-';
+    const targetMotion=Number.isFinite(Number(ex.target_motion_speed_mm_s))?ex.target_motion_speed_mm_s:ex.target_forward_speed_mm_s;
+    E.targetNow.textContent=hasRun?num(targetMotion,1)+' mm/s':'-';
     E.vehicleNow.textContent=hasRun?num(ex.vehicle_speed_cmd,2):'-';
     E.brakeTargetNow.textContent=hasRun?num(ex.brake_target_speed_mm_s,1)+' mm/s':'-';
     E.brakeVehicleNow.textContent=hasRun?num(ex.brake_vehicle_speed_cmd,2):'-';
     E.scaleNow.textContent=Number.isFinite(Number(ex.speed_to_mm_s))?num(ex.speed_to_mm_s,3)+' mm/s/cmd':'-';
     E.pidNow.textContent=ex.multi_pid?'多 PID':'普通 PID';
     E.startBtn.disabled=!!ex.active;
+    E.forceBrakeBtn.disabled=!ex.active||ex.phase==='brake';
     E.cancelBtn.disabled=!ex.active;
     if(s.acks&&s.acks.length){const a=s.acks[s.acks.length-1];E.lastAck.textContent='ACK:0x'+Number(a.control).toString(16).padStart(2,'0')+' / '+a.status}
   }catch(_){}
@@ -218,6 +221,7 @@ async function pollStatus(){
 function initApi(){window.addEventListener('pywebviewready',()=>{S.api=true});const t=setInterval(()=>{if(window.pywebview&&window.pywebview.api){S.api=true;clearInterval(t)}},80)}
 function initButtons(){
   E.startBtn.onclick=async()=>{try{const r=await window.pywebview.api.start_experiment(E.targetSpeed.value,E.multiPid.checked,E.brakeTargetSpeed.value);tip(r&&r.msg?r.msg:(r&&r.success?'已开始':'开始失败'))}catch(e){tip('开始失败: '+(e.message||e))}};
+  E.forceBrakeBtn.onclick=async()=>{try{const r=await window.pywebview.api.force_brake_experiment();tip(r&&r.msg?r.msg:(r&&r.success?'已进入刹车':'开始刹车失败'))}catch(e){tip('开始刹车失败: '+(e.message||e))}};
   E.cancelBtn.onclick=async()=>{try{const r=await window.pywebview.api.cancel_experiment();tip(r&&r.error?r.error:'已停止')}catch(e){tip('停止失败: '+(e.message||e))}};
   E.zeroBtn.onclick=async()=>{try{const r=await window.pywebview.api.send_zero_speed();tip(r&&r.msg?r.msg:'已发送零速')}catch(e){tip('发送失败: '+(e.message||e))}};
   E.clearBtn.onclick=async()=>{S.frames=[];S.last=null;E.rows.innerHTML='';draw();try{await window.pywebview.api.clear_history()}catch(_){}};

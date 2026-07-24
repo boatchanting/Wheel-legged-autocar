@@ -45,6 +45,7 @@
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
+#include "tools/wifi_protocol.h"
 
 // 声明外部函数
 
@@ -76,10 +77,52 @@ static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣�
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
 static uint16 profile_switch_beep_ticks = 0U;      // 复刻PID切换蜂鸣剩余时间，1ms 递减
+static uint16 wifi_host_beep_ticks = 0U;           // WiFi host command beep, 1ms tick
 static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
 #define FALLEN_STANDUP_GRACE_MS (1500U)
+
+static uint8 Control_NavReplayRunning(void)
+{
+    if (g_replay_state == REPLAY_RUNNING)
+    {
+        return 1U;
+    }
+#if GNSS_NAV == 1
+    if (g_gps_replay_state == REPLAY_RUNNING)
+    {
+        return 1U;
+    }
+#endif
+    return 0U;
+}
+
+static uint8 Control_ReplayLikeActive(void)
+{
+    if (Control_NavReplayRunning() != 0U)
+    {
+        return 1U;
+    }
+    if (WifiHostSpeedTest_IsActive() != 0U)
+    {
+        return 1U;
+    }
+    return 0U;
+}
+
+static uint8 Control_AccelFeedforwardReplayLikeActive(void)
+{
+    if (Control_NavReplayRunning() != 0U)
+    {
+        return 1U;
+    }
+    if (WifiHostSpeedTest_AccelFeedforwardActive() != 0U)
+    {
+        return 1U;
+    }
+    return 0U;
+}
 
 #if IMU_REFRESH_TEST_ENABLE
 #define IMU_REFRESH_TEST_TIME_MS (10000U)
@@ -340,6 +383,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     if((g_motor_enable == 1) && (!g_fallen)){
         BumpyRoad_Update_1ms(); // 颠簸路段状态机
     }
+    WifiHostSpeedTest_Update1ms();
 
     
     // ==========================================================
@@ -428,20 +472,28 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     if (profile_switch_beep_request != 0U)
     {
         profile_switch_beep_request = 0U;
-        if (g_replay_state == REPLAY_RUNNING)
+        if (Control_ReplayLikeActive() != 0U)
         {
             profile_switch_beep_ticks = 50U; // 蜂鸣50ms
-            gpio_set_level(BUZZER_PIN, GPIO_HIGH);
         }
+    }
+    if (g_wifi_host_beep_request != 0U)
+    {
+        g_wifi_host_beep_request = 0U;
+        wifi_host_beep_ticks = 35U;
     }
     if (profile_switch_beep_ticks > 0U)
     {
         profile_switch_beep_ticks--;
-        if (profile_switch_beep_ticks == 0U)
-        {
-            gpio_set_level(BUZZER_PIN, GPIO_LOW);
-        }
     }
+    if (wifi_host_beep_ticks > 0U)
+    {
+        wifi_host_beep_ticks--;
+    }
+    gpio_set_level(
+        BUZZER_PIN,
+        ((profile_switch_beep_ticks > 0U) || (wifi_host_beep_ticks > 0U)) ? GPIO_HIGH : GPIO_LOW
+    );
 
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次，现改为9ms)
@@ -467,20 +519,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             }
             Brake_Feedforward_Update(target_speed_set, current_actual_speed, brake_ff_enable, jump_flag);
             {
-                uint8 accel_ff_replay_running = 0U;
+                uint8 accel_ff_replay_running = Control_AccelFeedforwardReplayLikeActive();
                 uint8 accel_ff_inhibit = 0U;
                 float brake_pwm_now = Brake_Feedforward_GetPwm();
-
-                if (g_replay_state == REPLAY_RUNNING)
-                {
-                    accel_ff_replay_running = 1U;
-                }
-                #if GNSS_NAV == 1
-                if (g_gps_replay_state == REPLAY_RUNNING)
-                {
-                    accel_ff_replay_running = 1U;
-                }
-                #endif
 
                 // 加速前馈计算阶段的屏蔽条件：
                 // 刹车前馈达到 BRAKE_ACCEL_INHIBIT_PWM 或特殊/视觉任务接管时，不再生成新的加速补偿；
@@ -843,18 +884,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // - 转向控制：同向输出 (+turn_gyro_loop_out) → 实现旋转
         float brake_pwm = Brake_Feedforward_GetPwm();
         float accel_ff_pwm = Accel_Feedforward_GetPwm();
-        uint8 accel_ff_replay_running_fast = 0U;
-        if (g_replay_state == REPLAY_RUNNING)
-        {
-            accel_ff_replay_running_fast = 1U;
-        }
-        #if GNSS_NAV == 1
-        if (g_gps_replay_state == REPLAY_RUNNING)
-        {
-            accel_ff_replay_running_fast = 1U;
-        }
-        #endif
-        if ((accel_ff_replay_running_fast == 0U) ||
+        if ((Control_AccelFeedforwardReplayLikeActive() == 0U) ||
             (g_motor_enable == 0) ||
             (g_fallen) ||
             (jump_flag != 0) ||
@@ -1023,6 +1053,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
+        && (WifiHostSpeedTest_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
@@ -1031,6 +1062,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
+        && (WifiHostSpeedTest_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif

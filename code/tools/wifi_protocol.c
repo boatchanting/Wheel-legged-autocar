@@ -1,5 +1,7 @@
 #include "wifi_protocol.h"
 #include "menu.h"
+#include "sbus.h"
+#include "../common.h"
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
 #include "../calculate/ekf.h"
@@ -13,13 +15,21 @@ static uint8_t tx_buf[WIFI_TX_BUFFER_SIZE];
 static uint16_t tx_idx = 0;
 
 uint8_t g_manual_log_enabled = 0;
+volatile uint8_t g_wifi_host_beep_request = 0U;
 #define WIFI_RX_READ_CHUNK   128U
 #define WIFI_RX_STREAM_SIZE  512U
 #define WIFI_FRAME_MIN_SIZE  6U
 #define WIFI_ACK_PAYLOAD_LEN 2U
+#define WIFI_SPEED_CMD_ZERO_EPS 0.001f
 
 static uint8_t rx_stream[WIFI_RX_STREAM_SIZE];
 static uint16_t rx_len = 0;
+static uint8_t s_host_speed_test_active = 0U;
+static float s_host_speed_test_cmd = 0.0f;
+static uint8_t s_host_speed_test_mode = (uint8_t)CONTROL_MODE_NORMAL;
+static float s_last_host_speed_cmd = 0.0f;
+static uint8_t s_last_host_speed_mode = (uint8_t)CONTROL_MODE_NORMAL;
+static uint8_t s_last_host_speed_valid = 0U;
 
 // ------------------------------------------------------------------
 // Serialization helpers (little-endian)
@@ -83,6 +93,133 @@ static float read_float_le(const uint8_t *src)
     value.b[2] = src[2];
     value.b[3] = src[3];
     return value.f;
+}
+
+static float wifi_protocol_absf(float value)
+{
+    return (value < 0.0f) ? -value : value;
+}
+
+static uint8_t wifi_protocol_speed_cmd_is_zero(float speed_cmd)
+{
+    return (uint8_t)(wifi_protocol_absf(speed_cmd) <= WIFI_SPEED_CMD_ZERO_EPS);
+}
+
+static uint8_t wifi_protocol_target_changed(float speed_cmd, uint8_t mode)
+{
+    if (s_last_host_speed_valid == 0U)
+    {
+        return 1U;
+    }
+    if (s_last_host_speed_mode != mode)
+    {
+        return 1U;
+    }
+    return (uint8_t)(wifi_protocol_absf(s_last_host_speed_cmd - speed_cmd) > WIFI_SPEED_CMD_ZERO_EPS);
+}
+
+static void wifi_protocol_request_host_beep(void)
+{
+    g_wifi_host_beep_request = 1U;
+}
+
+uint8_t WifiHostSpeedTest_IsActive(void)
+{
+    return s_host_speed_test_active;
+}
+
+uint8_t WifiHostSpeedTest_AccelFeedforwardActive(void)
+{
+    return (uint8_t)((s_host_speed_test_active != 0U) &&
+                     (s_host_speed_test_mode == (uint8_t)CONTROL_MODE_ACCEL) &&
+                     (wifi_protocol_speed_cmd_is_zero(s_host_speed_test_cmd) == 0U));
+}
+
+uint8_t WifiHostSpeedTest_Arm(void)
+{
+    if ((g_motor_enable == 0) || (g_brake_active != 0U) || (g_reverse_brake_active != 0U))
+    {
+        return 0U;
+    }
+
+    g_fallen = false;
+    g_load_flash_request = 0U;
+    g_replay_start_request = 0U;
+    g_replay_stop_request = 0U;
+    g_nav_start_recording = 0U;
+    g_nav_recording = 0U;
+    NavReplay_Stop();
+#if GNSS_NAV == 1
+    GpsNavReplay_Stop();
+#endif
+
+    s_host_speed_test_active = 1U;
+    s_host_speed_test_cmd = 0.0f;
+    s_host_speed_test_mode = (uint8_t)CONTROL_MODE_NORMAL;
+    s_last_host_speed_valid = 0U;
+    target_speed_set = 0.0f;
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
+    wifi_protocol_request_host_beep();
+    return 1U;
+}
+
+uint8_t WifiHostSpeedTest_SetTarget(float speed_cmd, uint8_t mode)
+{
+    const uint8_t zero_cmd = wifi_protocol_speed_cmd_is_zero(speed_cmd);
+
+    if (mode > (uint8_t)CONTROL_MODE_BRAKE)
+    {
+        return 0U;
+    }
+    if (s_host_speed_test_active == 0U)
+    {
+        return 0U;
+    }
+    if ((zero_cmd == 0U) && ((g_motor_enable == 0) || (g_brake_active != 0U) || (g_reverse_brake_active != 0U)))
+    {
+        return 0U;
+    }
+
+    s_host_speed_test_cmd = speed_cmd;
+    s_host_speed_test_mode = mode;
+    target_speed_set = speed_cmd;
+    Control_Profile_RequestMode((ControlMode_e)mode);
+
+    if (wifi_protocol_target_changed(speed_cmd, mode) != 0U)
+    {
+        s_last_host_speed_cmd = speed_cmd;
+        s_last_host_speed_mode = mode;
+        s_last_host_speed_valid = 1U;
+        wifi_protocol_request_host_beep();
+    }
+    return 1U;
+}
+
+void WifiHostSpeedTest_Stop(void)
+{
+    s_host_speed_test_active = 0U;
+    s_host_speed_test_cmd = 0.0f;
+    s_host_speed_test_mode = (uint8_t)CONTROL_MODE_NORMAL;
+    s_last_host_speed_valid = 0U;
+    target_speed_set = 0.0f;
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
+    wifi_protocol_request_host_beep();
+}
+
+void WifiHostSpeedTest_Update1ms(void)
+{
+    if (s_host_speed_test_active == 0U)
+    {
+        return;
+    }
+
+    if ((g_motor_enable == 0) || (g_fallen) || (g_brake_active != 0U) || (g_reverse_brake_active != 0U))
+    {
+        WifiHostSpeedTest_Stop();
+        return;
+    }
+
+    target_speed_set = s_host_speed_test_cmd;
 }
 
 static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
@@ -223,6 +360,35 @@ static void wifi_protocol_apply_host_control(uint8_t control_id, const uint8_t *
         break;
     }
 
+    case WIFI_HOST_CTRL_ARM_DIRECT_SPEED:
+    {
+        if (WifiHostSpeedTest_Arm() != 0U)
+        {
+            ack_status = WIFI_HOST_ACK_ACCEPTED;
+#if DEBUG_LOG_ENABLE
+            printf("[WIFI] Host cmd ARM_DIRECT_SPEED accepted.\r\n");
+#endif
+        }
+        else
+        {
+            ack_status = WIFI_HOST_ACK_REJECTED;
+#if DEBUG_LOG_ENABLE
+            printf("[WIFI] Host cmd ARM_DIRECT_SPEED rejected.\r\n");
+#endif
+        }
+        break;
+    }
+
+    case WIFI_HOST_CTRL_STOP_DIRECT_SPEED:
+    {
+        WifiHostSpeedTest_Stop();
+        ack_status = WIFI_HOST_ACK_ACCEPTED;
+#if DEBUG_LOG_ENABLE
+        printf("[WIFI] Host cmd STOP_DIRECT_SPEED accepted.\r\n");
+#endif
+        break;
+    }
+
     case WIFI_HOST_CTRL_SET_TARGET_SPEED:
     {
         if (payload_len < 7U)
@@ -233,17 +399,36 @@ static void wifi_protocol_apply_host_control(uint8_t control_id, const uint8_t *
 
         const float speed_cmd = read_float_le(&payload[1]);
         const uint8_t mode = payload[5];
+        const uint8_t zero_cmd = wifi_protocol_speed_cmd_is_zero(speed_cmd);
         if (mode > (uint8_t)CONTROL_MODE_BRAKE)
         {
             ack_status = WIFI_HOST_ACK_INVALID_PAYLOAD;
             break;
         }
 
-        target_speed_set = speed_cmd;
-        Control_Profile_RequestMode((ControlMode_e)mode);
-        ack_status = WIFI_HOST_ACK_ACCEPTED;
+        if (WifiHostSpeedTest_IsActive() != 0U)
+        {
+            if (WifiHostSpeedTest_SetTarget(speed_cmd, mode) != 0U)
+            {
+                ack_status = WIFI_HOST_ACK_ACCEPTED;
+            }
+            else
+            {
+                ack_status = WIFI_HOST_ACK_REJECTED;
+            }
+        }
+        else if (zero_cmd != 0U)
+        {
+            target_speed_set = 0.0f;
+            Control_Profile_RequestMode((ControlMode_e)mode);
+            ack_status = WIFI_HOST_ACK_ACCEPTED;
+        }
+        else
+        {
+            ack_status = WIFI_HOST_ACK_REJECTED;
+        }
 #if DEBUG_LOG_ENABLE
-        printf("[WIFI] Host cmd SET_TARGET_SPEED speed=%.2f mode=%u accepted.\r\n", speed_cmd, mode);
+        printf("[WIFI] Host cmd SET_TARGET_SPEED speed=%.2f mode=%u status=%u.\r\n", speed_cmd, mode, ack_status);
 #endif
         break;
     }

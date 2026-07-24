@@ -21,6 +21,8 @@
 #define WIFI_HOST_CTRL_START_LOG          0x05
 #define WIFI_HOST_CTRL_STOP_LOG           0x06
 #define WIFI_HOST_CTRL_SET_TARGET_SPEED   0x20
+#define WIFI_HOST_CTRL_ARM_DIRECT_SPEED   0x21
+#define WIFI_HOST_CTRL_STOP_DIRECT_SPEED  0x22
 
 // Host control ACK status
 #define WIFI_HOST_ACK_ACCEPTED            0x00
@@ -29,6 +31,15 @@
 #define WIFI_HOST_ACK_INVALID_PAYLOAD     0x03
 
 #define WIFI_TX_BUFFER_SIZE     320
+
+extern volatile uint8_t g_wifi_host_beep_request;
+
+uint8_t WifiHostSpeedTest_IsActive(void);
+uint8_t WifiHostSpeedTest_Arm(void);
+uint8_t WifiHostSpeedTest_SetTarget(float speed_cmd, uint8_t mode);
+void WifiHostSpeedTest_Stop(void);
+void WifiHostSpeedTest_Update1ms(void);
+uint8_t WifiHostSpeedTest_AccelFeedforwardActive(void);
 
 // Send telemetry frame to host
 void wifi_protocol_send_data(void);
