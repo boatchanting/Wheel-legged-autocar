@@ -245,19 +245,8 @@ def _normalize_marker_type(value):
     return None
 
 
-def _is_entry_exit_pair(entry_type, exit_type):
-    return 1 <= entry_type <= 5 and exit_type == entry_type * 10
-
-
-def _pair_relative_yaw_deg(x0, y0, x1, y1):
-    """Match the vehicle navigation coordinate convention used by route replay."""
-    if math.isclose(x0, x1) and math.isclose(y0, y1):
-        return 0.0
-    return _normalize_relative_yaw_deg(-math.degrees(math.atan2(y1 - y0, -(x1 - x0))))
-
-
 def _prepare_export_points(points):
-    """Validate marker records and replace yaw with adjacent entry-exit segment yaw."""
+    """Validate marker records without changing the raw relative yaw captured at each point."""
     prepared = []
     for i, item in enumerate(points):
         if not isinstance(item, dict):
@@ -267,6 +256,7 @@ def _prepare_export_points(points):
         y = _safe_float(item.get("y"))
         point_type = _normalize_marker_type(item.get("point_type", 0))
         heading_deg = _normalize_heading_deg(item.get("heading", 0.0))
+        relative_yaw_deg = _normalize_relative_yaw_deg(item.get("relative_yaw", 0.0))
         if x is None or y is None:
             raise ValueError(f"第 {i + 1} 个标记点坐标无效")
         if point_type is None:
@@ -278,22 +268,10 @@ def _prepare_export_points(points):
             "y": y,
             "point_type": point_type,
             "heading": 0.0 if heading_deg is None else heading_deg,
-            "relative_yaw": 0.0,
+            "relative_yaw": 0.0 if relative_yaw_deg is None else relative_yaw_deg,
         })
 
-    pair_count = 0
-    for i in range(len(prepared) - 1):
-        entry = prepared[i]
-        exit_point = prepared[i + 1]
-        if not _is_entry_exit_pair(entry["point_type"], exit_point["point_type"]):
-            continue
-
-        yaw = _pair_relative_yaw_deg(entry["x"], entry["y"], exit_point["x"], exit_point["y"])
-        entry["relative_yaw"] = yaw
-        exit_point["relative_yaw"] = yaw
-        pair_count += 1
-
-    return prepared, pair_count
+    return prepared
 
 
 def _estimate_start_heading():
@@ -674,7 +652,7 @@ class Api:
             if not isinstance(points, list) or not points:
                 return {"success": False, "msg": "没有可导出的标记点"}
 
-            points, pair_count = _prepare_export_points(points)
+            points = _prepare_export_points(points)
             count = len(points)
             start_heading = _estimate_start_heading()
             start_heading_str = "" if start_heading is None else f"{start_heading:.3f}"
@@ -714,7 +692,7 @@ class Api:
             heading_msg = "NA" if start_heading is None else f"{start_heading:.3f}"
             return {
                 "success": True,
-                "msg": f"导出成功: {filepath} (进入/退出线段={pair_count}, start_heading={heading_msg})",
+                "msg": f"导出成功: {filepath} (保留原始 relative_yaw, start_heading={heading_msg})",
                 "path": filepath,
                 "start_heading": start_heading,
             }

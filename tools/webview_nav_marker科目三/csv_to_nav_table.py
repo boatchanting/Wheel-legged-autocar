@@ -86,25 +86,6 @@ def calc_path_yaw_deg(x0: float, y0: float, x1: float, y1: float) -> float:
     return -math.degrees(math.atan2(y1 - y0, -(x1 - x0)))
 
 
-def is_entry_exit_pair(entry_type: int, exit_type: int) -> bool:
-    return 1 <= entry_type <= 5 and exit_type == entry_type * 10
-
-
-def apply_entry_exit_segment_yaws(points: List[RoutePoint]) -> None:
-    """Set both ends of each adjacent entry/exit pair to its segment direction."""
-    for idx in range(len(points) - 1):
-        entry = points[idx]
-        exit_point = points[idx + 1]
-        if not is_entry_exit_pair(entry.point_type, exit_point.point_type):
-            continue
-        if math.isclose(entry.x, exit_point.x) and math.isclose(entry.y, exit_point.y):
-            yaw = 0.0
-        else:
-            yaw = calc_path_yaw_deg(entry.x, entry.y, exit_point.x, exit_point.y)
-        entry.target_yaw_deg = normalize_relative_yaw_deg(yaw)
-        exit_point.target_yaw_deg = normalize_relative_yaw_deg(yaw)
-
-
 def infer_target_yaws(points: List[RoutePoint]) -> None:
     count = len(points)
     for idx, point in enumerate(points):
@@ -186,7 +167,6 @@ def read_points(csv_path: Path) -> Tuple[List[RoutePoint], Optional[float]]:
 
     points.sort(key=lambda item: item.index)
     infer_target_yaws(points)
-    apply_entry_exit_segment_yaws(points)
     fill_missing_heading(points)
     return points, start_heading
 

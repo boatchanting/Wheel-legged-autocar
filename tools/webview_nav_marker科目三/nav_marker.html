@@ -79,7 +79,7 @@ tr.sel{background:#eaf2ff}
 <div class="main">
   <div class="card canvas-card">
     <canvas id="cv"></canvas>
-    <div class="hint">拖拽平移 | 滚轮缩放 | 双击加点 | 拖动点可位移<br/>进入点与紧邻的同类型退出点（标签末尾加 0）显示为线段，偏航角自动由线段方向计算</div>
+    <div class="hint">拖拽平移 | 滚轮缩放 | 双击加点 | 拖动点可位移<br/>箭头表示设备原始 relative_yaw；特殊元素进入点的状态机方向角直接使用该原始值，不由进入/退出点连线计算</div>
   </div>
   <div class="card side">
     <div class="box">
@@ -161,10 +161,9 @@ function w2s(x,y){const c=center();return{x:c.x+x*V.scale,y:c.y-y*V.scale}}
 function s2w(x,y){const c=center();return{x:(x-c.x)/V.scale,y:-(y-c.y)/V.scale}}
 function getSel(){return S.marks.find(m=>m.id===S.sel)||null}
  function isEntryExitPair(entry,exit){return entry&&exit&&entry.type>=1&&entry.type<=5&&exit.type===entry.type*10}
- function calcPairYaw(entry,exit){if(!isEntryExitPair(entry,exit))return 0;const dx=exit.x-entry.x,dy=exit.y-entry.y;if(Math.abs(dx)<1e-6&&Math.abs(dy)<1e-6)return 0;return normalizeYaw(-Math.atan2(dy,-dx)*180/Math.PI)}
- function markerYaw(index){const mark=S.marks[index];if(!mark)return 0;if(isEntryExitPair(mark,S.marks[index+1]))return calcPairYaw(mark,S.marks[index+1]);if(isEntryExitPair(S.marks[index-1],mark))return calcPairYaw(S.marks[index-1],mark);return 0}
+   function markerYaw(index){const mark=S.marks[index];return mark?normalizeYaw(mark.relative_yaw):0}
  function markerColor(type){return COLORS[type>=10?type/10:type]||'#374151'}
- function addMark(x,y,t,src,headingDeg){const m={id:S.nextId++,x:Number(x),y:Number(y),type:clampType(t),src:src||'manual',heading:normalizeHeading(headingDeg)};S.marks.push(m);if(S.marks.length>S.maxMarks)S.marks.splice(0,S.marks.length-S.maxMarks);S.sel=m.id;syncMarks();draw()}
+  function addMark(x,y,t,src,headingDeg,relativeYawDeg){const m={id:S.nextId++,x:Number(x),y:Number(y),type:clampType(t),src:src||'manual',heading:normalizeHeading(headingDeg),relative_yaw:normalizeYaw(relativeYawDeg)};S.marks.push(m);if(S.marks.length>S.maxMarks)S.marks.splice(0,S.marks.length-S.maxMarks);S.sel=m.id;syncMarks();draw()}
 function rmSel(){if(S.sel==null)return;const n=S.marks.length;S.marks=S.marks.filter(m=>m.id!==S.sel);if(S.marks.length!==n){S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()}}
     function fitAll(){const pts=[];for(const kind of traceVisibleKinds()){for(const p of tracePoints(kind))pts.push({x:p.x,y:p.y})}for(const m of S.marks)pts.push({x:m.x,y:m.y});if(!pts.length)return;let minX=pts[0].x,maxX=pts[0].x,minY=pts[0].y,maxY=pts[0].y;for(let i=1;i<pts.length;i++){const p=pts[i];if(p.x<minX)minX=p.x;if(p.x>maxX)maxX=p.x;if(p.y<minY)minY=p.y;if(p.y>maxY)maxY=p.y}const s=size();const margin=60;const w=Math.max(10,s.w-margin*2),h=Math.max(10,s.h-margin*2);const rx=Math.max(10,maxX-minX),ry=Math.max(10,maxY-minY);V.scale=Math.max(0.0015,Math.min(2.2,Math.min(w/rx,h/ry)));const cx=(minX+maxX)*0.5,cy=(minY+maxY)*0.5;V.ox=-cx*V.scale;V.oy=cy*V.scale}
 function follow(){if(!S.last)return;V.ox=-S.last.x*V.scale;V.oy=S.last.y*V.scale}
@@ -173,8 +172,9 @@ function grid(w,h){const stepMm=1000;const sp=stepMm*V.scale;const c=center();ct
 function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(0,c.y);ctx.lineTo(w,c.y);ctx.stroke();ctx.beginPath();ctx.moveTo(c.x,0);ctx.lineTo(c.x,h);ctx.stroke();ctx.fillStyle='#6183a8';ctx.beginPath();ctx.arc(c.x,c.y,3.5,0,Math.PI*2);ctx.fill()}
     function drawTrace(kind){if(!S.traceVisible[kind])return;const pts=tracePoints(kind);if(pts.length<2)return;ctx.lineWidth=2;for(let i=1;i<pts.length;i++){const p1=w2s(pts[i-1].x,pts[i-1].y);const p2=w2s(pts[i].x,pts[i].y);ctx.strokeStyle=traceColor(kind,pts[i]);ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke()}const last=pts[pts.length-1];const p=w2s(last.x,last.y);ctx.fillStyle=tracePointColor(kind,last);ctx.beginPath();ctx.arc(p.x,p.y,5.5,0,Math.PI*2);ctx.fill()}
     function drawTraces(){for(const kind of ['ins','gps','fusion'])drawTrace(kind)}
-function drawMarkerSegments(){for(let i=0;i<S.marks.length-1;i++){const entry=S.marks[i],exit=S.marks[i+1];if(!isEntryExitPair(entry,exit))continue;const p1=w2s(entry.x,entry.y),p2=w2s(exit.x,exit.y);ctx.strokeStyle=markerColor(entry.type);ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke()}}
-function drawMarks(){drawMarkerSegments();for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=markerColor(m.type),isExit=m.type>=10;ctx.fillStyle=isExit?'#fff':col;ctx.strokeStyle=col;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();ctx.stroke();if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
+ function drawMarkerSegments(){for(let i=0;i<S.marks.length-1;i++){const entry=S.marks[i],exit=S.marks[i+1];if(!isEntryExitPair(entry,exit))continue;const p1=w2s(entry.x,entry.y),p2=w2s(exit.x,exit.y);ctx.strokeStyle=markerColor(entry.type);ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(p1.x,p1.y);ctx.lineTo(p2.x,p2.y);ctx.stroke()}}
+ function drawYawArrow(p,yawDeg,col,selected){const len=selected?19:16;ctx.save();ctx.translate(p.x,p.y);ctx.rotate(Math.PI-normalizeYaw(yawDeg)*Math.PI/180);ctx.strokeStyle='#fff';ctx.lineWidth=4;ctx.lineCap='round';ctx.beginPath();ctx.moveTo(-len*.45,0);ctx.lineTo(len*.55,0);ctx.stroke();ctx.strokeStyle=col;ctx.lineWidth=2.2;ctx.beginPath();ctx.moveTo(-len*.45,0);ctx.lineTo(len*.55,0);ctx.stroke();ctx.fillStyle=col;ctx.beginPath();ctx.moveTo(len*.62,0);ctx.lineTo(len*.15,-len*.27);ctx.lineTo(len*.15,len*.27);ctx.closePath();ctx.fill();ctx.restore()}
+ function drawMarks(){drawMarkerSegments();for(let i=0;i<S.marks.length;i++){const m=S.marks[i],p=w2s(m.x,m.y),sel=(m.id===S.sel),col=markerColor(m.type),isExit=m.type>=10;ctx.fillStyle=isExit?'#fff':col;ctx.strokeStyle=col;ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,sel?8:6.5,0,Math.PI*2);ctx.fill();ctx.stroke();drawYawArrow(p,m.relative_yaw,col,sel);if(sel){ctx.strokeStyle='#111827';ctx.lineWidth=2;ctx.beginPath();ctx.arc(p.x,p.y,11,0,Math.PI*2);ctx.stroke()}ctx.fillStyle='#111827';ctx.font='12px Microsoft YaHei';ctx.fillText('#'+i,p.x+9,p.y-9);ctx.fillText(String(m.type),p.x+9,p.y+7)}}
     function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraces();drawMarks()}
 // 渲染 vxBody 内容
 function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
@@ -190,9 +190,9 @@ async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pyweb
     function feed(frames){
       if(!Array.isArray(frames)||!frames.length)return;
       for(const it of frames){
-        const x=Number(it.nav_x),y=Number(it.nav_y),hdg=normalizeHeading(it.heading||0),pid_mode=Number(it.pid_mode||0),slip_flag=Number(it.slip_flag||0);
+        const x=Number(it.nav_x),y=Number(it.nav_y),hdg=normalizeHeading(it.heading||0),rawYaw=normalizeYaw(it.relative_yaw||0),pid_mode=Number(it.pid_mode||0),slip_flag=Number(it.slip_flag||0);
         if(Number.isFinite(x)&&Number.isFinite(y)){
-          S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),heading:hdg,pid_mode:pid_mode,slip_flag:slip_flag};
+          S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),heading:hdg,relative_yaw:rawYaw,pid_mode:pid_mode,slip_flag:slip_flag};
           addTracePoint('ins',x,y,{pid_mode:pid_mode,slip_flag:slip_flag})
         }
         if(Number(it.gps_valid)&&Number(it.gps_origin_set)){
@@ -204,7 +204,7 @@ async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pyweb
           if(Number.isFinite(fx)&&Number.isFinite(fy))addTracePoint('fusion',fx,fy)
         }
         const trig=Number(it.mark_trigger)||0;
-        if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',hdg);S.lastMarkLoop=Number(it.loop)||0}
+        if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',hdg,rawYaw);S.lastMarkLoop=Number(it.loop)||0}
         S.lastTrigger=trig;
         S.payload=it.payload_size||'--';
         S.vx_body=it.vx_body!=null?Number(it.vx_body).toFixed(3):'--';
@@ -219,7 +219,7 @@ async function pollData(){if(!S.api||!window.pywebview||!window.pywebview.api){s
 let stTick=0;
 async function pollStatus(){if(!S.api||!window.pywebview||!window.pywebview.api){setTimeout(pollStatus,500);return}try{const s=await window.pywebview.api.get_status();if(s&&s.server_error)setConn(false,s.server_error,'err');else if(s&&s.connected){const p=s.peer?`\u5df2\u8fde\u63a5 ${s.peer}`:'\u5df2\u8fde\u63a5';if(s.data_fresh||s.frame_fresh)setConn(true,p,'ok');else setConn(false,p+' (\u65e0\u6709\u6548\u6570\u636e)','warn')}else setConn(false,'\u7b49\u5f85\u8fde\u63a5','warn');stTick+=1;if(stTick%4===0&&s)E.payload.textContent='Payload:'+(s.last_payload_size||'--')}catch(_){ }setTimeout(pollStatus,320)}
 function updateSelectedHeading(){const m=getSel();if(!m)return;const raw=Number(E.inpHeading.value);if(!Number.isFinite(raw))return;m.heading=normalizeHeading(raw);syncSel();syncRows();draw()}
-function initCanvas(){const c=E.cv;c.onmousedown=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;const m=hit(x,y);S.mx=x;S.my=y;if(m){S.sel=m.id;S.dragId=m.id;c.style.cursor='move'}else{S.pan=true;c.style.cursor='grabbing'}syncMarks();draw()};c.onmousemove=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;if(S.dragId!=null){const m=S.marks.find(v=>v.id===S.dragId);if(m){const p=s2w(x,y);m.x=p.x;m.y=p.y;syncSel();syncRows();draw()}return}if(S.pan){const dx=x-S.mx,dy=y-S.my;V.ox+=dx;V.oy+=dy;S.mx=x;S.my=y;V.follow=false;E.bFollow.classList.remove('active');draw()}};const stop=()=>{S.dragId=null;S.pan=false;c.style.cursor='grab'};c.onmouseup=stop;c.onmouseleave=stop;c.onwheel=(ev)=>{ev.preventDefault();const r=c.getBoundingClientRect(),sx=ev.clientX-r.left,sy=ev.clientY-r.top;const p=s2w(sx,sy);V.scale*=ev.deltaY>0?0.9:1.1;V.scale=Math.max(0.0015,Math.min(2.5,V.scale));const s=size();V.ox=sx-s.w*0.5-p.x*V.scale;V.oy=sy-s.h*0.5+p.y*V.scale;V.follow=false;E.bFollow.classList.remove('active');draw()};c.ondblclick=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top,p=s2w(x,y);const heading=S.last?S.last.heading:0;addMark(p.x,p.y,Number(E.selType.value||0),'manual',heading);tip('\u5df2\u65b0\u589e\u6807\u8bb0\u70b9')}}
+ function initCanvas(){const c=E.cv;c.onmousedown=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;const m=hit(x,y);S.mx=x;S.my=y;if(m){S.sel=m.id;S.dragId=m.id;c.style.cursor='move'}else{S.pan=true;c.style.cursor='grabbing'}syncMarks();draw()};c.onmousemove=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top;if(S.dragId!=null){const m=S.marks.find(v=>v.id===S.dragId);if(m){const p=s2w(x,y);m.x=p.x;m.y=p.y;syncSel();syncRows();draw()}return}if(S.pan){const dx=x-S.mx,dy=y-S.my;V.ox+=dx;V.oy+=dy;S.mx=x;S.my=y;V.follow=false;E.bFollow.classList.remove('active');draw()}};const stop=()=>{S.dragId=null;S.pan=false;c.style.cursor='grab'};c.onmouseup=stop;c.onmouseleave=stop;c.onwheel=(ev)=>{ev.preventDefault();const r=c.getBoundingClientRect(),sx=ev.clientX-r.left,sy=ev.clientY-r.top;const p=s2w(sx,sy);V.scale*=ev.deltaY>0?0.9:1.1;V.scale=Math.max(0.0015,Math.min(2.5,V.scale));const s=size();V.ox=sx-s.w*0.5-p.x*V.scale;V.oy=sy-s.h*0.5+p.y*V.scale;V.follow=false;E.bFollow.classList.remove('active');draw()};c.ondblclick=(ev)=>{const r=c.getBoundingClientRect(),x=ev.clientX-r.left,y=ev.clientY-r.top,p=s2w(x,y);const heading=S.last?S.last.heading:0,rawYaw=S.last?S.last.relative_yaw:0;addMark(p.x,p.y,Number(E.selType.value||0),'manual',heading,rawYaw);tip('\u5df2\u65b0\u589e\u6807\u8bb0\u70b9')}}
     function initBtns(){
     fillType(E.selType,0);
     syncTraceControls();
@@ -233,7 +233,7 @@ E.bRealDistance.onclick=()=>{S.showRealDistance=!S.showRealDistance;E.bRealDista
 E.bAdaptive.onclick=()=>{V.adaptive=!V.adaptive;E.bAdaptive.classList.toggle('active',V.adaptive);if(V.adaptive){fitAll();draw()}};
 E.bFit.onclick=()=>{fitAll();draw()};
 E.bReset.onclick=()=>{V.scale=0.035;V.ox=0;V.oy=0;draw()};
-E.bAdd.onclick=()=>{if(!S.last){tip('\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u8f68\u8ff9\u70b9');return}addMark(S.last.x,S.last.y,Number(E.selType.value||S.last.pt||0),'manual',S.last.heading);tip('\u5df2\u6dfb\u52a0\u5f53\u524d\u70b9')};
+ E.bAdd.onclick=()=>{if(!S.last){tip('\u5f53\u524d\u6ca1\u6709\u53ef\u7528\u8f68\u8ff9\u70b9');return}addMark(S.last.x,S.last.y,Number(E.selType.value||S.last.pt||0),'manual',S.last.heading,S.last.relative_yaw);tip('\u5df2\u6dfb\u52a0\u5f53\u524d\u70b9')};
 E.bDel.onclick=()=>{rmSel();tip('\u5df2\u5220\u9664\u9009\u4e2d\u70b9')};
 E.bClrM.onclick=()=>{S.marks=[];S.sel=null;syncMarks();draw();tip('\u5df2\u6e05\u7a7a\u6807\u8bb0\u70b9')};
 E.bClrT.onclick=async()=>{

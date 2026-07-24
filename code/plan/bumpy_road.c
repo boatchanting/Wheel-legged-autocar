@@ -9,13 +9,13 @@ extern volatile uint8 exit_beep_request;
 #define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (800.0f)
 
 /* ========================= 参数区（可按实车调参） ========================= */
-#define BUMPY_ROAD_LOCK_SPEED_SET        (-200.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
+#define BUMPY_ROAD_LOCK_SPEED_SET        (-400.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
 #define BUMPY_ROAD_VISUAL_EXIT_MIN_DISTANCE_MM (1000.0f) // 累计满 1m 后才允许由视觉确认出口
-#define BUMPY_ROAD_TARGET_DISTANCE_MM    (3000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
+#define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
 #define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms(10个1ms周期)更新一次距离
 
 #define BUMPY_ROAD_STALL_SPEED_ABS_TH    (50.0f)        // 卡顿检测速度阈值(mm/s)，低于此值认为可能卡住
-#define BUMPY_ROAD_STALL_PITCH_TH        (2.6f)         // 卡顿检测俯仰角阈值(°)，大于此值且速度低时认为卡住
+#define BUMPY_ROAD_STALL_PITCH_TH        (1.6f)         // 卡顿检测俯仰角阈值(°)，大于此值且速度低时认为卡住
 #define BUMPY_ROAD_STALL_MS              (100U)         // 卡顿持续时间阈值(ms)，持续满足卡顿条件此时间才判定为卡住
 
 #define BUMPY_ROAD_JUMP_MIN_GAP_MS       (1000U)        // 两次跳跃动作最小间隔(ms)，防止频繁跳跃
@@ -187,9 +187,17 @@ void BumpyRoad_Update_1ms(void)
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
         target_speed_set = BUMPY_ROAD_LOCK_SPEED_SET;
-        BumpyRoad_ApplyVisionSteer();
+        if (s_bumpy_ctx.correction_applied != 0U)
+        {
+            err_degree = 0.0f;
+        }
+        else
+        {
+            BumpyRoad_ApplyVisionSteer();
+        }
 
-        if (jump_flag == 0U)
+        if ((s_bumpy_ctx.correction_applied == 0U) &&
+            (jump_flag == 0U))
         {
             const float left_speed_abs = fabsf((float)motor_value.receive_left_speed_data);
             const float right_speed_abs = fabsf((float)motor_value.receive_right_speed_data);
@@ -266,6 +274,9 @@ void BumpyRoad_Update_1ms(void)
                 s_bumpy_ctx.correction_start_x_mm = inertial_nav.x;
                 s_bumpy_ctx.correction_start_y_mm = inertial_nav.y;
                 s_bumpy_ctx.correction_applied = 1U;
+                s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;
+                s_bumpy_ctx.stall_counter_ms = 0U;
+                err_degree = 0.0f;
             }
 
             if ((s_bumpy_ctx.correction_applied != 0U) &&
