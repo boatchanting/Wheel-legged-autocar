@@ -1,6 +1,7 @@
 #include "../nav_replay.h"
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
+#include "../../../vision/vision_bridge_control.h"
 #if (CURRENT_NAV_PLAN == 3) && (NAV_PLAN3_METHOD == PLAN3_METHOD_PRECISE)
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;
@@ -17,6 +18,8 @@ uint8 g_special_action_trigger = 0;         // 触发标志
 #endif
 
 static uint8 g_start_heading_aligned = 1;
+// 单边桥入口已交给视觉任务后，等待视觉任务结束并消费紧邻的 40 退出锚点。
+static uint8 s_bridge_exit_pending = 0U;
 
 #if IMU_CATEGORY == 3
 static uint8 s_start_heading_stable_count = 0;
@@ -46,6 +49,27 @@ static float NormalizeAngle(float angle)
 static float CalcDistance(float x1, float y1, float x2, float y2)
 {
     return sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
+}
+
+static uint8 NavReplay_IsBridgeExitPoint(uint16 point_idx)
+{
+    return (uint8)((point_idx < nav_ram_data.point_count) &&
+                   (nav_ram_data.points[point_idx].point_type == NAV_POINT_BRIDGE_EXIT));
+}
+
+static void NavReplay_CompleteVisionBridgeExit(void)
+{
+    // 40 只是视觉桥任务的退出锚点，不能再次作为普通特殊点触发状态机。
+    if (NavReplay_IsBridgeExitPoint(g_target_idx))
+    {
+        nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
+        nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
+        Buzzer_Beep_Times(2U);
+        g_target_idx++;
+    }
+
+    s_bridge_exit_pending = 0U;
+    g_special_action_trigger = 0U;
 }
 
 // ========================= 接口实现 =========================
@@ -87,6 +111,7 @@ void NavReplay_Start(void)
     g_target_idx = 0; // 从第1个点开始（起始点没有储存，默认为(0,0)）
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
+    s_bridge_exit_pending = 0U;
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
     s_start_heading_stable_count = 0;
@@ -110,6 +135,7 @@ void NavReplay_Stop(void)
     g_replay_state = REPLAY_IDLE;
     err_degree = 0.0f;
     g_special_action_trigger = 0;
+    s_bridge_exit_pending = 0U;
     g_start_heading_aligned = 1;
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
@@ -143,10 +169,32 @@ static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下�
 
 void NavReplay_Process(void)
 {
-    if (g_replay_state != REPLAY_RUNNING || g_special_action_trigger == 1) 
+    if (g_replay_state != REPLAY_RUNNING)
     {
         s_prev_err_degree = 0.0f; 
         s_is_aligning = 0; // 状态机接管或停止时，确保解锁
+        return;
+    }
+
+    // 视觉桥任务结束后，将融合坐标钉到 40 退出锚点并直接进入后续普通点。
+    if (s_bridge_exit_pending)
+    {
+        if (!VisionBridgeTask_IsActive())
+        {
+            NavReplay_CompleteVisionBridgeExit();
+            s_prev_err_degree = 0.0f;
+            s_is_aligning = 0U;
+        }
+        else
+        {
+            return;
+        }
+    }
+
+    if (g_special_action_trigger == 1)
+    {
+        s_prev_err_degree = 0.0f;
+        s_is_aligning = 0U;
         return;
     }
 
@@ -188,9 +236,11 @@ void NavReplay_Process(void)
     g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
 
     // 3. 计算距离和期望位置角度
-    float dx = tx - inertial_nav.x;
-    float dy = ty - inertial_nav.y;
-    float dist = CalcDistance(inertial_nav.x, inertial_nav.y, tx, ty);
+    float nav_x = nav_vision_fusion_x;
+    float nav_y = nav_vision_fusion_y;
+    float dx = tx - nav_x;
+    float dy = ty - nav_y;
+    float dist = CalcDistance(nav_x, nav_y, tx, ty);
 
     float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
     float raw_err = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
@@ -227,7 +277,13 @@ void NavReplay_Process(void)
                 // 位置到了，角度也转对了！正式触发状态机！
                 if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
                 else if (g_current_point_type == NAV_POINT_JUMP) vision_detected_three_jump_point = 1;
-                else if (g_current_point_type == NAV_POINT_BRIDGE) VisionBridgeTask_Start();
+                else if (g_current_point_type == NAV_POINT_BRIDGE)
+                {
+                    // 桥入口、视觉桥任务真正结束时各鸣叫两声，便于实车确认交接时刻。
+                    Buzzer_Beep_Times(2U);
+                    s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
+                    VisionBridgeTask_Start();
+                }
                 else if (g_current_point_type == NAV_POINT_BUMP) BumpyRoad_Trigger();
                 
                 g_special_action_trigger = 1;

@@ -42,6 +42,7 @@ typedef struct
     uint16 exit_lost_ticks;           /* 下桥阶段：连续多少次没看到线了 */
     uint16 bridge_hold_ticks;         /* 看见桥面黑块后的“闭眼盲跑”倒计时 */
     uint16 align_ok_ticks;            /* 桥头对齐：连续多少次对准了 */
+    uint8 bridge_seen;                /* 本次任务已经可靠看见过桥，才允许视觉丢失判定为出口 */
     uint32 last_seq;                  /* 上次滤波处理的 IPC 序号 */
     uint8 center_filter_valid;
     uint8 center_filter_pending_jump;
@@ -356,7 +357,7 @@ static void vision_bridge_apply_normal_posture(void)
  * 
  * @param next_state 下一个阶段是什么
  * 
- * @note 切换时，把计时器清零。如果是切换到“下桥”，还要记下下桥那一刻的位置。
+ * @note 切换时把计时器清零；下桥完成由视觉确认或时间兜底决定，不依赖惯导距离。
  */
 static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
 {
@@ -372,11 +373,6 @@ static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
         s_bridge_task.run_yaw_locked = 0U;
     }
 
-    if (next_state == VISION_BRIDGE_TASK_EXIT)
-    {
-        s_bridge_task.exit_start_x_mm = inertial_nav.x;
-        s_bridge_task.exit_start_y_mm = inertial_nav.y;
-    }
 }
 
 /**
@@ -617,6 +613,7 @@ void VisionBridgeTask_Update_2ms(void)
             if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
                 (packet->bridge_stable_detected != 0U))
             {
+                s_bridge_task.bridge_seen = 1U;
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
                 vision_bridge_apply_high_posture();
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
@@ -640,6 +637,7 @@ void VisionBridgeTask_Update_2ms(void)
             if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
                 (packet->bridge_stable_detected != 0U))
             {
+                s_bridge_task.bridge_seen = 1U;
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
             }
             else if (s_bridge_task.bridge_hold_ticks > 0U)
@@ -691,10 +689,10 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 至少跑够一定距离（比如 1 米）才允许判断是不是下桥了 */
-            if (traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM)
+            /* 可靠见桥后，连续看不到桥和桥中心线才判定视觉脱出。 */
+            if (s_bridge_task.bridge_seen != 0U)
             {
-                /* 怎么判断下桥？线看不见 + 桥看不见 + 倒计时归零 + 画面里的白赛道不多 */
+                /* 桥与桥中心线均丢失、且防抖倒计时归零，说明已经驶出桥区。 */
                 const uint8 no_visual = (uint8)((packet->bridge_geometry_stable_detected == 0U) &&
                                                 (packet->bridge_stable_detected == 0U) &&
                                                 (s_bridge_task.bridge_hold_ticks == 0U));
@@ -708,9 +706,9 @@ void VisionBridgeTask_Update_2ms(void)
                 }
             }
 
-            /* 如果连续很多次都疑似下桥，或者跑得太远了（超时保护），进入下桥阶段 */
+            /* 正常路径由视觉丢失确认脱出；视觉长期异常时也自动继续，不停车等待。 */
             if ((s_bridge_task.exit_lost_ticks >= VISION_BRIDGE_TASK_EXIT_LOST_TICKS) ||
-                (traveled_mm >= VISION_BRIDGE_TASK_RUN_MAX_MM))
+                (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS))
             {
                 vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
             }
@@ -724,11 +722,9 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 再往前开一小段距离，且底盘已经降到位了，任务才算彻底结束 */
-            if ((vision_bridge_distance_from(s_bridge_task.exit_start_x_mm,
-                                             s_bridge_task.exit_start_y_mm) >=
-                 VISION_BRIDGE_TASK_EXIT_BUFFER_MM) &&
-                (vision_bridge_abs_f(servo_height - bridge_params.height_normal) < 0.2f))
+            /* 底盘恢复后即可交还导航；异常时到达时间上限也继续前进。 */
+            if ((vision_bridge_abs_f(servo_height - bridge_params.height_normal) < 0.2f) ||
+                (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS))
             {
 #if VISION_BRIDGE_TASK_NAV_CORRECT_ENABLE
                 vision_bridge_apply_nav_correction(); /* 修正惯导 */

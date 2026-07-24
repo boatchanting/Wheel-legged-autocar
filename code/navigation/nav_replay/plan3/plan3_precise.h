@@ -68,7 +68,7 @@ void NavReplay_Stop(void);
 /**
  * @brief  惯性导航复现控制周期函数
  * @note   建议放在 10ms 或 20ms 定时器中断或主循环中调用
- *         它会根据当前 inertial_nav 坐标计算 target_speed_set 和 err_degree
+ *         它会根据当前视觉/惯导融合坐标计算 target_speed_set 和 err_degree
  */
 void NavReplay_Process(void);
 
