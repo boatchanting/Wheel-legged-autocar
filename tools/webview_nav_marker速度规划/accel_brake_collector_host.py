@@ -230,7 +230,12 @@ def _parse_frame_stream(raw_buffer, controller):
             if data is not None:
                 core.attach_control_debug(data, control_debug, now=now)
                 _push_data(data)
-                controller.feed_frame(data, now=now)
+                try:
+                    controller.feed_frame(data, now=now)
+                except Exception as exc:
+                    print(f"[TCP] feed_frame error: {exc}")
+            else:
+                print(f"[TCP] decode_payload returned None, payload_len={payload_len}")
 
         del raw_buffer[:frame_len]
 
@@ -297,6 +302,8 @@ class Api:
         with state_lock:
             data = list(new_data_buffer)
             new_data_buffer.clear()
+        if data:
+            print(f"[API] get_new_data returning {len(data)} frames")
         return data
 
     def get_status(self):

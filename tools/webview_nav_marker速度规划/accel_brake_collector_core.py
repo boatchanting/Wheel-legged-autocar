@@ -434,7 +434,11 @@ def decode_payload(payload_bytes):
     if size < PAYLOAD_SIZE_V1:
         return None
 
-    unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes[:PAYLOAD_SIZE_V1])
+    try:
+        unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes[:PAYLOAD_SIZE_V1])
+    except struct.error as exc:
+        print(f"[decode] struct.unpack V1 failed: size={size}, err={exc}")
+        return None
     data = dict(zip(FIELD_NAMES_V1, unpacked))
     layout = _resolve_trace_layout(size)
 
@@ -530,19 +534,36 @@ def decode_payload(payload_bytes):
 
 def decode_control_debug_payload(payload_bytes):
     size = len(payload_bytes)
-    if size < PAYLOAD_CONTROL_DEBUG_BYTES:
+    servo_bytes = len(SERVO_FIELD_NAMES) * 4
+    turn_bytes = len(TURN_DEBUG_FIELD_NAMES) * 4
+    if size < servo_bytes:
         return None
 
-    values = struct.unpack(
-        "<" + "f" * len(CONTROL_DEBUG_FIELD_NAMES),
-        payload_bytes[:PAYLOAD_CONTROL_DEBUG_BYTES],
+    # 先解码 SERVO 字段（前7个float）
+    servo_values = struct.unpack(
+        "<" + "f" * len(SERVO_FIELD_NAMES),
+        payload_bytes[:servo_bytes],
     )
-    data = dict(zip(CONTROL_DEBUG_FIELD_NAMES, values))
+    data = dict(zip(SERVO_FIELD_NAMES, servo_values))
     data["has_servo"] = True
-    data["has_turn_debug"] = True
-    data["has_control_debug"] = True
     data["control_debug_payload_size"] = size
     data["control_debug_age_ms"] = None
+
+    # 再尝试解码 TURN_DEBUG 字段（后5个float）
+    if size >= servo_bytes + turn_bytes:
+        turn_values = struct.unpack(
+            "<" + "f" * len(TURN_DEBUG_FIELD_NAMES),
+            payload_bytes[servo_bytes : servo_bytes + turn_bytes],
+        )
+        data.update(dict(zip(TURN_DEBUG_FIELD_NAMES, turn_values)))
+        data["has_turn_debug"] = True
+        data["has_control_debug"] = True
+    else:
+        for field in TURN_DEBUG_FIELD_NAMES:
+            data[field] = None
+        data["has_turn_debug"] = False
+        data["has_control_debug"] = False
+
     return data
 
 
