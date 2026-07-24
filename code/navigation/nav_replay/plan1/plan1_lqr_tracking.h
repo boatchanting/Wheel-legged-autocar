@@ -76,7 +76,7 @@
 #define NAV_SPEED_SLEW_LOW_SPEED_TH        80.0f
 #define NAV_SPEED_SLEW_FAST_DECEL_TH      220.0f
 #define NAV_SPEED_SLEW_UP_LOW              30.0f
-#define NAV_SPEED_SLEW_UP_NORMAL           45.0f
+#define NAV_SPEED_SLEW_UP_NORMAL           70.0f
 #define NAV_SPEED_SLEW_DOWN_NORMAL        400.0f
 #define NAV_SPEED_SLEW_DOWN_FAST          800.0f
 #define NAV_SPEED_SLEW_DOWN_CROSS_ZERO    120.0f

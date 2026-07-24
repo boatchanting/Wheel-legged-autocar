@@ -49,7 +49,7 @@ static const ControlProfile_t g_control_profile_accel = {
 };// 【优化点】这些参数是ai随便写的，需要调整，以及可以扩展更多的场景
 
 static const ControlProfile_t g_control_profile_brake = {
-    -4.8f, SERVO_SPEED_KI, -0.22f, 2300.0f, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
+    -4.8f, SERVO_SPEED_KI, -0.22f, 2600.0f, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
     -10.8f, ANG_KI, -15.0f, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO,
     GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE,
     TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE,

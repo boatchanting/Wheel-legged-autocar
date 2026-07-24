@@ -292,12 +292,7 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
         Control_Profile_RequestMode(target_mode);
     }
 
-    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
-    if (((raw_speed * prev_speed_set) >= 0.0f) &&
-        (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS)))
-    {
-        return raw_speed;
-    }
+    // 加速段也走斜率限制，避免目标速度阶跃导致舵机速度环大幅超调。
 
     if ((raw_speed * prev_speed_set) < 0.0f)
     {

@@ -290,12 +290,7 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     }
 
     // --- 3. 速度曲线斜率生成 (基于前馈目标，保证目标平滑) ---
-    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
-    if (((raw_speed * s_prev_speed_set) >= 0.0f) &&
-        (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS)))
-    {
-        return raw_speed;
-    }
+    // 加速段也走斜率限制，避免目标速度阶跃导致舵机速度环大幅超调。
 
     if ((raw_speed * s_prev_speed_set) < 0.0f)
     {
