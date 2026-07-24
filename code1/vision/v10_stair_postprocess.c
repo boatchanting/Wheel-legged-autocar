@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * v9_stair_postprocess.c  ——  V9 台阶检测后处理实现
+ * v10_stair_postprocess.c  ——  V10 台阶检测后处理实现
  * ============================================================================
  * Copyright (C) 2026  Ji Zixiang
  *
@@ -11,14 +11,14 @@
  * ============================================================================
  * 平台: Infineon CYT4BB7 Cortex-M7
  *
- * 实现三阶段后处理 (全尺寸 188×120 → 117×185):
+ * 实现三阶段后处理:
  *   1. stair_discriminate  — 台阶/背景判别
- *   2. detect_crease       — Crease + 双峰检测
- *   3. fit_gy_edges        — 上峰横线双中点提取
+ *   2. fit_gy_edges        — Gy 峰值行种子 + RLE 扩展 + 最小二乘拟合
+ *   3. detect_crease       — Crease 检测
  * ============================================================================
  */
 
-#include "v9_stair_postprocess.h"
+#include "v10_stair_postprocess.h"
 #include <string.h>
 #include <math.h>
 
@@ -31,11 +31,18 @@ typedef struct {
     uint8_t  end_x;
 } gy_run_t;
 
-static gy_run_t gy_seed_runs[V9_GY_MAX_RUNS];   /* 峰值行 runs */
-static gy_run_t gy_curr_row_runs[V9_GY_MAX_RUNS]; /* 邻行 runs (扩展用) */
+static gy_run_t gy_seed_runs[V10_GY_MAX_RUNS];   /* 峰值行 runs */
+static gy_run_t gy_prev_row_runs[V10_GY_MAX_RUNS]; /* 上一行 runs (扩展用) */
+static gy_run_t gy_curr_row_runs[V10_GY_MAX_RUNS]; /* 当前行 runs (扩展用) */
 
 /* |Gy| 直方图缓冲 */
 static uint32_t gy_hist[1021];
+
+/* 最小二乘累加器 */
+typedef struct {
+    float    sum_x, sum_y, sum_xy, sum_x2;
+    uint16_t num_points;
+} gy_lsq_acc_t;
 
 
 /* ==========================================================================
@@ -159,126 +166,109 @@ static int16_t row_max_abs(const int16_t *row_ptr, uint32_t cols)
 }
 
 
-/* ==========================================================================
- * fit_gy_edges  ——  上峰横线双中点提取
- *
- * 在上峰行提取 Gy 边缘 runs, 通过上下邻行垂直扩展, 过滤碎片后,
- * 将所有有效 run 按 x 位置分为左右两半, 各取中点。
- * ========================================================================== */
-void fit_gy_edges(
-    const int16_t    *p_gy,
-    uint32_t          rows,
-    uint32_t          cols,
-    int16_t           upper_peak_y,
-    v9_stair_result_t *p_result)
+static uint8_t compute_peak_midpoint(
+    const int16_t *p_gy,
+    uint32_t       rows,
+    uint32_t       cols,
+    int16_t        peak_row,
+    float         *p_mid_x,
+    float         *p_span)
 {
     float    threshold;
     int16_t  count, k;
-    uint8_t  left_min, left_max, right_min, right_max;
-    float    mid_x;
-    (void)rows;
+    uint8_t  x_min, x_max;
 
-    /* 清零输出 */
-    p_result->upper_mid1_x     = 0.0f;
-    p_result->upper_mid2_x     = 0.0f;
-    p_result->edge_span        = 0.0f;
-    p_result->num_edge_points  = 0;
-
-    if (upper_peak_y < 0 || (uint32_t)upper_peak_y >= rows) return;
+    if (peak_row < 0 || (uint32_t)peak_row >= rows) return 0;
 
     /* 阈值由峰值行决定, 上下行共用 */
     {
-        int16_t rmax = row_max_abs(&p_gy[(uint32_t)upper_peak_y * cols], cols);
-        threshold = (float)rmax * V9_GY_EDGE_RATIO;
-        if (threshold < (float)V9_GY_MIN_ABS_THRESH)
-            threshold = (float)V9_GY_MIN_ABS_THRESH;
+        int16_t rmax = row_max_abs(&p_gy[(uint32_t)peak_row * cols], cols);
+        threshold = (float)rmax * V10_GY_EDGE_RATIO;
+        if (threshold < (float)V10_GY_MIN_ABS_THRESH)
+            threshold = (float)V10_GY_MIN_ABS_THRESH;
     }
 
     /* 提取峰值行 runs */
-    count = extract_row_runs(&p_gy[(uint32_t)upper_peak_y * cols], cols,
-                             threshold, gy_seed_runs, V9_GY_MAX_RUNS);
-    if (count <= 0) return;
+    count = extract_row_runs(&p_gy[(uint32_t)peak_row * cols], cols,
+                             threshold, gy_seed_runs, V10_GY_MAX_RUNS);
+    if (count <= 0) return 0;
 
     /* 向上一行: 提取 + 垂直连通合并 */
-    if (upper_peak_y > 0) {
+    if (peak_row > 0) {
         int16_t above = extract_row_runs(
-            &p_gy[(uint32_t)(upper_peak_y - 1) * cols], cols,
-            threshold, gy_curr_row_runs, V9_GY_MAX_RUNS);
+            &p_gy[(uint32_t)(peak_row - 1) * cols], cols,
+            threshold, gy_curr_row_runs, V10_GY_MAX_RUNS);
         if (above > 0)
-            merge_overlapping_runs(gy_seed_runs, &count, V9_GY_MAX_RUNS,
+            merge_overlapping_runs(gy_seed_runs, &count, V10_GY_MAX_RUNS,
                                    gy_curr_row_runs, above);
     }
 
     /* 向下一行: 提取 + 垂直连通合并 */
-    if ((uint32_t)(upper_peak_y + 1) < rows) {
+    if ((uint32_t)(peak_row + 1) < rows) {
         int16_t below = extract_row_runs(
-            &p_gy[(uint32_t)(upper_peak_y + 1) * cols], cols,
-            threshold, gy_curr_row_runs, V9_GY_MAX_RUNS);
+            &p_gy[(uint32_t)(peak_row + 1) * cols], cols,
+            threshold, gy_curr_row_runs, V10_GY_MAX_RUNS);
         if (below > 0)
-            merge_overlapping_runs(gy_seed_runs, &count, V9_GY_MAX_RUNS,
+            merge_overlapping_runs(gy_seed_runs, &count, V10_GY_MAX_RUNS,
                                    gy_curr_row_runs, below);
     }
 
-    /* 过滤宽度<3 的碎片, 同时计算整体 bbox */
+    /* 过滤宽度<3, 计算包围盒 */
+    x_min = 255; x_max = 0;
     {
-        uint8_t global_x_min = 255, global_x_max = 0;
         int16_t orig = count;
         count = 0;
         for (k = 0; k < orig; k++) {
             uint8_t sx = gy_seed_runs[k].start_x;
             uint8_t ex = gy_seed_runs[k].end_x;
             if ((uint8_t)(ex - sx + 1u) < 3u) continue;
-            gy_seed_runs[count++] = gy_seed_runs[k];
-            if (sx < global_x_min) global_x_min = sx;
-            if (ex > global_x_max) global_x_max = ex;
+            if (sx < x_min) x_min = sx;
+            if (ex > x_max) x_max = ex;
+            count++;
         }
-        if (count == 0) return;
-
-        /* 整体中点作为 edge_span 参考 */
-        mid_x = (float)(global_x_min + global_x_max) * 0.5f;
-        p_result->edge_span = (float)(global_x_max - global_x_min + 1);
     }
+    if (count == 0) return 0;
 
-    /* 将有效 runs 按 x 分为左右两半, 各取中点 */
-    {
-        left_min  = 255; left_max  = 0;
-        right_min = 255; right_max = 0;
+    *p_mid_x = (float)(x_min + x_max) * 0.5f;
+    *p_span  = (float)(x_max - x_min + 1);
+    return 1;
+}
 
-        for (k = 0; k < count; k++) {
-            uint8_t run_mid = (uint8_t)((gy_seed_runs[k].start_x + gy_seed_runs[k].end_x) / 2u);
-            if ((float)run_mid <= mid_x) {
-                /* 左半 */
-                if (gy_seed_runs[k].start_x < left_min)
-                    left_min = gy_seed_runs[k].start_x;
-                if (gy_seed_runs[k].end_x > left_max)
-                    left_max = gy_seed_runs[k].end_x;
-            } else {
-                /* 右半 */
-                if (gy_seed_runs[k].start_x < right_min)
-                    right_min = gy_seed_runs[k].start_x;
-                if (gy_seed_runs[k].end_x > right_max)
-                    right_max = gy_seed_runs[k].end_x;
-            }
-        }
 
-        if (left_max > 0) {
-            p_result->upper_mid1_x = (float)(left_min + left_max) * 0.5f;
-            p_result->num_edge_points++;
-        }
-        if (right_max > 0) {
-            p_result->upper_mid2_x = (float)(right_min + right_max) * 0.5f;
-            p_result->num_edge_points++;
-        }
+/* ==========================================================================
+ * fit_gy_edges  ——  双峰中点提取
+ * ========================================================================== */
+void fit_gy_edges(
+    const int16_t    *p_gy,
+    uint32_t          rows,
+    uint32_t          cols,
+    int16_t           peak_y,
+    v10_stair_result_t *p_result)
+{
+    float span1, span2;
+    (void)rows;
 
-        /* 如果只有一侧有 run (例如所有 run 都在同一半), 则两个中点都从整体取 */
-        if (p_result->num_edge_points == 1) {
-            p_result->upper_mid2_x = mid_x;
-            p_result->num_edge_points = 2;
-        } else if (p_result->num_edge_points == 0) {
-            p_result->upper_mid1_x = mid_x;
-            p_result->upper_mid2_x = mid_x;
-            p_result->num_edge_points = 2;
-        }
+    p_result->mid_x           = 0.0f;
+    p_result->mid_y           = 0.0f;
+    p_result->mid2_x          = 0.0f;
+    p_result->mid2_y          = 0.0f;
+    p_result->edge_span       = 0.0f;
+    p_result->num_edge_points = 0;
+
+    if (peak_y < 0 || (uint32_t)peak_y >= rows) return;
+
+    if (!compute_peak_midpoint(p_gy, rows, cols, peak_y,
+                               &p_result->mid_x, &span1))
+        return;
+    p_result->mid_y     = (float)peak_y;
+    p_result->edge_span = span1;
+    p_result->num_edge_points = 1;
+
+    if (compute_peak_midpoint(p_gy, rows, cols, p_result->peak2_y,
+                              &p_result->mid2_x, &span2)) {
+        p_result->mid2_y = (float)p_result->peak2_y;
+        if (span2 > p_result->edge_span) p_result->edge_span = span2;
+        p_result->num_edge_points = 2;
     }
 }
 
@@ -293,8 +283,8 @@ float stair_discriminate(
     uint32_t       cols,
     uint32_t       gy_var_start_row)
 {
-    float    P[V9_STAIR_POST_COLS];         /* |Gx| 列总和 */
-    float    gy_prof[V9_STAIR_POST_ROWS];   /* Gy 行均值剖面 */
+    float    P[V10_GY_COLS];         /* |Gx| 列总和 */
+    float    gy_prof[V10_GY_ROWS];   /* Gy 行均值剖面 */
     uint32_t r, c;
     float    sum_P, mean_P, var_P, gx_score;
     float    sum_gy, mean_gy, var_gy;
@@ -355,46 +345,30 @@ float stair_discriminate(
 
 
 /* ==========================================================================
- * detect_crease  ——  Crease + 双峰检测
- *
- * gy_prof 非 NULL 时直接使用预计算的行均值剖面;
- * gy_prof 为 NULL 时从 p_gy 计算 (p_gy 必须非 NULL).
+ * detect_crease  ——  Crease 检测
  * ========================================================================== */
 void detect_crease(
     const int16_t    *p_gy,
-    const float      *gy_prof_in,
     uint32_t          rows,
     uint32_t          cols,
-    v9_stair_result_t *p_result)
+    v10_stair_result_t *p_result)
 {
-    float    gy_prof[V9_STAIR_POST_ROWS];
+    float    gy_prof[V10_GY_ROWS];
     uint32_t r, c;
     float    sum_gy;
 
-    /* ---- 获取 Gy 行均值剖面 ---- */
-    if (gy_prof_in != NULL) {
-        for (r = 0; r < rows; r++) {
-            gy_prof[r] = gy_prof_in[r];
+    /* ---- 计算 Gy 行均值剖面 ---- */
+    for (r = 0; r < rows; r++) {
+        sum_gy = 0.0f;
+        for (c = 0; c < cols; c++) {
+            sum_gy += (float)p_gy[r * cols + c];
         }
-    } else if (p_gy != NULL) {
-        for (r = 0; r < rows; r++) {
-            sum_gy = 0.0f;
-            for (c = 0; c < cols; c++) {
-                sum_gy += (float)p_gy[r * cols + c];
-            }
-            gy_prof[r] = sum_gy / (float)cols;
-        }
-    } else {
-        p_result->crease_y    = -1;
-        p_result->crease_span = 0;
-        p_result->upper_peak_y = -1;
-        p_result->lower_peak_y = -1;
-        return;
+        gy_prof[r] = sum_gy / (float)cols;
     }
 
     /* ---- Step 2.1: 提取正峰和负谷 ---- */
     typedef struct { uint32_t idx; float val; } extremum_t;
-    extremum_t pos_peaks[V9_STAIR_POST_ROWS], neg_peaks[V9_STAIR_POST_ROWS];
+    extremum_t pos_peaks[V10_GY_ROWS], neg_peaks[V10_GY_ROWS];
     uint32_t   num_pos = 0, num_neg = 0;
 
     for (r = 1; r < rows - 1; r++) {
@@ -412,7 +386,6 @@ void detect_crease(
     /* ---- Step 2.2: 排序 ---- */
     {
         uint32_t i, j;
-        /* 正峰: 降序 */
         for (i = 1; i < num_pos; i++) {
             extremum_t key = pos_peaks[i];
             j = i;
@@ -422,7 +395,6 @@ void detect_crease(
             }
             pos_peaks[j] = key;
         }
-        /* 负谷: 绝对值降序 */
         for (i = 1; i < num_neg; i++) {
             extremum_t key = neg_peaks[i];
             j = i;
@@ -451,8 +423,6 @@ void detect_crease(
     } else {
         p_result->crease_y    = -1;
         p_result->crease_span = 0;
-        p_result->upper_peak_y = -1;
-        p_result->lower_peak_y = -1;
         return;
     }
 
@@ -462,7 +432,7 @@ void detect_crease(
         uint32_t i, new_count = 0;
 
         for (i = 0; i < num_chosen; i++) {
-            if (fabsf(chosen[i].val) >= max_abs * V9_WEAK_RATIO) {
+            if (fabsf(chosen[i].val) >= max_abs * V10_WEAK_RATIO) {
                 chosen[new_count++] = chosen[i];
             }
         }
@@ -470,8 +440,6 @@ void detect_crease(
         if (num_chosen < 2) {
             p_result->crease_y    = -1;
             p_result->crease_span = 0;
-            p_result->upper_peak_y = -1;
-            p_result->lower_peak_y = -1;
             return;
         }
     }
@@ -488,7 +456,7 @@ void detect_crease(
     uint32_t    num_cand = 0;
 
     {
-        uint32_t top_n = (num_chosen < (uint32_t)V9_TOP_N) ? num_chosen : (uint32_t)V9_TOP_N;
+        uint32_t top_n = (num_chosen < (uint32_t)V10_TOP_N) ? num_chosen : (uint32_t)V10_TOP_N;
         uint32_t k, m;
 
         for (k = 0; k < top_n; k++) {
@@ -498,8 +466,7 @@ void detect_crease(
                 if (i1 > i2) { uint32_t tmp = i1; i1 = i2; i2 = tmp; }
                 uint32_t span = i2 - i1;
 
-                if (span <= (uint32_t)V9_SPAN_MAX) {
-                    /* 在两峰之间找 |Gy| 最小的点 */
+                if (span <= (uint32_t)V10_SPAN_MAX) {
                     uint32_t crease_idx = i1;
                     float    min_abs    = fabsf(gy_prof[i1]);
                     uint32_t ii;
@@ -512,12 +479,11 @@ void detect_crease(
                         }
                     }
 
-                    /* 谷点验证 */
                     float weaker_peak = fabsf(chosen[k].val);
                     if (fabsf(chosen[m].val) < weaker_peak)
                         weaker_peak = fabsf(chosen[m].val);
 
-                    if (min_abs < weaker_peak - (float)V9_VALLEY_MARGIN) {
+                    if (min_abs < weaker_peak - (float)V10_VALLEY_MARGIN) {
                         if (num_cand < 30) {
                             candidates[num_cand].y         = crease_idx;
                             candidates[num_cand].span      = span;
@@ -535,12 +501,12 @@ void detect_crease(
     if (num_cand == 0) {
         p_result->crease_y    = -1;
         p_result->crease_span = 0;
-        p_result->upper_peak_y = -1;
-        p_result->lower_peak_y = -1;
+        p_result->peak_y      = -1;
+        p_result->peak2_y     = -1;
         return;
     }
 
-    /* ---- Step 2.6: 按 bottom_y 降序排序 (靠近机器人的优先) ---- */
+    /* ---- Step 2.6: 按 bottom_y 降序排序 ---- */
     {
         uint32_t i, j;
         for (i = 1; i < num_cand; i++) {
@@ -566,7 +532,7 @@ void detect_crease(
             int32_t diff = (int32_t)candidates[i].bottom_y
                          - (int32_t)valid[num_valid-1].bottom_y;
             if (diff < 0) diff = -diff;
-            if ((uint32_t)diff >= (uint32_t)V9_CANDIDATE_GAP) {
+            if ((uint32_t)diff >= (uint32_t)V10_CANDIDATE_GAP) {
                 valid[num_valid++] = candidates[i];
             }
         }
@@ -574,16 +540,16 @@ void detect_crease(
         p_result->crease_y    = (int16_t)valid[0].y;
         p_result->crease_span = (int16_t)valid[0].span;
 
-        /* 双峰: 行坐标小的为上峰, 大的为下峰 */
+        /* 输出双峰行号: 行坐标小的为上峰 (peak_y), 大的为下峰 (peak2_y) */
         {
             uint32_t r1 = chosen[valid[0].peak1_idx].idx;
             uint32_t r2 = chosen[valid[0].peak2_idx].idx;
             if (r1 <= r2) {
-                p_result->upper_peak_y = (int16_t)r1;
-                p_result->lower_peak_y = (int16_t)r2;
+                p_result->peak_y  = (int16_t)r1;
+                p_result->peak2_y = (int16_t)r2;
             } else {
-                p_result->upper_peak_y = (int16_t)r2;
-                p_result->lower_peak_y = (int16_t)r1;
+                p_result->peak_y  = (int16_t)r2;
+                p_result->peak2_y = (int16_t)r1;
             }
         }
     }
@@ -591,33 +557,64 @@ void detect_crease(
 
 
 /* ==========================================================================
- * v9_stair_process_full  ——  完整 V9 后处理管线
+ * find_gy_peak  ——  查找 |Gy| 全局最大峰值
+ * ========================================================================== */
+void find_gy_peak(
+    const int16_t    *p_gy,
+    uint32_t          rows,
+    uint32_t          cols,
+    v10_stair_result_t *p_result)
+{
+    uint32_t r, c;
+    int32_t  max_val = 0;
+    int16_t  max_x = 0, max_y = 0;
+
+    for (r = 0; r < rows; r++) {
+        for (c = 0; c < cols; c++) {
+            int16_t v = p_gy[r * cols + c];
+            int32_t av = (v < 0) ? -(int32_t)v : (int32_t)v;
+            if (av > max_val) {
+                max_val = av;
+                max_x   = (int16_t)c;
+                max_y   = (int16_t)r;
+            }
+        }
+    }
+
+    p_result->gy_max_x   = max_x;
+    p_result->gy_max_y   = max_y;
+    p_result->gy_max_val = max_val;
+}
+
+
+/* ==========================================================================
+ * v10_stair_process_full  ——  完整 V10 后处理管线
  *
  * 无门控: 始终检测 crease + 中点; has_stairs = fit_gy_edges 成功
  * ========================================================================== */
-void v9_stair_process_full(
+void v10_stair_process_full(
     const int16_t    *p_gx,
     const int16_t    *p_gy,
     uint32_t          rows,
     uint32_t          cols,
-    v9_stair_result_t *p_result)
+    v10_stair_result_t *p_result)
 {
     /* 清零结果 */
     memset(p_result, 0, sizeof(*p_result));
-    p_result->crease_y    = -1;
-    p_result->upper_peak_y = -1;
-    p_result->lower_peak_y = -1;
+    p_result->crease_y = -1;
+    p_result->peak_y   = -1;
+    p_result->peak2_y  = -1;
 
     /* joint_score 保留供参考 */
-    p_result->joint_score = stair_discriminate(p_gx, p_gy, rows, cols, V9_GY_VAR_START_ROW);
+    p_result->joint_score = stair_discriminate(p_gx, p_gy, rows, cols, V10_GY_VAR_START_ROW);
 
-    /* Step 1: Crease + 双峰检测 */
+    /* Step 1: Crease 检测 */
     detect_crease(p_gy, rows, cols, p_result);
 
-    /* Step 2: 上峰双中点提取 — 成功则 has_stairs=1 */
-    if (p_result->upper_peak_y >= 0) {
-        fit_gy_edges(p_gy, rows, cols, p_result->upper_peak_y, p_result);
-        if (p_result->num_edge_points >= 2) {
+    /* Step 2: 中点提取 — 成功则 has_stairs=1 */
+    if (p_result->peak_y >= 0) {
+        fit_gy_edges(p_gy, rows, cols, p_result->peak_y, p_result);
+        if (p_result->num_edge_points > 0) {
             p_result->has_stairs = 1;
         }
     }

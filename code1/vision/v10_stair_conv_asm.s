@@ -1,6 +1,6 @@
 ;
 ; ============================================================================
-; v9_stair_conv_asm.s  ——  V9 台阶检测卷积汇编算子 (IAR ARM 汇编器)
+; v10_stair_conv_asm.s  ——  V10 台阶检测卷积汇编算子 (IAR ARM 汇编器)
 ;
 ; Copyright (C) 2026  Ji Zixiang
 ;
@@ -22,29 +22,29 @@
 ; 段:    .itcm_text -> SELF_ITCM (0x00000000 核内零等待取指)
 ;
 ; 内核清单:
-;   v9_conv_gx_row  — Gx 2×4 Box-Diff: 2 行→1 行 (SMLAD 双发射)
-;   v9_conv_gy_row  — Gy 4×4 二项式差分: 4 行→1 行 (SMLAD, 16 MAC/px)
+;   v10_conv_gx_row  — Gx 2×4 Box-Diff: 2 行→1 行 (SMLAD 双发射)
+;   v10_conv_gy_row  — Gy 4×4 二项式差分: 4 行→1 行 (SMLAD, 16 MAC/px)
 ;
-; 图像规格: uint8 灰度 188×120 → int16 展开 → 全流水线
+; 图像规格: uint8 灰度 120×188, 全流水线 int16
 ; 核常量:   [-1,-1,1,1] 全部 MOVW+MOVT 寄存器常驻
 ; ============================================================================
 
-    MODULE  v9_stair_conv_asm
+    MODULE  v10_stair_conv_asm
     SECTION .itcm_text:CODE:ROOT(3)
     THUMB
 
-    PUBLIC  v9_conv_gx_row
-    PUBLIC  v9_conv_gy_row
+    PUBLIC  v10_conv_gx_row
+    PUBLIC  v10_conv_gy_row
 
 
 ; ============================================================================
-; v9_conv_gx_row  ——  Gx 2×4 Box-Diff 卷积
+; v10_conv_gx_row  ——  Gx 2×4 Box-Diff 卷积
 ; ============================================================================
 ; AAPCS:
-;   r0 = p_row0   (const int16_t*, W 个元素)
-;   r1 = p_row1   (const int16_t*, W 个元素)
-;   r2 = p_out    (int16_t*, W-3 个元素)
-;   r3 = out_width (W-3)
+;   r0 = p_row0   (const int16_t*, 188 个元素)
+;   r1 = p_row1   (const int16_t*, 188 个元素)
+;   r2 = p_out    (int16_t*, 185 个元素)
+;   r3 = out_width (185)
 ;
 ; 核常量 (寄存器):
 ;   r5  = {-1, -1}  核前半: 差分负号
@@ -55,7 +55,7 @@
 ;   每迭代 ~14c / 8 MAC ≈ 1.75 c/MAC
 ; ============================================================================
     ALIGNROM 3
-v9_conv_gx_row:
+v10_conv_gx_row:
     PUSH    {r4-r12, lr}
 
     ; ---- 初始化核常量到寄存器 ----
@@ -68,7 +68,7 @@ v9_conv_gx_row:
     MOV     r0, r3               ; r0  = 循环计数 = out_width
 
     ALIGNROM 3
-v9_gx_loop:
+v10_gx_loop:
     LDR     r4, [r12], #4        ; r4 = {p0[x+1], p0[x]},     r12 += 4 → p0[x+2]
     LDR     r6, [r12]            ; r6 = {p0[x+3], p0[x+2]},   r12 不动
     LDR     r7, [r1], #4         ; r7 = {p1[x+1], p1[x]},     r1  += 4 → p1[x+2]
@@ -89,21 +89,21 @@ v9_gx_loop:
     SUB     r1,  r1,  #2
 
     SUBS    r0, r0, #1
-    BNE     v9_gx_loop
+    BNE     v10_gx_loop
 
     POP     {r4-r12, pc}
 
 
 ; ============================================================================
-; v9_conv_gy_row  ——  Gy 4×4 二项式差分卷积
+; v10_conv_gy_row  ——  Gy 4×4 二项式差分卷积
 ; ============================================================================
 ; AAPCS:
-;   r0 = p_row0   (const int16_t*, W 个元素)
-;   r1 = p_row1   (const int16_t*, W 个元素)
-;   r2 = p_row2   (const int16_t*, W 个元素)
-;   r3 = p_row3   (const int16_t*, W 个元素)
-;   [sp+0]  = p_out     (int16_t*, W-3 个元素)  ← PUSH {r4-r12,lr}=40B偏移
-;   [sp+4]  = out_width (W-3)
+;   r0 = p_row0   (const int16_t*, 188 个元素)
+;   r1 = p_row1   (const int16_t*, 188 个元素)
+;   r2 = p_row2   (const int16_t*, 188 个元素)
+;   r3 = p_row3   (const int16_t*, 188 个元素)
+;   [sp+0]  = p_out     (int16_t*, 185 个元素)  ← PUSH {r4-r12,lr}=40B偏移
+;   [sp+4]  = out_width (185)
 ;
 ; 核: [-1,-1,1,1]^T ⊗ [1,3,3,1]
 ;   每行 4-tap 用 2 条 SMLAD: {3,1} → {1,3}
@@ -113,7 +113,7 @@ v9_gx_loop:
 ;   每迭代 ~22c / 16 MAC ≈ 1.4 c/MAC
 ; ============================================================================
     ALIGNROM 3
-v9_conv_gy_row:
+v10_conv_gy_row:
     PUSH    {r4-r12, lr}
 
     ; ---- 加载栈参数 (PUSH 偏移 40) ----
@@ -127,7 +127,7 @@ v9_conv_gy_row:
     MOVT    r9,  #0x0003         ; r9 = {1, 3}
 
     ALIGNROM 3
-v9_gy4x4_loop:
+v10_gy4x4_loop:
     ; ── Row 0 ──
     LDR     r4, [r0], #4
     LDR     r5, [r0]
@@ -168,7 +168,7 @@ v9_gy4x4_loop:
     SUB     r3, r3, #2
 
     SUBS    lr, lr, #1            ; lr 作为循环计数, 不被 SMLAD 污染
-    BNE     v9_gy4x4_loop
+    BNE     v10_gy4x4_loop
 
     POP     {r4-r12, pc}
 

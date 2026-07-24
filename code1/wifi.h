@@ -158,5 +158,6 @@ void draw_cross_on_image(int x, int y, int size, uint8 color);
 void render_pvc_vision_to_image(void);
 void render_bridge_vision_to_image(void);
 void render_bumpy_vision_to_image(void);
+void render_stair_vision_to_image(void);
 
 #endif // __CODE1_WIFI_H__

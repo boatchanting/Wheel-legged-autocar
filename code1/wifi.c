@@ -36,6 +36,7 @@ int flash_write = 0;      // flash写使能标志位
 int flash_write_flag = 0; // flash写标志位
 #include "wifi.h"
 #include "zf_common_headfile.h"
+#include "../code1/vision/stair_vision.h"
 
 // 只有X边界
 uint8 xy_x1_boundary[BOUNDARY_NUM], xy_x2_boundary[BOUNDARY_NUM], xy_x3_boundary[BOUNDARY_NUM];
@@ -912,4 +913,32 @@ void render_bumpy_vision_to_image(void)
         }
     }
 #endif
+}
+
+void render_stair_vision_to_image(void)
+{
+    const volatile stair_vision_output_t *out = stair_vision_get_output();
+    const v10_stair_result_t *r = &out->result;
+    int hw, uy, ly;
+
+    if (out->detected == 0 || r->has_stairs == 0) return;
+    if (r->peak_y < 0 || r->peak2_y < 0) return;
+
+    /* Gy空间(117×185) → 压缩图(94×60): (+2)÷2 */
+    uy = (r->peak_y + 2) / 2;
+    ly = (r->peak2_y + 2) / 2;
+    hw = (int)(r->edge_span * 0.5f + 2.0f) / 2;
+
+    if (uy < 0) uy = 0; if (uy >= 60) uy = 59;
+    if (ly < 0) ly = 0; if (ly >= 60) ly = 59;
+
+    /* 上峰: 短横线 + 小十字 */
+    draw_hline_on_image((int)((r->mid_x + 2.0f) / 2) - hw,
+                        (int)((r->mid_x + 2.0f) / 2) + hw, uy, 0);
+    draw_cross_on_image((int)((r->mid_x + 2.0f) / 2), uy, 2, 0);
+
+    /* 下峰: 短横线 + 小十字 */
+    draw_hline_on_image((int)((r->mid2_x + 2.0f) / 2) - hw,
+                        (int)((r->mid2_x + 2.0f) / 2) + hw, ly, 0);
+    draw_cross_on_image((int)((r->mid2_x + 2.0f) / 2), ly, 2, 0);
 }

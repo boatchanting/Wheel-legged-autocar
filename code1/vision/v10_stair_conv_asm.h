@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * v9_stair_conv_asm.h  ——  V9 台阶检测汇编算子接口
+ * v10_stair_conv_asm.h  ——  V10 台阶检测汇编算子接口
  * ============================================================================
  * Copyright (C) 2026  Ji Zixiang
  *
@@ -18,9 +18,9 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  * ============================================================================
  * 平台:  Infineon CYT4BB7 (Cortex-M7, ARMv7E-M)
- * 所有函数由 v9_stair_conv_asm.s 实现, 置于 SELF_ITCM (0x00000000)
+ * 所有函数由 v10_stair_conv_asm.s 实现, 置于 SELF_ITCM (0x00000000)
  *
- * 图像规格: uint8 灰度 188×120 (行×列, 全尺寸摄像头原图)
+ * 图像规格: uint8 灰度 120×188 (行×列)
  * Gx 核: 2×4 Box-Diff  [[-1,-1,1,1],[-1,-1,1,1]]  → 输出 119×185 int16
  * Gy 核: 4×4 二项式差分  1/16 * [[-1,-3,-3,-1],[-1,-3,-3,-1],[1,3,3,1],[1,3,3,1]]
  *   可分离: [-1,-1,1,1]^T ⊗ [1,3,3,1], 响应水平~45°倾斜边缘
@@ -28,8 +28,8 @@
  * ============================================================================
  */
 
-#ifndef _V9_STAIR_CONV_ASM_H_
-#define _V9_STAIR_CONV_ASM_H_
+#ifndef _V10_STAIR_CONV_ASM_H_
+#define _V10_STAIR_CONV_ASM_H_
 
 #include <stdint.h>
 
@@ -39,55 +39,44 @@ extern "C" {
 
 
 /* ==========================================================================
- * 图像尺寸宏 (全尺寸 188×120)
- * ========================================================================== */
-#define V9_STAIR_IMAGE_W        188
-#define V9_STAIR_IMAGE_H        120
-
-/* 卷积输出尺寸 */
-#define V9_STAIR_GX_OUT_ROWS    (V9_STAIR_IMAGE_H - 1)   /* 119 */
-#define V9_STAIR_GX_OUT_COLS    (V9_STAIR_IMAGE_W - 3)   /* 185 */
-#define V9_STAIR_GY_OUT_ROWS    (V9_STAIR_IMAGE_H - 3)   /* 117 */
-#define V9_STAIR_GY_OUT_COLS    (V9_STAIR_IMAGE_W - 3)   /* 185 */
-
-/* 后处理用: 取 Gx 和 Gy 共同的最小 rows (117) */
-#define V9_STAIR_POST_ROWS      V9_STAIR_GY_OUT_ROWS     /* 117 */
-#define V9_STAIR_POST_COLS      V9_STAIR_GY_OUT_COLS     /* 185 */
-
-
-/* ==========================================================================
- * 台阶检测完整结果
+ * 台阶检测完整结果 (与 V10_PSEUDOCODE.md §五 对齐)
  * ========================================================================== */
 typedef struct {
     uint8_t  has_stairs;         /* 是否有台阶                          */
     float    joint_score;        /* gx_score × gy_var 联合判别分数       */
-    /* 上峰横线中间点 (y = upper_peak_y, 不重复存储) */
-    float    upper_mid1_x;       /* 上峰中间点1 x                       */
-    float    upper_mid2_x;       /* 上峰中间点2 x                       */
-    float    edge_span;          /* 横线水平跨度 (px)                    */
-    int16_t  num_edge_points;    /* 参与提取的 run 数                    */
-    /* Crease + 双峰 */
-    int16_t  crease_y;           /* 折痕行号 (0=图像顶部)                */
+    /* 横线中点 */
+    float    mid_x;              /* 上峰中点 x (0~184)                  */
+    float    mid_y;              /* 上峰中点 y (0~116)                  */
+    float    mid2_x;             /* 下峰中点 x (0~184)                  */
+    float    mid2_y;             /* 下峰中点 y (0~116)                  */
+    float    edge_span;          /* 线段水平跨度 (px)                    */
+    int16_t  num_edge_points;    /* 参与拟合的点数                       */
+    /* Crease */
+    int16_t  crease_y;           /* crease 行号 (0=图像顶部)             */
     int16_t  crease_span;        /* 双峰间距 (px)                       */
-    int16_t  upper_peak_y;       /* 上峰行号 (小 y, 远离机器人)          */
-    int16_t  lower_peak_y;       /* 下峰行号 (大 y, 靠近机器人)          */
-} v9_stair_result_t;
+    int16_t  peak_y;             /* 上峰行号 (绝对值更大的)              */
+    int16_t  peak2_y;            /* 下峰行号                            */
+    /* |Gy| 全局最大峰值 (不考虑台阶结构, 纯最大梯度点)   */
+    int16_t  gy_max_x;           /* |Gy| 最大值的列坐标 (Gy 空间)       */
+    int16_t  gy_max_y;           /* |Gy| 最大值的行坐标 (Gy 空间)       */
+    int32_t  gy_max_val;         /* |Gy| 最大绝对值                      */
+} v10_stair_result_t;
 
 
 /* ==========================================================================
- * v9_conv_gx_row  ——  Gx 2×4 Box-Diff 卷积: 2 行 → 1 行
+ * v10_conv_gx_row  ——  Gx 2×4 Box-Diff 卷积: 2 行 → 1 行
  * ==========================================================================
  * 对连续两行输入做 2×4 卷积, SMLAD 双发射。
  * 核: [[-1,-1,1,1],[-1,-1,1,1]] 全部常驻寄存器 (MOVW+MOVT)。
  *
- * p_row0:  第 y   行, W 个 int16 (uint8 零扩展打包)
- * p_row1:  第 y+1 行, W 个 int16
- * p_out:   Gx 输出, W-3 个 int16
- * out_width: W-3 (185 for 188-wide input)
+ * p_row0:  第 y   行, 188 个 int16 (uint8 零扩展打包)
+ * p_row1:  第 y+1 行, 188 个 int16
+ * p_out:   Gx 输出, 185 个 int16
+ * out_width: 185
  *
  * 值域: 输出 ∈ [-1020, +1020]  ✅ int16 安全
  * ========================================================================== */
-void v9_conv_gx_row(
+void v10_conv_gx_row(
     const int16_t *p_row0,
     const int16_t *p_row1,
     int16_t       *p_out,
@@ -95,18 +84,18 @@ void v9_conv_gx_row(
 
 
 /* ==========================================================================
- * v9_conv_gy_row  ——  Gy 4×4 二项式差分: 4 行 → 1 行
+ * v10_conv_gy_row  ——  Gy 4×4 二项式差分: 4 行 → 1 行
  * ==========================================================================
  * 对连续四行输入做 4×4 卷积, SMLAD 双发射。
  * 核: 1/16 * [[-1,-3,-3,-1],[-1,-3,-3,-1],[1,3,3,1],[1,3,3,1]]
  *
- * p_row0..p_row3: 第 y..y+3 行, 各 W 个 int16
- * p_out:   Gy 输出, W-3 个 int16
- * out_width: W-3 (185 for 188-wide input)
+ * p_row0..p_row3: 第 y..y+3 行, 各 188 个 int16
+ * p_out:   Gy 输出, 185 个 int16
+ * out_width: 185
  *
  * 值域: 输出 ∈ [-8160, +8160]  ✅ int16 安全
  * ========================================================================== */
-void v9_conv_gy_row(
+void v10_conv_gy_row(
     const int16_t *p_row0,
     const int16_t *p_row1,
     const int16_t *p_row2,
@@ -119,4 +108,4 @@ void v9_conv_gy_row(
 }
 #endif
 
-#endif /* _V9_STAIR_CONV_ASM_H_ */
+#endif /* _V10_STAIR_CONV_ASM_H_ */
