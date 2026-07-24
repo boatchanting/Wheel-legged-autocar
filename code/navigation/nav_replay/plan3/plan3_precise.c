@@ -27,6 +27,9 @@ static uint8 s_bumpy_exit_pending = 0U;
 #define NAV_BRIDGE_HANDOFF_SPEED_STEP        (3.0f) // 每 10ms 最大速度目标变化
 #define NAV_BRIDGE_HANDOFF_ERR_STEP_DEG      (0.5f) // 每 10ms 最大转向误差变化
 static uint8 s_special_handoff_ticks = 0U;
+// 当前目标点的最近距离，用于判定“已经穿过目标点”，避免错过小半径后回头。
+static uint16 s_arrival_target_idx = 0xFFFFU;
+static float s_arrival_min_dist = 0.0f;
 
 #if IMU_CATEGORY == 3
 static uint8 s_start_heading_stable_count = 0;
@@ -165,6 +168,8 @@ void NavReplay_Start(void)
     s_bridge_exit_pending = 0U;
     s_bumpy_exit_pending = 0U;
     s_special_handoff_ticks = 0U;
+    s_arrival_target_idx = 0xFFFFU;
+    s_arrival_min_dist = 0.0f;
     entry_beep_request = 0U;
     exit_beep_request = 0U;
 #if IMU_CATEGORY == 3
@@ -193,6 +198,8 @@ void NavReplay_Stop(void)
     s_bridge_exit_pending = 0U;
     s_bumpy_exit_pending = 0U;
     s_special_handoff_ticks = 0U;
+    s_arrival_target_idx = 0xFFFFU;
+    s_arrival_min_dist = 0.0f;
     g_start_heading_aligned = 1;
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
@@ -219,17 +226,32 @@ void NavReplay_Stop(void)
 static float s_prev_err_degree = 0.0f; // 用于角度滤波的静态变量
 uint8 is_arrived = 0;  // 到达判定状态锁
 
-// 局部静态变量：用于滤波历史保持与下降沿检测
-static uint8 s_is_aligning = 0;
-static uint8 s_prev_trigger = 0;  // 用于检测状态机结束的瞬间（下降沿）
-// 局部静态变量，用于记录历史角度和状态锁
+static uint8 NavReplay_TargetArrived(uint16 target_idx, float dist)
+{
+    if (target_idx != s_arrival_target_idx)
+    {
+        s_arrival_target_idx = target_idx;
+        s_arrival_min_dist = dist;
+    }
+    else if (dist < s_arrival_min_dist)
+    {
+        s_arrival_min_dist = dist;
+    }
+
+    if (dist <= NAV_DIST_ARRIVE)
+    {
+        return 1U;
+    }
+
+    return (uint8)((s_arrival_min_dist <= NAV_DIST_PASS_CAPTURE) &&
+                   (dist >= (s_arrival_min_dist + NAV_DIST_PASS_HYSTERESIS)));
+}
 
 void NavReplay_Process(void)
 {
     if (g_replay_state != REPLAY_RUNNING)
     {
         s_prev_err_degree = 0.0f; 
-        s_is_aligning = 0; // 状态机接管或停止时，确保解锁
         return;
     }
 
@@ -240,7 +262,6 @@ void NavReplay_Process(void)
         {
             NavReplay_CompleteVisionBridgeExit();
             s_prev_err_degree = 0.0f;
-            s_is_aligning = 0U;
         }
         else
         {
@@ -255,7 +276,6 @@ void NavReplay_Process(void)
         {
             NavReplay_CompleteVisionBumpyExit();
             s_prev_err_degree = 0.0f;
-            s_is_aligning = 0U;
         }
         else
         {
@@ -266,7 +286,6 @@ void NavReplay_Process(void)
     if (g_special_action_trigger == 1)
     {
         s_prev_err_degree = 0.0f;
-        s_is_aligning = 0U;
         return;
     }
 
@@ -351,7 +370,6 @@ void NavReplay_Process(void)
         g_replay_state = REPLAY_FINISHED;
         target_speed_set = NAV_SPEED_STOP;
         err_degree = 0.0f;
-        s_is_aligning = 0;
         return;
     }
 
@@ -370,107 +388,48 @@ void NavReplay_Process(void)
     float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
     float raw_err = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
 
-    // 4. 控制策略：先转再走
-    // 🌟 核心修改：如果距离够近，或者【已经被锁在对齐状态中】，都强行进入到达逻辑！🌟
-    if (dist <= NAV_DIST_ARRIVE || s_is_aligning)
+    // 4. 控制策略：不在点前降速；进入捕获范围或已穿点时直接切换状态机。
+    if (NavReplay_TargetArrived(g_target_idx, dist))
     {
-        // ==========================================
-        // 【A. 已经到达目标点 (执行停车 / 对角)】
-        // ==========================================
-        target_speed_set = NAV_SPEED_STOP;
-
         if (g_current_point_type != NAV_POINT_PATH)
         {
-            // 第一步：只要进来了，立刻锁死状态！即便下一帧 dist 变大了也不会退出去！
-            s_is_aligning = 1; 
-
-            // 第二步：开始专心对齐特殊点的角度
-            float special_target_yaw = nav_ram_data.points[g_target_idx].target_yaw_deg;
-            float special_yaw_err = NormalizeAngle(special_target_yaw - inertial_nav.relative_yaw);
-
-            if (fabsf(special_yaw_err) > NAV_YAW_TOLERANCE)
+            // 特殊点到达后直接把控制权交给对应状态机，不停车、不原地对角。
+            if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
+            else if (g_current_point_type == NAV_POINT_JUMP) vision_detected_three_jump_point = 1;
+            else if (g_current_point_type == NAV_POINT_BRIDGE)
             {
-                // 限幅保护，温柔转向
-                if (special_yaw_err > MAX_SPIN_ERR) special_yaw_err = MAX_SPIN_ERR;
-                if (special_yaw_err < -MAX_SPIN_ERR) special_yaw_err = -MAX_SPIN_ERR;
-                
-                err_degree = special_yaw_err;
-                s_prev_err_degree = err_degree; 
+                entry_beep_request = 1U;
+                s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
+                VisionBridgeTask_Start();
             }
-            else
+            else if (g_current_point_type == NAV_POINT_BUMP)
             {
-                // 位置到了，角度也转对了！正式触发状态机！
-                if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
-                else if (g_current_point_type == NAV_POINT_JUMP) vision_detected_three_jump_point = 1;
-                else if (g_current_point_type == NAV_POINT_BRIDGE)
-                {
-                    // 桥入口、视觉桥任务真正结束时各鸣叫两声，便于实车确认交接时刻。
-                    entry_beep_request = 1U;
-                    s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
-                    VisionBridgeTask_Start();
-                }
-                else if (g_current_point_type == NAV_POINT_BUMP)
-                {
-                    entry_beep_request = 1U;
-                    s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
-                    BumpyRoad_Trigger();
-                }
-                
-                g_special_action_trigger = 1;
-                g_target_idx++;     // 切向下一个点
-                
-                s_prev_err_degree = 0.0f;
-                s_is_aligning = 0;  // 🌟 对齐完成，解除锁定！🌟
+                entry_beep_request = 1U;
+                s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
+                BumpyRoad_Trigger();
             }
+
+            g_special_action_trigger = 1U;
+            g_target_idx++;
+            s_prev_err_degree = 0.0f;
         }
         else
         {
-            // 普通路径点：到了直接切下一个点
+            // 普通路径点：到达或穿过后直接切下一个点。
             g_target_idx++;
-            s_is_aligning = 0;      // 确保普通点不会被误锁
+            s_prev_err_degree = 0.0f;
         }
     }
     else
     {
-        // ==========================================
-        // 【B. 未到达目标点 (还在路上)】
-        // ==========================================
-        
-        // 距离点非常近时的抽搐保护
-        if (dist < NAV_DIST_ARRIVE + 150.0f) {
-            if (raw_err > 15.0f) raw_err = 15.0f;
-            if (raw_err < -15.0f) raw_err = -15.0f;
-        } 
-        else {
-            if (raw_err > MAX_APPROACH_ERR) raw_err = MAX_APPROACH_ERR;
-            if (raw_err < -MAX_APPROACH_ERR) raw_err = -MAX_APPROACH_ERR;
-        }
+        if (raw_err > MAX_APPROACH_ERR) raw_err = MAX_APPROACH_ERR;
+        if (raw_err < -MAX_APPROACH_ERR) raw_err = -MAX_APPROACH_ERR;
 
         err_degree = ANGLE_FILTER_ALPHA * raw_err + (1.0f - ANGLE_FILTER_ALPHA) * s_prev_err_degree;
         s_prev_err_degree = err_degree;
 
-        // 检查车头是否对准目标点
-        if (fabsf(NormalizeAngle(target_yaw - inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE)
-        {
-            target_speed_set = NAV_SPEED_STOP; // 角度偏大，原地转
-        }
-        else
-        {
-            // 角度基本对准，开始直线移动逼近
-            if (dist > NAV_DIST_FAR)
-            {
-                target_speed_set = NAV_SPEED_FAST;
-            }
-            else if (dist > NAV_DIST_NEAR)
-            {
-                float ratio = (dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
-                target_speed_set = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
-            }
-            else
-            {
-                target_speed_set = NAV_SPEED_SLOW;
-            }
-        }
+        // 追点过程中始终保持行驶，由转向误差连续修正；不因接近点或角度偏差停车。
+        target_speed_set = NAV_SPEED_FAST;
     }
 }
 

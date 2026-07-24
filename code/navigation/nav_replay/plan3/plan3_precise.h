@@ -8,7 +8,9 @@
 #define NAV_DIST_FAR            500.0f  // 远距离界限，全速
 #define NAV_DIST_NEAR           150.0f  // 近距离界限，开始最低速 
 
-#define NAV_DIST_ARRIVE         20.0f   // 到达判定阈值
+#define NAV_DIST_ARRIVE         120.0f  // 到达捕获半径：不在点前减速，进入该范围直接切换
+#define NAV_DIST_PASS_CAPTURE   250.0f  // 曾进入此范围后距离开始增大，判定为已穿过目标点
+#define NAV_DIST_PASS_HYSTERESIS 30.0f  // 穿点判定的距离回升滞回，避免定位抖动误触发
 #define NAV_YAW_TOLERANCE        1.0f    //转向阈值，先转再走
 #define NAV_START_HEADING_TOLERANCE 0.3f // 复刻起步前，绝对航向对齐阈值(度)
 
