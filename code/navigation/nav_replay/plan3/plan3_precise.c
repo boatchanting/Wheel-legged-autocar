@@ -8,6 +8,8 @@ NavReplayState_e g_replay_state = REPLAY_IDLE;
 uint16 g_target_idx = 0;                    // 当前正在前往的点索引
 uint8 g_current_point_type = NAV_POINT_PATH;// 当前点的类型
 uint8 g_special_action_trigger = 0;         // 触发标志
+volatile uint8 g_nav_bridge_entry_beep_request = 0U;
+volatile uint8 g_nav_bridge_exit_beep_request = 0U;
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
 #define NAV_REPLAY_START_HEADING_VALID 0
@@ -20,6 +22,10 @@ uint8 g_special_action_trigger = 0;         // 触发标志
 static uint8 g_start_heading_aligned = 1;
 // 单边桥入口已交给视觉任务后，等待视觉任务结束并消费紧邻的 40 退出锚点。
 static uint8 s_bridge_exit_pending = 0U;
+#define NAV_BRIDGE_HANDOFF_TICKS            (10U)  // 100ms：视觉退出控制平滑切换至 Plan3
+#define NAV_BRIDGE_HANDOFF_SPEED_STEP        (3.0f) // 每 10ms 最大速度目标变化
+#define NAV_BRIDGE_HANDOFF_ERR_STEP_DEG      (0.5f) // 每 10ms 最大转向误差变化
+static uint8 s_bridge_handoff_ticks = 0U;
 
 #if IMU_CATEGORY == 3
 static uint8 s_start_heading_stable_count = 0;
@@ -51,6 +57,21 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
     return sqrtf((x2 - x1) * (x2 - x1) + (y2 - y1) * (y2 - y1));
 }
 
+static float NavReplay_RampFloat(float current, float target, float step)
+{
+    if (current < target)
+    {
+        current += step;
+        return (current > target) ? target : current;
+    }
+    if (current > target)
+    {
+        current -= step;
+        return (current < target) ? target : current;
+    }
+    return current;
+}
+
 static uint8 NavReplay_IsBridgeExitPoint(uint16 point_idx)
 {
     return (uint8)((point_idx < nav_ram_data.point_count) &&
@@ -62,13 +83,17 @@ static void NavReplay_CompleteVisionBridgeExit(void)
     // 40 只是视觉桥任务的退出锚点，不能再次作为普通特殊点触发状态机。
     if (NavReplay_IsBridgeExitPoint(g_target_idx))
     {
-        nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
-        nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
-        Buzzer_Beep_Times(2U);
+        if (g_bridge_vision_task_exit_reason == VISION_BRIDGE_EXIT_VISUAL_CONFIRMED)
+        {
+            nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
+            nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
+            g_nav_bridge_exit_beep_request = 1U;
+        }
         g_target_idx++;
     }
 
     s_bridge_exit_pending = 0U;
+    s_bridge_handoff_ticks = NAV_BRIDGE_HANDOFF_TICKS;
     g_special_action_trigger = 0U;
 }
 
@@ -112,6 +137,9 @@ void NavReplay_Start(void)
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
     s_bridge_exit_pending = 0U;
+    s_bridge_handoff_ticks = 0U;
+    g_nav_bridge_entry_beep_request = 0U;
+    g_nav_bridge_exit_beep_request = 0U;
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
     s_start_heading_stable_count = 0;
@@ -136,6 +164,7 @@ void NavReplay_Stop(void)
     err_degree = 0.0f;
     g_special_action_trigger = 0;
     s_bridge_exit_pending = 0U;
+    s_bridge_handoff_ticks = 0U;
     g_start_heading_aligned = 1;
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
@@ -195,6 +224,59 @@ void NavReplay_Process(void)
     {
         s_prev_err_degree = 0.0f;
         s_is_aligning = 0U;
+        return;
+    }
+
+    // 视觉状态机结束后，先以最后的视觉控制量向下一个点平滑过渡，避免速度/转向突变。
+    if (s_bridge_handoff_ticks > 0U)
+    {
+        float nav_x = nav_vision_fusion_x;
+        float nav_y = nav_vision_fusion_y;
+        float tx;
+        float ty;
+        float dist;
+        float target_yaw;
+        float desired_err;
+        float desired_speed;
+
+        if (g_target_idx >= nav_ram_data.point_count)
+        {
+            s_bridge_handoff_ticks = 0U;
+            target_speed_set = NAV_SPEED_STOP;
+            err_degree = 0.0f;
+            return;
+        }
+
+        tx = nav_ram_data.points[g_target_idx].x;
+        ty = nav_ram_data.points[g_target_idx].y;
+        dist = CalcDistance(nav_x, nav_y, tx, ty);
+        target_yaw = -atan2f(ty - nav_y, -(tx - nav_x)) * 57.29578f;
+        desired_err = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
+        if (desired_err > MAX_APPROACH_ERR) desired_err = MAX_APPROACH_ERR;
+        if (desired_err < -MAX_APPROACH_ERR) desired_err = -MAX_APPROACH_ERR;
+
+        if (fabsf(NormalizeAngle(target_yaw - inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE)
+        {
+            desired_speed = NAV_SPEED_STOP;
+        }
+        else if (dist > NAV_DIST_FAR)
+        {
+            desired_speed = NAV_SPEED_FAST;
+        }
+        else if (dist > NAV_DIST_NEAR)
+        {
+            float ratio = (dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
+            desired_speed = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
+        }
+        else
+        {
+            desired_speed = NAV_SPEED_SLOW;
+        }
+
+        err_degree = NavReplay_RampFloat(err_degree, desired_err, NAV_BRIDGE_HANDOFF_ERR_STEP_DEG);
+        target_speed_set = NavReplay_RampFloat(target_speed_set, desired_speed, NAV_BRIDGE_HANDOFF_SPEED_STEP);
+        s_prev_err_degree = err_degree;
+        s_bridge_handoff_ticks--;
         return;
     }
 
@@ -280,7 +362,7 @@ void NavReplay_Process(void)
                 else if (g_current_point_type == NAV_POINT_BRIDGE)
                 {
                     // 桥入口、视觉桥任务真正结束时各鸣叫两声，便于实车确认交接时刻。
-                    Buzzer_Beep_Times(2U);
+                    g_nav_bridge_entry_beep_request = 1U;
                     s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
                     VisionBridgeTask_Start();
                 }

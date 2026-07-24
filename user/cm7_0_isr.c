@@ -420,7 +420,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     Control_Profile_Update1ms();//pid参数调度更新
 
-    // 自转结束蜂鸣器提示
+    // 自转结束蜂鸣器提示【优化点】不要放中断
     if (g_minefield_beep_request != 0U)
     {
         g_minefield_beep_request = 0U;

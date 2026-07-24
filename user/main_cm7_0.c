@@ -101,6 +101,21 @@ int main(void)
 
     while(true)
     {
+#if CURRENT_NAV_PLAN == 3
+        // 导航/视觉状态机只置请求标志；蜂鸣器在主循环执行，绝不阻塞中断控制周期。
+        if (g_nav_bridge_entry_beep_request != 0U)
+        {
+            g_nav_bridge_entry_beep_request = 0U;
+            Buzzer_Beep_Times(2U);
+        }
+
+        if (g_nav_bridge_exit_beep_request != 0U)
+        {
+            g_nav_bridge_exit_beep_request = 0U;
+            Buzzer_Beep_Times(2U);
+        }
+#endif
+
 #if IMU_REFRESH_TEST_ENABLE
         if (g_imu_refresh_test_start_beep_request != 0U)
         {

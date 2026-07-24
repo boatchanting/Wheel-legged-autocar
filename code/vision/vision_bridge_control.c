@@ -29,6 +29,7 @@ extern float servo_height;                  /* 舵机高度（比如过桥时可
 /* --- 全局变量 --- */
 volatile uint8 g_bridge_vision_task_enable = 0U; /* 任务总开关，别人可以把它设为 1 来启动任务 */
 volatile vision_bridge_task_status_t g_bridge_vision_task_status = {0}; /* 记录当前任务的详细状态供外人看 */
+volatile vision_bridge_exit_reason_e g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_NONE;
 
 /* --- 内部数据结构 --- */
 /**
@@ -39,10 +40,8 @@ typedef struct
 {
     vision_bridge_task_state_e state; /* 当前处于哪个阶段 */
     uint32 state_ticks;               /* 在这个阶段待了多久了（每个 tick 是 2ms） */
-    uint16 exit_lost_ticks;           /* 下桥阶段：连续多少次没看到线了 */
     uint16 bridge_hold_ticks;         /* 看见桥面黑块后的“闭眼盲跑”倒计时 */
     uint16 align_ok_ticks;            /* 桥头对齐：连续多少次对准了 */
-    uint8 bridge_seen;                /* 本次任务已经可靠看见过桥，才允许视觉丢失判定为出口 */
     uint32 last_seq;                  /* 上次滤波处理的 IPC 序号 */
     uint8 center_filter_valid;
     uint8 center_filter_pending_jump;
@@ -375,6 +374,20 @@ static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
 
 }
 
+static uint8 vision_bridge_exit_line_confirmed(const volatile vision_ipc_packet_t *packet)
+{
+    int16 y0 = packet->bridge_up_line_y0;
+    int16 y1 = packet->bridge_up_line_y1;
+
+    // 视觉协议中 -1 表示端点无效；不能把无效值误判为“均值小于 10”。
+    if ((y0 < 0) || (y1 < 0))
+    {
+        return 0U;
+    }
+
+    return (uint8)((((int32)y0 + (int32)y1) / 2) < 10);
+}
+
 /**
  * @brief 把当前的内部状态打包公开，给外面的模块（或者屏幕）看
  */
@@ -393,7 +406,6 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.traveled_mm = traveled_mm;
     status.err_degree_cmd = err_cmd;
     status.speed_cmd = speed_cmd;
-    status.exit_lost_ticks = s_bridge_task.exit_lost_ticks;
     status.bridge_hold_ticks = s_bridge_task.bridge_hold_ticks;
 
     if (packet != NULL)
@@ -479,6 +491,7 @@ void VisionBridgeTask_Init(void)
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
     memset((void *)&g_bridge_vision_task_status, 0, sizeof(g_bridge_vision_task_status));
     g_bridge_vision_task_enable = 0U;
+    g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_NONE;
 }
 
 /**
@@ -487,6 +500,7 @@ void VisionBridgeTask_Init(void)
  */
 void VisionBridgeTask_Start(void)
 {
+    g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_NONE;
     g_bridge_vision_task_enable = 1U;
 }
 
@@ -613,7 +627,6 @@ void VisionBridgeTask_Update_2ms(void)
             if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
                 (packet->bridge_stable_detected != 0U))
             {
-                s_bridge_task.bridge_seen = 1U;
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
                 vision_bridge_apply_high_posture();
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
@@ -626,7 +639,6 @@ void VisionBridgeTask_Update_2ms(void)
                 s_bridge_task.start_x_mm = inertial_nav.x;
                 s_bridge_task.start_y_mm = inertial_nav.y;
                 s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
-                s_bridge_task.exit_lost_ticks = 0U;
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
             }
             break;
@@ -637,7 +649,6 @@ void VisionBridgeTask_Update_2ms(void)
             if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
                 (packet->bridge_stable_detected != 0U))
             {
-                s_bridge_task.bridge_seen = 1U;
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
             }
             else if (s_bridge_task.bridge_hold_ticks > 0U)
@@ -689,27 +700,17 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 可靠见桥后，连续看不到桥和桥中心线才判定视觉脱出。 */
-            if (s_bridge_task.bridge_seen != 0U)
+            /* 行驶满 1m 后，以上边线端点均值进入图像顶部作为视觉脱出确认。 */
+            if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM) &&
+                vision_bridge_exit_line_confirmed(packet))
             {
-                /* 桥与桥中心线均丢失、且防抖倒计时归零，说明已经驶出桥区。 */
-                const uint8 no_visual = (uint8)((packet->bridge_geometry_stable_detected == 0U) &&
-                                                (packet->bridge_stable_detected == 0U) &&
-                                                (s_bridge_task.bridge_hold_ticks == 0U));
-                if (no_visual)
-                {
-                    s_bridge_task.exit_lost_ticks++; /* 疑似下桥次数 +1 */
-                }
-                else
-                {
-                    s_bridge_task.exit_lost_ticks = 0U; /* 误报，重新数 */
-                }
+                g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_VISUAL_CONFIRMED;
+                vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
             }
-
-            /* 正常路径由视觉丢失确认脱出；视觉长期异常时也自动继续，不停车等待。 */
-            if ((s_bridge_task.exit_lost_ticks >= VISION_BRIDGE_TASK_EXIT_LOST_TICKS) ||
-                (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS))
+            else if (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS)
             {
+                // 视觉异常时自动继续；Plan3 会知道这不是已确认的视觉出口，不会重定位到 40。
+                g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_AUTO_TIMEOUT;
                 vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
             }
             break;
@@ -735,7 +736,7 @@ void VisionBridgeTask_Update_2ms(void)
 
         /* --- 阶段 5：任务完成 --- */
         case VISION_BRIDGE_TASK_FINISH:
-            vision_bridge_cleanup(1U); /* 打扫战场，交还控制权 */
+            vision_bridge_cleanup(0U); /* 保持最后的退出速度/航向，交给 Plan3 平滑接管 */
             break;
 
         /* --- 阶段 6：故障处理 --- */
