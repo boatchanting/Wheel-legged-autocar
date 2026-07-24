@@ -109,15 +109,8 @@ static void NavReplay_CompleteVisionBridgeExit(void)
 
 static void NavReplay_CompleteVisionBumpyExit(void)
 {
-    // 50 是颠簸视觉任务的退出锚点，只在视觉确认出口时用于重定位。
     if (NavReplay_IsBumpyExitPoint(g_target_idx))
     {
-        if (BumpyRoad_GetExitReason() == BUMPY_ROAD_EXIT_VISUAL_CONFIRMED)
-        {
-            nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
-            nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
-            exit_beep_request = 1U;
-        }
         g_target_idx++;
     }
 
@@ -404,8 +397,12 @@ void NavReplay_Process(void)
             }
             else if (g_current_point_type == NAV_POINT_BUMP)
             {
-                entry_beep_request = 1U;
                 s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
+                if (s_bumpy_exit_pending)
+                {
+                    BumpyRoad_SetExitAnchor(nav_ram_data.points[g_target_idx + 1U].x,
+                                             nav_ram_data.points[g_target_idx + 1U].y);
+                }
                 BumpyRoad_Trigger();
             }
 

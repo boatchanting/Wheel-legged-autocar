@@ -104,7 +104,19 @@ static void vision_bumpy_reset_exit_detection(void)
 {
     g_bumpy_ctrl_shadow.exit_confirmed = 0U;
     g_bumpy_ctrl_shadow.miss_frame_count = 0U;
+}
+
+static void vision_bumpy_reset_entry_detection(void)
+{
+    g_bumpy_ctrl_shadow.entry_confirmed = 0U;
+    g_bumpy_ctrl_shadow.detect_frame_count = 0U;
     g_bumpy_ctrl_shadow.last_frame_id = 0U;
+}
+
+static void vision_bumpy_reset_all_detection(void)
+{
+    vision_bumpy_reset_entry_detection();
+    vision_bumpy_reset_exit_detection();
 }
 
 /**
@@ -123,7 +135,7 @@ void VisionBumpyControl_Init(void)
     g_bumpy_ctrl_shadow.pid.Ki = VISION_BUMPY_PID_KI;
     g_bumpy_ctrl_shadow.pid.Kd = VISION_BUMPY_PID_KD;
     vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
-    vision_bumpy_reset_exit_detection();
+    vision_bumpy_reset_all_detection();
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;             // 更新全局状态
 
 #if VISION_BUMPY_CONTROL_PROFILE_ENABLE
@@ -149,8 +161,19 @@ void VisionBumpyControl_SetEnable(uint8 enable)
 
 void VisionBumpyControl_ResetExitDetection(void)
 {
+    vision_bumpy_reset_all_detection();
+    g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;
+}
+
+void VisionBumpyControl_RearmExitDetection(void)
+{
     vision_bumpy_reset_exit_detection();
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;
+}
+
+uint8 VisionBumpyControl_IsEntryConfirmed(void)
+{
+    return g_vision_bumpy_control_status.entry_confirmed;
 }
 
 uint8 VisionBumpyControl_IsExitConfirmed(void)
@@ -221,7 +244,9 @@ void VisionBumpyControl_Update_2ms(void)
         g_bumpy_ctrl_shadow.direction_y = 0.0f;
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                  // 清零误差指令
         vision_bumpy_pid_reset(&g_bumpy_ctrl_shadow.pid);
+        // 视觉数据暂时无效不抹除已确认的“进入”事实，但出口统计必须重新开始。
         vision_bumpy_reset_exit_detection();
+        g_bumpy_ctrl_shadow.detect_frame_count = 0U;
         g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;        // 更新全局状态
 #if VISION_BUMPY_CONTROL_PROFILE_ENABLE
         RUNTIME_PROFILE_END(&g_vision_bumpy_control_profiler, VISION_BUMPY_CONTROL_PROFILE_TIMER);  // 结束性能分析
@@ -253,11 +278,26 @@ void VisionBumpyControl_Update_2ms(void)
         g_bumpy_ctrl_shadow.last_frame_id = packet->frame_id;
         if (packet->bumpy_detected)
         {
+            if (g_bumpy_ctrl_shadow.entry_confirmed == 0U)
+            {
+                if (g_bumpy_ctrl_shadow.detect_frame_count < VISION_BUMPY_ENTRY_DETECT_FRAMES)
+                {
+                    g_bumpy_ctrl_shadow.detect_frame_count++;
+                }
+                if (g_bumpy_ctrl_shadow.detect_frame_count >= VISION_BUMPY_ENTRY_DETECT_FRAMES)
+                {
+                    g_bumpy_ctrl_shadow.entry_confirmed = 1U;
+                }
+            }
             g_bumpy_ctrl_shadow.miss_frame_count = 0U;
             g_bumpy_ctrl_shadow.exit_confirmed = 0U;
         }
         else if (g_bumpy_ctrl_shadow.miss_frame_count < VISION_BUMPY_EXIT_MISS_FRAMES)
         {
+            if (g_bumpy_ctrl_shadow.entry_confirmed == 0U)
+            {
+                g_bumpy_ctrl_shadow.detect_frame_count = 0U;
+            }
             g_bumpy_ctrl_shadow.miss_frame_count++;
             if (g_bumpy_ctrl_shadow.miss_frame_count >= VISION_BUMPY_EXIT_MISS_FRAMES)
             {

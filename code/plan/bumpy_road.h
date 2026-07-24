@@ -22,7 +22,7 @@ typedef enum
 typedef enum
 {
     BUMPY_ROAD_EXIT_NONE = 0,
-    BUMPY_ROAD_EXIT_VISUAL_CONFIRMED,
+    BUMPY_ROAD_EXIT_POST_CORRECTION_COMPLETE,
     BUMPY_ROAD_EXIT_AUTO_DISTANCE
 } BumpyRoadExitReason_e;
 
@@ -40,6 +40,11 @@ void BumpyRoad_Init(void);
  * @note 仅当状态机处于空闲态时触发有效，触发后将记录当前惯导坐标作为起点
  */
 void BumpyRoad_Trigger(void);
+
+/**
+ * @brief 设置视觉出口锚点；视觉确认出口时将融合坐标修正到该位置
+ */
+void BumpyRoad_SetExitAnchor(float x_mm, float y_mm);
 
 /**
  * @brief 颠簸路段状态机周期更新（1ms节拍）
