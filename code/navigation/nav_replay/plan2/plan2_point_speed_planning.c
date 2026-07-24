@@ -237,31 +237,89 @@ static uint8 ShouldTriggerSpecialAction(float dist_to_point, float speed_mag)
                    (speed_mag <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S));
 }
 
-// 单周期速度斜率限制；普通巡航仍然平滑，但雷区停车阶段会直接绕过它给 0。
-static float SpeedSlew(float raw_speed)
+/**
+ * @brief 目标速度分段限斜率 + 多预设PID模式切换
+ * @param raw_speed 本周期导航层计算出的原始目标速度，符号方向保持不变
+ * @return 经过单周期步长限制后的目标速度
+ * @note 根据实际车速与目标速度的关系，自动切换 NORMAL/ACCEL/BRAKE 三档PID预设，
+ *       同时对速度目标施加分段斜率限制，避免阶跃导致速度环超调。
+ *       0724修复：加速段也走斜率限制，不再直接放行。
+ */
+static float NavReplay_SpeedSlew_Update(float raw_speed)
 {
+    float abs_raw = fabsf(raw_speed);
+    float abs_prev = fabsf(s_prev_speed_cmd);
+    float abs_actual = fabsf(current_actual_speed);
     float diff = raw_speed - s_prev_speed_cmd;
-    float step_limit = NAV_POINT_SPEED_ACCEL_STEP;
+    float step_limit;
 
-    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
-    if (((raw_speed * s_prev_speed_cmd) >= 0.0f) &&
-        (fabsf(raw_speed) > fabsf(s_prev_speed_cmd)))
+    ControlMode_e target_mode = CONTROL_MODE_NORMAL;
+    static ControlMode_e s_current_req_mode = CONTROL_MODE_NORMAL;
+    static uint16 s_mode_cooldown = 0;
+
+    // --- 1. 基于实际车速决定目标 PID 模式 ---
+    float actual_speed_clamped = (abs_actual < 50.0f) ? 0.0f : current_actual_speed;
+    if ((raw_speed * actual_speed_clamped) < 0.0f)
     {
-        s_prev_speed_cmd = raw_speed;
-        return s_prev_speed_cmd;
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else if (abs_raw > (abs_actual + NAV_SPEED_SLEW_EPS))
+    {
+        target_mode = CONTROL_MODE_ACCEL;
+    }
+    else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_actual)
+    {
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else
+    {
+        target_mode = CONTROL_MODE_NORMAL;
     }
 
+    // --- 2. 带有紧急豁免的 PID 切换冷却机制 ---
+    if (target_mode == CONTROL_MODE_BRAKE && s_current_req_mode != CONTROL_MODE_BRAKE)
+    {
+        // 紧急情况：需要刹车，无视冷却立即切换
+        s_current_req_mode = CONTROL_MODE_BRAKE;
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+        s_mode_cooldown = 30; // 切换后进入 300ms 冷却
+    }
+    else if (target_mode != s_current_req_mode && s_mode_cooldown == 0)
+    {
+        // 正常切换：冷却完毕允许切换
+        s_current_req_mode = target_mode;
+        Control_Profile_RequestMode(target_mode);
+        s_mode_cooldown = 30; // 重置 300ms 冷却
+    }
+    else if (s_mode_cooldown > 0)
+    {
+        s_mode_cooldown--;
+        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状态
+    }
+    else
+    {
+        Control_Profile_RequestMode(target_mode); // 平稳保持
+    }
+
+    // --- 3. 速度曲线斜率生成 (0724修复：加速段也走斜率限制) ---
     if ((raw_speed * s_prev_speed_cmd) < 0.0f)
     {
-        step_limit = NAV_POINT_SPEED_CROSS_ZERO_STEP;
+        step_limit = NAV_SPEED_SLEW_DOWN_CROSS_ZERO;
     }
-    else if (fabsf(raw_speed) < fabsf(s_prev_speed_cmd))
+    else if (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS))
     {
-        step_limit = NAV_POINT_SPEED_DECEL_STEP;
+        step_limit = (abs_prev < NAV_SPEED_SLEW_LOW_SPEED_TH) ? NAV_SPEED_SLEW_UP_LOW : NAV_SPEED_SLEW_UP_NORMAL;
+    }
+    else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_prev)
+    {
+        step_limit = (abs_prev > NAV_SPEED_SLEW_FAST_DECEL_TH) ? NAV_SPEED_SLEW_DOWN_FAST : NAV_SPEED_SLEW_DOWN_NORMAL;
+    }
+    else
+    {
+        step_limit = NAV_SPEED_SLEW_UP_NORMAL;
     }
 
-    s_prev_speed_cmd += Float_Constrain(diff, -step_limit, step_limit);
-    return s_prev_speed_cmd;
+    return s_prev_speed_cmd + Float_Constrain(diff, -step_limit, step_limit);
 }
 
 static float PositiveAngle360(float angle)
@@ -795,6 +853,7 @@ void NavReplay_Start(void)
     ResetEncoderStopPrediction();
     Minefield_Init();
     Brake_NavHardStop_Reset();
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
 
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0U : 1U;
@@ -817,6 +876,7 @@ void NavReplay_Stop(void)
     ResetEncoderStopPrediction();
     Minefield_Init();
     Brake_NavHardStop_Reset();
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
 }
 
 void NavReplay_Process(void)
@@ -968,7 +1028,7 @@ void NavReplay_Process(void)
     {
         speed_mag = ApplyEncoderStopPrediction(speed_mag, dist_to_point, stop_radius, speed_sign);
     }
-    target_speed_set = SpeedSlew(speed_sign * speed_mag);
+    target_speed_set = NavReplay_SpeedSlew_Update(speed_sign * speed_mag);
     if (s_spin_exit_align_ticks != 0U)
     {
         s_spin_exit_align_ticks--;

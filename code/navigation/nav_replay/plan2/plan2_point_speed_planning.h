@@ -78,6 +78,17 @@
 // 跨零或瞬时停车时的最大速度变化量。
 #define NAV_POINT_SPEED_CROSS_ZERO_STEP         90.0f
 
+// ========================= 多预设PID切换 + 速度斜率限制参数 =========================
+// 由 NavReplay_SpeedSlew_Update() 使用，与 plan1 保持一致
+#define NAV_SPEED_SLEW_EPS             1.0f    // 速度变化死区，小于该值认为没有明显加/减速
+#define NAV_SPEED_SLEW_LOW_SPEED_TH    80.0f   // 低速加速分界；低于该速度使用 NAV_SPEED_SLEW_UP_LOW
+#define NAV_SPEED_SLEW_FAST_DECEL_TH   220.0f  // 高速减速分界；高于该速度允许更大的降速步长
+#define NAV_SPEED_SLEW_UP_LOW          30.0f   // 低速/起步加速步长；加大起步更冲，减小更柔
+#define NAV_SPEED_SLEW_UP_NORMAL       70.0f   // 正常加速步长（0724修复后放大，原45偏保守）
+#define NAV_SPEED_SLEW_DOWN_NORMAL     65.0f   // 普通减速步长
+#define NAV_SPEED_SLEW_DOWN_FAST       95.0f   // 高速减速步长
+#define NAV_SPEED_SLEW_DOWN_CROSS_ZERO 120.0f  // 目标速度跨零或停车时的步长
+
 // 输出到底盘控制层的目标速度指令。
 extern volatile float target_speed_set;
 // 输出到底盘控制层的目标转向误差（deg）。
