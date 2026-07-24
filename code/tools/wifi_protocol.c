@@ -2,6 +2,8 @@
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
+#include "../calculate/ekf.h"
+#include "../navigation/inertial_nav.h"
 #include "../navigation/nav_replay/nav_replay.h"
 #include "../plan/minefield.h"
 
@@ -432,9 +434,28 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&inertial_nav.theoretical_yaw_rate);
     write_u32_or_float(&inertial_nav.actual_yaw_rate);
 
-    // J. Plan-2 special-point diagnostic block (25 floats, 100 bytes).
-    // Keep this fixed-width and append-only; the host accepts older packets
-    // without it and records these fields only when this block is present.
+    // K. IMU raw gyro (3 floats, 12 bytes)
+    write_u32_or_float((const void *)&imu_data.gyro_x);
+    write_u32_or_float((const void *)&imu_data.gyro_y);
+    write_u32_or_float((const void *)&imu_data.gyro_z);
+
+    // L. IMU raw accelerometer (3 floats, 12 bytes)
+    write_u32_or_float((const void *)&imu_data.acc_x);
+    write_u32_or_float((const void *)&imu_data.acc_y);
+    write_u32_or_float((const void *)&imu_data.acc_z);
+
+    // M. IMU-integrated velocity before fusion (1 float, 4 bytes)
+    write_u32_or_float(&inertial_nav.v_pred);
+
+    // N. Servo speed loop runtime values (3 floats, 12 bytes)
+    write_u32_or_float(&pid_servo_speed.error);
+    write_u32_or_float(&pid_servo_speed.output);
+    write_u32_or_float(&pid_servo_speed.error_integral);
+
+    // O. Plan-2 special-point diagnostic block (25 floats, 100 bytes).
+    // Only sent when CURRENT_NAV_PLAN == 2; plan-1 hosts stop parsing at the
+    // shared block above.
+#if CURRENT_NAV_PLAN == 2
     {
         float nav_replay_state = (float)g_replay_state;
         float nav_special_action_trigger = (float)g_special_action_trigger;
@@ -503,6 +524,7 @@ void wifi_protocol_send_data(void)
         write_u32_or_float(&mf_stall);
         write_u32_or_float(&mf_abort);
     }
+#endif /* CURRENT_NAV_PLAN == 2 */
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));
     tx_buf[len_pos] = payload_len;

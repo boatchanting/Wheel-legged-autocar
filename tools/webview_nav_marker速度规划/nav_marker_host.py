@@ -33,18 +33,20 @@ HOST_ACK_TIMEOUT_SEC = 1.5
 
 PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
-PAYLOAD_GPS_TRACE_FLOAT_BYTES = 8
-PAYLOAD_GPS_TRACE_FLAG_BYTES = 2
-PAYLOAD_GPS_TRACE_CTRL_BYTES = 2
-PAYLOAD_DEBUG_BYTES = 20
-PAYLOAD_FUSION_TRACE_FLOAT_BYTES = 8
-PAYLOAD_FUSION_TRACE_FLAG_BYTES = 1
-PAYLOAD_SIZE_GPS_TRACE = PAYLOAD_SIZE_V2 + PAYLOAD_GPS_TRACE_FLOAT_BYTES + PAYLOAD_GPS_TRACE_FLAG_BYTES
-PAYLOAD_SIZE_GPS_TRACE_CTRL = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
-PAYLOAD_SIZE_GPS_TRACE_DEBUG = PAYLOAD_SIZE_GPS_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
-PAYLOAD_SIZE_TRACE = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_FUSION_TRACE_FLOAT_BYTES + PAYLOAD_FUSION_TRACE_FLAG_BYTES
-PAYLOAD_SIZE_TRACE_CTRL = PAYLOAD_SIZE_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
-PAYLOAD_SIZE_TRACE_DEBUG = PAYLOAD_SIZE_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
+PAYLOAD_CTRL_BYTES = 3          # pid_mode, slip_flag, minefield_is_active
+PAYLOAD_DEBUG_BYTES = 20        # 5 floats: target_speed, speed_L, speed_R, theo_yaw_rate, actual_yaw_rate
+PAYLOAD_IMU_GYRO_BYTES = 12     # 3 floats: gyro_x, gyro_y, gyro_z
+PAYLOAD_IMU_ACC_BYTES = 12      # 3 floats: acc_x, acc_y, acc_z
+PAYLOAD_V_PRED_BYTES = 4        # 1 float: v_pred
+PAYLOAD_SERVO_BYTES = 12        # 3 floats: error, output, integral
+PAYLOAD_NAV_DIAG_BYTES = 100    # 25 floats: plan-2 only
+
+PAYLOAD_SIZE_CTRL = PAYLOAD_SIZE_V2 + PAYLOAD_CTRL_BYTES
+PAYLOAD_SIZE_DEBUG = PAYLOAD_SIZE_CTRL + PAYLOAD_DEBUG_BYTES
+PAYLOAD_SIZE_IMU = PAYLOAD_SIZE_DEBUG + PAYLOAD_IMU_GYRO_BYTES + PAYLOAD_IMU_ACC_BYTES
+PAYLOAD_SIZE_V_PRED = PAYLOAD_SIZE_IMU + PAYLOAD_V_PRED_BYTES
+PAYLOAD_SIZE_SERVO = PAYLOAD_SIZE_V_PRED + PAYLOAD_SERVO_BYTES  # 149 = plan-1 full size
+PAYLOAD_SIZE_NAV_DIAG = PAYLOAD_SIZE_SERVO + PAYLOAD_NAV_DIAG_BYTES  # 249 = plan-2 full size
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -89,20 +91,24 @@ WIFI_TELEMETRY_LOG_FIELDS = [
     "frame_cmd",
     "raw_frame_hex",
 ] + FIELD_NAMES_V2 + [
-    "gps_x",
-    "gps_y",
-    "gps_valid",
-    "gps_origin_set",
-    "fusion_x",
-    "fusion_y",
-    "fusion_valid",
     "pid_mode",
     "slip_flag",
+    "minefield_is_active",
     "target_speed",
     "speed_L",
     "speed_R",
     "theoretical_yaw_rate",
     "actual_yaw_rate",
+    "gyro_x",
+    "gyro_y",
+    "gyro_z",
+    "acc_x",
+    "acc_y",
+    "acc_z",
+    "v_pred",
+    "servo_error",
+    "servo_output",
+    "servo_integral",
     "has_debug",
     "payload_size",
     "time_str",
@@ -307,94 +313,21 @@ def _estimate_start_heading():
 
 
 def _resolve_trace_layout(size):
-    if size >= PAYLOAD_SIZE_TRACE_DEBUG:
-        return {
-            "has_gps": True,
-            "has_fusion": True,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": True,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_TRACE,
-            "debug_base": PAYLOAD_SIZE_TRACE_CTRL,
-        }
-
-    if size >= PAYLOAD_SIZE_GPS_TRACE_DEBUG:
-        return {
-            "has_gps": True,
-            "has_fusion": False,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": True,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
-            "debug_base": PAYLOAD_SIZE_GPS_TRACE_CTRL,
-        }
-
-    if size >= PAYLOAD_SIZE_TRACE_CTRL:
-        return {
-            "has_gps": True,
-            "has_fusion": True,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_TRACE,
-            "debug_base": None,
-        }
-
-    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
-        return {
-            "has_gps": True,
-            "has_fusion": False,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
-            "debug_base": None,
-        }
-
-    if size >= PAYLOAD_SIZE_TRACE:
-        return {
-            "has_gps": True,
-            "has_fusion": True,
-            "has_pid_mode": False,
-            "has_slip_flag": False,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": None,
-            "debug_base": None,
-        }
-
-    if size >= PAYLOAD_SIZE_GPS_TRACE:
-        return {
-            "has_gps": True,
-            "has_fusion": False,
-            "has_pid_mode": False,
-            "has_slip_flag": False,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": None,
-            "debug_base": None,
-        }
-
+    """解析 payload 大小，返回各字段是否存在的布尔字典。"""
     return {
-        "has_gps": False,
-        "has_fusion": False,
-        "has_pid_mode": False,
-        "has_slip_flag": False,
-        "has_debug": False,
-        "gps_base": PAYLOAD_SIZE_V2,
-        "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-        "pid_base": None,
-        "debug_base": None,
+        "has_ctrl": size >= PAYLOAD_SIZE_CTRL,
+        "has_debug": size >= PAYLOAD_SIZE_DEBUG,
+        "has_imu": size >= PAYLOAD_SIZE_IMU,
+        "has_v_pred": size >= PAYLOAD_SIZE_V_PRED,
+        "has_servo": size >= PAYLOAD_SIZE_SERVO,
+        "has_nav_diag": size >= PAYLOAD_SIZE_NAV_DIAG,
+        "ctrl_base": PAYLOAD_SIZE_V2,
+        "debug_base": PAYLOAD_SIZE_CTRL,
+        "imu_gyro_base": PAYLOAD_SIZE_DEBUG,
+        "imu_acc_base": PAYLOAD_SIZE_DEBUG + PAYLOAD_IMU_GYRO_BYTES,
+        "v_pred_base": PAYLOAD_SIZE_IMU,
+        "servo_base": PAYLOAD_SIZE_V_PRED,
+        "nav_diag_base": PAYLOAD_SIZE_SERVO,
     }
 
 
@@ -416,50 +349,56 @@ def _decode_payload(payload_bytes):
         data["mark_trigger"] = 0
         data["point_type"] = 0
 
-    if layout["has_gps"]:
-        gps_base = layout["gps_base"]
-        gps_x, gps_y = struct.unpack("<ff", payload_bytes[gps_base : gps_base + 8])
-        data["gps_x"] = gps_x
-        data["gps_y"] = gps_y
-        data["gps_valid"] = payload_bytes[gps_base + 8]
-        data["gps_origin_set"] = payload_bytes[gps_base + 9]
+    # Control fields: pid_mode, slip_flag, minefield_is_active
+    if layout["has_ctrl"]:
+        ctrl_base = layout["ctrl_base"]
+        data["pid_mode"] = payload_bytes[ctrl_base]
+        data["slip_flag"] = payload_bytes[ctrl_base + 1]
+        data["minefield_is_active"] = payload_bytes[ctrl_base + 2]
     else:
-        data["gps_x"] = None
-        data["gps_y"] = None
-        data["gps_valid"] = 0
-        data["gps_origin_set"] = 0
+        data["pid_mode"] = None
+        data["slip_flag"] = None
+        data["minefield_is_active"] = None
 
-    if layout["has_fusion"]:
-        fusion_base = layout["fusion_base"]
-        fusion_x, fusion_y = struct.unpack("<ff", payload_bytes[fusion_base : fusion_base + 8])
-        data["fusion_x"] = fusion_x
-        data["fusion_y"] = fusion_y
-        data["fusion_valid"] = payload_bytes[fusion_base + 8]
-    else:
-        data["fusion_x"] = None
-        data["fusion_y"] = None
-        data["fusion_valid"] = 0
-
-    if layout["has_pid_mode"]:
-        data["pid_mode"] = payload_bytes[layout["pid_base"]]
-    else:
-        data["pid_mode"] = 0
-
-    if layout["has_slip_flag"]:
-        data["slip_flag"] = payload_bytes[layout["pid_base"] + 1]
-    else:
-        data["slip_flag"] = 0
-
+    # Debug fields: 5 floats
+    debug_fields = ["target_speed", "speed_L", "speed_R", "theoretical_yaw_rate", "actual_yaw_rate"]
     if layout["has_debug"]:
-        debug_floats = struct.unpack('<fffff', payload_bytes[layout["debug_base"] : layout["debug_base"] + 20])
-        data["target_speed"] = debug_floats[0]
-        data["speed_L"] = debug_floats[1]
-        data["speed_R"] = debug_floats[2]
-        data["theoretical_yaw_rate"] = debug_floats[3]
-        data["actual_yaw_rate"] = debug_floats[4]
+        debug_values = struct.unpack("<5f", payload_bytes[layout["debug_base"] : layout["debug_base"] + PAYLOAD_DEBUG_BYTES])
+        data.update(zip(debug_fields, debug_values))
         data["has_debug"] = True
     else:
+        data.update({field: None for field in debug_fields})
         data["has_debug"] = False
+
+    # IMU gyro: 3 floats
+    imu_gyro_fields = ["gyro_x", "gyro_y", "gyro_z"]
+    if layout["has_imu"]:
+        imu_gyro_values = struct.unpack("<3f", payload_bytes[layout["imu_gyro_base"] : layout["imu_gyro_base"] + PAYLOAD_IMU_GYRO_BYTES])
+        data.update(zip(imu_gyro_fields, imu_gyro_values))
+    else:
+        data.update({field: None for field in imu_gyro_fields})
+
+    # IMU accelerometer: 3 floats
+    imu_acc_fields = ["acc_x", "acc_y", "acc_z"]
+    if layout["has_imu"]:
+        imu_acc_values = struct.unpack("<3f", payload_bytes[layout["imu_acc_base"] : layout["imu_acc_base"] + PAYLOAD_IMU_ACC_BYTES])
+        data.update(zip(imu_acc_fields, imu_acc_values))
+    else:
+        data.update({field: None for field in imu_acc_fields})
+
+    # IMU-integrated velocity before fusion: 1 float
+    if layout["has_v_pred"]:
+        data["v_pred"] = struct.unpack("<f", payload_bytes[layout["v_pred_base"] : layout["v_pred_base"] + PAYLOAD_V_PRED_BYTES])[0]
+    else:
+        data["v_pred"] = None
+
+    # Servo speed loop runtime: 3 floats
+    servo_fields = ["servo_error", "servo_output", "servo_integral"]
+    if layout["has_servo"]:
+        servo_values = struct.unpack("<3f", payload_bytes[layout["servo_base"] : layout["servo_base"] + PAYLOAD_SERVO_BYTES])
+        data.update(zip(servo_fields, servo_values))
+    else:
+        data.update({field: None for field in servo_fields})
 
     data["payload_size"] = size
     data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"

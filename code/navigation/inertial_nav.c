@@ -34,6 +34,7 @@ void InertialNav_Init(void) {
     inertial_nav.init_yaw = 0.0f;
     inertial_nav.vx_body = 0.0f;
     inertial_nav.vy_body = 0.0f;
+    inertial_nav.v_pred = 0.0f;
     inertial_nav.slip_flag = 0;// 初始化打滑标志位
     inertial_nav.slip_timer_ms = 0;
 }
@@ -117,6 +118,9 @@ void InertialNav_Update(float curr_yaw,
     if (inertial_nav.slip_flag == 3) {
         v_pred *= MINEFIELD_VEL_DAMPING; 
     }
+
+    // 缓存融合前的 IMU 积分速度，供 WiFi 回传调试
+    inertial_nav.v_pred = v_pred;
 
     inertial_nav.vx_body = alpha * v_wheel_avg + (1.0f - alpha) * v_pred;
 

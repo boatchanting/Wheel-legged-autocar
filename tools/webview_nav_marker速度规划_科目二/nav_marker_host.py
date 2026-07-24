@@ -36,10 +36,17 @@ PAYLOAD_SIZE_V1 = 84
 PAYLOAD_SIZE_V2 = 86
 PAYLOAD_CTRL_BYTES = 3
 PAYLOAD_DEBUG_BYTES = 20
+PAYLOAD_IMU_GYRO_BYTES = 12     # 3 floats: gyro_x, gyro_y, gyro_z
+PAYLOAD_IMU_ACC_BYTES = 12      # 3 floats: acc_x, acc_y, acc_z
+PAYLOAD_V_PRED_BYTES = 4        # 1 float: v_pred
+PAYLOAD_SERVO_BYTES = 12        # 3 floats: error, output, integral
 PAYLOAD_NAV_DIAG_BYTES = 100
 PAYLOAD_SIZE_CTRL = PAYLOAD_SIZE_V2 + PAYLOAD_CTRL_BYTES
-PAYLOAD_SIZE_CTRL_DEBUG = PAYLOAD_SIZE_CTRL + PAYLOAD_DEBUG_BYTES
-PAYLOAD_SIZE_CTRL_NAV_DIAG = PAYLOAD_SIZE_CTRL_DEBUG + PAYLOAD_NAV_DIAG_BYTES
+PAYLOAD_SIZE_DEBUG = PAYLOAD_SIZE_CTRL + PAYLOAD_DEBUG_BYTES
+PAYLOAD_SIZE_IMU = PAYLOAD_SIZE_DEBUG + PAYLOAD_IMU_GYRO_BYTES + PAYLOAD_IMU_ACC_BYTES
+PAYLOAD_SIZE_V_PRED = PAYLOAD_SIZE_IMU + PAYLOAD_V_PRED_BYTES
+PAYLOAD_SIZE_SERVO = PAYLOAD_SIZE_V_PRED + PAYLOAD_SERVO_BYTES
+PAYLOAD_SIZE_NAV_DIAG = PAYLOAD_SIZE_SERVO + PAYLOAD_NAV_DIAG_BYTES  # 249 = plan-2 full size
 
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
@@ -92,6 +99,16 @@ WIFI_TELEMETRY_LOG_FIELDS = [
     "speed_R",
     "theoretical_yaw_rate",
     "actual_yaw_rate",
+    "gyro_x",
+    "gyro_y",
+    "gyro_z",
+    "acc_x",
+    "acc_y",
+    "acc_z",
+    "v_pred",
+    "servo_error",
+    "servo_output",
+    "servo_integral",
     "nav_replay_state",
     "nav_special_action_trigger",
     "nav_current_point_type",
@@ -463,11 +480,18 @@ def _estimate_start_heading():
 def _resolve_trace_layout(size):
     return {
         "has_ctrl": size >= PAYLOAD_SIZE_CTRL,
-        "has_debug": size >= PAYLOAD_SIZE_CTRL_DEBUG,
-        "has_nav_diag": size >= PAYLOAD_SIZE_CTRL_NAV_DIAG,
+        "has_debug": size >= PAYLOAD_SIZE_DEBUG,
+        "has_imu": size >= PAYLOAD_SIZE_IMU,
+        "has_v_pred": size >= PAYLOAD_SIZE_V_PRED,
+        "has_servo": size >= PAYLOAD_SIZE_SERVO,
+        "has_nav_diag": size >= PAYLOAD_SIZE_NAV_DIAG,
         "ctrl_base": PAYLOAD_SIZE_V2,
         "debug_base": PAYLOAD_SIZE_CTRL,
-        "nav_diag_base": PAYLOAD_SIZE_CTRL_DEBUG,
+        "imu_gyro_base": PAYLOAD_SIZE_DEBUG,
+        "imu_acc_base": PAYLOAD_SIZE_DEBUG + PAYLOAD_IMU_GYRO_BYTES,
+        "v_pred_base": PAYLOAD_SIZE_IMU,
+        "servo_base": PAYLOAD_SIZE_V_PRED,
+        "nav_diag_base": PAYLOAD_SIZE_SERVO,
     }
 
 
@@ -542,6 +566,36 @@ def _decode_payload(payload_bytes):
         data.update(zip(debug_fields, debug_values))
     else:
         data.update({field: None for field in debug_fields})
+
+    # IMU gyro: 3 floats
+    imu_gyro_fields = ["gyro_x", "gyro_y", "gyro_z"]
+    if layout["has_imu"]:
+        imu_gyro_values = struct.unpack("<3f", payload_bytes[layout["imu_gyro_base"] : layout["imu_gyro_base"] + PAYLOAD_IMU_GYRO_BYTES])
+        data.update(zip(imu_gyro_fields, imu_gyro_values))
+    else:
+        data.update({field: None for field in imu_gyro_fields})
+
+    # IMU accelerometer: 3 floats
+    imu_acc_fields = ["acc_x", "acc_y", "acc_z"]
+    if layout["has_imu"]:
+        imu_acc_values = struct.unpack("<3f", payload_bytes[layout["imu_acc_base"] : layout["imu_acc_base"] + PAYLOAD_IMU_ACC_BYTES])
+        data.update(zip(imu_acc_fields, imu_acc_values))
+    else:
+        data.update({field: None for field in imu_acc_fields})
+
+    # IMU-integrated velocity before fusion: 1 float
+    if layout["has_v_pred"]:
+        data["v_pred"] = struct.unpack("<f", payload_bytes[layout["v_pred_base"] : layout["v_pred_base"] + PAYLOAD_V_PRED_BYTES])[0]
+    else:
+        data["v_pred"] = None
+
+    # Servo speed loop runtime: 3 floats
+    servo_fields = ["servo_error", "servo_output", "servo_integral"]
+    if layout["has_servo"]:
+        servo_values = struct.unpack("<3f", payload_bytes[layout["servo_base"] : layout["servo_base"] + PAYLOAD_SERVO_BYTES])
+        data.update(zip(servo_fields, servo_values))
+    else:
+        data.update({field: None for field in servo_fields})
 
     nav_diag_fields = [
         "nav_replay_state",

@@ -60,6 +60,9 @@ typedef struct {
     float current_speed_R;
     float theoretical_yaw_rate;
     float actual_yaw_rate;
+
+    // [调试信息] IMU 加速度积分速度（融合前），用于调试惯导融合权重
+    float v_pred;
 } InertialNav_t;
 
 // --- 全局变量声明 ---
