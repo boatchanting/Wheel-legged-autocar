@@ -425,8 +425,15 @@ void NavReplay_Process(void)
         err_degree = ANGLE_FILTER_ALPHA * raw_err + (1.0f - ANGLE_FILTER_ALPHA) * s_prev_err_degree;
         s_prev_err_degree = err_degree;
 
-        // 追点过程中始终保持行驶，由转向误差连续修正；不因接近点或角度偏差停车。
-        target_speed_set = NAV_SPEED_FAST;
+        // 如果角度偏差过大，则原地转向；否则快速逼近
+        if (fabsf(NormalizeAngle(target_yaw - inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE)
+        {
+            target_speed_set = NAV_SPEED_STOP;
+        }
+        else
+        {
+            target_speed_set = NAV_SPEED_FAST;
+        }
     }
 }
 
