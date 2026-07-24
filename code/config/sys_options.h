@@ -1,9 +1,11 @@
 #ifndef __SYS_OPTIONS_H__
 #define __SYS_OPTIONS_H__
 
+#define JUMP_ENABLE_LANDING_BUFFER 0U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
+
 #define WIFI_USE 1// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
-#define WIFI_CORE_SELECT 1 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
-#define WIFI_PROTOCOL_SELECT 2 // 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
+#define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
+#define WIFI_PROTOCOL_SELECT  2// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 #define DEBUG_DISPLAY_CORE_SELECT 0      // 【显示核心选择】0: 0核独占屏幕  1: 1核视觉屏幕
@@ -20,7 +22,7 @@
 #define IMU_CATEGORY 3//【全局开关】1:imu660ra  2:imu660rb 3:imu963ra 注：imu660ra被赛事禁用
 #define IMU_REFRESH_TEST_ENABLE 0 // 1: 上电后测试IMU刷新频率，运行10秒后串口打印一次结果
 #define SUBS_CATEGORY 1  //【遥控器选择】1.旧遥控器2.新遥控器。选反会导致前进后退相反
-#define SBUS_ACTIVE_POINT 4 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段
+#define SBUS_ACTIVE_POINT 2 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段
 #define SLIP_DETECTION_ENABLE 1U //【全局开关】1:开启基于侧向加速度的纯横向打滑检测  0:关闭（默认正常抓地权重）
 // ---------------- plan 配置 ----------------
 #define GNSS_NAV 0 // 【全局开关】gps寻迹还是惯导寻迹，现阶段暂时还没联合(date0511)，联合后考虑去除该开关，1表示使用gnss寻迹，0表示不使用gnss寻迹，惯导开关常开
@@ -64,6 +66,10 @@
 
 #if (CAMERA_MENU_DEBUG_LOG_DIV == 0U)
 #error "DEBUG display config error: CAMERA_MENU_DEBUG_LOG_DIV must be greater than 0."
+#endif
+
+#if (JUMP_ENABLE_LANDING_BUFFER != 0U) && (JUMP_ENABLE_LANDING_BUFFER != 1U)
+#error "JUMP config error: JUMP_ENABLE_LANDING_BUFFER must be 0 or 1."
 #endif
 
 #define DEBUG_DISPLAY_CORE0 (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT == 0))
