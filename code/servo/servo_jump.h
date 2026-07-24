@@ -53,6 +53,12 @@ extern volatile JumpPhase g_current_jump_phase;//跳跃阶段的变量
 extern JumpType_e g_current_jump_type;
 // 跳跃阶段枚举
 extern uint32_t time_elapsed1, time_elapsed2, time_elapsed3, time_elapsed4; // 距离起跳的时间 (ms)
+extern volatile int32 g_jump_target_pwm_lf;
+extern volatile int32 g_jump_target_pwm_rf;
+extern volatile int32 g_jump_target_pwm_rr;
+extern volatile int32 g_jump_target_pwm_lr;
+extern volatile uint32_t g_jump_launch_cmd_time_ms;
+extern volatile uint32_t g_jump_flight_cmd_time_ms;
 
 // ===================== 函数声明 =====================
 void jump_module_init(void);
