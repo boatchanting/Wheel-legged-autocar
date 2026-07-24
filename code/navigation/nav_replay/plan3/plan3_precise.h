@@ -50,8 +50,8 @@ extern NavReplayState_e g_replay_state;         // 当前复现状态
 extern uint8 g_current_point_type;              // 当前正在前往/到达的点的类型
 extern uint8 g_special_action_trigger;          // 特殊动作触发标志 (1: 到达特殊点，请执行动作)
 // 由 main_cm7_0.c 主循环消费，避免在中断控制路径中阻塞蜂鸣。
-extern volatile uint8 g_nav_bridge_entry_beep_request;
-extern volatile uint8 g_nav_bridge_exit_beep_request;
+extern volatile uint8 entry_beep_request;
+extern volatile uint8 exit_beep_request;
 
 // ========================= 函数接口 =========================
 

@@ -8,8 +8,8 @@ NavReplayState_e g_replay_state = REPLAY_IDLE;
 uint16 g_target_idx = 0;                    // 当前正在前往的点索引
 uint8 g_current_point_type = NAV_POINT_PATH;// 当前点的类型
 uint8 g_special_action_trigger = 0;         // 触发标志
-volatile uint8 g_nav_bridge_entry_beep_request = 0U;
-volatile uint8 g_nav_bridge_exit_beep_request = 0U;
+volatile uint8 entry_beep_request = 0U;
+volatile uint8 exit_beep_request = 0U;
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
 #define NAV_REPLAY_START_HEADING_VALID 0
@@ -87,7 +87,7 @@ static void NavReplay_CompleteVisionBridgeExit(void)
         {
             nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
             nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
-            g_nav_bridge_exit_beep_request = 1U;
+            exit_beep_request = 1U;
         }
         g_target_idx++;
     }
@@ -138,8 +138,8 @@ void NavReplay_Start(void)
     g_special_action_trigger = 0;
     s_bridge_exit_pending = 0U;
     s_bridge_handoff_ticks = 0U;
-    g_nav_bridge_entry_beep_request = 0U;
-    g_nav_bridge_exit_beep_request = 0U;
+    entry_beep_request = 0U;
+    exit_beep_request = 0U;
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
     s_start_heading_stable_count = 0;
@@ -362,7 +362,7 @@ void NavReplay_Process(void)
                 else if (g_current_point_type == NAV_POINT_BRIDGE)
                 {
                     // 桥入口、视觉桥任务真正结束时各鸣叫两声，便于实车确认交接时刻。
-                    g_nav_bridge_entry_beep_request = 1U;
+                    entry_beep_request = 1U;
                     s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
                     VisionBridgeTask_Start();
                 }
