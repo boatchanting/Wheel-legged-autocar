@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 import math
 import os
 import socket
@@ -576,6 +576,7 @@ def tcp_server_thread():
             print(f"[TCP] Connected: {peer}")
 
             raw_buffer = bytearray()
+            last_recv_time = time.time()
             with conn:
                 conn.settimeout(1.0)
                 while True:
@@ -583,9 +584,13 @@ def tcp_server_thread():
                         chunk = conn.recv(2048)
                         if not chunk:
                             break
+                        last_recv_time = time.time()
                         raw_buffer.extend(chunk)
                         _parse_frame_stream(raw_buffer)
                     except socket.timeout:
+                        if time.time() - last_recv_time > 3.0:
+                            print(f"[TCP] Connection timeout (no data for 3s), closing {peer}")
+                            break
                         continue
 
             with state_lock:
