@@ -319,7 +319,8 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
         step_limit = NAV_SPEED_SLEW_UP_NORMAL;
     }
 
-    return s_prev_speed_cmd + Float_Constrain(diff, -step_limit, step_limit);
+    s_prev_speed_cmd += Float_Constrain(diff, -step_limit, step_limit);
+    return s_prev_speed_cmd;
 }
 
 static float PositiveAngle360(float angle)
@@ -638,12 +639,15 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
                                               float dist_to_point,
                                               float point_yaw_deg,
                                               float selected_err_deg,
-                                              float speed_sign)
+                                              float speed_sign,
+                                              float *out_override_speed)
 {
     float abs_vehicle_speed = fabsf(current_actual_speed);
     float approach_speed_mag;
     float brake_radius_mm;
     float target_speed_cmd;
+
+    *out_override_speed = 1e30f; /* sentinel: 未覆盖 */
 
     SelectSpecialPointHeading(point_yaw_deg,
                               dist_to_point,
@@ -652,6 +656,28 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
                               &speed_sign);
     approach_speed_mag = UpdateSpecialCaptureSpeedRef(GetApproachSpeedMag(speed_sign), speed_sign);
     brake_radius_mm = CalcSpecialBrakeRadius(approach_speed_mag);
+
+    /* ---- 补丁：两个雷区距离过近时，放宽刹车距离、提高通过速度 ---- */
+    {
+        float dist_to_next_minefield = 1e9f;
+        uint16 next_idx = (uint16)(point_idx + 1U);
+        if ((next_idx < nav_ram_data.point_count) &&
+            IsSpecialPointType(nav_ram_data.points[next_idx].point_type))
+        {
+            dist_to_next_minefield = CalcDistance(nav_ram_data.points[point_idx].x,
+                                                  nav_ram_data.points[point_idx].y,
+                                                  nav_ram_data.points[next_idx].x,
+                                                  nav_ram_data.points[next_idx].y);
+        }
+        if (dist_to_next_minefield < brake_radius_mm)
+        {
+            brake_radius_mm = dist_to_next_minefield * 0.5f;
+            brake_radius_mm = Float_Constrain(brake_radius_mm,
+                                              NAV_POINT_SPECIAL_EXECUTE_RADIUS,
+                                              NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX);
+        }
+    }
+    /* ---- 补丁结束 ---- */
 
     g_nav_point_special_debug_target_idx = point_idx;
     g_nav_point_special_debug_target_x = nav_ram_data.points[point_idx].x;
@@ -665,6 +691,24 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     if ((s_special_zero_brake_issued == 0U) &&
         (ShouldStartSpecialPointCapture(dist_to_point, brake_radius_mm) == 0U))
     {
+        /* ---- 补丁：两个雷区距离过近时，以 NAV_POINT_SPEED_FAST/2 通过 ---- */
+        {
+            uint16 next_idx = (uint16)(point_idx + 1U);
+            if ((next_idx < nav_ram_data.point_count) &&
+                IsSpecialPointType(nav_ram_data.points[next_idx].point_type))
+            {
+                float dist_to_next = CalcDistance(nav_ram_data.points[point_idx].x,
+                                                  nav_ram_data.points[point_idx].y,
+                                                  nav_ram_data.points[next_idx].x,
+                                                  nav_ram_data.points[next_idx].y);
+                float orig_brake_radius = CalcSpecialBrakeRadius(approach_speed_mag);
+                if (dist_to_next < orig_brake_radius)
+                {
+                    *out_override_speed = NAV_POINT_SPEED_FAST * 0.5f;
+                }
+            }
+        }
+        /* ---- 补丁结束 ---- */
         Brake_NavHardStop_Reset();
         ResetStopState();
         return 0U;
@@ -890,6 +934,7 @@ void NavReplay_Process(void)
     float speed_sign;
     float stop_radius;
     float speed_mag;
+    float override_speed = 1e30f;
     uint8 point_type;
     uint8 is_last_point;
     uint8 use_spin_exit_align;
@@ -971,7 +1016,8 @@ void NavReplay_Process(void)
                                                                 dist_to_point,
                                                                 point_yaw_deg,
                                                                 selected_err_deg,
-                                                                speed_sign);
+                                                                speed_sign,
+                                                                &override_speed);
         if (special_result != 0U)
         {
             if (special_result == 2U)
@@ -1009,6 +1055,20 @@ void NavReplay_Process(void)
     }
 
     stop_radius = IsSpecialPointType(point_type) ? NAV_POINT_SPECIAL_EXECUTE_RADIUS : NAV_POINT_PATH_ARRIVE_RADIUS;
+
+    /* ---- 补丁：两个雷区过近时，直接使用覆盖速度，跳过正常规划 ---- */
+    if (override_speed < 1e29f)
+    {
+        target_speed_set = NavReplay_SpeedSlew_Update(override_speed);
+        if (s_spin_exit_align_ticks != 0U)
+        {
+            s_spin_exit_align_ticks--;
+        }
+        Brake_NavHardStop_Reset();
+        return;
+    }
+    /* ---- 补丁结束 ---- */
+
     use_spin_exit_align = (uint8)((s_spin_exit_align_ticks != 0U) &&
                                   (is_last_point == 0U));
     if (is_last_point != 0U)
