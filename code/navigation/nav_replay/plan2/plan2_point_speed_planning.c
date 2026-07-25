@@ -156,8 +156,11 @@ static float CalcSpecialBrakeRadius(float approach_speed_mag)
 {
     float speed_mag = fabsf(approach_speed_mag);
     float brake_pwm_abs = fabsf(Brake_Feedforward_GetPwm());
-    float decel = CalcSpecialBrakeDecel();
-    float stop_dist = (speed_mag * speed_mag) / (2.0f * decel);
+    /* 标定公式: D(m) = 0.2094 * v_peak(m/s)^2 - 0.9238
+       转 mm: D(mm) = 0.2094 * (v_mm_s/1000)^2 * 1000 - 923.8
+             = 0.0002094 * v_mm_s^2 - 923.8  */
+    float v_mmps = speed_mag;
+    float stop_dist = 0.0002094f * v_mmps * v_mmps - 923.8f;
     float brake_radius = NAV_POINT_SPECIAL_EXECUTE_RADIUS +
                          NAV_POINT_SPECIAL_BRAKE_MARGIN_MM +
                          stop_dist;
