@@ -956,7 +956,7 @@ class AccelBrakeExperimentController:
         stop_speed_threshold=2.0,
         stop_hold_s=0.3,
         accel_timeout_s=8.0,
-        brake_timeout_s=5.0,
+        brake_timeout_s=20.0,
         zero_lock_interval_s=0.1,
         telemetry_timeout_s=1.5,
         brake_target_tolerance_mm_s=10.0,

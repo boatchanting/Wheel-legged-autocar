@@ -296,7 +296,7 @@ def tcp_server_thread(controller):
 
 class Api:
     def __init__(self, controller):
-        self.controller = controller
+        self._controller = controller
 
     def get_new_data(self):
         with state_lock:
@@ -329,8 +329,8 @@ class Api:
                     for seq, ctrl, ack_status, ts in acks
                 ],
             }
-        self.controller.tick(now=now)
-        status["experiment"] = self.controller.status()
+        self._controller.tick(now=now)
+        status["experiment"] = self._controller.status()
         return status
 
     def start_experiment(self, target_forward_speed_mm_s, multi_pid, brake_target_speed_mm_s=0.0):
@@ -354,7 +354,7 @@ class Api:
                 "arm_result": arm_result,
             }
 
-        result = self.controller.start(
+        result = self._controller.start(
             target_forward_speed_mm_s=speed,
             brake_target_speed_mm_s=brake_target_speed,
             multi_pid=bool(multi_pid),
@@ -382,10 +382,10 @@ class Api:
         return result
 
     def cancel_experiment(self):
-        return self.controller.cancel(now=time.time())
+        return self._controller.cancel(now=time.time())
 
     def force_brake_experiment(self):
-        result = self.controller.force_brake(now=time.time())
+        result = self._controller.force_brake(now=time.time())
         if result.get("success"):
             result["msg"] = "已手动进入刹车阶段"
         return result
