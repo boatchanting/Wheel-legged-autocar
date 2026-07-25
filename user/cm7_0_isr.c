@@ -75,6 +75,8 @@ volatile float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴角速度，用
 volatile float g_debug_pwm_left = 0.0f;
 volatile float g_debug_pwm_right = 0.0f;
 uint32_t loop_counter = 0;
+static float wifi_host_yaw_hold_ref = 0.0f;
+static uint8 wifi_host_yaw_hold_active = 0U;
 static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
@@ -84,6 +86,20 @@ static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
 #define FALLEN_STANDUP_GRACE_MS (1500U)
+
+static float WifiHostYawHold_WrapErrorDeg(float yaw_error)
+{
+    yaw_error = fmodf(yaw_error, 360.0f);
+    if (yaw_error > 180.0f)
+    {
+        yaw_error -= 360.0f;
+    }
+    else if (yaw_error < -180.0f)
+    {
+        yaw_error += 360.0f;
+    }
+    return yaw_error;
+}
 
 static uint8 Control_NavReplayRunning(void)
 {
@@ -561,6 +577,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                                          accel_ff_inhibit);
             }
 
+            if ((WifiHostSpeedTest_IsActive() != 0U) && (g_yaw_initialized != 0U))
+            {
+                if (wifi_host_yaw_hold_active == 0U)
+                {
+                    wifi_host_yaw_hold_ref = euler_angle.yaw;
+                }
+                wifi_host_yaw_hold_active = 1U;
+            }
+            else
+            {
+                wifi_host_yaw_hold_active = 0U;
+            }
+
 
             // 2.3 计算目标速度调整分量
             float duty_adjustment = Servo_Speed_Control(target_speed_set, current_actual_speed,euler_angle.pitch);
@@ -611,7 +640,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
              // 只有在偏航角成功初始化后，才执行航向保持控制
             // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
-            if (WifiHostSpeedTest_IsActive() != 0U)
+            if ((wifi_host_yaw_hold_active != 0U) && (g_yaw_initialized != 0U))
+            {
+                float yaw_error = WifiHostYawHold_WrapErrorDeg(wifi_host_yaw_hold_ref - euler_angle.yaw);
+                err_degree = yaw_error;
+                turn_angle_loop_out = Turn_Angle_Loop_Control(yaw_error);
+            }
+            else if (WifiHostSpeedTest_IsActive() != 0U)
             {
                 err_degree = 0.0f;
                 turn_angle_loop_out = 0.0f;
@@ -713,7 +748,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;
         
-        if (WifiHostSpeedTest_IsActive() != 0U)
+        if ((wifi_host_yaw_hold_active != 0U) && (g_yaw_initialized != 0U))
+        {
+            final_turn_cmd = turn_angle_loop_out;
+        }
+        else if (WifiHostSpeedTest_IsActive() != 0U)
         {
             err_degree = 0.0f;
             turn_angle_loop_out = 0.0f;
@@ -733,7 +772,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         }
         //==================== [雷区旋转调用结束] =================
         // 将雷区旋转指令或者正常转向角速度指令送入内环PID
-        if (WifiHostSpeedTest_IsActive() != 0U)
+        if ((wifi_host_yaw_hold_active != 0U) && (g_yaw_initialized != 0U))
+        {
+            turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+        }
+        else if (WifiHostSpeedTest_IsActive() != 0U)
         {
             turn_gyro_loop_out = 0.0f;
         }
