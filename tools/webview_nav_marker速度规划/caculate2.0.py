@@ -2,9 +2,8 @@
 """Optimized offline path and speed planner for plan1 slalom.
 
 Input point semantics:
-    point 0      : pseudo cone at the u-turn area; also marks the u-turn line
-    point 1..n-2 : cone positions
-    point n-1    : one marker point on the finish line, not a waypoint
+    point 0      : cone at the u-turn area; also marks the u-turn line
+    point 1..n-1 : normal slalom cone positions
 
 The vehicle still starts from (0, 0).  The planner treats point 0..n-2 as
 clearance obstacles/control cones, chooses a smooth track around them, crosses
@@ -67,6 +66,12 @@ UTURN_ARC_MAX_SWEEP_RAD = math.radians(260.0)
 UTURN_ARC_LENGTH_PRIORITY_WEIGHT = 1.0
 UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS = 10
 FINISH_OVER_LINE_MM = 700.0
+ACCEL_RESERVE_MARGIN_M = 0.20
+BRAKE_RESERVE_MARGIN_M = 0.20
+ACCEL_DISTANCE_COEFF = 0.1454
+ACCEL_DISTANCE_OFFSET_M = 1.0044
+BRAKE_DISTANCE_COEFF = 0.2094
+BRAKE_DISTANCE_OFFSET_M = -0.9238
 LINE_SAMPLE_COUNT = 11
 GAP_SAMPLE_COUNT = 9
 BEAM_WIDTH = 96
@@ -142,6 +147,22 @@ class OptimizedPathResult:
 
 class PathConstraintError(ValueError):
     """Raised when no path can satisfy the geometric constraints."""
+
+
+def accel_reserve_distance_m(target_speed_mps: float) -> float:
+    """Empirical distance reserved for acceleration and balance-loop overshoot."""
+    speed = max(0.0, float(target_speed_mps))
+    return max(0.0, ACCEL_DISTANCE_COEFF * speed * speed + ACCEL_DISTANCE_OFFSET_M) + ACCEL_RESERVE_MARGIN_M
+
+
+def _brake_distance_m(speed_mps: float) -> float:
+    speed = max(0.0, float(speed_mps))
+    return BRAKE_DISTANCE_COEFF * speed * speed + BRAKE_DISTANCE_OFFSET_M
+
+
+def brake_reserve_distance_m(actual_speed_mps: float, turn_speed_mps: float) -> float:
+    """Empirical distance needed to reduce actual speed to turn speed."""
+    return max(0.0, _brake_distance_m(actual_speed_mps) - _brake_distance_m(turn_speed_mps)) + BRAKE_RESERVE_MARGIN_M
 
 
 def normalize_relative_yaw_deg(value: float) -> float:
@@ -344,11 +365,30 @@ def read_route_header(file_path: str) -> Tuple[List[RoutePoint], int, float]:
 def _course_axis_from_markers_and_cones(
     uturn_marker: RoutePoint,
     cones: Sequence[RoutePoint],
-    finish_marker: RoutePoint,
+    finish_marker: Optional[RoutePoint] = None,
 ) -> Tuple[Tuple[float, float], Tuple[float, float]]:
-    marker_dx = finish_marker.x - uturn_marker.x
+    # The finish line is always x=0.  The course axis points from the first
+    # u-turn cone toward that line; use the first normal cone only when the
+    # marker itself lies on x=0 and the direction would otherwise be ambiguous.
+    marker_dx = -uturn_marker.x
+    if abs(marker_dx) <= 1.0e-6 and cones:
+        marker_dx = cones[0].x - uturn_marker.x
+    if abs(marker_dx) <= 1.0e-6:
+        marker_dx = 1.0
     axis_x = 1.0 if marker_dx >= 0.0 else -1.0
     return (axis_x, 0.0), (0.0, axis_x)
+
+
+def _fixed_finish_marker(uturn_marker: RoutePoint) -> RoutePoint:
+    """Return a synthetic point on the fixed x=0 finish line."""
+    return RoutePoint(
+        x=0.0,
+        y=float(uturn_marker.y),
+        target_yaw_deg=0.0,
+        heading_deg=0.0,
+        target_speed=0.0,
+        point_type=0,
+    )
 
 
 def _to_sl(
@@ -1170,11 +1210,13 @@ def validate_uturn_line_crossing(
     points: Sequence[RoutePoint],
     uturn_marker: RoutePoint,
     real_cones: Sequence[RoutePoint],
-    finish_marker: RoutePoint,
+    finish_marker: Optional[RoutePoint] = None,
 ) -> None:
     if not points:
         raise PathConstraintError("path is empty")
 
+    if finish_marker is None:
+        finish_marker = _fixed_finish_marker(uturn_marker)
     axis, lateral = _course_axis_from_markers_and_cones(uturn_marker, real_cones, finish_marker)
     origin_xy = _point_xy(uturn_marker)
     finish_s, _finish_l = _to_sl(_point_xy(finish_marker), origin_xy, axis, lateral)
@@ -1246,9 +1288,11 @@ def _score_final_path(
 def build_candidate_stages(
     uturn_marker: RoutePoint,
     cones: Sequence[RoutePoint],
-    finish_marker: RoutePoint,
+    finish_marker: Optional[RoutePoint] = None,
 ) -> Tuple[List[List[CandidatePoint]], List[RoutePoint], Tuple[float, float]]:
     obstacle_cones = list(cones)
+    if finish_marker is None:
+        finish_marker = _fixed_finish_marker(uturn_marker)
     real_cones = [cone for cone in obstacle_cones if not _same_xy(cone, uturn_marker)]
     if len(real_cones) < 2:
         raise PathConstraintError("needs at least two real cones after the pseudo u-turn cone")
@@ -1354,13 +1398,13 @@ def build_candidate_stages(
 
 
 def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathResult:
-    if len(raw_points) < 4:
-        raise ValueError("plan1 optimized planner needs at least: pseudo u-turn cone, two cones, finish marker")
+    if len(raw_points) < 3:
+        raise ValueError("plan1 optimized planner needs at least: u-turn cone and two normal cones")
 
     uturn_marker = raw_points[0]
-    cones = list(raw_points[:-1])
-    real_cones = list(raw_points[1:-1])
-    finish_marker = raw_points[-1]
+    cones = list(raw_points)
+    real_cones = list(raw_points[1:])
+    finish_marker = _fixed_finish_marker(uturn_marker)
     start_xy = (0.0, 0.0)
 
     stages, sorted_cones, _axis = build_candidate_stages(uturn_marker, cones, finish_marker)
@@ -1444,6 +1488,27 @@ def yaw_accel_speed_limit_mm_s(curvature_rate: float) -> float:
     return math.sqrt(MAX_PATH_YAW_ACCEL_RAD_S2 / curvature_rate)
 
 
+def apply_accel_reserve(planned: np.ndarray, s_vals: np.ndarray) -> None:
+    """Stretch only genuine low-to-high speed transitions by the measured reserve."""
+    if len(planned) < 2:
+        return
+
+    requested = np.array(planned, copy=True)
+    rising_start_idx: Optional[int] = None
+    for i in range(1, len(planned)):
+        if requested[i] > requested[i - 1] + 1.0e-6:
+            if rising_start_idx is None:
+                rising_start_idx = i - 1
+            target_speed_mps = abs(float(requested[i])) / 1000.0
+            reserve_mm = accel_reserve_distance_m(target_speed_mps) * 1000.0
+            travelled_mm = max(0.0, float(s_vals[i] - s_vals[rising_start_idx]))
+            progress = min(1.0, travelled_mm / max(reserve_mm, 1.0))
+            start_speed = float(requested[rising_start_idx])
+            planned[i] = min(planned[i], start_speed + (requested[i] - start_speed) * progress)
+        else:
+            rising_start_idx = None
+
+
 def apply_speed_plan(
     points: List[RoutePoint],
     slalom_start_idx: Optional[int] = None,
@@ -1520,12 +1585,25 @@ def apply_speed_plan(
         max_exit = math.sqrt(max(0.0, planned[i - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds))
         planned[i] = min(planned[i], max_exit)
 
+    apply_accel_reserve(planned, s_vals)
+
     target_speed_cmd = -planned / SPEED_TO_MM_S
     for point, speed_cmd in zip(points, target_speed_cmd):
         point.target_speed = float(speed_cmd)
 
 
-def generate_route_plan(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float, float]], List[RoutePoint], str]:
+def _nearest_point_index(points: Sequence[RoutePoint], xy: Tuple[float, float]) -> int:
+    if not points:
+        return 0
+    return min(
+        range(len(points)),
+        key=lambda i: math.hypot(points[i].x - xy[0], points[i].y - xy[1]),
+    )
+
+
+def generate_route_plan(
+    raw_points: List[RoutePoint],
+) -> Tuple[List[Tuple[float, float]], List[RoutePoint], str, Tuple[int, int]]:
     result = generate_optimized_path(raw_points)
     final_points = result.final_points
 
@@ -1557,29 +1635,30 @@ def generate_route_plan(raw_points: List[RoutePoint]) -> Tuple[List[Tuple[float,
 
     apply_speed_plan(final_points, slalom_start_idx=slalom_start_idx, uturn_slow_range=uturn_slow_range)
     control_points = list(result.raw_route)
+    uturn_meta = (0, 0)
+    if len(result.raw_route) >= 4 and final_points:
+        uturn_meta = (
+            _nearest_point_index(final_points, result.raw_route[1]),
+            _nearest_point_index(final_points, result.raw_route[3]),
+        )
     method = (
         "Plan1 Optimized 平滑避障绕桩 "
         f"(clearance={result.min_clearance_mm:.1f}mm, score={result.score:.1f})"
     )
-    return control_points, final_points, method
+    return control_points, final_points, method, uturn_meta
 
 
 def _finish_line_config(raw_points: Optional[Sequence[RoutePoint]]) -> Optional[Tuple[float, float, float, float]]:
-    if raw_points is None or len(raw_points) < 4:
+    if raw_points is None or len(raw_points) < 3:
         return None
 
     uturn_marker = raw_points[0]
-    real_cones = raw_points[1:-1]
-    finish_marker = raw_points[-1]
-    axis, lateral = _course_axis_from_markers_and_cones(uturn_marker, real_cones, finish_marker)
-    origin_xy = _point_xy(uturn_marker)
-    finish_s, _finish_l = _to_sl(_point_xy(finish_marker), origin_xy, axis, lateral)
-    if finish_s <= 0.0:
-        axis = (-axis[0], -axis[1])
+    real_cones = raw_points[1:]
+    axis, _lateral = _course_axis_from_markers_and_cones(uturn_marker, real_cones)
 
     return (
-        float(finish_marker.x),
-        float(finish_marker.y),
+        0.0,
+        0.0,
         float(axis[0]),
         float(axis[1]),
     )
@@ -1592,6 +1671,7 @@ def generate_header(
     start_heading_valid: int,
     start_heading_deg: float,
     raw_points: Optional[Sequence[RoutePoint]] = None,
+    uturn_meta: Optional[Tuple[int, int]] = None,
 ) -> None:
     output_dir = os.path.dirname(output_path)
     if output_dir:
@@ -1631,6 +1711,23 @@ def generate_header(
             f.write("#define NAV_REPLAY_FINISH_LINE_Y_MM 0.0f\n")
             f.write("#define NAV_REPLAY_FINISH_LINE_NX 0.0f\n")
             f.write("#define NAV_REPLAY_FINISH_LINE_NY 0.0f\n\n")
+        if uturn_meta is not None and len(points) > 0:
+            entry_idx, exit_idx = (int(uturn_meta[0]), int(uturn_meta[1]))
+            entry_idx = max(0, min(entry_idx, len(points) - 1))
+            exit_idx = max(entry_idx, min(exit_idx, len(points) - 1))
+            f.write("#define NAV_REPLAY_UTURN_META_VALID 1\n")
+            f.write(f"#define NAV_REPLAY_UTURN_ENTRY_INDEX {entry_idx}U\n")
+            f.write(f"#define NAV_REPLAY_UTURN_EXIT_INDEX {exit_idx}U\n")
+            f.write(f"#define NAV_REPLAY_UTURN_TARGET_SPEED_CMD {points[entry_idx].target_speed:.3f}f\n\n")
+        else:
+            f.write("#define NAV_REPLAY_UTURN_META_VALID 0\n")
+            f.write("#define NAV_REPLAY_UTURN_ENTRY_INDEX 0U\n")
+            f.write("#define NAV_REPLAY_UTURN_EXIT_INDEX 0U\n")
+            f.write("#define NAV_REPLAY_UTURN_TARGET_SPEED_CMD 0.0f\n\n")
+        f.write(f"#define NAV_REPLAY_ACCEL_RESERVE_MARGIN_M {ACCEL_RESERVE_MARGIN_M:.3f}f\n")
+        f.write(f"#define NAV_REPLAY_BRAKE_RESERVE_MARGIN_M {BRAKE_RESERVE_MARGIN_M:.3f}f\n")
+        f.write(f"#define NAV_REPLAY_BRAKE_DISTANCE_COEFF {BRAKE_DISTANCE_COEFF:.6f}f\n")
+        f.write(f"#define NAV_REPLAY_BRAKE_DISTANCE_OFFSET_M {BRAKE_DISTANCE_OFFSET_M:.6f}f\n\n")
         f.write(f"#define NAV_REPLAY_STATIC_ROUTE_COUNT {len(points)}\n\n")
         f.write(f"static const NavRamPoint_t nav_replay_static_route_points[{max(len(points), 1)}] = {{\n")
         if points:
@@ -1657,8 +1754,8 @@ def plot_result(
     ax.set_facecolor("#FCFCFD")
 
     if raw_points:
-        finish_marker = raw_points[-1]
-        cones = raw_points[:-1]
+        uturn_marker = raw_points[0]
+        cones = list(raw_points)
         ax.scatter(
             [0.0],
             [0.0],
@@ -1669,8 +1766,8 @@ def plot_result(
             zorder=8,
         )
         ax.scatter(
-            [finish_marker.x],
-            [finish_marker.y],
+            [0.0],
+            [uturn_marker.y],
             c="#7C3AED",
             marker="s",
             s=120,
@@ -1723,7 +1820,7 @@ def plot_result(
                 )
                 ax.add_patch(circle)
             if len(cones) >= 3:
-                axis, lateral = _course_axis_from_markers_and_cones(cones[0], cones[1:], finish_marker)
+                axis, lateral = _course_axis_from_markers_and_cones(cones[0], cones[1:])
                 origin_xy = _point_xy(cones[0])
                 l_values = [
                     _to_sl((p.x, p.y), origin_xy, axis, lateral)[1]
@@ -1744,12 +1841,14 @@ def plot_result(
                     label="掉头线",
                     zorder=2,
                 )
-                finish_s, _finish_l = _to_sl(_point_xy(finish_marker), origin_xy, axis, lateral)
-                finish_line_a = _from_sl(finish_s, low_l, origin_xy, axis, lateral)
-                finish_line_b = _from_sl(finish_s, high_l, origin_xy, axis, lateral)
+                all_y_values = [p.y for p in list(raw_points) + list(final_points)]
+                if control_points:
+                    all_y_values.extend(p[1] for p in control_points)
+                finish_y_low = min(all_y_values) - 600.0
+                finish_y_high = max(all_y_values) + 600.0
                 ax.plot(
-                    [finish_line_a[0], finish_line_b[0]],
-                    [finish_line_a[1], finish_line_b[1]],
+                    [0.0, 0.0],
+                    [finish_y_low, finish_y_high],
                     color="#7C3AED",
                     linestyle=(0, (4, 4)),
                     linewidth=1.5,
@@ -1918,18 +2017,18 @@ def main() -> int:
     else:
         raw_points, start_heading_valid, start_heading_deg = read_route_header(str(input_path))
 
-    if len(raw_points) < 4:
-        print("[error] need at least: u-turn marker + two cones + finish marker")
+    if len(raw_points) < 3:
+        print("[error] need at least: u-turn marker + two normal cones")
         return 1
 
     print(f"[input] file: {input_path}")
     print(f"[input] raw points: {len(raw_points)}")
-    print(f"[plan1] pseudo u-turn cone: ({raw_points[0].x:.1f}, {raw_points[0].y:.1f})")
-    print(f"[plan1] cones including pseudo: {len(raw_points) - 1}")
-    print(f"[plan1] finish marker: ({raw_points[-1].x:.1f}, {raw_points[-1].y:.1f})")
+    print(f"[plan1] u-turn cone: ({raw_points[0].x:.1f}, {raw_points[0].y:.1f})")
+    print(f"[plan1] normal cones: {len(raw_points) - 1}")
+    print("[plan1] finish line: x=0 (world y axis)")
     print(f"[params] min cone clearance: {MIN_CONE_CLEARANCE_MM:.1f}mm")
 
-    control_points, final_points, method_name = generate_route_plan(raw_points)
+    control_points, final_points, method_name, uturn_meta = generate_route_plan(raw_points)
     generate_header(
         final_points,
         method_name,
@@ -1937,6 +2036,7 @@ def main() -> int:
         start_heading_valid,
         start_heading_deg,
         raw_points=raw_points,
+        uturn_meta=uturn_meta,
     )
 
     print(f"[method] {method_name}")

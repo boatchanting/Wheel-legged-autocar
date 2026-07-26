@@ -45,6 +45,40 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #define NAV_REPLAY_FINISH_LINE_NY 0.0f
 #endif
 
+#ifndef NAV_REPLAY_UTURN_META_VALID
+#define NAV_REPLAY_UTURN_META_VALID        0
+#endif
+#ifndef NAV_REPLAY_UTURN_ENTRY_INDEX
+#define NAV_REPLAY_UTURN_ENTRY_INDEX       0U
+#endif
+#ifndef NAV_REPLAY_UTURN_EXIT_INDEX
+#define NAV_REPLAY_UTURN_EXIT_INDEX        0U
+#endif
+#ifndef NAV_REPLAY_UTURN_TARGET_SPEED_CMD
+#define NAV_REPLAY_UTURN_TARGET_SPEED_CMD  0.0f
+#endif
+#ifndef NAV_REPLAY_BRAKE_RESERVE_MARGIN_M
+#define NAV_REPLAY_BRAKE_RESERVE_MARGIN_M  0.20f
+#endif
+#ifndef NAV_REPLAY_BRAKE_DISTANCE_COEFF
+#define NAV_REPLAY_BRAKE_DISTANCE_COEFF    0.2094f
+#endif
+#ifndef NAV_REPLAY_BRAKE_DISTANCE_OFFSET_M
+#define NAV_REPLAY_BRAKE_DISTANCE_OFFSET_M (-0.9238f)
+#endif
+#ifndef NAV_REPLAY_SPEED_TO_MPS
+#if CAR_SELECT == 0
+#define NAV_REPLAY_SPEED_TO_MPS             0.0034596f
+#elif CAR_SELECT == 2
+#define NAV_REPLAY_SPEED_TO_MPS             0.0051830f
+#else
+#define NAV_REPLAY_SPEED_TO_MPS             0.0049360f
+#endif
+#endif
+#ifndef NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS
+#define NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS 0.05f
+#endif
+
 #ifndef NAV_FINISH_LINE_ARM_REMAINING_POINTS
 #define NAV_FINISH_LINE_ARM_REMAINING_POINTS 80U
 #endif
@@ -84,6 +118,15 @@ typedef enum
     PLAN1_FAST_UTURN_LEAD_REAR
 } Plan1FastUTurnLead_e;
 
+typedef enum
+{
+    PLAN1_UTURN_BRAKE_DISABLED = 0U,
+    PLAN1_UTURN_BRAKE_ARMED,
+    PLAN1_UTURN_BRAKE_BRAKING,
+    PLAN1_UTURN_BRAKE_RELEASED,
+    PLAN1_UTURN_BRAKE_DONE
+} Plan1UturnBrakeState_e;
+
 /*
  * LQR 本周期参考量：
  *   x/y          ：车身当前位置投影到最近路径线段后的参考点
@@ -115,6 +158,7 @@ static uint16 s_finish_stop_stable_count = 0U;
 static uint16 s_fast_uturn_action_idx = PLAN1_FAST_UTURN_INVALID_IDX;
 static uint16 s_fast_uturn_state_ticks = 0U;
 static uint16 s_fast_uturn_recover_ticks = 0U;
+static Plan1UturnBrakeState_e s_uturn_brake_state = PLAN1_UTURN_BRAKE_DISABLED;
 
 #if IMU_CATEGORY == 3
 static uint8 s_start_heading_stable_count = 0;
@@ -123,6 +167,130 @@ static uint8 s_start_heading_stable_count = 0;
 #endif
 
 static void NavReplay_ResetProcessState(void);
+
+#if NAV_REPLAY_UTURN_META_VALID
+static float NavReplay_UturnBrakeDistanceM(float speed_mps)
+{
+    float speed = fabsf(speed_mps);
+    return NAV_REPLAY_BRAKE_DISTANCE_COEFF * speed * speed +
+           NAV_REPLAY_BRAKE_DISTANCE_OFFSET_M;
+}
+
+static float NavReplay_UturnBrakeReserveM(float actual_speed_mps, float turn_speed_mps)
+{
+    float reserve = NavReplay_UturnBrakeDistanceM(actual_speed_mps) -
+                    NavReplay_UturnBrakeDistanceM(turn_speed_mps) +
+                    NAV_REPLAY_BRAKE_RESERVE_MARGIN_M;
+    return (reserve > NAV_REPLAY_BRAKE_RESERVE_MARGIN_M) ?
+           reserve : NAV_REPLAY_BRAKE_RESERVE_MARGIN_M;
+}
+
+static float NavReplay_PathDistanceToIndex(uint16 from_idx, uint16 to_idx)
+{
+    uint16 i;
+    float distance = 0.0f;
+    uint16 last_idx;
+
+    if (nav_ram_data.point_count < 2U || from_idx >= to_idx)
+    {
+        return 0.0f;
+    }
+
+    last_idx = (uint16)(nav_ram_data.point_count - 1U);
+    if (to_idx > last_idx)
+    {
+        to_idx = last_idx;
+    }
+    if (from_idx >= last_idx)
+    {
+        return 0.0f;
+    }
+
+    for (i = from_idx; i < to_idx; i++)
+    {
+        float dx = nav_ram_data.points[i + 1U].x - nav_ram_data.points[i].x;
+        float dy = nav_ram_data.points[i + 1U].y - nav_ram_data.points[i].y;
+        distance += sqrtf(dx * dx + dy * dy);
+    }
+    return distance;
+}
+#endif
+
+static void NavReplay_UturnBrake_Reset(void)
+{
+#if NAV_REPLAY_UTURN_META_VALID
+    s_uturn_brake_state = PLAN1_UTURN_BRAKE_ARMED;
+#else
+    s_uturn_brake_state = PLAN1_UTURN_BRAKE_DISABLED;
+#endif
+}
+
+static float NavReplay_UturnBrake_Apply(uint16 base_idx, float raw_speed)
+{
+#if NAV_REPLAY_UTURN_META_VALID
+    float actual_speed_mps;
+    float turn_speed_mps;
+    float remaining_mm;
+    float reserve_mm;
+    float turn_cmd = fabsf(NAV_REPLAY_UTURN_TARGET_SPEED_CMD);
+
+    if (s_uturn_brake_state == PLAN1_UTURN_BRAKE_DISABLED ||
+        s_uturn_brake_state == PLAN1_UTURN_BRAKE_DONE)
+    {
+        return raw_speed;
+    }
+
+    actual_speed_mps = fabsf(current_actual_speed) * NAV_REPLAY_SPEED_TO_MPS;
+    turn_speed_mps = turn_cmd * NAV_REPLAY_SPEED_TO_MPS;
+
+    if (base_idx >= NAV_REPLAY_UTURN_EXIT_INDEX)
+    {
+        s_uturn_brake_state = PLAN1_UTURN_BRAKE_DONE;
+        return raw_speed;
+    }
+
+    if (s_uturn_brake_state == PLAN1_UTURN_BRAKE_ARMED)
+    {
+        remaining_mm = NavReplay_PathDistanceToIndex(base_idx, NAV_REPLAY_UTURN_ENTRY_INDEX);
+        reserve_mm = NavReplay_UturnBrakeReserveM(actual_speed_mps, turn_speed_mps) * 1000.0f;
+        if ((actual_speed_mps > (turn_speed_mps + NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS)) &&
+            ((remaining_mm <= reserve_mm) || (base_idx >= NAV_REPLAY_UTURN_ENTRY_INDEX)))
+        {
+            s_uturn_brake_state = PLAN1_UTURN_BRAKE_BRAKING;
+        }
+        else if (base_idx >= NAV_REPLAY_UTURN_ENTRY_INDEX)
+        {
+            s_uturn_brake_state = PLAN1_UTURN_BRAKE_RELEASED;
+        }
+    }
+
+    if (s_uturn_brake_state == PLAN1_UTURN_BRAKE_BRAKING)
+    {
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+        if (actual_speed_mps <= (turn_speed_mps + NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS))
+        {
+            s_uturn_brake_state = PLAN1_UTURN_BRAKE_RELEASED;
+        }
+        else
+        {
+            target_speed_set = NAV_SPEED_STOP;
+            return NAV_SPEED_STOP;
+        }
+    }
+
+    if (s_uturn_brake_state == PLAN1_UTURN_BRAKE_RELEASED)
+    {
+        float signed_turn_cmd = (raw_speed < 0.0f) ? -turn_cmd : turn_cmd;
+        if (fabsf(raw_speed) > turn_cmd)
+        {
+            raw_speed = signed_turn_cmd;
+        }
+    }
+#else
+    (void)base_idx;
+#endif
+    return raw_speed;
+}
 
 /**
  * @brief 角度归一化到 [-180, 180] deg。
@@ -661,6 +829,7 @@ static void NavReplay_ResetProcessState(void)
     s_prev_speed_set = 0.0f;
     s_prev_trigger = 0;
     NavReplay_ClearFinishStopLock();
+    NavReplay_UturnBrake_Reset();
 }
 
 /**
@@ -1306,7 +1475,15 @@ void NavReplay_Process(void)
     s_prev_err_degree = err_degree;
 
     raw_speed = ref.target_speed;
-    target_speed_set = NavReplay_SpeedSlew_Update(raw_speed);
+    raw_speed = NavReplay_UturnBrake_Apply((uint16)base_idx, raw_speed);
+    if (s_uturn_brake_state == PLAN1_UTURN_BRAKE_BRAKING)
+    {
+        target_speed_set = NAV_SPEED_STOP;
+    }
+    else
+    {
+        target_speed_set = NavReplay_SpeedSlew_Update(raw_speed);
+    }
     s_prev_speed_set = target_speed_set;
     g_current_point_type = ref.point_type;
 }
