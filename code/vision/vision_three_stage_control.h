@@ -41,9 +41,9 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 #define VISION_THREE_STAGE_EXIT_STABLE_FRAMES            (2U)
 
 /* 像素阈值默认值（可在线调整） */
-#define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (24U)
-#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (24U)
-#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (16U)
+#define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (32U) //第一级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳
+#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (32U) //第二级台阶顶端小于该值时跳跃，增大阈值，车必须走得更近才跳
+#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (32U)//第三级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳，粗调参时候，可以用第一级台阶那个值用一下
 #define VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT            (24U)
 
 typedef enum
