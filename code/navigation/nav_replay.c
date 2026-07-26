@@ -5,6 +5,6 @@
 #include "nav_replay/plan2/plan2_pure_pursuit_speed_planning.c"
 #include "nav_replay/plan2/plan2_pure_pursuit.c"
 #include "nav_replay/plan2/plan2_precise.c"
-#include "nav_replay/plan2/plan2_point_speed_planning.c"
+#include "nav_replay/plan2/plan2_point_speed_planning_lite.c"
 #include "nav_replay/plan3/plan3_precise.c"
 #include "nav_replay/template/nav_plan_template.c"
