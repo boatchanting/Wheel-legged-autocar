@@ -34,17 +34,17 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 /* 时序参数（2ms tick） */
 #define VISION_THREE_STAGE_STALE_TIMEOUT_TICKS           (1500U)  /* 3.0s */
 #define VISION_THREE_STAGE_STATE_TIMEOUT_TICKS           (8000U)  /* 16.0s */
-#define VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS           (50U)    /* 100ms */
+#define VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS           (22U)    /* 100ms */
 #define VISION_THREE_STAGE_LOCK_STABLE_FRAMES            (3U)
 #define VISION_THREE_STAGE_BLACK_GAP_LOST_FRAMES         (2U)
 #define VISION_THREE_STAGE_REACQUIRE_STABLE_FRAMES       (2U)
 #define VISION_THREE_STAGE_EXIT_STABLE_FRAMES            (2U)
 
 /* 像素阈值默认值（可在线调整） */
-#define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (36U)
-#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (36U)
-#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (51U)
-#define VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT            (22U)
+#define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (24U)
+#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (24U)
+#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (16U)
+#define VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT            (24U)
 
 typedef enum
 {
