@@ -6,7 +6,7 @@
 
 extern volatile uint8 exit_beep_request;
 
-#define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (800.0f)
+#define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (1500.0f)
 
 /* ========================= 参数区（可按实车调参） ========================= */
 #define BUMPY_ROAD_LOCK_SPEED_SET        (-400.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
