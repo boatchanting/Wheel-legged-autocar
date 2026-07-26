@@ -95,7 +95,7 @@
 #define WIFI_PASSWORD_TEST      "00000000"                  // 如果需要连接的WIFI 没有密码则需要将 这里 替换为 NULL
 #define TCP_TARGET_IP           "192.168.137.1"             // 连接目标的 IP
 #define TCP_TARGET_PORT         "8086"                      // 连接目标的端口
-#define WIFI_LOCAL_PORT         "6666"                      // 本机的端口 0：随机  可设置范围2048-65535  默认 6666
+#define WIFI_LOCAL_PORT         "0"                         // 本机的端口 0：随机  可设置范围2048-65535  默认 6666
 
 // 边界的点数量远大于图像高度，便于保存回弯的情况
 #define BOUNDARY_NUM            (MT9V03X_H * 3 / 2)
