@@ -293,12 +293,12 @@ static float pvc_score_component(const pvc_component_t *component)
         1.0f);
 
     /* 乘以各自的权重，加起来得到总分 */
-    return 0.35f * area_score
-         + 0.18f * width_score
-         + 0.12f * height_score
-         + 0.12f * fill_score
-         + 0.18f * border_score
-         + 0.05f * brightness_score;
+    return 0.38f * area_score
+         + 0.20f * width_score
+         + 0.16f * height_score
+         + 0.16f * fill_score
+         //+ 0.18f * border_score
+         + 0.10f * brightness_score;
 }
 
 /**
@@ -529,10 +529,10 @@ static uint8 pvc_filter_candidates(uint8 component_count)
             continue;
         }
         /* 没挨着照片边缘？PVC 入口应该是由远及近从画面边缘进入的，淘汰！ */
-        if (component.touches_border == 0U)
-        {
-            continue;
-        }
+        // if (component.touches_border == 0U)
+        // {
+        //     continue;
+        // }
 
         /* 活下来的都是“好苗子”，放进候选名单 */
         if (candidate_count < PVC_VISION_MAX_COMPONENTS)

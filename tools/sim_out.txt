@@ -1,0 +1,20 @@
+========================================================================
+NavReplay 全链路模拟 (dist<brake 触发补丁)
+========================================================================
+
+路表:
+  P0: (-6158,-2401) CIRCLE
+  P1: (-9010,+1549) CIRCLE
+  P2: (-13280,-1906) CIRCLE
+  P3: (-13813,-4211) CIRCLE
+  P4: (-15473,-4835) PATH
+  P5: (-16275,-3431) PATH
+  P6: (-8777,+159) PATH(终)
+
+点间距 (brake=2600 mm):
+Traceback (most recent call last):
+  File "d:\autocar\project3\project3\project\tools\webview_nav_marker速度规划_科目二\simulate_nav_replay.py", line 61, in <module>
+    print(f"  P{i}→P{i+1}: {dd:.0f} mm{s}")
+    ~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'gbk' codec can't encode character '\u2713' in position 17: illegal multibyte sequence
+

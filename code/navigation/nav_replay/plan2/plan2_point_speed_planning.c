@@ -156,8 +156,11 @@ static float CalcSpecialBrakeRadius(float approach_speed_mag)
 {
     float speed_mag = fabsf(approach_speed_mag);
     float brake_pwm_abs = fabsf(Brake_Feedforward_GetPwm());
-    float decel = CalcSpecialBrakeDecel();
-    float stop_dist = (speed_mag * speed_mag) / (2.0f * decel);
+    /* 标定公式: D(m) = 0.2094 * v_peak(m/s)^2 - 0.9238
+       转 mm: D(mm) = 0.2094 * (v_mm_s/1000)^2 * 1000 - 923.8
+             = 0.0002094 * v_mm_s^2 - 923.8  */
+    float v_mmps = speed_mag;
+    float stop_dist = 0.0002094f * v_mmps * v_mmps - 923.8f;
     float brake_radius = NAV_POINT_SPECIAL_EXECUTE_RADIUS +
                          NAV_POINT_SPECIAL_BRAKE_MARGIN_MM +
                          stop_dist;
@@ -237,27 +240,86 @@ static uint8 ShouldTriggerSpecialAction(float dist_to_point, float speed_mag)
                    (speed_mag <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S));
 }
 
-// 单周期速度斜率限制；普通巡航仍然平滑，但雷区停车阶段会直接绕过它给 0。
-static float SpeedSlew(float raw_speed)
+/**
+ * @brief 目标速度分段限斜率 + 多预设PID模式切换
+ * @param raw_speed 本周期导航层计算出的原始目标速度，符号方向保持不变
+ * @return 经过单周期步长限制后的目标速度
+ * @note 根据实际车速与目标速度的关系，自动切换 NORMAL/ACCEL/BRAKE 三档PID预设，
+ *       同时对速度目标施加分段斜率限制，避免阶跃导致速度环超调。
+ *       0724修复：加速段也走斜率限制，不再直接放行。
+ */
+static float NavReplay_SpeedSlew_Update(float raw_speed)
 {
+    float abs_raw = fabsf(raw_speed);
+    float abs_prev = fabsf(s_prev_speed_cmd);
+    float abs_actual = fabsf(current_actual_speed);
     float diff = raw_speed - s_prev_speed_cmd;
-    float step_limit = NAV_POINT_SPEED_ACCEL_STEP;
+    float step_limit;
 
-    // 加速段直接给目标速度，保留目标速度台阶，避免把加速前馈的触发条件抹平。
-    if (((raw_speed * s_prev_speed_cmd) >= 0.0f) &&
-        (fabsf(raw_speed) > fabsf(s_prev_speed_cmd)))
+    ControlMode_e target_mode = CONTROL_MODE_NORMAL;
+    static ControlMode_e s_current_req_mode = CONTROL_MODE_NORMAL;
+    static uint16 s_mode_cooldown = 0;
+
+    // --- 1. 基于实际车速决定目标 PID 模式 ---
+    float actual_speed_clamped = (abs_actual < 50.0f) ? 0.0f : current_actual_speed;
+    if ((raw_speed * actual_speed_clamped) < 0.0f)
     {
-        s_prev_speed_cmd = raw_speed;
-        return s_prev_speed_cmd;
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else if (abs_raw > (abs_actual + NAV_SPEED_SLEW_EPS))
+    {
+        target_mode = CONTROL_MODE_ACCEL;
+    }
+    else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_actual)
+    {
+        target_mode = CONTROL_MODE_BRAKE;
+    }
+    else
+    {
+        target_mode = CONTROL_MODE_NORMAL;
     }
 
+    // --- 2. 带有紧急豁免的 PID 切换冷却机制 ---
+    if (target_mode == CONTROL_MODE_BRAKE && s_current_req_mode != CONTROL_MODE_BRAKE)
+    {
+        // 紧急情况：需要刹车，无视冷却立即切换
+        s_current_req_mode = CONTROL_MODE_BRAKE;
+        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+        s_mode_cooldown = 30; // 切换后进入 300ms 冷却
+    }
+    else if (target_mode != s_current_req_mode && s_mode_cooldown == 0)
+    {
+        // 正常切换：冷却完毕允许切换
+        s_current_req_mode = target_mode;
+        Control_Profile_RequestMode(target_mode);
+        s_mode_cooldown = 30; // 重置 300ms 冷却
+    }
+    else if (s_mode_cooldown > 0)
+    {
+        s_mode_cooldown--;
+        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状态
+    }
+    else
+    {
+        Control_Profile_RequestMode(target_mode); // 平稳保持
+    }
+
+    // --- 3. 速度曲线斜率生成 (0724修复：加速段也走斜率限制) ---
     if ((raw_speed * s_prev_speed_cmd) < 0.0f)
     {
-        step_limit = NAV_POINT_SPEED_CROSS_ZERO_STEP;
+        step_limit = NAV_SPEED_SLEW_DOWN_CROSS_ZERO;
     }
-    else if (fabsf(raw_speed) < fabsf(s_prev_speed_cmd))
+    else if (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS))
     {
-        step_limit = NAV_POINT_SPEED_DECEL_STEP;
+        step_limit = (abs_prev < NAV_SPEED_SLEW_LOW_SPEED_TH) ? NAV_SPEED_SLEW_UP_LOW : NAV_SPEED_SLEW_UP_NORMAL;
+    }
+    else if ((abs_raw + NAV_SPEED_SLEW_EPS) < abs_prev)
+    {
+        step_limit = (abs_prev > NAV_SPEED_SLEW_FAST_DECEL_TH) ? NAV_SPEED_SLEW_DOWN_FAST : NAV_SPEED_SLEW_DOWN_NORMAL;
+    }
+    else
+    {
+        step_limit = NAV_SPEED_SLEW_UP_NORMAL;
     }
 
     s_prev_speed_cmd += Float_Constrain(diff, -step_limit, step_limit);
@@ -580,12 +642,15 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
                                               float dist_to_point,
                                               float point_yaw_deg,
                                               float selected_err_deg,
-                                              float speed_sign)
+                                              float speed_sign,
+                                              float *out_override_speed)
 {
     float abs_vehicle_speed = fabsf(current_actual_speed);
     float approach_speed_mag;
     float brake_radius_mm;
     float target_speed_cmd;
+
+    *out_override_speed = 1e30f; /* sentinel: 未覆盖 */
 
     SelectSpecialPointHeading(point_yaw_deg,
                               dist_to_point,
@@ -594,6 +659,28 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
                               &speed_sign);
     approach_speed_mag = UpdateSpecialCaptureSpeedRef(GetApproachSpeedMag(speed_sign), speed_sign);
     brake_radius_mm = CalcSpecialBrakeRadius(approach_speed_mag);
+
+    /* ---- 补丁：两个雷区距离过近时，放宽刹车距离、提高通过速度 ---- */
+    {
+        float dist_to_next_minefield = 1e9f;
+        uint16 next_idx = (uint16)(point_idx + 1U);
+        if ((next_idx < nav_ram_data.point_count) &&
+            IsSpecialPointType(nav_ram_data.points[next_idx].point_type))
+        {
+            dist_to_next_minefield = CalcDistance(nav_ram_data.points[point_idx].x,
+                                                  nav_ram_data.points[point_idx].y,
+                                                  nav_ram_data.points[next_idx].x,
+                                                  nav_ram_data.points[next_idx].y);
+        }
+        if (dist_to_next_minefield < brake_radius_mm)
+        {
+            brake_radius_mm = dist_to_next_minefield * 0.5f;
+            brake_radius_mm = Float_Constrain(brake_radius_mm,
+                                              NAV_POINT_SPECIAL_EXECUTE_RADIUS,
+                                              NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX);
+        }
+    }
+    /* ---- 补丁结束 ---- */
 
     g_nav_point_special_debug_target_idx = point_idx;
     g_nav_point_special_debug_target_x = nav_ram_data.points[point_idx].x;
@@ -607,6 +694,24 @@ static uint8 HandleSpecialPointStopAndTrigger(uint16 point_idx,
     if ((s_special_zero_brake_issued == 0U) &&
         (ShouldStartSpecialPointCapture(dist_to_point, brake_radius_mm) == 0U))
     {
+        /* ---- 补丁：两个雷区距离过近时，以 NAV_POINT_SPEED_FAST/2 通过 ---- */
+        {
+            uint16 next_idx = (uint16)(point_idx + 1U);
+            if ((next_idx < nav_ram_data.point_count) &&
+                IsSpecialPointType(nav_ram_data.points[next_idx].point_type))
+            {
+                float dist_to_next = CalcDistance(nav_ram_data.points[point_idx].x,
+                                                  nav_ram_data.points[point_idx].y,
+                                                  nav_ram_data.points[next_idx].x,
+                                                  nav_ram_data.points[next_idx].y);
+                float orig_brake_radius = CalcSpecialBrakeRadius(approach_speed_mag);
+                if (dist_to_next < orig_brake_radius)
+                {
+                    *out_override_speed = NAV_POINT_SPEED_FAST * 0.5f;
+                }
+            }
+        }
+        /* ---- 补丁结束 ---- */
         Brake_NavHardStop_Reset();
         ResetStopState();
         return 0U;
@@ -795,6 +900,7 @@ void NavReplay_Start(void)
     ResetEncoderStopPrediction();
     Minefield_Init();
     Brake_NavHardStop_Reset();
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
 
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0U : 1U;
@@ -817,6 +923,7 @@ void NavReplay_Stop(void)
     ResetEncoderStopPrediction();
     Minefield_Init();
     Brake_NavHardStop_Reset();
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
 }
 
 void NavReplay_Process(void)
@@ -830,6 +937,7 @@ void NavReplay_Process(void)
     float speed_sign;
     float stop_radius;
     float speed_mag;
+    float override_speed = 1e30f;
     uint8 point_type;
     uint8 is_last_point;
     uint8 use_spin_exit_align;
@@ -911,7 +1019,8 @@ void NavReplay_Process(void)
                                                                 dist_to_point,
                                                                 point_yaw_deg,
                                                                 selected_err_deg,
-                                                                speed_sign);
+                                                                speed_sign,
+                                                                &override_speed);
         if (special_result != 0U)
         {
             if (special_result == 2U)
@@ -949,6 +1058,20 @@ void NavReplay_Process(void)
     }
 
     stop_radius = IsSpecialPointType(point_type) ? NAV_POINT_SPECIAL_EXECUTE_RADIUS : NAV_POINT_PATH_ARRIVE_RADIUS;
+
+    /* ---- 补丁：两个雷区过近时，直接使用覆盖速度，跳过正常规划 ---- */
+    if (override_speed < 1e29f)
+    {
+        target_speed_set = NavReplay_SpeedSlew_Update(override_speed);
+        if (s_spin_exit_align_ticks != 0U)
+        {
+            s_spin_exit_align_ticks--;
+        }
+        Brake_NavHardStop_Reset();
+        return;
+    }
+    /* ---- 补丁结束 ---- */
+
     use_spin_exit_align = (uint8)((s_spin_exit_align_ticks != 0U) &&
                                   (is_last_point == 0U));
     if (is_last_point != 0U)
@@ -968,7 +1091,7 @@ void NavReplay_Process(void)
     {
         speed_mag = ApplyEncoderStopPrediction(speed_mag, dist_to_point, stop_radius, speed_sign);
     }
-    target_speed_set = SpeedSlew(speed_sign * speed_mag);
+    target_speed_set = NavReplay_SpeedSlew_Update(speed_sign * speed_mag);
     if (s_spin_exit_align_ticks != 0U)
     {
         s_spin_exit_align_ticks--;

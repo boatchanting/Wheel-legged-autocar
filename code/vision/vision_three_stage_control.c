@@ -31,12 +31,12 @@ volatile uint8 g_vision_three_stage_jump2_top_y = VISION_THREE_STAGE_JUMP2_TOP_Y
 volatile uint8 g_vision_three_stage_jump3_bottom_y = VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT;
 volatile uint8 g_vision_three_stage_exit_top_y = VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT;
 
-volatile float g_vision_three_stage_speed_approach = -150.0f; /* 锁定目标靠近时的速度 */
-volatile float g_vision_three_stage_speed_jump1    = -150.0f;/* 第一跳寻找速度 */
-volatile float g_vision_three_stage_speed_jump2    = -150.0f;/* 第二跳寻找速度 */
-volatile float g_vision_three_stage_speed_gap      = -150.0f; /* 短暂丢失过渡阶段速度 */
-volatile float g_vision_three_stage_speed_jump3    = -150.0f;/* 第三跳寻找速度 */
-volatile float g_vision_three_stage_speed_exit     = -150.0f; /* 最后一跳完成后的驶出减速 */
+volatile float g_vision_three_stage_speed_approach = -200.0f; /* 锁定目标靠近时的速度 */
+volatile float g_vision_three_stage_speed_jump1    = -200.0f;/* 第一跳寻找速度 */
+volatile float g_vision_three_stage_speed_jump2    = -200.0f;/* 第二跳寻找速度 */
+volatile float g_vision_three_stage_speed_gap      = -200.0f; /* 短暂丢失过渡阶段速度 */
+volatile float g_vision_three_stage_speed_jump3    = -200.0f;/* 第三跳寻找速度 */
+volatile float g_vision_three_stage_speed_exit     = -200.0f; /* 最后一跳完成后的驶出减速 */
 
 /* 影子变量：先算完，再一次性发布，减少并发读写中间态 */
 static vision_three_stage_control_status_t s_ctrl_shadow;

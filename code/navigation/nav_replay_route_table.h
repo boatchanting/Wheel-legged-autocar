@@ -10,7 +10,7 @@
 #define NAV_REPLAY_START_HEADING_VALID 0
 #define NAV_REPLAY_START_HEADING_DEG 135.787f
 
-#define NAV_REPLAY_STATIC_ROUTE_COUNT 3
+#define NAV_REPLAY_STATIC_ROUTE_COUNT 3上
 
 static const NavRamPoint_t nav_replay_static_route_points[3] = {
     {-6250.392f, -1995.105f, -2.612f, 142.448f, (uint8)5},
