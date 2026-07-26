@@ -51,16 +51,63 @@ static float CalcDistance(float x1, float y1, float x2, float y2)
 
 static float CalcBearingDeg(float x1, float y1, float x2, float y2)
 {
-    float dx = x2 - x1;
-    float dy = y2 - y1;
-    float rad = atan2f(dy, dx);
-    return rad * 180.0f / 3.14159265f;
+    return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
 }
 
 static uint8 IsSpecialPointType(uint8 point_type)
 {
     return (uint8)(point_type != NAV_POINT_PATH);
 }
+
+static float PositiveAngle360(float angle)
+{
+    while (angle < 0.0f) angle += 360.0f;
+    while (angle >= 360.0f) angle -= 360.0f;
+    return angle;
+}
+
+static void ConfigureSpinPlanForPoint_Lite(uint16 point_idx)
+{
+    uint16 next_idx = (uint16)(point_idx + 1U);
+    float exit_yaw;
+    
+    if (next_idx < nav_ram_data.point_count)
+    {
+        exit_yaw = CalcBearingDeg(nav_ram_data.points[point_idx].x,
+                                  nav_ram_data.points[point_idx].y,
+                                  nav_ram_data.points[next_idx].x,
+                                  nav_ram_data.points[next_idx].y);
+    }
+    else
+    {
+        exit_yaw = nav_ram_data.points[point_idx].target_yaw_deg;
+    }
+
+    float current_yaw = inertial_nav.relative_yaw;
+    
+    // 计算顺时针 (CW) 和逆时针 (CCW) 需要补齐的夹角
+    float delta_cw = PositiveAngle360(current_yaw - exit_yaw);
+    float delta_ccw = PositiveAngle360(exit_yaw - current_yaw);
+
+    float total_cw = 720.0f + delta_cw;
+    float total_ccw = 720.0f + delta_ccw;
+
+    if (total_cw < 725.0f) total_cw = 725.0f;
+    if (total_ccw < 725.0f) total_ccw = 725.0f;
+
+    // 选择自转总角度较小的一侧
+    float best_total_angle = total_cw;
+    float best_spin_sign = 1.0f; // 1.0f = CW
+
+    if (total_ccw < total_cw)
+    {
+        best_total_angle = total_ccw;
+        best_spin_sign = -1.0f; // -1.0f = CCW
+    }
+
+    Minefield_SetSpinPlan(best_total_angle, exit_yaw, best_spin_sign);
+}
+
 
 // --------------------------- 核心简化版速度规划逻辑 ---------------------------
 
@@ -158,6 +205,11 @@ static uint8 HandleSpecialPointStopAndTrigger_Lite(float dist_to_point)
             {
                 // 完美！停稳，触发动作！
                 g_special_action_trigger = 1U;
+                if (IsSpecialPointType(g_current_point_type))
+                {
+                    ConfigureSpinPlanForPoint_Lite(g_target_idx);
+                    minefield_flag = 1U;
+                }
                 target_speed_set = 0.0f;
                 return 2U; // 返回 2U 表示触发动作，结束当前点导航
             }
@@ -174,9 +226,9 @@ static uint8 HandleSpecialPointStopAndTrigger_Lite(float dist_to_point)
             // 还没进执行圆，但在刹车中
             if (v_actual <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S)
             {
-                // 兜底逻辑：刹车过猛，速度已经掉到安全阈值以下了，给阈值的 1/5 蠕动进去，防止提前停死
-                target_speed_set = - ((NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S / 5.0f) / SPEED_TO_MM_S); // 注意负号代表前进
-                // 此时为了防止突变抬头，可以走简化版斜率，让 0.0 缓慢变为 1/5 阈值
+                // 兜底逻辑：刹车过猛，速度已经掉到安全阈值以下了，给阈值的 1/2 蠕动进去，防止提前停死
+                target_speed_set = - ((NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S / 2.0f) / SPEED_TO_MM_S); // 注意负号代表前进
+                // 此时为了防止突变抬头，可以走简化版斜率，让 0.0 缓慢变为 1/2 阈值
                 target_speed_set = NavReplay_SpeedSlew_Update_Lite(target_speed_set);
                 return 0U;
             }

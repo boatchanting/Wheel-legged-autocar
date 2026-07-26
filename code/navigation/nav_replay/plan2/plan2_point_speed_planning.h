@@ -14,7 +14,7 @@
 // 普通路径点的通过半径（mm）；进入后直接推进索引，不停车。
 #define NAV_POINT_PATH_ARRIVE_RADIUS            70.0f
 // 特殊动作最终执行中心圈半径（mm）；小于雷区物理半径，避免边缘或外侧提前旋转。
-#define NAV_POINT_SPECIAL_EXECUTE_RADIUS        200.0f
+#define NAV_POINT_SPECIAL_EXECUTE_RADIUS        100.0f
 #define NAV_POINT_SPECIAL_PREP_STOP_RADIUS      200.0f
 #define NAV_POINT_SPECIAL_CRAWL_RELEASE_MARGIN_MM 80.0f
 // 特殊点提前刹车按当前接近速度动态计算：执行圆 + 余量 + v^2/(2a)。
