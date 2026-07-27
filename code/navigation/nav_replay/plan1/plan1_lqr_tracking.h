@@ -50,7 +50,7 @@
 
 #define LQR_CURVATURE_SPEED_SIGN_ENABLE     1
 #define LQR_FORWARD_SPEED_IS_NEGATIVE       1
-#define LQR_SPEED_TO_MM_S                   4.936f
+#define LQR_SPEED_TO_MM_S                   4.79f
 
 /* Low speed keeps authority; high speed tightens stability envelopes. */
 #define LQR_LOW_SPEED_MM_S                500.0f
