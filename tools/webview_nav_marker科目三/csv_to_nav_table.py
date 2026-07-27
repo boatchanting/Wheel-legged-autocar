@@ -21,7 +21,7 @@ MAX_POINTS_DEFAULT = 500
 # 负值：结束点沿同一连线的反方向远离进入点。
 SPECIAL_EXIT_DISTANCE_OFFSETS = {
     30: 0.0,
-    40: 900.0,
+    40: 750.0,
     50: 0.0,
 }
 
