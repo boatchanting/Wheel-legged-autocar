@@ -13,6 +13,18 @@ from typing import List, Optional, Tuple
 
 MAX_POINTS_DEFAULT = 500
 
+# 特殊状态机结束点的沿线修正距离（单位：CSV 坐标单位；当前导航坐标单位为毫米 mm）。
+# 30：三级台阶结束点，对应状态机进入点类型 3（3 -> 30），单位：mm。
+# 40：单边桥结束点，对应状态机进入点类型 4（4 -> 40），单位：mm。
+# 50：颠簸路段结束点，对应状态机进入点类型 5（5 -> 50），单位：mm。
+# 正值：结束点沿“结束点 -> 对应进入点”的连线靠近进入点。
+# 负值：结束点沿同一连线的反方向远离进入点。
+SPECIAL_EXIT_DISTANCE_OFFSETS = {
+    30: 0.0,
+    40: 900.0,
+    50: 0.0,
+}
+
 
 @dataclass
 class RoutePoint:
@@ -22,6 +34,30 @@ class RoutePoint:
     point_type: int
     target_yaw_deg: Optional[float]
     heading_deg: Optional[float]
+
+
+def apply_special_exit_distance_offsets(
+    points: List[RoutePoint], offsets: Optional[dict[int, float]] = None
+) -> None:
+    """按相邻状态机进入/结束点的连线，修正特殊结束点的位置。"""
+    distance_offsets = SPECIAL_EXIT_DISTANCE_OFFSETS if offsets is None else offsets
+
+    for entry_point, exit_point in zip(points, points[1:]):
+        distance_offset = distance_offsets.get(exit_point.point_type)
+        if distance_offset is None or distance_offset == 0.0:
+            continue
+        if exit_point.point_type != entry_point.point_type * 10:
+            continue
+
+        # 向量固定由该状态机的结束点指向进入点，避免受整条路线方向影响。
+        dx = entry_point.x - exit_point.x
+        dy = entry_point.y - exit_point.y
+        length = math.hypot(dx, dy)
+        if math.isclose(length, 0.0):
+            continue
+
+        exit_point.x += distance_offset * dx / length
+        exit_point.y += distance_offset * dy / length
 
 
 def parse_args() -> argparse.Namespace:
@@ -166,6 +202,7 @@ def read_points(csv_path: Path) -> Tuple[List[RoutePoint], Optional[float]]:
                 raise ValueError(f"Invalid row {order + 1}: {exc}") from exc
 
     points.sort(key=lambda item: item.index)
+    apply_special_exit_distance_offsets(points)
     infer_target_yaws(points)
     fill_missing_heading(points)
     return points, start_heading
