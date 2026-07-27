@@ -66,9 +66,10 @@ UTURN_OVERLINE_DISTANCES_MM = (800.0, 1200.0, 1800.0, 2600.0, 3600.0)
 UTURN_GUARD_RADIUS_OFFSETS_MM = (800.0, 1200.0, 1600.0, 2200.0, 3000.0)
 UTURN_ARC_ENABLE = True
 UTURN_ARC_RADIUS_CANDIDATES_MM = (1800.0, 2000.0, 2200.0)
-UTURN_ARC_TARGET_ROUTE_INDICES = (4,)
+UTURN_ARC_TARGET_ROUTE_INDICES = (5,)
 UTURN_ARC_MAX_SWEEP_RAD = math.radians(260.0)
 UTURN_ARC_LENGTH_PRIORITY_WEIGHT = 1.0
+UTURN_ARC_EXIT_BEZIER_HANDLE_MM = 200.0
 UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS = 10
 FINISH_OVER_LINE_MM = 700.0
 ACCEL_RESERVE_MARGIN_M = 0.20
@@ -1096,6 +1097,41 @@ def _sample_circle_arc(
     ]
 
 
+def _sample_cubic_bezier_connector(
+    start_xy: Tuple[float, float],
+    end_xy: Tuple[float, float],
+    start_tangent: Tuple[float, float],
+    end_tangent: Tuple[float, float],
+    handle_mm: float,
+    sample_step_mm: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Sample a C1 connector with explicit tangents at both ends."""
+    chord_mm = math.hypot(end_xy[0] - start_xy[0], end_xy[1] - start_xy[1])
+    if chord_mm <= 1.0e-6:
+        return np.array([start_xy[0]], dtype=float), np.array([start_xy[1]], dtype=float)
+
+    handle_mm = min(max(0.0, float(handle_mm)), chord_mm * 0.45)
+    p0 = np.array(start_xy, dtype=float)
+    p1 = p0 + np.array(start_tangent, dtype=float) * handle_mm
+    p3 = np.array(end_xy, dtype=float)
+    p2 = p3 - np.array(end_tangent, dtype=float) * handle_mm
+    control_length = (
+        math.hypot(*(p1 - p0))
+        + math.hypot(*(p2 - p1))
+        + math.hypot(*(p3 - p2))
+    )
+    steps = max(8, int(math.ceil(control_length / max(sample_step_mm, 1.0))))
+    t_vals = np.linspace(0.0, 1.0, steps + 1)
+    one_minus_t = 1.0 - t_vals
+    samples = (
+        (one_minus_t[:, None] ** 3) * p0
+        + 3.0 * (one_minus_t[:, None] ** 2) * t_vals[:, None] * p1
+        + 3.0 * one_minus_t[:, None] * (t_vals[:, None] ** 2) * p2
+        + (t_vals[:, None] ** 3) * p3
+    )
+    return samples[:, 0], samples[:, 1]
+
+
 def _arc_crosses_uturn_line(
     arc_points: Sequence[Tuple[float, float]],
     center_xy: Tuple[float, float],
@@ -1172,15 +1208,39 @@ def _sample_circular_uturn_variant(
         return None
 
     _arc_delta, arc_points = min(arc_options, key=lambda item: item[0])
-    rest_route = [(end_tangent[0], end_tangent[1])] + list(route[target_idx:])
+    rest_route = list(route[target_idx:])
+    if not rest_route:
+        return None
+    if len(rest_route) >= 2:
+        rest_tangent = _unit_vec(
+            rest_route[1][0] - rest_route[0][0],
+            rest_route[1][1] - rest_route[0][1],
+        )
+    else:
+        rest_tangent = _unit_vec(
+            rest_route[0][0] - end_tangent[0],
+            rest_route[0][1] - end_tangent[1],
+        )
+    arc_exit_tangent = (
+        -direction * math.sin(end_tangent[2]),
+        direction * math.cos(end_tangent[2]),
+    )
+    connector_x, connector_y = _sample_cubic_bezier_connector(
+        (end_tangent[0], end_tangent[1]),
+        rest_route[0],
+        arc_exit_tangent,
+        rest_tangent,
+        UTURN_ARC_EXIT_BEZIER_HANDLE_MM,
+        sample_step_mm,
+    )
     rest_sample_route = _add_terminal_anchor_points(rest_route)
     rest_x, rest_y = _sample_hermite_path(rest_sample_route, tension, sample_step_mm)
     line_x, line_y = _polyline_sample_xy([route[0], (start_tangent[0], start_tangent[1])], sample_step_mm)
     arc_x = np.array([p[0] for p in arc_points], dtype=float)
     arc_y = np.array([p[1] for p in arc_points], dtype=float)
 
-    dense_x = np.concatenate([line_x[:-1], arc_x, rest_x[1:]])
-    dense_y = np.concatenate([line_y[:-1], arc_y, rest_y[1:]])
+    dense_x = np.concatenate([line_x[:-1], arc_x, connector_x[1:], rest_x[1:]])
+    dense_y = np.concatenate([line_y[:-1], arc_y, connector_y[1:], rest_y[1:]])
 
     mid_arc = arc_points[len(arc_points) // 2]
     raw_route = [
