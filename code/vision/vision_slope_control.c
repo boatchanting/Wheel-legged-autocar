@@ -3,8 +3,8 @@
  * 文件: vision_slope_control.c
  * 作用: 0 核(Core 0)斜坡路段视觉识别与控制状态机。
  * 说明: 白色 PVC 斜坡入口阶段复用现有 PVC 控制模块修正方向；检测稳定后，
- *       立即锁定当前惯导航向。蓝色坡面不做视觉识别，依靠锁角、定速和惯导里程
- *       完成上坡及下坡，累计 2000mm 后自动退出。
+ *       立即锁定当前惯导航向。蓝色坡面不做视觉识别，前 300ms 后方向误差清零，
+ *       依靠定速和惯导里程完成上坡及下坡并自动退出。
  * =================================================================================
  */
 #include "vision/vision_slope_control.h"
@@ -34,7 +34,7 @@ typedef struct
     float start_x_mm;                     /* 锁角进入斜坡瞬间的惯导 X 坐标 */
     float start_y_mm;                     /* 锁角进入斜坡瞬间的惯导 Y 坐标 */
     float locked_yaw_deg;                 /* PVC 校准完成后锁定的惯导航向 */
-    uint16 pvc_align_ok_ticks;            /* PVC 方向误差连续落入容差的 2ms tick 数 */
+    uint16 pvc_align_ok_ticks;            /* PVC 入口确认条件连续满足的 2ms tick 数 */
 } vision_slope_task_ctx_t;
 
 static vision_slope_task_ctx_t s_slope_task;
@@ -55,14 +55,6 @@ static float vision_slope_normalize_angle(float angle_deg)
         angle_deg += 360.0f;
     }
     return angle_deg;
-}
-
-/**
- * @brief 返回浮点数绝对值，用于判断 PVC 方向误差是否已收敛。
- */
-static float vision_slope_abs_f(float value)
-{
-    return (value < 0.0f) ? -value : value;
 }
 
 /**
@@ -110,21 +102,35 @@ static void vision_slope_set_state(vision_slope_task_state_e next_state)
 {
     s_slope_task.state = next_state;
     s_slope_task.state_ticks = 0U;
+
+    /* PVC 入口确认完成的瞬间记录航向和位置，后续里程从这里开始累计。 */
+    if (next_state == VISION_SLOPE_TASK_ENTRY_HOLD)
+    {
+        s_slope_task.start_x_mm = inertial_nav.x;
+        s_slope_task.start_y_mm = inertial_nav.y;
+        s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
+    }
 }
 
 /**
  * @brief 将内部状态一次性同步到全局状态，便于调试读取。
  */
-static void vision_slope_publish_status(float traveled_mm, float err_cmd, float speed_cmd)
+static void vision_slope_publish_status(const volatile vision_ipc_packet_t *packet,
+                                        float traveled_mm,
+                                        float err_cmd,
+                                        float speed_cmd)
 {
     g_slope_vision_task_status.enabled = g_slope_vision_task_enable;
     g_slope_vision_task_status.state = s_slope_task.state;
     g_slope_vision_task_status.state_ticks = s_slope_task.state_ticks;
+    g_slope_vision_task_status.last_seq = (packet != NULL) ? packet->seq : 0U;
     g_slope_vision_task_status.traveled_mm = traveled_mm;
     g_slope_vision_task_status.locked_yaw_deg = s_slope_task.locked_yaw_deg;
     g_slope_vision_task_status.err_degree_cmd = err_cmd;
     g_slope_vision_task_status.speed_cmd = speed_cmd;
     g_slope_vision_task_status.pvc_stable_detected = g_vision_pvc_control_status.stable_detected;
+    g_slope_vision_task_status.pvc_ratio_u16 = g_vision_pvc_control_status.bbox_area_ratio_u16;
+    g_slope_vision_task_status.pvc_steer_error_px_x100 = g_vision_pvc_control_status.steer_error_px_x100;
 }
 
 /**
@@ -132,14 +138,14 @@ static void vision_slope_publish_status(float traveled_mm, float err_cmd, float 
  */
 static void vision_slope_cleanup(uint8 stop_car)
 {
-    /* 斜坡进入后不再需要 PVC 检测，关闭检测和控制接管。 */
+    /* 释放 PVC 控制，并恢复 PVC 检测的项目默认调度状态，保证下次任务可重新触发。 */
     VisionPvcControl_SetEnable(0U);
-    VisionIpc_Core0_SetPvcEnable(0U);
+    VisionIpc_Core0_SetPvcEnable(VISION_PVC_DETECT_DEFAULT_ACTIVE);
 
+    err_degree = 0.0f;
     if (stop_car != 0U)
     {
         target_speed_set = 0.0f;
-        err_degree = 0.0f;
     }
 
     g_special_action_trigger = 0U;
@@ -156,6 +162,7 @@ static void vision_slope_enter_task(void)
 {
     memset(&s_slope_task, 0, sizeof(s_slope_task));
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
+    s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
     g_special_action_trigger = 1U;
 
     /* PVC 控制模块会提供方向误差；本状态机在本周期末统一强制入口速度。 */
@@ -195,6 +202,7 @@ uint8 VisionSlopeTask_IsActive(void)
  */
 void VisionSlopeTask_Update_2ms(void)
 {
+    const volatile vision_ipc_packet_t *packet = VisionIpc_Core0_GetLatest();
     float traveled_mm = 0.0f;
     float err_cmd = 0.0f;
     float speed_cmd = 0.0f;
@@ -226,7 +234,10 @@ void VisionSlopeTask_Update_2ms(void)
         vision_slope_enter_task();
     }
 
-    s_slope_task.state_ticks++;
+    if (s_slope_task.state_ticks < 0xFFFFFFFFU)
+    {
+        s_slope_task.state_ticks++;
+    }
 
     if ((s_slope_task.state == VISION_SLOPE_TASK_ENTRY_HOLD) ||
         (s_slope_task.state == VISION_SLOPE_TASK_RUN))
@@ -238,18 +249,18 @@ void VisionSlopeTask_Update_2ms(void)
     switch (s_slope_task.state)
     {
         case VISION_SLOPE_TASK_PVC_ALIGN:
-            /* 复用 PVC 控制模块给出的方向修正；速度始终由斜坡策略固定为入口速度。 */
+            /* 复用 PVC 控制模块给出的方向修正；搜索/校准期间以低速行驶，给转向收敛留出距离。 */
             err_cmd = g_vision_pvc_control_status.err_degree_cmd;
-            speed_cmd = VISION_SLOPE_TASK_ENTRY_SPEED_SET;
+            speed_cmd = VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
             /*
-             * stable_detected 只表示白色 PVC 被稳定识别，不能直接认为方向已经校准。
-             * 必须让 PVC PID 输出的方向误差持续收敛到容差内，给车辆实际转向留出时间。
+             * 沿用参考提交的入口确认逻辑：稳定看到 PVC 且白色区域占满画面才表示已压上入口。
+             * 入口条件连续保持 50ms，可滤除临界画面抖动，避免过早锁住尚未进入斜坡的航向。
              */
             if ((g_vision_pvc_control_status.stable_detected != 0U) &&
-                (vision_slope_abs_f(err_cmd) <= VISION_SLOPE_TASK_PVC_ALIGN_ERR_TOL_DEG))
+                (g_vision_pvc_control_status.bbox_area_ratio_u16 >= VISION_SLOPE_TASK_PVC_FULL_RATIO_U16))
             {
                 if (s_slope_task.pvc_align_ok_ticks < 0xFFFFU)
                 {
@@ -261,15 +272,17 @@ void VisionSlopeTask_Update_2ms(void)
                 s_slope_task.pvc_align_ok_ticks = 0U;
             }
 
-            /* PVC 方向校准稳定 100ms 后，保存此刻航向；后续蓝色坡面不再依赖视觉。 */
+            /* PVC 入口确认稳定 50ms 后，保存此刻航向；后续蓝色坡面不再依赖视觉。 */
             if (s_slope_task.pvc_align_ok_ticks >= VISION_SLOPE_TASK_PVC_ALIGN_OK_TICKS)
             {
-                s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
-                s_slope_task.start_x_mm = inertial_nav.x;
-                s_slope_task.start_y_mm = inertial_nav.y;
                 VisionPvcControl_SetEnable(0U);
-                VisionIpc_Core0_SetPvcEnable(0U);
+                VisionIpc_Core0_SetPvcEnable(VISION_PVC_DETECT_DEFAULT_ACTIVE);
                 vision_slope_set_state(VISION_SLOPE_TASK_ENTRY_HOLD);
+            }
+            else if (s_slope_task.state_ticks >= VISION_SLOPE_TASK_PVC_ALIGN_TIMEOUT_TICKS)
+            {
+                /* 5 秒内仍未确认进入 PVC，认为视觉入口异常并安全退出。 */
+                vision_slope_set_state(VISION_SLOPE_TASK_FAILSAFE);
             }
             break;
 
@@ -287,8 +300,8 @@ void VisionSlopeTask_Update_2ms(void)
             break;
 
         case VISION_SLOPE_TASK_RUN:
-            /* 蓝色斜坡路面没有视觉特征，固定使用锁角和降低后的稳定速度。 */
-            err_cmd = vision_slope_calc_yaw_hold_err();
+            /* 蓝色斜坡路面不使用视觉或惯导方向修正，直接保持方向误差为零。 */
+            err_cmd = 0.0f;
             speed_cmd = VISION_SLOPE_TASK_RUN_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
@@ -310,7 +323,7 @@ void VisionSlopeTask_Update_2ms(void)
             return;
     }
 
-    vision_slope_publish_status(traveled_mm, err_cmd, speed_cmd);
+    vision_slope_publish_status(packet, traveled_mm, err_cmd, speed_cmd);
 }
 
 #endif
