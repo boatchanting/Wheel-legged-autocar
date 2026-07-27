@@ -2,6 +2,7 @@
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
 #include "../../../vision/vision_bridge_control.h"
+#include "../../../vision/vision_three_stage_control.h"
 #if (CURRENT_NAV_PLAN == 3) && (NAV_PLAN3_METHOD == PLAN3_METHOD_PRECISE)
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;
@@ -20,7 +21,8 @@ volatile uint8 exit_beep_request = 0U;
 #endif
 
 static uint8 g_start_heading_aligned = 1;
-// 单边桥入口已交给视觉任务后，等待视觉任务结束并消费紧邻的 40 退出锚点。
+// 特殊任务入口已交给视觉状态机后，等待其结束并消费紧邻的退出锚点。
+static uint8 s_jump_exit_pending = 0U;
 static uint8 s_bridge_exit_pending = 0U;
 static uint8 s_bumpy_exit_pending = 0U;
 #define NAV_BRIDGE_HANDOFF_TICKS            (10U)  // 100ms：视觉退出控制平滑切换至 Plan3
@@ -82,6 +84,12 @@ static uint8 NavReplay_IsBridgeExitPoint(uint16 point_idx)
                    (nav_ram_data.points[point_idx].point_type == NAV_POINT_BRIDGE_EXIT));
 }
 
+static uint8 NavReplay_IsJumpExitPoint(uint16 point_idx)
+{
+    return (uint8)((point_idx < nav_ram_data.point_count) &&
+                   (nav_ram_data.points[point_idx].point_type == NAV_POINT_JUMP_EXIT));
+}
+
 static uint8 NavReplay_IsBumpyExitPoint(uint16 point_idx)
 {
     return (uint8)((point_idx < nav_ram_data.point_count) &&
@@ -103,6 +111,27 @@ static void NavReplay_CompleteVisionBridgeExit(void)
     }
 
     s_bridge_exit_pending = 0U;
+    s_special_handoff_ticks = NAV_BRIDGE_HANDOFF_TICKS;
+    g_special_action_trigger = 0U;
+}
+
+static void NavReplay_CompleteVisionJumpExit(void)
+{
+    /* 30 仅是三级跳的退出锚点。只有状态机视觉确认完成时才允许重定位，
+     * 防止超时/急停后把融合坐标错误钉到赛道后方。 */
+    if (NavReplay_IsJumpExitPoint(g_target_idx))
+    {
+        if (g_vision_three_stage_control_status.exit_reason ==
+            VISION_THREE_STAGE_EXIT_SUCCESS)
+        {
+            nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
+            nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
+            exit_beep_request = 1U;
+        }
+        g_target_idx++;
+    }
+
+    s_jump_exit_pending = 0U;
     s_special_handoff_ticks = NAV_BRIDGE_HANDOFF_TICKS;
     g_special_action_trigger = 0U;
 }
@@ -158,6 +187,7 @@ void NavReplay_Start(void)
     g_target_idx = 0; // 从第1个点开始（起始点没有储存，默认为(0,0)）
     g_replay_state = REPLAY_RUNNING;
     g_special_action_trigger = 0;
+    s_jump_exit_pending = 0U;
     s_bridge_exit_pending = 0U;
     s_bumpy_exit_pending = 0U;
     s_special_handoff_ticks = 0U;
@@ -188,6 +218,7 @@ void NavReplay_Stop(void)
     g_replay_state = REPLAY_IDLE;
     err_degree = 0.0f;
     g_special_action_trigger = 0;
+    s_jump_exit_pending = 0U;
     s_bridge_exit_pending = 0U;
     s_bumpy_exit_pending = 0U;
     s_special_handoff_ticks = 0U;
@@ -246,6 +277,20 @@ void NavReplay_Process(void)
     {
         s_prev_err_degree = 0.0f; 
         return;
+    }
+
+    // 三级跳结束后，消费紧邻的 30 退出锚点；只有视觉确认的正常脱出才重定位。
+    if (s_jump_exit_pending)
+    {
+        if (!VisionThreeStageControl_IsActive())
+        {
+            NavReplay_CompleteVisionJumpExit();
+            s_prev_err_degree = 0.0f;
+        }
+        else
+        {
+            return;
+        }
     }
 
     // 视觉桥任务结束后，将融合坐标钉到 40 退出锚点并直接进入后续普通点。
@@ -388,7 +433,12 @@ void NavReplay_Process(void)
         {
             // 特殊点到达后直接把控制权交给对应状态机，不停车、不原地对角。
             if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
-            else if (g_current_point_type == NAV_POINT_JUMP) vision_detected_three_jump_point = 1;
+            else if (g_current_point_type == NAV_POINT_JUMP)
+            {
+                entry_beep_request = 1U;
+                s_jump_exit_pending = NavReplay_IsJumpExitPoint(g_target_idx + 1U);
+                VisionThreeStageControl_Start();
+            }
             else if (g_current_point_type == NAV_POINT_BRIDGE)
             {
                 entry_beep_request = 1U;
