@@ -351,7 +351,17 @@ void VisionThreeStageControl_Update_2ms(void)
             break;
 
         case VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC:
-            target_speed_set = g_vision_three_stage_speed_gap;
+            /* 第二跳触发后累计 180ms，直接触发第三跳。 */
+            target_speed_set = g_vision_three_stage_speed_jump3;
+            if (s_ctrl_shadow.state_ticks >= VISION_THREE_STAGE_JUMP3_DELAY_AFTER_JUMP2_TICKS)
+            {
+                if (vision_three_stage_try_trigger_step_jump() != 0U)
+                {
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_EXIT_TOP);
+                }
+            }
+
+            /* 原第三跳逻辑：PVC 丢失后重新识别，并按 bottom_y 阈值触发。
             if (s_ctrl_shadow.pvc_stable_detected == 0U)
             {
                 s_ctrl_shadow.stable_count = 0U;
@@ -379,9 +389,12 @@ void VisionThreeStageControl_Update_2ms(void)
                     }
                 }
             }
+            */
             break;
 
         case VISION_THREE_STAGE_CTRL_WAIT_JUMP3_BOTTOM:
+            /* 原第三跳逻辑保留，第三跳现由 WAIT_SECOND_PVC 的 180ms 定时触发。 */
+            /*
             target_speed_set = g_vision_three_stage_speed_jump3;
             if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
                 (s_ctrl_shadow.pvc_entry_bottom_y >= g_vision_three_stage_jump3_bottom_y))
@@ -391,6 +404,7 @@ void VisionThreeStageControl_Update_2ms(void)
                     vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_EXIT_TOP);
                 }
             }
+            */
             break;
 
         case VISION_THREE_STAGE_CTRL_WAIT_EXIT_TOP:
