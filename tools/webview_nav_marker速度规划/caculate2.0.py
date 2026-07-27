@@ -42,17 +42,22 @@ CONE_RADIUS_MM = 140.0
 CAR_HALF_WIDTH_MM = 135.0
 
 PRE_UTURN_SPEED_MAX_MM_S = 5000.0
-PATH_SPEED_MAX_MM_S = 6500.0
+PATH_SPEED_MAX_MM_S = 4000.0
 SPRINT_SPEED_MM_S = 3000.0
 UTURN_SPEED_MAX_MM_S = 4000.0
 ENABLE_FINISH_SPRINT = True
 MAX_ACCEL_MM_S2 = 1500.0
 MAX_DECEL_MM_S2 = 1500.0
-MAX_LATERAL_ACCEL_MM_S2 = 3500.0
+PRE_UTURN_MAX_LATERAL_ACCEL_MM_S2 = 3500.0
+UTURN_MAX_LATERAL_ACCEL_MM_S2 = 6000.0
+NORMAL_SLALOM_MAX_LATERAL_ACCEL_MM_S2 = 6000.0
 MAX_PATH_YAW_RATE_RAD_S = 2.8
 MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0
 SPEED_TO_MM_S = 4.936
 CURVATURE_EPS = 1e-9
+SLALOM_CURVE_ENTER_ABS_CURVATURE = 0.0005
+SLALOM_CURVE_EXIT_ABS_CURVATURE = 0.0003
+SLALOM_CURVE_EXIT_PERSISTENCE_MM = 150.0
 
 UTURN_OVER_LINE_MM = 400.0
 UTURN_APPROACH_DISTANCES_MM = (1200.0, 2000.0, 3200.0, 4800.0, 6500.0)
@@ -130,6 +135,15 @@ class RoutePoint:
 
 
 @dataclass(frozen=True)
+class SlalomCurveSegment:
+    """One normal-slalom curve with stable path-index bounds and a speed platform."""
+
+    entry_idx: int
+    exit_idx: int
+    speed_mm_s: float
+
+
+@dataclass(frozen=True)
 class CandidatePoint:
     x: float
     y: float
@@ -163,6 +177,134 @@ def _brake_distance_m(speed_mps: float) -> float:
 def brake_reserve_distance_m(actual_speed_mps: float, turn_speed_mps: float) -> float:
     """Empirical distance needed to reduce actual speed to turn speed."""
     return max(0.0, _brake_distance_m(actual_speed_mps) - _brake_distance_m(turn_speed_mps)) + BRAKE_RESERVE_MARGIN_M
+
+
+def detect_slalom_curve_segments(
+    curvature: Sequence[float],
+    s_vals: Sequence[float],
+    uturn_slow_range: Optional[Tuple[int, int]] = None,
+    normal_start_idx: Optional[int] = None,
+    enter_abs_curvature: float = SLALOM_CURVE_ENTER_ABS_CURVATURE,
+    exit_abs_curvature: float = SLALOM_CURVE_EXIT_ABS_CURVATURE,
+    min_exit_distance_mm: float = SLALOM_CURVE_EXIT_PERSISTENCE_MM,
+    speed_limits_mm_s: Optional[Sequence[float]] = None,
+) -> List[SlalomCurveSegment]:
+    """Find normal-slalom curves with hysteresis and a persistent exit guard.
+
+    The u-turn owns every point through its exit index.  Normal-slalom
+    detection therefore starts strictly after that index, so it cannot export
+    metadata which competes with the dedicated u-turn controller.
+    """
+    if len(curvature) != len(s_vals):
+        raise ValueError("curvature and s_vals must have the same length")
+    if speed_limits_mm_s is not None and len(speed_limits_mm_s) != len(curvature):
+        raise ValueError("speed_limits_mm_s and curvature must have the same length")
+    if len(curvature) == 0:
+        return []
+    if enter_abs_curvature <= exit_abs_curvature:
+        raise ValueError("enter_abs_curvature must be greater than exit_abs_curvature")
+    if min_exit_distance_mm < 0.0:
+        raise ValueError("min_exit_distance_mm must not be negative")
+
+    first_idx = 0
+    if uturn_slow_range is not None:
+        _uturn_start, uturn_end = sorted((int(uturn_slow_range[0]), int(uturn_slow_range[1])))
+        first_idx = max(0, uturn_end + 1)
+    if normal_start_idx is not None:
+        first_idx = max(first_idx, int(normal_start_idx))
+
+    segments: List[SlalomCurveSegment] = []
+    entry_idx: Optional[int] = None
+    low_curvature_start_idx: Optional[int] = None
+
+    def curve_speed_mm_s(start_idx: int, end_idx: int) -> float:
+        if speed_limits_mm_s is None:
+            return PATH_SPEED_MAX_MM_S
+        peak_idx = max(range(start_idx, end_idx + 1), key=lambda idx: abs(float(curvature[idx])))
+        return max(0.0, float(speed_limits_mm_s[peak_idx]))
+
+    for idx in range(first_idx, len(curvature)):
+        abs_curvature = abs(float(curvature[idx]))
+
+        if entry_idx is None:
+            if abs_curvature >= enter_abs_curvature:
+                entry_idx = idx
+            continue
+
+        if abs_curvature >= exit_abs_curvature:
+            low_curvature_start_idx = None
+            continue
+
+        if low_curvature_start_idx is None:
+            low_curvature_start_idx = idx
+
+        low_distance_mm = float(s_vals[idx]) - float(s_vals[low_curvature_start_idx])
+        if low_distance_mm >= min_exit_distance_mm:
+            segments.append(
+                SlalomCurveSegment(
+                    entry_idx=entry_idx,
+                    exit_idx=low_curvature_start_idx,
+                    speed_mm_s=curve_speed_mm_s(entry_idx, low_curvature_start_idx),
+                )
+            )
+            entry_idx = None
+            low_curvature_start_idx = None
+
+    if entry_idx is not None:
+        segments.append(
+            SlalomCurveSegment(
+                entry_idx=entry_idx,
+                exit_idx=len(curvature) - 1,
+                speed_mm_s=curve_speed_mm_s(entry_idx, len(curvature) - 1),
+            )
+        )
+
+    return segments
+
+
+def build_slalom_platform_speed_plan(
+    point_speed_limits: Sequence[float],
+    s_vals: Sequence[float],
+    normal_start_idx: int,
+    curve_segments: Sequence[SlalomCurveSegment],
+    finish_speed_mm_s: Optional[float],
+) -> np.ndarray:
+    """Write rectangular high/curve platforms for the normal-slalom portion."""
+    if len(point_speed_limits) != len(s_vals):
+        raise ValueError("point_speed_limits and s_vals must have the same length")
+
+    planned = np.array(point_speed_limits, dtype=float, copy=True)
+    point_count = len(planned)
+    normal_start_idx = max(0, min(int(normal_start_idx), point_count))
+    if normal_start_idx >= point_count:
+        return planned
+
+    ordered_segments = sorted(curve_segments, key=lambda segment: segment.entry_idx)
+    cursor_idx = normal_start_idx
+    for segment in ordered_segments:
+        entry_idx = max(cursor_idx, int(segment.entry_idx))
+        exit_idx = min(point_count - 1, max(entry_idx, int(segment.exit_idx)))
+        if exit_idx < normal_start_idx:
+            continue
+
+        curve_speed_mm_s = min(
+            max(0.0, float(segment.speed_mm_s)),
+            float(np.min(planned[entry_idx : exit_idx + 1])),
+        )
+        if entry_idx > cursor_idx:
+            planned[cursor_idx:entry_idx] = PATH_SPEED_MAX_MM_S
+        planned[entry_idx : exit_idx + 1] = curve_speed_mm_s
+        cursor_idx = exit_idx + 1
+
+    if cursor_idx < point_count:
+        tail_speed_mm_s = PATH_SPEED_MAX_MM_S
+        if finish_speed_mm_s is not None:
+            tail_speed_mm_s = min(tail_speed_mm_s, max(0.0, float(finish_speed_mm_s)))
+        planned[cursor_idx:] = tail_speed_mm_s
+    elif not ordered_segments:
+        planned[normal_start_idx:] = PATH_SPEED_MAX_MM_S
+
+    return planned
 
 
 def normalize_relative_yaw_deg(value: float) -> float:
@@ -1488,34 +1630,48 @@ def yaw_accel_speed_limit_mm_s(curvature_rate: float) -> float:
     return math.sqrt(MAX_PATH_YAW_ACCEL_RAD_S2 / curvature_rate)
 
 
-def apply_accel_reserve(planned: np.ndarray, s_vals: np.ndarray) -> None:
-    """Stretch only genuine low-to-high speed transitions by the measured reserve."""
-    if len(planned) < 2:
-        return
+def normal_slalom_curve_speed_limit_mm_s(curvature: float) -> float:
+    """Steady normal-slalom speed cap from the measured lateral-acceleration limit."""
+    abs_curvature = abs(float(curvature))
+    if abs_curvature <= CURVATURE_EPS:
+        return PATH_SPEED_MAX_MM_S
+    return min(
+        PATH_SPEED_MAX_MM_S,
+        math.sqrt(NORMAL_SLALOM_MAX_LATERAL_ACCEL_MM_S2 / abs_curvature),
+    )
 
-    requested = np.array(planned, copy=True)
-    rising_start_idx: Optional[int] = None
-    for i in range(1, len(planned)):
-        if requested[i] > requested[i - 1] + 1.0e-6:
-            if rising_start_idx is None:
-                rising_start_idx = i - 1
-            target_speed_mps = abs(float(requested[i])) / 1000.0
-            reserve_mm = accel_reserve_distance_m(target_speed_mps) * 1000.0
-            travelled_mm = max(0.0, float(s_vals[i] - s_vals[rising_start_idx]))
-            progress = min(1.0, travelled_mm / max(reserve_mm, 1.0))
-            start_speed = float(requested[rising_start_idx])
-            planned[i] = min(planned[i], start_speed + (requested[i] - start_speed) * progress)
-        else:
-            rising_start_idx = None
+
+def uturn_curve_speed_limit_mm_s(curvature: float) -> float:
+    """Steady u-turn speed cap from the measured lateral-acceleration limit."""
+    abs_curvature = abs(float(curvature))
+    if abs_curvature <= CURVATURE_EPS:
+        return UTURN_SPEED_MAX_MM_S
+    return min(
+        UTURN_SPEED_MAX_MM_S,
+        math.sqrt(UTURN_MAX_LATERAL_ACCEL_MM_S2 / abs_curvature),
+    )
+
+
+def apply_stop_braking_envelope(planned: np.ndarray, s_vals: Sequence[float]) -> None:
+    """Only genuine zero-speed stops receive a backward deceleration envelope."""
+    for stop_idx in np.flatnonzero(planned <= CURVATURE_EPS):
+        for idx in range(int(stop_idx) - 1, -1, -1):
+            ds_mm = float(s_vals[idx + 1]) - float(s_vals[idx])
+            max_entry_mm_s = math.sqrt(
+                max(0.0, planned[idx + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds_mm)
+            )
+            if planned[idx] <= max_entry_mm_s:
+                break
+            planned[idx] = max_entry_mm_s
 
 
 def apply_speed_plan(
     points: List[RoutePoint],
     slalom_start_idx: Optional[int] = None,
     uturn_slow_range: Optional[Tuple[int, int]] = None,
-) -> None:
+) -> List[SlalomCurveSegment]:
     if not points:
-        return
+        return []
 
     s_vals = cumulative_arc_length(points)
     curvature = signed_curvature(points)
@@ -1528,8 +1684,30 @@ def apply_speed_plan(
             max(0, relax_start - UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS),
             min(len(points) - 1, relax_end + UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS),
         )
+    normal_slalom_enabled = slalom_start_idx is not None
+    normal_start_idx = int(slalom_start_idx) if normal_slalom_enabled else 0
+    if uturn_slow_range is not None:
+        normal_start_idx = max(normal_start_idx, int(max(uturn_slow_range)) + 1)
+    normal_start_idx = max(0, min(normal_start_idx, len(points)))
+    uturn_curve_range: Optional[Tuple[int, int]] = None
+    if uturn_slow_range is not None:
+        uturn_start_idx, uturn_end_idx = sorted((int(uturn_slow_range[0]), int(uturn_slow_range[1])))
+        uturn_curve_range = (
+            max(0, uturn_start_idx - 2),
+            min(len(points) - 1, uturn_end_idx + 2),
+        )
 
     for i, kappa in enumerate(curvature):
+        if normal_slalom_enabled and i >= normal_start_idx:
+            speed_limit[i] = normal_slalom_curve_speed_limit_mm_s(float(kappa))
+            points[i].curvature = float(kappa)
+            continue
+
+        if uturn_curve_range is not None and uturn_curve_range[0] <= i <= uturn_curve_range[1]:
+            speed_limit[i] = uturn_curve_speed_limit_mm_s(float(kappa))
+            points[i].curvature = float(kappa)
+            continue
+
         local_speed_max = (
             PATH_SPEED_MAX_MM_S
             if slalom_start_idx is not None and i >= int(slalom_start_idx)
@@ -1541,7 +1719,7 @@ def apply_speed_plan(
         if uturn_relax_range is not None and uturn_relax_range[0] <= i <= uturn_relax_range[1]:
             yaw_accel_limit = local_speed_max
         if abs(kappa) > CURVATURE_EPS:
-            curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / max(abs(kappa), CURVATURE_EPS))
+            curve_limit = math.sqrt(PRE_UTURN_MAX_LATERAL_ACCEL_MM_S2 / max(abs(kappa), CURVATURE_EPS))
             yaw_rate_limit = MAX_PATH_YAW_RATE_RAD_S / abs(kappa)
         speed_limit[i] = min(local_speed_max, curve_limit, yaw_rate_limit, yaw_accel_limit)
         points[i].curvature = float(kappa)
@@ -1553,43 +1731,58 @@ def apply_speed_plan(
         for i in range(start_idx, end_idx + 1):
             speed_limit[i] = min(speed_limit[i], UTURN_SPEED_MAX_MM_S)
 
-    # The finish marker is a crossing target, not a stop line.
-    if ENABLE_FINISH_SPRINT:
-        speed_limit[-1] = min(speed_limit[-1], SPRINT_SPEED_MM_S)
-    else:
-        speed_limit[-1] = 0.0
+    slalom_segments = detect_slalom_curve_segments(
+        curvature=curvature,
+        s_vals=s_vals,
+        uturn_slow_range=uturn_slow_range,
+        normal_start_idx=normal_start_idx,
+        speed_limits_mm_s=speed_limit,
+    )
+    slalom_segments = [
+        SlalomCurveSegment(
+            entry_idx=max(normal_start_idx, segment.entry_idx),
+            exit_idx=segment.exit_idx,
+            speed_mm_s=segment.speed_mm_s,
+        )
+        for segment in slalom_segments
+        if segment.exit_idx >= normal_start_idx
+    ]
 
-    if ENABLE_FINISH_SPRINT and len(points) > 8:
-        last_curve_idx = -1
-        for i in range(len(curvature) - 1, -1, -1):
-            if abs(curvature[i]) > 0.00045:
-                last_curve_idx = i
-                break
-        if last_curve_idx != -1 and last_curve_idx < len(points) - 8:
-            for i in range(last_curve_idx + 6, len(points)):
-                speed_limit[i] = min(speed_limit[i], SPRINT_SPEED_MM_S)
+    # Keep the pre-u-turn path at its direct high platform.  The existing
+    # u-turn state machine performs the actual-speed brake before its own
+    # constant turn-speed section.
+    planned = np.full(len(points), PRE_UTURN_SPEED_MAX_MM_S, dtype=float)
+    if uturn_slow_range is not None:
+        uturn_start_idx, uturn_end_idx = sorted((int(uturn_slow_range[0]), int(uturn_slow_range[1])))
+        uturn_start_idx = max(0, uturn_start_idx)
+        uturn_end_idx = min(len(points) - 1, uturn_end_idx)
+        if uturn_start_idx <= uturn_end_idx:
+            uturn_speed_mm_s = min(
+                UTURN_SPEED_MAX_MM_S,
+                float(np.min(speed_limit[uturn_start_idx : uturn_end_idx + 1])),
+            )
+            planned[uturn_start_idx : uturn_end_idx + 1] = uturn_speed_mm_s
 
-    for i, point in enumerate(points):
+    normal_platforms = build_slalom_platform_speed_plan(
+        point_speed_limits=speed_limit,
+        s_vals=s_vals,
+        normal_start_idx=normal_start_idx,
+        curve_segments=slalom_segments,
+        finish_speed_mm_s=None,
+    )
+    planned[normal_start_idx:] = normal_platforms[normal_start_idx:]
+
+    for idx, point in enumerate(points):
         if point.point_type == POINT_TYPE_TOKENS["NAV_POINT_CIRCLE"]:
-            speed_limit[i] = 0.0
-
-    planned = np.array(speed_limit, copy=True)
-
-    for i in range(len(points) - 2, -1, -1):
-        ds = s_vals[i + 1] - s_vals[i]
-        max_entry = math.sqrt(max(0.0, planned[i + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds))
-        planned[i] = min(planned[i], max_entry)
-
-    for i in range(1, len(points)):
-        ds = s_vals[i] - s_vals[i - 1]
-        max_exit = math.sqrt(max(0.0, planned[i - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds))
-        planned[i] = min(planned[i], max_exit)
-
-    apply_accel_reserve(planned, s_vals)
+            planned[idx] = 0.0
+    if not ENABLE_FINISH_SPRINT:
+        planned[-1] = 0.0
+    apply_stop_braking_envelope(planned, s_vals)
 
     target_speed_cmd = -planned / SPEED_TO_MM_S
     for point, speed_cmd in zip(points, target_speed_cmd):
         point.target_speed = float(speed_cmd)
+    return slalom_segments
 
 
 def _nearest_point_index(points: Sequence[RoutePoint], xy: Tuple[float, float]) -> int:
@@ -1603,7 +1796,13 @@ def _nearest_point_index(points: Sequence[RoutePoint], xy: Tuple[float, float]) 
 
 def generate_route_plan(
     raw_points: List[RoutePoint],
-) -> Tuple[List[Tuple[float, float]], List[RoutePoint], str, Tuple[int, int]]:
+) -> Tuple[
+    List[Tuple[float, float]],
+    List[RoutePoint],
+    str,
+    Tuple[int, int],
+    List[SlalomCurveSegment],
+]:
     result = generate_optimized_path(raw_points)
     final_points = result.final_points
 
@@ -1633,7 +1832,11 @@ def generate_route_plan(
             ),
         )
 
-    apply_speed_plan(final_points, slalom_start_idx=slalom_start_idx, uturn_slow_range=uturn_slow_range)
+    slalom_segments = apply_speed_plan(
+        final_points,
+        slalom_start_idx=slalom_start_idx,
+        uturn_slow_range=uturn_slow_range,
+    )
     control_points = list(result.raw_route)
     uturn_meta = (0, 0)
     if len(result.raw_route) >= 4 and final_points:
@@ -1645,7 +1848,7 @@ def generate_route_plan(
         "Plan1 Optimized 平滑避障绕桩 "
         f"(clearance={result.min_clearance_mm:.1f}mm, score={result.score:.1f})"
     )
-    return control_points, final_points, method, uturn_meta
+    return control_points, final_points, method, uturn_meta, slalom_segments
 
 
 def _finish_line_config(raw_points: Optional[Sequence[RoutePoint]]) -> Optional[Tuple[float, float, float, float]]:
@@ -1672,6 +1875,7 @@ def generate_header(
     start_heading_deg: float,
     raw_points: Optional[Sequence[RoutePoint]] = None,
     uturn_meta: Optional[Tuple[int, int]] = None,
+    slalom_curve_segments: Optional[Sequence[SlalomCurveSegment]] = None,
 ) -> None:
     output_dir = os.path.dirname(output_path)
     if output_dir:
@@ -1693,7 +1897,9 @@ def generate_header(
             f"slalom_vmax={PATH_SPEED_MAX_MM_S:.1f}mm/s, "
             f"accel={MAX_ACCEL_MM_S2:.1f}mm/s^2, "
             f"decel={MAX_DECEL_MM_S2:.1f}mm/s^2, "
-            f"alat={MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2, "
+            f"pre_uturn_alat={PRE_UTURN_MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2, "
+            f"uturn_alat={UTURN_MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2, "
+            f"slalom_alat={NORMAL_SLALOM_MAX_LATERAL_ACCEL_MM_S2:.1f}mm/s^2, "
             f"forward speed command is negative\n\n"
         )
         f.write(f"#define NAV_REPLAY_START_HEADING_VALID {int(start_heading_valid)}\n")
@@ -1724,6 +1930,37 @@ def generate_header(
             f.write("#define NAV_REPLAY_UTURN_ENTRY_INDEX 0U\n")
             f.write("#define NAV_REPLAY_UTURN_EXIT_INDEX 0U\n")
             f.write("#define NAV_REPLAY_UTURN_TARGET_SPEED_CMD 0.0f\n\n")
+        valid_slalom_segments = []
+        for segment in slalom_curve_segments or ():
+            if not points:
+                break
+            entry_idx = max(0, min(int(segment.entry_idx), len(points) - 1))
+            exit_idx = max(entry_idx, min(int(segment.exit_idx), len(points) - 1))
+            direction = -1.0 if points[entry_idx].target_speed <= 0.0 else 1.0
+            valid_slalom_segments.append(
+                (entry_idx, exit_idx, direction * abs(float(segment.speed_mm_s)) / SPEED_TO_MM_S)
+            )
+        if valid_slalom_segments:
+            f.write("#define NAV_REPLAY_SLALOM_META_VALID 1\n")
+            f.write(f"#define NAV_REPLAY_SLALOM_CURVE_COUNT {len(valid_slalom_segments)}U\n")
+            f.write(
+                f"static const uint16 NAV_REPLAY_SLALOM_CURVE_ENTRY_INDICES[{len(valid_slalom_segments)}] = "
+                "{" + ", ".join(f"{entry_idx}U" for entry_idx, _exit_idx, _speed_cmd in valid_slalom_segments) + "};\n"
+            )
+            f.write(
+                f"static const uint16 NAV_REPLAY_SLALOM_CURVE_EXIT_INDICES[{len(valid_slalom_segments)}] = "
+                "{" + ", ".join(f"{exit_idx}U" for _entry_idx, exit_idx, _speed_cmd in valid_slalom_segments) + "};\n"
+            )
+            f.write(
+                f"static const float NAV_REPLAY_SLALOM_CURVE_SPEED_CMDS[{len(valid_slalom_segments)}] = "
+                "{" + ", ".join(f"{speed_cmd:.3f}f" for _entry_idx, _exit_idx, speed_cmd in valid_slalom_segments) + "};\n\n"
+            )
+        else:
+            f.write("#define NAV_REPLAY_SLALOM_META_VALID 0\n")
+            f.write("#define NAV_REPLAY_SLALOM_CURVE_COUNT 0U\n")
+            f.write("static const uint16 NAV_REPLAY_SLALOM_CURVE_ENTRY_INDICES[1] = {0U};\n")
+            f.write("static const uint16 NAV_REPLAY_SLALOM_CURVE_EXIT_INDICES[1] = {0U};\n")
+            f.write("static const float NAV_REPLAY_SLALOM_CURVE_SPEED_CMDS[1] = {0.0f};\n\n")
         f.write(f"#define NAV_REPLAY_ACCEL_RESERVE_MARGIN_M {ACCEL_RESERVE_MARGIN_M:.3f}f\n")
         f.write(f"#define NAV_REPLAY_BRAKE_RESERVE_MARGIN_M {BRAKE_RESERVE_MARGIN_M:.3f}f\n")
         f.write(f"#define NAV_REPLAY_BRAKE_DISTANCE_COEFF {BRAKE_DISTANCE_COEFF:.6f}f\n")
@@ -2028,7 +2265,7 @@ def main() -> int:
     print("[plan1] finish line: x=0 (world y axis)")
     print(f"[params] min cone clearance: {MIN_CONE_CLEARANCE_MM:.1f}mm")
 
-    control_points, final_points, method_name, uturn_meta = generate_route_plan(raw_points)
+    control_points, final_points, method_name, uturn_meta, slalom_segments = generate_route_plan(raw_points)
     generate_header(
         final_points,
         method_name,
@@ -2037,6 +2274,7 @@ def main() -> int:
         start_heading_deg,
         raw_points=raw_points,
         uturn_meta=uturn_meta,
+        slalom_curve_segments=slalom_segments,
     )
 
     print(f"[method] {method_name}")

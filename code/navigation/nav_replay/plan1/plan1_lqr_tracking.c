@@ -57,6 +57,12 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #ifndef NAV_REPLAY_UTURN_TARGET_SPEED_CMD
 #define NAV_REPLAY_UTURN_TARGET_SPEED_CMD  0.0f
 #endif
+#ifndef NAV_REPLAY_SLALOM_META_VALID
+#define NAV_REPLAY_SLALOM_META_VALID        0
+#endif
+#ifndef NAV_REPLAY_SLALOM_CURVE_COUNT
+#define NAV_REPLAY_SLALOM_CURVE_COUNT       0U
+#endif
 #ifndef NAV_REPLAY_BRAKE_RESERVE_MARGIN_M
 #define NAV_REPLAY_BRAKE_RESERVE_MARGIN_M  0.20f
 #endif
@@ -127,6 +133,15 @@ typedef enum
     PLAN1_UTURN_BRAKE_DONE
 } Plan1UturnBrakeState_e;
 
+typedef enum
+{
+    PLAN1_SLALOM_BRAKE_DISABLED = 0U,
+    PLAN1_SLALOM_BRAKE_ARMED,
+    PLAN1_SLALOM_BRAKE_BRAKING,
+    PLAN1_SLALOM_BRAKE_CURVE_HOLD,
+    PLAN1_SLALOM_BRAKE_DONE
+} Plan1SlalomBrakeState_e;
+
 /*
  * LQR 本周期参考量：
  *   x/y          ：车身当前位置投影到最近路径线段后的参考点
@@ -159,6 +174,12 @@ static uint16 s_fast_uturn_action_idx = PLAN1_FAST_UTURN_INVALID_IDX;
 static uint16 s_fast_uturn_state_ticks = 0U;
 static uint16 s_fast_uturn_recover_ticks = 0U;
 static Plan1UturnBrakeState_e s_uturn_brake_state = PLAN1_UTURN_BRAKE_DISABLED;
+static Plan1SlalomBrakeState_e s_slalom_brake_state = PLAN1_SLALOM_BRAKE_DISABLED;
+static ControlMode_e s_speed_request_mode = CONTROL_MODE_NORMAL;
+static uint16 s_speed_mode_cooldown = 0U;
+#if NAV_REPLAY_SLALOM_META_VALID && (NAV_REPLAY_SLALOM_CURVE_COUNT > 0U)
+static uint16 s_slalom_curve_idx = 0U;
+#endif
 
 #if IMU_CATEGORY == 3
 static uint8 s_start_heading_stable_count = 0;
@@ -167,6 +188,13 @@ static uint8 s_start_heading_stable_count = 0;
 #endif
 
 static void NavReplay_ResetProcessState(void);
+
+static void NavReplay_RequestStrongBrake(void)
+{
+    s_speed_request_mode = CONTROL_MODE_BRAKE;
+    s_speed_mode_cooldown = 0U;
+    Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+}
 
 #if NAV_REPLAY_UTURN_META_VALID
 static float NavReplay_UturnBrakeDistanceM(float speed_mps)
@@ -266,7 +294,7 @@ static float NavReplay_UturnBrake_Apply(uint16 base_idx, float raw_speed)
 
     if (s_uturn_brake_state == PLAN1_UTURN_BRAKE_BRAKING)
     {
-        Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
+        NavReplay_RequestStrongBrake();
         if (actual_speed_mps <= (turn_speed_mps + NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS))
         {
             s_uturn_brake_state = PLAN1_UTURN_BRAKE_RELEASED;
@@ -285,6 +313,149 @@ static float NavReplay_UturnBrake_Apply(uint16 base_idx, float raw_speed)
         {
             raw_speed = signed_turn_cmd;
         }
+    }
+#else
+    (void)base_idx;
+#endif
+    return raw_speed;
+}
+
+static void NavReplay_SlalomBrake_Reset(void)
+{
+#if NAV_REPLAY_SLALOM_META_VALID && (NAV_REPLAY_SLALOM_CURVE_COUNT > 0U)
+    s_slalom_brake_state = PLAN1_SLALOM_BRAKE_ARMED;
+    s_slalom_curve_idx = 0U;
+#else
+    s_slalom_brake_state = PLAN1_SLALOM_BRAKE_DISABLED;
+#endif
+}
+
+#if NAV_REPLAY_SLALOM_META_VALID && (NAV_REPLAY_SLALOM_CURVE_COUNT > 0U)
+static float NavReplay_SlalomBrakeDistanceM(float speed_mps)
+{
+    float speed = fabsf(speed_mps);
+    return NAV_REPLAY_BRAKE_DISTANCE_COEFF * speed * speed +
+           NAV_REPLAY_BRAKE_DISTANCE_OFFSET_M;
+}
+
+static float NavReplay_SlalomBrakeReserveM(float actual_speed_mps, float curve_speed_mps)
+{
+    float reserve = NavReplay_SlalomBrakeDistanceM(actual_speed_mps) -
+                    NavReplay_SlalomBrakeDistanceM(curve_speed_mps) +
+                    NAV_REPLAY_BRAKE_RESERVE_MARGIN_M;
+    return (reserve > NAV_REPLAY_BRAKE_RESERVE_MARGIN_M) ?
+           reserve : NAV_REPLAY_BRAKE_RESERVE_MARGIN_M;
+}
+
+static float NavReplay_SlalomPathDistanceToIndex(uint16 from_idx, uint16 to_idx)
+{
+    uint16 i;
+    uint16 last_idx;
+    float distance = 0.0f;
+
+    if (nav_ram_data.point_count < 2U || from_idx >= to_idx)
+    {
+        return 0.0f;
+    }
+
+    last_idx = (uint16)(nav_ram_data.point_count - 1U);
+    if (to_idx > last_idx)
+    {
+        to_idx = last_idx;
+    }
+    if (from_idx >= last_idx)
+    {
+        return 0.0f;
+    }
+
+    for (i = from_idx; i < to_idx; i++)
+    {
+        float dx = nav_ram_data.points[i + 1U].x - nav_ram_data.points[i].x;
+        float dy = nav_ram_data.points[i + 1U].y - nav_ram_data.points[i].y;
+        distance += sqrtf(dx * dx + dy * dy);
+    }
+    return distance;
+}
+#endif
+
+static float NavReplay_SlalomBrake_Apply(uint16 base_idx, float raw_speed)
+{
+#if NAV_REPLAY_SLALOM_META_VALID && (NAV_REPLAY_SLALOM_CURVE_COUNT > 0U)
+    float actual_speed_mps;
+    float curve_speed_mps;
+    float curve_cmd;
+    float remaining_mm;
+    float reserve_mm;
+    uint16 entry_idx;
+    uint16 exit_idx;
+
+    if (s_slalom_brake_state == PLAN1_SLALOM_BRAKE_DISABLED ||
+        s_slalom_brake_state == PLAN1_SLALOM_BRAKE_DONE)
+    {
+        return raw_speed;
+    }
+
+    /* The u-turn state machine owns the entire approach and turn. */
+    if (s_uturn_brake_state != PLAN1_UTURN_BRAKE_DISABLED &&
+        s_uturn_brake_state != PLAN1_UTURN_BRAKE_DONE)
+    {
+        return raw_speed;
+    }
+
+    if (s_slalom_brake_state != PLAN1_SLALOM_BRAKE_BRAKING)
+    {
+        while (s_slalom_curve_idx < NAV_REPLAY_SLALOM_CURVE_COUNT &&
+               base_idx > NAV_REPLAY_SLALOM_CURVE_EXIT_INDICES[s_slalom_curve_idx])
+        {
+            s_slalom_curve_idx++;
+            s_slalom_brake_state = PLAN1_SLALOM_BRAKE_ARMED;
+        }
+    }
+    if (s_slalom_curve_idx >= NAV_REPLAY_SLALOM_CURVE_COUNT)
+    {
+        s_slalom_brake_state = PLAN1_SLALOM_BRAKE_DONE;
+        return raw_speed;
+    }
+
+    entry_idx = NAV_REPLAY_SLALOM_CURVE_ENTRY_INDICES[s_slalom_curve_idx];
+    exit_idx = NAV_REPLAY_SLALOM_CURVE_EXIT_INDICES[s_slalom_curve_idx];
+    curve_cmd = NAV_REPLAY_SLALOM_CURVE_SPEED_CMDS[s_slalom_curve_idx];
+    actual_speed_mps = fabsf(current_actual_speed) * NAV_REPLAY_SPEED_TO_MPS;
+    curve_speed_mps = fabsf(curve_cmd) * NAV_REPLAY_SPEED_TO_MPS;
+
+    if (s_slalom_brake_state == PLAN1_SLALOM_BRAKE_ARMED)
+    {
+        remaining_mm = NavReplay_SlalomPathDistanceToIndex(base_idx, entry_idx);
+        reserve_mm = NavReplay_SlalomBrakeReserveM(actual_speed_mps, curve_speed_mps) * 1000.0f;
+        if (base_idx >= entry_idx)
+        {
+            s_slalom_brake_state = (actual_speed_mps >
+                                     (curve_speed_mps + NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS)) ?
+                                    PLAN1_SLALOM_BRAKE_BRAKING : PLAN1_SLALOM_BRAKE_CURVE_HOLD;
+        }
+        else if ((actual_speed_mps > (curve_speed_mps + NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS)) &&
+                 (remaining_mm <= reserve_mm))
+        {
+            s_slalom_brake_state = PLAN1_SLALOM_BRAKE_BRAKING;
+        }
+    }
+
+    if (s_slalom_brake_state == PLAN1_SLALOM_BRAKE_BRAKING)
+    {
+        NavReplay_RequestStrongBrake();
+        if (actual_speed_mps <= (curve_speed_mps + NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS))
+        {
+            s_slalom_brake_state = PLAN1_SLALOM_BRAKE_CURVE_HOLD;
+        }
+        else
+        {
+            return NAV_SPEED_STOP;
+        }
+    }
+
+    if (s_slalom_brake_state == PLAN1_SLALOM_BRAKE_CURVE_HOLD && base_idx <= exit_idx)
+    {
+        return curve_cmd;
     }
 #else
     (void)base_idx;
@@ -828,8 +999,11 @@ static void NavReplay_ResetProcessState(void)
     s_prev_err_degree = 0.0f;
     s_prev_speed_set = 0.0f;
     s_prev_trigger = 0;
+    s_speed_request_mode = CONTROL_MODE_NORMAL;
+    s_speed_mode_cooldown = 0U;
     NavReplay_ClearFinishStopLock();
     NavReplay_UturnBrake_Reset();
+    NavReplay_SlalomBrake_Reset();
 }
 
 /**
@@ -847,8 +1021,6 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     float step_limit;
 
     ControlMode_e target_mode = CONTROL_MODE_NORMAL;
-    static ControlMode_e s_current_req_mode = CONTROL_MODE_NORMAL;
-    static uint16 s_mode_cooldown = 0;
 
     // --- 1. 基于实际车速决定目标 PID 模式 ---
     float actual_speed_clamped = (abs_actual < 50.0f) ? 0.0f : current_actual_speed;
@@ -870,24 +1042,24 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     }
 
     // --- 2. 带有紧急豁免的 PID 切换冷却机制 ---
-    if (target_mode == CONTROL_MODE_BRAKE && s_current_req_mode != CONTROL_MODE_BRAKE)
+    if (target_mode == CONTROL_MODE_BRAKE && s_speed_request_mode != CONTROL_MODE_BRAKE)
     {
         // 紧急情况：需要刹车，无视冷却立即切换
-        s_current_req_mode = CONTROL_MODE_BRAKE;
+        s_speed_request_mode = CONTROL_MODE_BRAKE;
         Control_Profile_RequestMode(CONTROL_MODE_BRAKE);
-        s_mode_cooldown = 30; // 切换后进入 300ms 冷却
+        s_speed_mode_cooldown = 30; // 切换后进入 300ms 冷却
     }
-    else if (target_mode != s_current_req_mode && s_mode_cooldown == 0)
+    else if (target_mode != s_speed_request_mode && s_speed_mode_cooldown == 0)
     {
         // 正常切换：冷却完毕允许切换
-        s_current_req_mode = target_mode;
+        s_speed_request_mode = target_mode;
         Control_Profile_RequestMode(target_mode);
-        s_mode_cooldown = 30; // 重置 300ms 冷却
+        s_speed_mode_cooldown = 30; // 重置 300ms 冷却
     }
-    else if (s_mode_cooldown > 0)
+    else if (s_speed_mode_cooldown > 0)
     {
-        s_mode_cooldown--;
-        Control_Profile_RequestMode(s_current_req_mode); // 维持冷却中的状态
+        s_speed_mode_cooldown--;
+        Control_Profile_RequestMode(s_speed_request_mode); // 维持冷却中的状态
     }
     else
     {
@@ -1482,7 +1654,15 @@ void NavReplay_Process(void)
     }
     else
     {
-        target_speed_set = NavReplay_SpeedSlew_Update(raw_speed);
+        raw_speed = NavReplay_SlalomBrake_Apply((uint16)base_idx, raw_speed);
+        if (s_slalom_brake_state == PLAN1_SLALOM_BRAKE_BRAKING)
+        {
+            target_speed_set = NAV_SPEED_STOP;
+        }
+        else
+        {
+            target_speed_set = NavReplay_SpeedSlew_Update(raw_speed);
+        }
     }
     s_prev_speed_set = target_speed_set;
     g_current_point_type = ref.point_type;
