@@ -528,19 +528,6 @@ def _resolve_trace_layout(size):
             "debug_base": None,
         }
 
-    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
-        return {
-            "has_gps": True,
-            "has_fusion": False,
-            "has_pid_mode": True,
-            "has_slip_flag": True,
-            "has_debug": False,
-            "gps_base": PAYLOAD_SIZE_V2,
-            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
-            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
-            "debug_base": None,
-        }
-
     if size >= PAYLOAD_SIZE_TRACE:
         return {
             "has_gps": True,
@@ -551,6 +538,19 @@ def _resolve_trace_layout(size):
             "gps_base": PAYLOAD_SIZE_V2,
             "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
             "pid_base": None,
+            "debug_base": None,
+        }
+
+    if size >= PAYLOAD_SIZE_GPS_TRACE_CTRL:
+        return {
+            "has_gps": True,
+            "has_fusion": False,
+            "has_pid_mode": True,
+            "has_slip_flag": True,
+            "has_debug": False,
+            "gps_base": PAYLOAD_SIZE_V2,
+            "fusion_base": PAYLOAD_SIZE_GPS_TRACE,
+            "pid_base": PAYLOAD_SIZE_GPS_TRACE,
             "debug_base": None,
         }
 
