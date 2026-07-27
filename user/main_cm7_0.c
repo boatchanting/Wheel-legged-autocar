@@ -86,6 +86,7 @@ volatile uint8_t g_load_flash_request = 0;      // 1: 请求从 Flash 加载数�
 volatile uint8_t g_replay_start_request = 0;
 volatile uint8_t g_replay_stop_request = 0;
 volatile uint8_t vision_detected_bumpy_point = 0; // 模拟视觉检测到“颠簸入口”
+volatile uint8_t vision_detected_slope_point = 0; // 模拟视觉检测到“斜坡入口”
 // =================================================================================
 
 int main(void)
@@ -350,6 +351,17 @@ int main(void)
                 VisionBridgeTask_Start(); // 启动正式单边桥视觉任务：先 PVC 进门，再巡线找桥
             }
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
+        }
+
+        // 模拟视觉触发斜坡正式任务
+        if (vision_detected_slope_point == 1)
+        {
+            // 判断当前是否处于空闲状态，防止任务中途重复触发打断动作
+            if (!VisionSlopeTask_IsActive())
+            {
+                VisionSlopeTask_Start(); // 启动斜坡视觉任务：PVC 校准方向后锁角上下坡
+            }
+            vision_detected_slope_point = 0; // 清除标志位，避免重复触发
         }
 
         // 纯惯导触发单边桥正式任务
