@@ -3,7 +3,7 @@
 
 #define JUMP_ENABLE_LANDING_BUFFER 0U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 
-#define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
 #define WIFI_PROTOCOL_SELECT  2// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
