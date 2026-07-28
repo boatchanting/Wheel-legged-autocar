@@ -628,7 +628,7 @@ void VisionBridgeTask_Update_2ms(void)
                 (packet->bridge_stable_detected != 0U))
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
-                vision_bridge_apply_high_posture();
+                //vision_bridge_apply_high_posture();
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
                 break;
             }
@@ -659,13 +659,13 @@ void VisionBridgeTask_Update_2ms(void)
             /* 如果倒计时没归零，说明现在车还在桥上 */
             if (s_bridge_task.bridge_hold_ticks > 0U)
             {
-                vision_bridge_apply_high_posture(); /* 保持高底盘 */
+                //vision_bridge_apply_high_posture(); /* 保持高底盘 */
                 speed_cmd = VISION_BRIDGE_TASK_BRIDGE_SPEED_SET; /* 桥上速度 */
             }
             else
             {
                 /* 如果归零了，说明可能快下桥了或者在桥的平缓段 */
-                vision_bridge_apply_normal_posture(); /* 降下底盘 */
+                //vision_bridge_apply_normal_posture(); /* 降下底盘 */
                 /* 如果能看到地上的线，就跟着线跑 */
                 if (s_bridge_task.center_filter_valid)
                 {
