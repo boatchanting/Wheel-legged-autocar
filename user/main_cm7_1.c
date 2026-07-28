@@ -145,7 +145,7 @@ int main(void)
                 bumpy_vision_reset_filter();
             }
 
-            if(VisionIpc_Core1_ShouldRunPvc()) // VisionIpc_Core1_ShouldRunPvc() ，测试时用 1 0
+            if(1) // VisionIpc_Core1_ShouldRunPvc() ，测试时用 1 0
             {
 
                 pvc_vision_process_camera_frame(compressed_image_copy[0]);//将压缩图像输入到 PVC 检测算法中
