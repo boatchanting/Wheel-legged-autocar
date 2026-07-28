@@ -2,6 +2,7 @@
 #include "config/config.h"//【提醒】配置请在这里修改
 #include "../common.h"
 #include "../vision/vision_bridge_control.h"
+#include "../vision/vision_slope_control.h"
 #include "../plan/minefield.h"
 
 // ==========================================
@@ -433,6 +434,8 @@ void Remote_Control_Process(void)
         vision_detected_bridge_point = 1; // 单边桥调用,测试用
         #elif SBUS_ACTIVE_POINT == 5
         vision_detected_bumpy_point = 1;//颠簸路段调用,测试用
+        #elif SBUS_ACTIVE_POINT == 6
+        vision_detected_slope_point = 1;//上坡调用,测试用
         #endif
     // NAV_POINT_PATH = 0,     // 普通路径点
     // NAV_POINT_CIRCLE = 1,   // 转圈点

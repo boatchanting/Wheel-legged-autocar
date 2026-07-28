@@ -22,7 +22,7 @@
 #define IMU_CATEGORY 3//【全局开关】1:imu660ra  2:imu660rb 3:imu963ra 注：imu660ra被赛事禁用
 #define IMU_REFRESH_TEST_ENABLE 0 // 1: 上电后测试IMU刷新频率，运行10秒后串口打印一次结果
 #define SUBS_CATEGORY 2  //【遥控器选择】1.旧遥控器2.新遥控器。选反会导致前进后退相反
-#define SBUS_ACTIVE_POINT 5 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段
+#define SBUS_ACTIVE_POINT 0 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段
 #define SLIP_DETECTION_ENABLE 1U //【全局开关】1:开启基于侧向加速度的纯横向打滑检测  0:关闭（默认正常抓地权重）
 // ---------------- plan 配置 ----------------
 #define GNSS_NAV 0 // 【全局开关】gps寻迹还是惯导寻迹，现阶段暂时还没联合(date0511)，联合后考虑去除该开关，1表示使用gnss寻迹，0表示不使用gnss寻迹，惯导开关常开

@@ -9,6 +9,7 @@
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
+#include "vision/vision_slope_control.h"
 #include "vision/vision_three_stage_control.h"
 
 // **************************** uart配置区域 **************************** 
@@ -52,6 +53,7 @@ extern EulerAngles euler_angle; // 引用 ekf.c 中计算出的角度
 // =================================================================================
 // 导航记录控制标志位与视觉标志位 外部声明
 extern volatile uint8_t vision_detected_bumpy_point; // 模拟视觉检测到“颠簸入口”
+extern volatile uint8_t vision_detected_slope_point; // 模拟视觉检测到“斜坡入口”
 
 // ---------------------------
 // 0核主初始化函数声明
