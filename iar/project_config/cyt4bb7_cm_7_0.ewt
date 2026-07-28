@@ -1498,6 +1498,7 @@
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay.h</name>
+            </file>
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\nav_options.h</name>
               </file>
@@ -1509,6 +1510,7 @@
               </file>
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\template\nav_plan_template.c</name>
+              </file>
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan1\plan1_pure_pursuit_speed_planning.h</name>
               </file>
@@ -1536,11 +1538,14 @@
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan3\plan3_precise.h</name>
               </file>
-              <file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan3\plan3_precise.c</name>
-              </file>
-              </file>
-
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan3\plan3_lqr_speed_planning.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan3\plan3_lqr_speed_planning.c</name>
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\ram2flash.c</name>

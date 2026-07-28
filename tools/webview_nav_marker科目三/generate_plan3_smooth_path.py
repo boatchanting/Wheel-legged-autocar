@@ -43,7 +43,7 @@ MIN_LINK_LENGTH_MM = 5.0
 NAV_ROUTE_MAX_POINTS = 5000
 
 # 与 tools/webview_nav_marker速度规划/caculate_path.py 保持一致的离线路径速度约束。
-PATH_SPEED_MAX_MM_S = 5000.0
+PATH_SPEED_MAX_MM_S = 3000.0
 SPRINT_SPEED_MM_S = 3000.0
 ENABLE_FINISH_SPRINT = True
 MAX_ACCEL_MM_S2 = 1500.0
@@ -57,7 +57,7 @@ CURVATURE_EPS = 1e-6
 # Match csv_to_nav_table.py.  Each value is measured from the recorded exit
 # marker toward the matching entry marker, so the visual state-machine exit
 # is anchored where the vehicle actually leaves the task.
-SPECIAL_EXIT_DISTANCE_OFFSETS_MM = {30: 550.0, 40: 750.0, 50: 750.0}
+SPECIAL_EXIT_DISTANCE_OFFSETS_MM = {30: 300.0, 40: 750.0, 50: 750.0}
 
 ENTRY_TYPES = {1, 2, 3, 4, 5}
 EXIT_TO_ENTRY = {10: 1, 20: 2, 30: 3, 40: 4, 50: 5}
