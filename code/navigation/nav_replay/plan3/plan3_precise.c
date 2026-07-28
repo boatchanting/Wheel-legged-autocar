@@ -2,6 +2,7 @@
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
 #include "../../../vision/vision_bridge_control.h"
+#include "../../../vision/vision_slope_control.h"
 #include "../../../vision/vision_three_stage_control.h"
 #if (CURRENT_NAV_PLAN == 3) && (NAV_PLAN3_METHOD == PLAN3_METHOD_PRECISE)
 // ========================= 内部变量 =========================
@@ -448,7 +449,11 @@ void NavReplay_Process(void)
             }
 
             // 特殊点到达后直接把控制权交给对应状态机，不停车、不原地对角。
-            if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
+            //if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;//科目三没有雷区逻辑
+            if (g_current_point_type == NAV_POINT_SLOPE)
+            {
+                g_slope_vision_task_enable = 1U;
+            }
             else if (g_current_point_type == NAV_POINT_JUMP)
             {
                 entry_beep_request = 1U;
