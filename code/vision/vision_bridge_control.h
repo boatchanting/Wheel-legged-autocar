@@ -27,7 +27,7 @@ extern "C" {
 #define VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS       (1500U)     /* 对齐超时：3秒还没对齐好，强行上桥 */
 #define VISION_BRIDGE_TASK_ALIGN_OK_TICKS            (60U)       /* 连续对齐好的帧数：大约 0.12秒 都稳定，认为对齐成功 */
 #define VISION_BRIDGE_TASK_RUN_MIN_MM                (2500.0f)   /* 上桥后至少行驶 1m，才允许根据视觉出口线脱出 */
-#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1200.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
+#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1000.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
 #define VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE        (2.0f)      /* 超过视觉控制距离后，速度提高倍率 */
 #define VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS         (220U)      /* 看到桥梁黑块后，保持“桥梁模式”0.44秒，防抖 */
 #define VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS       (5000U)     /* 视觉长期异常时，10 秒后自动进入退出阶段，不停车等待 */

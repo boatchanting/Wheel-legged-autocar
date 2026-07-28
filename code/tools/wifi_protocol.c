@@ -2,12 +2,8 @@
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
-#include "../calculate/ekf.h"
-#include "../calculate/matrix.h"
 #include "../navigation/nav_replay/nav_replay.h"
-#include "../plan/bumpy_road.h"
 #include "../plan/minefield.h"
-#include "../servo/servo.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
@@ -20,7 +16,6 @@ uint8_t g_manual_log_enabled = 0;
 #define WIFI_RX_STREAM_SIZE  512U
 #define WIFI_FRAME_MIN_SIZE  6U
 #define WIFI_ACK_PAYLOAD_LEN 2U
-#define WIFI_COMPACT_V3_MARKER "NMV3"
 
 static uint8_t rx_stream[WIFI_RX_STREAM_SIZE];
 static uint16_t rx_len = 0;
@@ -31,6 +26,20 @@ static uint16_t rx_len = 0;
 static void write_u8(uint8_t val)
 {
     if (tx_idx < WIFI_TX_BUFFER_SIZE) tx_buf[tx_idx++] = val;
+}
+
+static void write_i8(int8_t val)
+{
+    if (tx_idx < WIFI_TX_BUFFER_SIZE) tx_buf[tx_idx++] = (uint8_t)val;
+}
+
+static void write_u16(uint16_t val)
+{
+    if (tx_idx + 2U <= WIFI_TX_BUFFER_SIZE)
+    {
+        tx_buf[tx_idx++] = (uint8_t)(val & 0xFFU);
+        tx_buf[tx_idx++] = (uint8_t)((val >> 8U) & 0xFFU);
+    }
 }
 
 static void write_u32_or_float(const void *val_ptr)
@@ -53,6 +62,18 @@ static inline void write_float(volatile float *value) {
 static void write_float_value(float val)
 {
     write_u32_or_float(&val);
+}
+
+static void write_double(const double *val_ptr)
+{
+    if (tx_idx + 8U <= WIFI_TX_BUFFER_SIZE)
+    {
+        const uint8_t *p = (const uint8_t *)val_ptr;
+        for (uint8_t i = 0; i < 8U; i++)
+        {
+            tx_buf[tx_idx++] = p[i];
+        }
+    }
 }
 
 static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
@@ -357,44 +378,59 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&inertial_nav.vx_body);
     write_u32_or_float(&inertial_nav.vy_body);
 
-    // C. Compact V3 marker and non-GNSS telemetry.
-    write_u8(WIFI_COMPACT_V3_MARKER[0]);
-    write_u8(WIFI_COMPACT_V3_MARKER[1]);
-    write_u8(WIFI_COMPACT_V3_MARKER[2]);
-    write_u8(WIFI_COMPACT_V3_MARKER[3]);
+    // C. GNSS fields
+    write_u16(gnss.time.year);
+    write_u8(gnss.time.month);
+    write_u8(gnss.time.day);
+    write_u8(gnss.time.hour);
+    write_u8(gnss.time.minute);
+    write_u8(gnss.time.second);
 
-    // Keep point-editor controls available to the existing host UI.
+    write_u8(gnss.state);
+
+    write_u16(gnss.latitude_degree);
+    write_u16(gnss.latitude_cent);
+    write_u16(gnss.latitude_second);
+    write_u16(gnss.longitude_degree);
+    write_u16(gnss.longitude_cent);
+    write_u16(gnss.longitude_second);
+
+    write_double(&gnss.latitude);
+    write_double(&gnss.longitude);
+
+    write_i8(gnss.ns);
+    write_i8(gnss.ew);
+
+    write_u32_or_float(&gnss.speed);
+    write_u32_or_float(&gnss.direction);
+
+    write_u8(gnss.antenna_direction_state);
+    write_u32_or_float(&gnss.antenna_direction);
+
+    write_u8(gnss.satellite_used);
+    write_u32_or_float(&gnss.height);
+
+#if IMU_CATEGORY == 3
+    float heading_to_send = heading;
+#else
+    float heading_to_send = 0.0f;
+#endif
+    write_u32_or_float(&heading_to_send);
+    write_u32_or_float(&inertial_nav.relative_yaw);
+
+    // D. host point editor fields
     write_u8(robot_ctrl.mark_trigger);
     write_u8(robot_ctrl.point_type);
 
-    // Attitude (degrees): processed Euler result plus relative yaw.
-    write_float(&euler_angle.roll);
-    write_float(&euler_angle.pitch);
-    write_float(&euler_angle.yaw);
-    write_u32_or_float(&inertial_nav.relative_yaw);
+    // (GPS and Fusion traces removed as requested)
 
-    // Four physical leg-servo angles: RF, RR, LF, LR.
-    float servo_angles[4];
-    servo_get_current_angles(servo_angles);
-    for (uint8_t servo_idx = 0U; servo_idx < 4U; servo_idx++)
-    {
-        write_float_value(servo_angles[servo_idx]);
-    }
-
-    // Processed IMU data: acceleration, angular velocity, and gravity projection.
-    write_float(&imu_data.acc_x);
-    write_float(&imu_data.acc_y);
-    write_float(&imu_data.acc_z);
-    write_float(&imu_data.gyro_x);
-    write_float(&imu_data.gyro_y);
-    write_float(&imu_data.gyro_z);
-    write_float(&imu_data.grav_x);
-    write_float(&imu_data.grav_y);
-    write_float(&imu_data.grav_z);
-
-    // D. Existing control diagnostics.
+    // G. PID Control Mode
     write_u8((uint8_t)g_control_mode_applied);
+    
+    // H. Slip Flag
     write_u8((uint8_t)inertial_nav.slip_flag);
+    
+    // H2. Minefield Is Active
     write_u8(Minefield_Is_Active());
 
     // I. Base control debug values (20 bytes). Always send these so a replay
@@ -406,16 +442,7 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&inertial_nav.theoretical_yaw_rate);
     write_u32_or_float(&inertial_nav.actual_yaw_rate);
 
-    // E. Bumpy-road state and durable boundary event data.
-    {
-        uint32_t bumpy_event_sequence = BumpyRoad_GetEventSequence();
-        write_u8((uint8_t)BumpyRoad_GetState());
-        write_u8((uint8_t)BumpyRoad_GetLastEvent());
-        write_u8((uint8_t)BumpyRoad_GetExitReason());
-        write_u32_or_float(&bumpy_event_sequence);
-    }
-
-    // F. Plan-2 special-point diagnostic block (25 floats, 100 bytes).
+    // J. Plan-2 special-point diagnostic block (25 floats, 100 bytes).
     // Keep this fixed-width and append-only; the host accepts older packets
     // without it and records these fields only when this block is present.
     {
