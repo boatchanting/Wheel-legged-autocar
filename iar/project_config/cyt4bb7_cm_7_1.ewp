@@ -1127,10 +1127,16 @@
         <group>
             <name>vision</name>
             <file>
-                <name>$PROJ_DIR$\..\..\tools\07_针对小车车载视频的cv算法\bridge2\c_bridge2\bridge_detection.c</name>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_detect.c</name>
             </file>
             <file>
-                <name>$PROJ_DIR$\..\..\code1\vision\bridge_detection.h</name>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_detect.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_asm_ops.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_asm_ops.c</name>
             </file>
             <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\bridge_vision.c</name>

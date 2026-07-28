@@ -3,7 +3,7 @@
 
 #include "zf_common_headfile.h"
 #include "tools/runtime_profiler.h"
-#include "bridge_detection.h"
+#include "bridge_detect.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -21,7 +21,7 @@ typedef struct
 {
     uint8 detected;                 /* 是否拿到了可直接用于控制的桥几何。1 表示中线坐标有效，0 表示中线无效。 */
     uint8 bridge_detected;          /* 是否检测到桥候选目标并通过门限。1 表示当前帧认为桥存在，0 表示桥候选不成立。 */
-    uint8 state;                    /* 桥检测状态机输出，取值见 BridgeDetectionState。只有 bridge_detected=1 时才有实际意义。 */
+    uint8 state;                    /* 桥检测状态。2=在桥上(红蓝双线可见)，其他值见 bridge_mode_t 枚举。仅 bridge_detected=1 时有意义。 */
     uint8 geometry_valid;           /* 几何信息是否完整可用。1 表示至少中线有效，0 表示下面所有坐标都应按无效值处理。 */
 
     int16 left_line_x0;             /* 左线起点 X 坐标。无效时固定为 -1。 */
