@@ -75,6 +75,11 @@ extern volatile vision_slope_task_status_t g_slope_vision_task_status;
 void VisionSlopeTask_Init(void);
 
 /**
+ * @brief 设置退出锚点
+ */
+void VisionSlopeTask_SetExitAnchor(float x_mm, float y_mm);
+
+/**
  * @brief 启动斜坡视觉任务；真正的状态切换由 2ms 中断执行。
  */
 void VisionSlopeTask_Start(void);

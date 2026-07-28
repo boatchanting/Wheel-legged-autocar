@@ -42,6 +42,16 @@
 #define FILTER_ALPHA_SPEED     1.0f    // 速度滤波系数 (0-1)。值越大提速越猛，值越小加速越柔和。
 #define SLEW_RATE_ANGLE        35.0f    // 单次周期最大转角变化 (度)。防止电机/舵机瞬间猛打。
 
+// 速度目标限斜率参数
+#define NAV_SPEED_SLEW_EPS             1.0f    
+#define NAV_SPEED_SLEW_LOW_SPEED_TH    80.0f   
+#define NAV_SPEED_SLEW_FAST_DECEL_TH   220.0f  
+#define NAV_SPEED_SLEW_UP_LOW          30.0f   
+#define NAV_SPEED_SLEW_UP_NORMAL       45.0f   
+#define NAV_SPEED_SLEW_DOWN_NORMAL     65.0f   
+#define NAV_SPEED_SLEW_DOWN_FAST       95.0f   
+#define NAV_SPEED_SLEW_DOWN_CROSS_ZERO 120.0f  
+
 // ========================= 全局控制变量声明 =========================
 // 这些变量由外部定义 (通常在 control.c 或 main.c)，此处引用
 extern volatile float target_speed_set;

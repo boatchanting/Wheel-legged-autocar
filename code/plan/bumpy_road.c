@@ -88,12 +88,7 @@ static void BumpyRoad_ApplyVisionSteer(void)
     float target_err = 0.0f;
     if (VisionBumpyControl_IsEnabled())
     {
-        // err_degree = VisionBumpyControl_GetErrDegreeCmd();//视觉控制方向
-        err_degree = 0.0f;
-    }
-    else
-    {
-        err_degree = 0.0f;
+        target_err = VisionBumpyControl_GetErrDegreeCmd(); //视觉控制方向
     }
     
     // 一阶低通滤波 (EMA)，减少视觉识别跳变带来的左右扭动

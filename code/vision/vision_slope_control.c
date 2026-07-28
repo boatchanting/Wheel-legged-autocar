@@ -35,6 +35,9 @@ typedef struct
     float start_y_mm;                     /* 锁角进入斜坡瞬间的惯导 Y 坐标 */
     float locked_yaw_deg;                 /* PVC 校准完成后锁定的惯导航向 */
     uint16 pvc_align_ok_ticks;            /* PVC 入口确认条件连续满足的 2ms tick 数 */
+    float exit_anchor_x_mm;
+    float exit_anchor_y_mm;
+    uint8_t exit_anchor_valid;
 } vision_slope_task_ctx_t;
 
 static vision_slope_task_ctx_t s_slope_task;
@@ -168,6 +171,16 @@ static void vision_slope_enter_task(void)
     /* PVC 控制模块会提供方向误差；本状态机在本周期末统一强制入口速度。 */
     VisionIpc_Core0_SetPvcEnable(1U);
     VisionPvcControl_SetEnable(1U);
+}
+
+void VisionSlopeTask_SetExitAnchor(float x_mm, float y_mm)
+{
+    if (s_slope_task.state == VISION_SLOPE_TASK_IDLE)
+    {
+        s_slope_task.exit_anchor_x_mm = x_mm;
+        s_slope_task.exit_anchor_y_mm = y_mm;
+        s_slope_task.exit_anchor_valid = 1U;
+    }
 }
 
 /* --- 对外接口函数 --- */
@@ -313,6 +326,16 @@ void VisionSlopeTask_Update_2ms(void)
             break;
 
         case VISION_SLOPE_TASK_FINISH:
+            /* 退出前如果有锚点信息，直接修正融合坐标 */
+            if (s_slope_task.exit_anchor_valid != 0U)
+            {
+                extern float nav_vision_fusion_x;
+                extern float nav_vision_fusion_y;
+                extern volatile uint8 exit_beep_request;
+                nav_vision_fusion_x = s_slope_task.exit_anchor_x_mm;
+                nav_vision_fusion_y = s_slope_task.exit_anchor_y_mm;
+                exit_beep_request = 1U;
+            }
             /* 保留上一周期的锁角和速度输出，让主控逻辑在下一周期平滑接管。 */
             vision_slope_cleanup(0U);
             return;
