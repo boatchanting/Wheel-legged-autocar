@@ -12,6 +12,7 @@
 #define NAV_DIST_PASS_CAPTURE   250.0f  // 曾进入此范围后距离开始增大，判定为已穿过目标点
 #define NAV_DIST_PASS_HYSTERESIS 30.0f  // 穿点判定的距离回升滞回，避免定位抖动误触发
 #define NAV_YAW_TOLERANCE        1.0f    //转向阈值，先转再走
+#define NAV_SPECIAL_ENTRY_YAW_TOLERANCE 1.0f // special state-machine entry yaw tolerance (deg)
 #define NAV_START_HEADING_TOLERANCE 0.3f // 复刻起步前，绝对航向对齐阈值(度)
 
 // 速度设定 (负数为前进，数值对应 motor rpm 或 pwm 级)
