@@ -21,6 +21,10 @@ extern "C" {
 #define VISION_BRIDGE_TASK_ENABLE                    (1)         /* 桥梁视觉任务总开关 */
 #define VISION_BRIDGE_TASK_NAV_CORRECT_ENABLE        (0)         /* 惯导修正开关（下桥后是否用视觉来纠正惯导位置） */
 #define VISION_BRIDGE_TASK_NAV_CORRECT_DISTANCE_MM   (3000.0f)   /* 纠正时假设桥的总长度是 3 米 */
+#define VISION_BRIDGE_TASK_ROLL_BALANCE_ENABLE        (1U)        /* 单边桥任务期间锁定入桥横滚角，并启用单侧收腿反馈补偿 */
+/* 6.0cm 桥面高度仅允许收至舵机表下限 2.7cm：最大收腿 3.3cm，对应 1307 PWM。
+ * 修改 height_bridge、P_min 或 pwm_high_table 后，必须按新表重新标定此值。 */
+#define VISION_BRIDGE_TASK_ROLL_RETRACT_MAX_PWM      (1307)
 
 /* --- 2. 状态机超时与计时参数 --- */
 /* (注意：这些 TICKS 都是基于 2ms 中断的，所以 1000 TICKS = 2 秒) */
@@ -58,10 +62,10 @@ extern "C" {
 
 /* --- 5. 各阶段速度与姿态设置 --- */
 #define VISION_BRIDGE_TASK_ALIGN_SPEED_SET           (0.0f)      /* 对齐时：速度为 0（边停边对） */
-#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-150.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
-#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-110.0f)   /* 看见黑块时：速度 110 */
-#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-90.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
-#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-90.0f)    /* 下桥缓冲时：速度 90 */
+#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-300.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
+#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-220.0f)   /* 看见黑块时：速度 110 */
+#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-150.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
+#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-180.0f)    /* 下桥缓冲时：速度 90 */
 #define VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE         (0.10f)     /* 舵机升降的高度步进步长比例 */
 
 /* --- 6. 数据结构定义 --- */

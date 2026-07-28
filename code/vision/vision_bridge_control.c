@@ -10,7 +10,10 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_ipc_core0.h"
 #include "../../code1/vision/ipm_transform.h"
+#include "calculate/matrix.h"
+#include "calculate/pid-new.h"
 #include "plan/bridge.h"
+#include "servo/servo_executor.h"
 #include "tools/sbus.h"
 
 #if VISION_BRIDGE_TASK_ENABLE
@@ -21,7 +24,6 @@ extern volatile float err_degree;           /* 方向盘打多少度 */
 extern volatile float target_speed_set;     /* 目标速度（负数代表前进） */
 extern int g_motor_enable;                  /* 电机使能开关 */
 extern uint8 g_special_action_trigger;      /* 特殊动作触发标志（比如过桥） */
-extern uint8_t roll_balance_enable;         /* 滚转平衡（过单边桥防翻车）开关 */
 extern int32 acc_limit;                     /* 加速度限制 */
 extern int32 dec_limit;                     /* 减速度限制 */
 extern float servo_height;                  /* 舵机高度（比如过桥时可能要抬高底盘） */
@@ -55,6 +57,11 @@ typedef struct
     float exit_start_x_mm;            /* 开始下桥那一刻的 X 坐标 */
     float exit_start_y_mm;            /* 开始下桥那一刻的 Y 坐标 */
     float locked_yaw_deg;             /* 上桥前锁定的车头朝向（如果桥上看不见线，就照着这个方向开） */
+    float locked_roll_deg;            /* 入桥前锁定的横滚角，供桥内单侧收腿反馈补偿使用 */
+    uint8 roll_balance_armed;         /* 已识别桥面并开始抬高姿态，允许高姿态到位后锁存横滚 */
+    uint8 roll_balance_locked;        /* 横滚目标已在高姿态到位后锁存 */
+    float saved_roll_max_output;      /* 进入桥内反馈前的常规 rolling 输出限幅 */
+    uint8 saved_roll_limit_valid;     /* 常规 rolling 输出限幅备份是否有效 */
     uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定当前航向 */
     int32 saved_acc_limit;            /* 备份原来的加速度限制，下桥后恢复 */
     int32 saved_dec_limit;            /* 备份原来的减速度限制，下桥后恢复 */
@@ -63,6 +70,74 @@ typedef struct
 
 /* 这个就是真正的“记事本”本尊，只有这个文件能用 */
 static vision_bridge_task_ctx_t s_bridge_task;
+
+static float vision_bridge_abs_f(float value);
+
+static void vision_bridge_disable_turn_active_roll(void)
+{
+    /* 桥上只允许“单侧收腿”的锁定横滚反馈，禁止转弯环同时伸另一侧腿。 */
+    (void)Turn_Active_Roll_Target_Update(0.0f, 1U);
+    Turn_Active_Roll_Duty_Update(0.0f, 1U);
+}
+
+static void vision_bridge_roll_balance_disable(void)
+{
+    vision_bridge_disable_turn_active_roll();
+    if (s_bridge_task.saved_roll_limit_valid != 0U)
+    {
+        pid_roll.max_output = s_bridge_task.saved_roll_max_output;
+        s_bridge_task.saved_roll_limit_valid = 0U;
+    }
+    roll_balance_enable = 0U;
+    s_bridge_task.roll_balance_armed = 0U;
+    s_bridge_task.roll_balance_locked = 0U;
+    pid_roll.last_error = 0.0f;
+    Roll_Balance_Control(0.0f, 0.0f);
+}
+
+static void vision_bridge_roll_balance_arm(void)
+{
+    /* 桥面一旦确认，整段桥内任务都保持高姿态；这不依赖 rolling 开关。 */
+    if (s_bridge_task.roll_balance_armed == 0U)
+    {
+        s_bridge_task.saved_roll_max_output = pid_roll.max_output;
+        s_bridge_task.saved_roll_limit_valid = 1U;
+    }
+    s_bridge_task.roll_balance_armed = 1U;
+}
+
+static void vision_bridge_roll_balance_update(void)
+{
+    /* 整个单边桥任务生命周期都不允许转弯主动 rolling 参与输出。 */
+    vision_bridge_disable_turn_active_roll();
+
+#if VISION_BRIDGE_TASK_ROLL_BALANCE_ENABLE
+    if (s_bridge_task.roll_balance_armed == 0U)
+    {
+        return;
+    }
+
+    if (s_bridge_task.roll_balance_locked == 0U)
+    {
+        if (vision_bridge_abs_f(servo_height - bridge_params.height_bridge) >= 0.1f)
+        {
+            return;
+        }
+
+        s_bridge_task.locked_roll_deg = euler_angle.roll;
+        s_bridge_task.roll_balance_locked = 1U;
+        roll_balance_enable = 1U;
+        pid_roll.last_error = 0.0f;
+    }
+
+    /* 通用滚动环默认只限 1000 PWM；桥内按高度表允许最大 1307 PWM（3.3cm）。 */
+    pid_roll.max_output = VISION_BRIDGE_TASK_ROLL_RETRACT_MAX_PWM;
+    Roll_Balance_Control(euler_angle.roll, s_bridge_task.locked_roll_deg);
+    g_target_pwm_roll_adj = (int16)Float_Constrain(g_target_pwm_roll_adj,
+                                                     -VISION_BRIDGE_TASK_ROLL_RETRACT_MAX_PWM,
+                                                     VISION_BRIDGE_TASK_ROLL_RETRACT_MAX_PWM);
+#endif
+}
 
 /* --- 基础数学工具函数 --- */
 
@@ -321,26 +396,25 @@ static void vision_bridge_save_servo_limits_once(void)
 
 /**
  * @brief 切换到“上桥姿态”
- * @note  限制加速度、开启滚转平衡（防翻车）、把底盘升高。
+ * @note  限制加速度、抬高底盘；高姿态到位后才锁存并开启滚转反馈。
  */
 static void vision_bridge_apply_high_posture(void)
 {
     vision_bridge_save_servo_limits_once();
     acc_limit = bridge_params.servo_acc_bridge;
     dec_limit = bridge_params.servo_dec_bridge;
-    roll_balance_enable = 0U;
     /* 抬高底盘，并且规定抬高的速度（步长） */
     Bridge_Apply_Height_Control(bridge_params.height_bridge,
                                 bridge_params.height_step_rise * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
+    vision_bridge_roll_balance_arm();
 }
 
 /**
  * @brief 切换回“正常姿态”
- * @note  恢复加速度限制、关掉滚转平衡、把底盘降下来。
+ * @note  恢复加速度限制、把底盘降下来；滚转反馈持续到任务清理。
  */
 static void vision_bridge_apply_normal_posture(void)
 {
-    roll_balance_enable = 0U;
     if (s_bridge_task.saved_limits_valid)
     {
         acc_limit = s_bridge_task.saved_acc_limit;
@@ -360,6 +434,12 @@ static void vision_bridge_apply_normal_posture(void)
  */
 static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
 {
+    if (next_state == VISION_BRIDGE_TASK_EXIT)
+    {
+        /* 下桥前先撤销单侧收腿反馈，再把整车高度降回正常值。 */
+        vision_bridge_roll_balance_disable();
+    }
+
     s_bridge_task.state = next_state;
     s_bridge_task.state_ticks = 0U;
     s_bridge_task.align_ok_ticks = 0U;
@@ -461,7 +541,8 @@ static void vision_bridge_cleanup(uint8 stop_car)
     /* 告诉 1 核停止单边桥检测。 */
     VisionIpc_Core0_SetBridgeEnable(0U);
     
-    /* 恢复正常姿态 */
+    vision_bridge_roll_balance_disable();
+    /* 关闭单侧收腿反馈后，再恢复正常姿态。 */
     vision_bridge_apply_normal_posture();
 
     if (stop_car)
@@ -533,6 +614,7 @@ static void vision_bridge_enter_task(void)
     s_bridge_task.start_x_mm = inertial_nav.x;
     s_bridge_task.start_y_mm = inertial_nav.y;
     s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+    vision_bridge_roll_balance_disable();
     s_bridge_task.saved_acc_limit = acc_limit;
     s_bridge_task.saved_dec_limit = dec_limit;
     s_bridge_task.saved_limits_valid = 1U;
@@ -664,8 +746,12 @@ void VisionBridgeTask_Update_2ms(void)
             }
             else
             {
-                /* 如果归零了，说明可能快下桥了或者在桥的平缓段 */
-                vision_bridge_apply_normal_posture(); /* 降下底盘 */
+                /* 桥面曾被确认后，整段 RUN 都锁定高姿态；不能因短暂丢帧
+                 * 提前降车，否则会在下桥前触发另一侧收腿。 */
+                if (s_bridge_task.roll_balance_armed != 0U)
+                {
+                    vision_bridge_apply_high_posture();
+                }
                 /* 如果能看到地上的线，就跟着线跑 */
                 if (s_bridge_task.center_filter_valid)
                 {
@@ -745,6 +831,8 @@ void VisionBridgeTask_Update_2ms(void)
             vision_bridge_cleanup(1U);
             break;
     }
+
+    vision_bridge_roll_balance_update();
 
     /* 把这一刻的状态广播出去 */
     vision_bridge_publish_status(packet, traveled_mm, err_cmd, speed_cmd);
