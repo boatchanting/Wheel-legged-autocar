@@ -413,16 +413,17 @@ static void threshold_mask(const uint8_t *gray, BridgeDetectionBitmap *mask,
     bitmap_clear(mask);
     for (y = 0; y < height; ++y) {
         const uint8_t *row = gray + y * stride;
-#define BD_THRESHOLD_RANGE(begin_, end_, value_) do { \
-    int bd_end = (end_) < width ? (end_) : width; \
-    for (x = (begin_); x < bd_end; ++x) if (row[x] > (value_)) mask->row[y][x >> 5] |= 1u << (x & 31); \
-} while (0)
-        BD_THRESHOLD_RANGE(0, 19, threshold - 10);
-        if (width > 19) BD_THRESHOLD_RANGE(19, 76, threshold);
-        if (width > 76) BD_THRESHOLD_RANGE(76, 83, threshold - 10);
-        if (width > 83) BD_THRESHOLD_RANGE(83, 89, threshold - 20);
-        if (width > 89) BD_THRESHOLD_RANGE(89, width, threshold - 10);
-#undef BD_THRESHOLD_RANGE
+        for (x = 0; x < width; ++x) {
+            int edge = x < width - 1 - x ? x : width - 1 - x;
+            int offset = 0;
+            /* Preserve the previous profile's average edge compensation,
+             * but make it invariant to a horizontal mirror. */
+            if (edge <= 4) offset = -10;
+            else if (edge <= 10) offset = -15;
+            else if (edge <= 17) offset = -10;
+            else if (edge == 18) offset = -5;
+            if (row[x] > threshold + offset) mask->row[y][x >> 5] |= 1u << (x & 31);
+        }
     }
 }
 
@@ -883,7 +884,12 @@ static LineFit fit_one_side_cached(const BridgeDetectionScratch *scratch, int wi
     use_unclipped = unclipped_count >= 6 && unclipped[unclipped_count - 1] - unclipped[0] >= 10;
     count = use_unclipped ? unclipped_count : row_count;
     for (y = 0; y < count; ++y) { int row = use_unclipped ? unclipped[y] : rows[y]; independent[y] = (float)row; dependent[y] = (float)(side_right ? right[row] : left[row]); }
-    return fit_line_fast(independent, dependent, count, side_right ? 0.15f : -2.5f, side_right ? 2.5f : 0.25f,
+    /* The allowed slopes must form a reflected pair.  A line x = a*y+b on
+     * the left becomes x = -a*y+(width-1-b) after a horizontal mirror.
+     * The former right-side lower bound (+0.15) rejected valid reflected
+     * left lines with small positive slopes, then RANSAC selected an
+     * unrelated right-side edge instead. */
+    return fit_line_fast(independent, dependent, count, side_right ? -0.25f : -2.5f, side_right ? 2.5f : 0.25f,
                          1.35f, 6, 10.0f, side_right ? width - 2.5f : 1.5f, side_right ? PREF_RIGHT : PREF_LEFT);
 }
 
@@ -942,19 +948,19 @@ static LineFit fit_top_plateau_cached(const BridgeDetectionScratch *scratch, int
     return none;
 }
 
-static int should_show_left(LineFit line, const Candidate *candidate)
+static int should_show_side(LineFit line, int width, const Candidate *candidate, int side_right)
 {
+    float border_limit = side_right ? width - 2.6f : 1.6f;
+    float clipped_limit = side_right ? width - 7.0f : 6.0f;
+    float narrow_limit = side_right ? width - 18.0f : 17.0f;
+    float clip_ratio = side_right ? candidate->right_clip_ratio : candidate->left_clip_ratio;
     if (!line.valid || line.inlier_count < 6 || line.span < 10.0f) return 0;
-    if (line.border_touch_ratio >= 0.75f && absf_fast(line.slope) <= 0.25f && line.mean_value <= 1.6f) return 0;
-    if (candidate->left_clip_ratio >= 0.75f && absf_fast(line.slope) <= 0.12f && line.mean_value <= 6.0f) return 0;
-    return 1;
-}
-
-static int should_show_right(LineFit line, int width, const Candidate *candidate)
-{
-    if (!line.valid || line.inlier_count < 6 || line.span < 10.0f) return 0;
-    if (line.border_touch_ratio >= 0.75f && absf_fast(line.slope) <= 0.25f && line.mean_value >= width - 2.6f) return 0;
-    if (candidate->max_width <= 36 && candidate->area_ratio <= 0.19f && line.mean_value >= width - 18.0f) return 0;
+    if (line.border_touch_ratio >= 0.75f && absf_fast(line.slope) <= 0.25f &&
+        (side_right ? line.mean_value >= border_limit : line.mean_value <= border_limit)) return 0;
+    if (clip_ratio >= 0.75f && absf_fast(line.slope) <= 0.12f &&
+        (side_right ? line.mean_value >= clipped_limit : line.mean_value <= clipped_limit)) return 0;
+    if (candidate->max_width <= 36 && candidate->area_ratio <= 0.19f &&
+        (side_right ? line.mean_value >= narrow_limit : line.mean_value <= narrow_limit)) return 0;
     return 1;
 }
 
@@ -971,11 +977,11 @@ static int should_show_entry(LineFit line, int height, const Candidate *candidat
     if (!line.valid || line.inlier_count < 6 || line.span < 8.0f) return 0;
     if (line.border_touch_ratio >= 0.55f && line.mean_value >= height - 2.6f) return 0;
     narrow_width = (candidate->max_width * 14 + 50) / 100; if (narrow_width < 8) narrow_width = 8;
-    if (line.slope <= -0.08f && line.border_touch_ratio <= 0.2f &&
+    if (absf_fast(line.slope) >= 0.08f && line.border_touch_ratio <= 0.2f &&
         (candidate->top_row <= 5 || candidate->max_width <= 52 || candidate->top_row >= 10 ||
          (candidate->top_row <= 8 && candidate->bottom_width <= narrow_width))) return 1;
     min_bottom_width = (candidate->max_width * 28 + 50) / 100; if (min_bottom_width < 16) min_bottom_width = 16;
-    return candidate->bottom_width >= min_bottom_width && line.slope <= -0.02f && line.border_touch_ratio <= 0.4f;
+    return candidate->bottom_width >= min_bottom_width && absf_fast(line.slope) >= 0.02f && line.border_touch_ratio <= 0.4f;
 }
 
 static void export_side_line(LineFit line, BridgeDetectionSideLine *out)
@@ -995,7 +1001,9 @@ static BridgeDetectionSegment side_segment(LineFit line, int visible, int side_r
     memset(&segment, 0, sizeof(segment));
     if (!visible || !line.valid) return segment;
     y0 = line.support_min; y1 = line.support_max;
-    if (!side_right && bottom_row - y1 >= 8.0f && line.slope * bottom_row + line.intercept > 2.5f) y1 = (float)bottom_row;
+    if (bottom_row - y1 >= 8.0f &&
+        ((!side_right && line.slope * bottom_row + line.intercept > 2.5f) ||
+         (side_right && line.slope * bottom_row + line.intercept < width - 3.5f))) y1 = (float)bottom_row;
     x0 = line.slope * y0 + line.intercept; x1 = line.slope * y1 + line.intercept;
     segment.valid = 1; segment.x0 = clamp_int(round_positive(x0), 0, width - 1); segment.y0 = clamp_int(round_positive(y0), 0, height - 1);
     segment.x1 = clamp_int(round_positive(x1), 0, width - 1); segment.y1 = clamp_int(round_positive(y1), 0, height - 1);
@@ -1228,15 +1236,18 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     entry = fit_horizontal_cached(scratch, width, height, 1);
     top_selected = plateau.valid ? plateau : top;
     export_side_line(left, &result->left_line); export_side_line(right, &result->right_line);
-    result->left_line_visible = (uint8_t)should_show_left(left, &best);
-    result->right_line_visible = (uint8_t)should_show_right(right, width, &best);
+    result->left_line_visible = (uint8_t)should_show_side(left, width, &best, 0);
+    result->right_line_visible = (uint8_t)should_show_side(right, width, &best, 1);
     result->top_line_visible = (uint8_t)(((result->left_line_visible && result->right_line_visible && plateau.valid) || should_show_top(top, &best)) && best.top_row > 1);
     result->entry_line_visible = (uint8_t)should_show_entry(entry, height, &best);
-    if (result->top_line_visible && result->entry_line_visible && best.top_row <= 5 && entry.slope <= -0.08f) result->top_line_visible = 0;
-    if (result->top_line_visible && !result->entry_line_visible && best.top_row <= 4 && best.left_clip_ratio >= 0.4f && best.max_width >= 85 && best.bottom_width >= 70) result->top_line_visible = 0;
-    if (best.center_x >= width * 0.62f && best.max_width <= 50 && best.bottom_width <= 6 &&
+    if (result->top_line_visible && result->entry_line_visible && best.top_row <= 5 && absf_fast(entry.slope) >= 0.08f) result->top_line_visible = 0;
+    if (result->top_line_visible && !result->entry_line_visible && best.top_row <= 4 &&
+        (best.left_clip_ratio >= 0.4f || best.right_clip_ratio >= 0.4f) && best.max_width >= 85 && best.bottom_width >= 70) result->top_line_visible = 0;
+    if (((best.center_x >= width * 0.62f && right.valid && right.slope <= 0.08f) ||
+         (best.center_x <= (width - 1) - width * 0.62f && left.valid && left.slope >= -0.08f)) &&
+        best.max_width <= 50 && best.bottom_width <= 6 &&
         best.left_clip_ratio < 0.1f && best.right_clip_ratio < 0.1f && best.top_row >= 10 && best.top_row <= 24 &&
-        right.valid && absf_fast(right.slope) <= 0.08f) result->entry_line_visible = 0;
+        ((right.valid && absf_fast(right.slope) <= 0.08f) || (left.valid && absf_fast(left.slope) <= 0.08f))) result->entry_line_visible = 0;
     if (best.score >= config->min_valid_score && best.edge_contrast >= config->min_edge_contrast) {
         float exit_clip = best.left_clip_ratio > best.right_clip_ratio ? best.left_clip_ratio : best.right_clip_ratio;
         result->bridge_found = 1;
@@ -1247,7 +1258,10 @@ int bridge_detection_detect_gray(const uint8_t *gray, int width, int height, int
     if (!result->bridge_found) {
         result->left_line_visible = 0; result->right_line_visible = 0; result->top_line_visible = 0; result->entry_line_visible = 0;
     }
-    if (result->bridge_found && best.top_row >= 30 && best.center_x >= width * 0.70f && best.max_width <= 40 && best.bottom_width >= 28) result->right_line_visible = 0;
+    if (result->bridge_found && best.top_row >= 30 && best.max_width <= 40 && best.bottom_width >= 28) {
+        if (best.center_x >= width * 0.70f) result->right_line_visible = 0;
+        if (best.center_x <= (width - 1) * 0.30f) result->left_line_visible = 0;
+    }
     if (result->bridge_found) {
         result->left_segment = side_segment(left, result->left_line_visible, 0, best.bottom_row, width, height);
         result->right_segment = side_segment(right, result->right_line_visible, 1, best.bottom_row, width, height);
