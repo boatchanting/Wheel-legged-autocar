@@ -14,8 +14,6 @@ typedef enum
 {
     BUMPY_ROAD_STATE_IDLE = 0,    // 空闲态
     BUMPY_ROAD_STATE_RUNNING,     // 运行态
-    BUMPY_ROAD_STATE_BACKING,     // 后退态
-    BUMPY_ROAD_STATE_APPROACHING, // 接近态（新增）
     BUMPY_ROAD_STATE_FINISH       // 收尾态
 } BumpyRoadState_e;
 
