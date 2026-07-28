@@ -22,7 +22,7 @@ MAX_POINTS_DEFAULT = 500
 SPECIAL_EXIT_DISTANCE_OFFSETS = {
     30: 0.0,
     40: 750.0,
-    50: 0.0,
+    50: 750.0,
 }
 
 

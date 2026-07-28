@@ -48,9 +48,17 @@ typedef struct
     uint8_t visual_exit_armed;
     uint8_t correction_applied;
     uint8_t exit_anchor_valid;
+    BumpyRoadEvent_e last_event;
+    uint32_t event_sequence;
 } BumpyRoadContext_t;
 
 static BumpyRoadContext_t s_bumpy_ctx = {BUMPY_ROAD_STATE_IDLE};
+
+static void BumpyRoad_PublishEvent(BumpyRoadEvent_e event)
+{
+    s_bumpy_ctx.last_event = event;
+    s_bumpy_ctx.event_sequence++;
+}
 
 /**
  * @brief 基于惯导坐标计算当前位置到起点的平面距离
@@ -86,6 +94,8 @@ static void BumpyRoad_ApplyVisionSteer(void)
 
 static void BumpyRoad_Cleanup(uint8_t stop_car)
 {
+    const uint8_t was_active = (s_bumpy_ctx.state != BUMPY_ROAD_STATE_IDLE) ? 1U : 0U;
+
     VisionBumpyControl_SetEnable(0U);
     VisionIpc_Core0_SetBumpyEnable(0U);
 
@@ -98,10 +108,16 @@ static void BumpyRoad_Cleanup(uint8_t stop_car)
     g_special_action_trigger = 0U;
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
     s_bumpy_ctx.exit_anchor_valid = 0U;
+    if (was_active != 0U)
+    {
+        BumpyRoad_PublishEvent(BUMPY_ROAD_EVENT_ENDED);
+    }
 }
 
 void BumpyRoad_Init(void)
 {
+    const uint8_t was_active = (s_bumpy_ctx.state != BUMPY_ROAD_STATE_IDLE) ? 1U : 0U;
+
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
     s_bumpy_ctx.start_x_mm = 0.0f;
     s_bumpy_ctx.start_y_mm = 0.0f;
@@ -120,6 +136,11 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.visual_exit_armed = 0U;
     s_bumpy_ctx.correction_applied = 0U;
     s_bumpy_ctx.exit_anchor_valid = 0U;
+    s_bumpy_ctx.last_event = BUMPY_ROAD_EVENT_NONE;
+    if (was_active != 0U)
+    {
+        BumpyRoad_PublishEvent(BUMPY_ROAD_EVENT_ENDED);
+    }
 
 }
 
@@ -162,6 +183,7 @@ void BumpyRoad_Trigger(void)
     VisionBumpyControl_ResetExitDetection();
 
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;
+    BumpyRoad_PublishEvent(BUMPY_ROAD_EVENT_STARTED);
 }
 
 void BumpyRoad_Update_1ms(void)
@@ -349,4 +371,14 @@ float BumpyRoad_GetDistanceMm(void)
 BumpyRoadExitReason_e BumpyRoad_GetExitReason(void)
 {
     return s_bumpy_ctx.exit_reason;
+}
+
+BumpyRoadEvent_e BumpyRoad_GetLastEvent(void)
+{
+    return s_bumpy_ctx.last_event;
+}
+
+uint32_t BumpyRoad_GetEventSequence(void)
+{
+    return s_bumpy_ctx.event_sequence;
 }

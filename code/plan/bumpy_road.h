@@ -26,6 +26,13 @@ typedef enum
     BUMPY_ROAD_EXIT_AUTO_DISTANCE
 } BumpyRoadExitReason_e;
 
+typedef enum
+{
+    BUMPY_ROAD_EVENT_NONE = 0,
+    BUMPY_ROAD_EVENT_STARTED,
+    BUMPY_ROAD_EVENT_ENDED
+} BumpyRoadEvent_e;
+
 extern volatile uint8_t vision_detected_bumpy_point;
 /**
  * @brief 颠簸路段状态机初始化
@@ -74,5 +81,9 @@ float BumpyRoad_GetDistanceMm(void);
  * @brief 获取最近一次颠簸路段的脱出原因
  */
 BumpyRoadExitReason_e BumpyRoad_GetExitReason(void);
+
+/* 最近一次状态机边界事件与其单调递增序号，供遥测日志去重。 */
+BumpyRoadEvent_e BumpyRoad_GetLastEvent(void);
+uint32_t BumpyRoad_GetEventSequence(void);
 
 #endif // __BUMPY_ROAD_H__
