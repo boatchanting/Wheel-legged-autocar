@@ -1,0 +1,423 @@
+#!/usr/bin/env python3
+"""Generate and render a G2-continuous Plan3 path from marked entry/exit points.
+
+The marker CSV describes route events.  A special event is represented by an
+entry tag (1..5) and its matching exit tag (10..50).  The generator preserves
+the two markers exactly and reserves two *straight* corridors:
+
+* 500 mm immediately before an entry marker;
+* 500 mm immediately after its exit marker.
+
+All remaining links are quintic Bezier curves whose curvature is zero at both
+ends.  Adjacent links therefore share tangent and curvature with the straight
+corridors (G2 continuity).  The generated path is intended as the route input
+for continuous tracking; it does not command a stop at ordinary samples.
+
+Example:
+    .venv\\Scripts\\python.exe tools\\webview_nav_marker科目三\\generate_plan3_smooth_path.py
+
+The default CSV is deliberately the latest Plan3 recording requested by the
+project.  Pass ``--input`` when generating from another recording.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import math
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterable, Optional
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+DEFAULT_INPUT = SCRIPT_DIR / "nav_mark_points_20260728_173111.csv"
+STRAIGHT_LENGTH_MM = 500.0
+SAMPLE_STEP_MM = 50.0
+MIN_LINK_LENGTH_MM = 5.0
+
+ENTRY_TYPES = {1, 2, 3, 4, 5}
+EXIT_TO_ENTRY = {10: 1, 20: 2, 30: 3, 40: 4, 50: 5}
+TYPE_LABEL = {
+    0: "普通路径",
+    1: "圆环进入",
+    2: "坡道进入",
+    3: "三级跳进入",
+    4: "单边桥进入",
+    5: "颠簸路进入",
+    10: "圆环退出",
+    20: "坡道退出",
+    30: "三级跳退出",
+    40: "单边桥退出",
+    50: "颠簸路退出",
+}
+TYPE_COLOR = {
+    0: "#3b82f6", 1: "#db2777", 2: "#d97706", 3: "#0891b2",
+    4: "#854d0e", 5: "#7e22ce", 10: "#db2777", 20: "#d97706",
+    30: "#0891b2", 40: "#854d0e", 50: "#7e22ce",
+}
+
+
+@dataclass(frozen=True)
+class Marker:
+    order: int
+    x: float
+    y: float
+    point_type: int
+    heading: Optional[float]
+
+
+@dataclass
+class Node:
+    x: float
+    y: float
+    point_type: int = 0
+    tangent: Optional[np.ndarray] = None
+    name: str = ""
+
+
+@dataclass
+class PathSample:
+    x: float
+    y: float
+    point_type: int
+    forced_straight: bool
+    segment: str
+
+
+def normalize_key(value: str) -> str:
+    return value.strip().lower().replace(" ", "")
+
+
+def unit(vector: np.ndarray) -> np.ndarray:
+    length = float(np.linalg.norm(vector))
+    if length < 1e-6:
+        raise ValueError("Two consecutive path anchors are coincident.")
+    return vector / length
+
+
+def distance(a: Node | Marker | np.ndarray, b: Node | Marker | np.ndarray) -> float:
+    ax, ay = (a.x, a.y) if hasattr(a, "x") else a
+    bx, by = (b.x, b.y) if hasattr(b, "x") else b
+    return math.hypot(bx - ax, by - ay)
+
+
+def read_markers(csv_path: Path) -> list[Marker]:
+    with csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+        reader = csv.DictReader(csv_file)
+        if not reader.fieldnames:
+            raise ValueError("CSV 缺少表头。")
+        fields = {normalize_key(name): name for name in reader.fieldnames if name}
+        for required in ("x", "y", "point_type"):
+            if required not in fields:
+                raise ValueError(f"CSV 缺少必需列: {required}")
+
+        index_field = fields.get("index")
+        heading_field = fields.get("heading")
+        markers: list[Marker] = []
+        for row_number, row in enumerate(reader, start=2):
+            try:
+                order = int(row[index_field]) if index_field and row[index_field] else len(markers)
+                heading = float(row[heading_field]) if heading_field and row[heading_field] else None
+                point_type = int(float(row[fields["point_type"]]))
+                if point_type not in TYPE_LABEL:
+                    raise ValueError(f"不支持的 point_type={point_type}")
+                markers.append(Marker(order, float(row[fields["x"]]), float(row[fields["y"]]), point_type, heading))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"CSV 第 {row_number} 行无效: {exc}") from exc
+
+    markers.sort(key=lambda item: item.order)
+    if len(markers) < 2:
+        raise ValueError("至少需要两个标记点。")
+    return markers
+
+
+def find_event_pairs(markers: list[Marker]) -> dict[int, int]:
+    """Return entry-index -> exit-index and reject ambiguous marker ordering."""
+    pairs: dict[int, int] = {}
+    pending: dict[int, int] = {}
+    for index, marker in enumerate(markers):
+        if marker.point_type in ENTRY_TYPES:
+            if marker.point_type in pending:
+                raise ValueError(f"第 {index} 个进入点前，类型 {marker.point_type} 的上一个任务尚未退出。")
+            pending[marker.point_type] = index
+        elif marker.point_type in EXIT_TO_ENTRY:
+            entry_type = EXIT_TO_ENTRY[marker.point_type]
+            if entry_type not in pending:
+                raise ValueError(f"第 {index} 个退出点 type={marker.point_type} 没有对应进入点。")
+            pairs[pending.pop(entry_type)] = index
+
+    if pending:
+        names = ", ".join(str(value) for value in sorted(pending))
+        raise ValueError(f"缺少对应退出点的进入类型: {names}")
+    return pairs
+
+
+def add_sample(samples: list[PathSample], point: np.ndarray, point_type: int, forced: bool, segment: str) -> None:
+    if samples and math.hypot(samples[-1].x - point[0], samples[-1].y - point[1]) < 0.01:
+        # Preserve an event tag if it coincides with the previous geometric point.
+        if point_type != 0:
+            samples[-1].point_type = point_type
+        samples[-1].forced_straight |= forced
+        return
+    samples.append(PathSample(float(point[0]), float(point[1]), point_type, forced, segment))
+
+
+def append_line(samples: list[PathSample], start: Node, end: Node, segment: str, forced: bool) -> None:
+    start_vec = np.array([start.x, start.y], dtype=float)
+    end_vec = np.array([end.x, end.y], dtype=float)
+    length = float(np.linalg.norm(end_vec - start_vec))
+    count = max(1, int(math.ceil(length / SAMPLE_STEP_MM)))
+    for i in range(count + 1):
+        ratio = i / count
+        event_type = start.point_type if i == 0 else (end.point_type if i == count else 0)
+        add_sample(samples, start_vec + ratio * (end_vec - start_vec), event_type, forced, segment)
+
+
+def bezier_quintic(control: np.ndarray, t: np.ndarray) -> np.ndarray:
+    omt = 1.0 - t
+    return (
+        (omt**5)[:, None] * control[0]
+        + (5.0 * omt**4 * t)[:, None] * control[1]
+        + (10.0 * omt**3 * t**2)[:, None] * control[2]
+        + (10.0 * omt**2 * t**3)[:, None] * control[3]
+        + (5.0 * omt * t**4)[:, None] * control[4]
+        + (t**5)[:, None] * control[5]
+    )
+
+
+def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: str) -> None:
+    """Append a quintic Bezier link with zero end curvature (G2 with straight)."""
+    start_vec = np.array([start.x, start.y], dtype=float)
+    end_vec = np.array([end.x, end.y], dtype=float)
+    chord = end_vec - start_vec
+    chord_length = float(np.linalg.norm(chord))
+    if chord_length < MIN_LINK_LENGTH_MM:
+        add_sample(samples, end_vec, end.point_type, False, segment)
+        return
+
+    tangent_start = unit(start.tangent if start.tangent is not None else chord)
+    tangent_end = unit(end.tangent if end.tangent is not None else chord)
+    # 0.18 L keeps control polygons local even for tight, sparse marker layouts.
+    handle = min(0.18 * chord_length, 800.0)
+    control = np.array([
+        start_vec,
+        start_vec + handle * tangent_start,
+        start_vec + 2.0 * handle * tangent_start,
+        end_vec - 2.0 * handle * tangent_end,
+        end_vec - handle * tangent_end,
+        end_vec,
+    ])
+
+    dense = bezier_quintic(control, np.linspace(0.0, 1.0, max(80, int(chord_length / 5.0))))
+    chord_lengths = np.linalg.norm(np.diff(dense, axis=0), axis=1)
+    arclength = np.concatenate(([0.0], np.cumsum(chord_lengths)))
+    sample_s = np.arange(0.0, arclength[-1], SAMPLE_STEP_MM)
+    if not math.isclose(sample_s[-1] if len(sample_s) else 0.0, arclength[-1], abs_tol=0.01):
+        sample_s = np.append(sample_s, arclength[-1])
+    x = np.interp(sample_s, arclength, dense[:, 0])
+    y = np.interp(sample_s, arclength, dense[:, 1])
+    for index, (px, py) in enumerate(zip(x, y)):
+        add_sample(samples, np.array([px, py]), start.point_type if index == 0 else (end.point_type if index == len(x) - 1 else 0), False, segment)
+
+
+def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node], dict[tuple[int, int], bool]]:
+    """Expand each special pair to pre-entry / entry / exit / post-exit anchors."""
+    nodes: list[Node] = []
+    # value=True only for the requested 0.5m approach/departure corridors.
+    # The entry->exit link is a direct task-zone placeholder; it is deliberately
+    # not counted as a forced straight section of the navigation path.
+    straight_links: dict[tuple[int, int], bool] = {}
+    entry_by_exit = {exit_index: entry_index for entry_index, exit_index in pairs.items()}
+    marker_index = 0
+
+    while marker_index < len(markers):
+        marker = markers[marker_index]
+        if marker_index in pairs:
+            exit_index = pairs[marker_index]
+            exit_marker = markers[exit_index]
+            axis = unit(np.array([exit_marker.x - marker.x, exit_marker.y - marker.y], dtype=float))
+            pre = Node(marker.x - STRAIGHT_LENGTH_MM * axis[0], marker.y - STRAIGHT_LENGTH_MM * axis[1], 0, axis, f"{TYPE_LABEL[marker.point_type]}前直线起点")
+            entry = Node(marker.x, marker.y, marker.point_type, axis, TYPE_LABEL[marker.point_type])
+            exit_node = Node(exit_marker.x, exit_marker.y, exit_marker.point_type, axis, TYPE_LABEL[exit_marker.point_type])
+            post = Node(exit_marker.x + STRAIGHT_LENGTH_MM * axis[0], exit_marker.y + STRAIGHT_LENGTH_MM * axis[1], 0, axis, f"{TYPE_LABEL[exit_marker.point_type]}后直线终点")
+            if nodes and distance(nodes[-1], pre) < MIN_LINK_LENGTH_MM:
+                raise ValueError(f"{entry.name} 前 0.5m 直线与上一锚点重叠，无法构造平滑连接。")
+            nodes.extend((pre, entry, exit_node, post))
+            base = len(nodes) - 4
+            straight_links[(base, base + 1)] = True
+            straight_links[(base + 1, base + 2)] = False
+            straight_links[(base + 2, base + 3)] = True
+            marker_index = exit_index + 1
+            continue
+        if marker_index in entry_by_exit:
+            marker_index += 1
+            continue
+        nodes.append(Node(marker.x, marker.y, marker.point_type, None, TYPE_LABEL[marker.point_type]))
+        marker_index += 1
+
+    if len(nodes) < 2:
+        raise ValueError("展开后路径锚点不足。")
+
+    # Untagged waypoints use a bisector tangent so neighbouring G2 links are C1.
+    for index, node in enumerate(nodes):
+        if node.tangent is not None:
+            continue
+        if index == 0:
+            node.tangent = unit(np.array([nodes[1].x - node.x, nodes[1].y - node.y]))
+        elif index == len(nodes) - 1:
+            node.tangent = unit(np.array([node.x - nodes[index - 1].x, node.y - nodes[index - 1].y]))
+        else:
+            incoming = unit(np.array([node.x - nodes[index - 1].x, node.y - nodes[index - 1].y]))
+            outgoing = unit(np.array([nodes[index + 1].x - node.x, nodes[index + 1].y - node.y]))
+            try:
+                node.tangent = unit(incoming + outgoing)
+            except ValueError:
+                node.tangent = outgoing
+    return nodes, straight_links
+
+
+def calculate_yaw_and_curvature(samples: list[PathSample]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    points = np.array([(sample.x, sample.y) for sample in samples], dtype=float)
+    count = len(points)
+    ds = np.zeros(count, dtype=float)
+    ds[1:] = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    s = np.cumsum(ds)
+    yaw = np.zeros(count, dtype=float)
+    for index in range(count):
+        before = max(0, index - 1)
+        after = min(count - 1, index + 1)
+        vector = points[after] - points[before]
+        yaw[index] = -math.degrees(math.atan2(vector[1], -vector[0])) if np.linalg.norm(vector) > 1e-6 else 0.0
+
+    curvature = np.zeros(count, dtype=float)
+    for index in range(1, count - 1):
+        a, b, c = points[index - 1], points[index], points[index + 1]
+        ab, bc, ca = np.linalg.norm(b - a), np.linalg.norm(c - b), np.linalg.norm(a - c)
+        denominator = ab * bc * ca
+        if denominator > 1e-6:
+            cross = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+            curvature[index] = 2.0 * cross / denominator
+    if count > 2:
+        curvature[0], curvature[-1] = curvature[1], curvature[-2]
+    return s, yaw, curvature
+
+
+def generate_path(markers: list[Marker]) -> list[PathSample]:
+    pairs = find_event_pairs(markers)
+    nodes, straight_links = make_nodes(markers, pairs)
+    samples: list[PathSample] = []
+    for index in range(len(nodes) - 1):
+        if (index, index + 1) in straight_links:
+            is_forced_corridor = straight_links[(index, index + 1)]
+            label = "强制直线" if is_forced_corridor else "任务区直连"
+            append_line(samples, nodes[index], nodes[index + 1], f"{label}: {nodes[index].name} -> {nodes[index + 1].name}", is_forced_corridor)
+        else:
+            append_g2_link(samples, nodes[index], nodes[index + 1], f"G2: {nodes[index].name} -> {nodes[index + 1].name}")
+    return samples
+
+
+def write_csv(output: Path, samples: list[PathSample], yaw: np.ndarray, curvature: np.ndarray) -> None:
+    with output.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow(["index", "x", "y", "target_yaw_deg", "heading", "point_type", "target_speed", "curvature", "forced_straight", "segment"])
+        for index, (sample, sample_yaw, sample_curvature) in enumerate(zip(samples, yaw, curvature)):
+            writer.writerow([index, f"{sample.x:.3f}", f"{sample.y:.3f}", f"{sample_yaw:.3f}", "0.000", sample.point_type, "0.000", f"{sample_curvature:.8f}", int(sample.forced_straight), sample.segment])
+
+
+def write_c_header(output: Path, samples: list[PathSample], yaw: np.ndarray, curvature: np.ndarray, source: Path) -> None:
+    lines = [
+        "#ifndef _NAV_REPLAY_ROUTE_TABLE_H_",
+        "#define _NAV_REPLAY_ROUTE_TABLE_H_",
+        "",
+        "#include \"nav_ram.h\"",
+        "",
+        f"// Generated by {Path(__file__).name} from {source.name}",
+        f"#define NAV_REPLAY_STATIC_ROUTE_COUNT {len(samples)}",
+        "",
+        f"static const NavRamPoint_t nav_replay_static_route_points[{len(samples)}] = {{",
+    ]
+    for sample, sample_yaw, sample_curvature in zip(samples, yaw, curvature):
+        lines.append(f"    {{{sample.x:.3f}f, {sample.y:.3f}f, {sample_yaw:.3f}f, 0.0f, (uint8){sample.point_type}, 0.0f, {sample_curvature:.8f}f}},")
+    lines.extend(["};", "", "#endif // _NAV_REPLAY_ROUTE_TABLE_H_", ""])
+    output.write_text("\n".join(lines), encoding="utf-8")
+
+
+def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s: np.ndarray, curvature: np.ndarray) -> None:
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
+    points = np.array([(sample.x, sample.y) for sample in samples], dtype=float)
+    forced = np.array([sample.forced_straight for sample in samples], dtype=bool)
+    figure, (axis_path, axis_curve) = plt.subplots(1, 2, figsize=(16, 7), gridspec_kw={"width_ratios": [1.35, 1]})
+    axis_path.plot(points[:, 0], points[:, 1], color="#1d4ed8", linewidth=2.0, label="G2 平滑路径")
+    if forced.any():
+        axis_path.scatter(points[forced, 0], points[forced, 1], s=9, color="#f97316", label="强制直线段", zorder=3)
+    for marker in markers:
+        color = TYPE_COLOR[marker.point_type]
+        axis_path.scatter(marker.x, marker.y, s=75, marker="o" if marker.point_type in (0, *ENTRY_TYPES) else "s", color=color, edgecolor="black", linewidth=0.6, zorder=5)
+        axis_path.annotate(f"{marker.order}: {TYPE_LABEL[marker.point_type]}", (marker.x, marker.y), xytext=(5, 5), textcoords="offset points", fontsize=8)
+    axis_path.set_title("Plan3 生成路径（橙色为入口前/出口后直线）")
+    axis_path.set_xlabel("X (mm)")
+    axis_path.set_ylabel("Y (mm)")
+    axis_path.axis("equal")
+    axis_path.grid(True, alpha=0.25)
+    axis_path.legend(loc="best")
+
+    axis_curve.plot(s, curvature * 1000.0, color="#0f766e", linewidth=1.5)
+    axis_curve.axhline(0.0, color="black", linewidth=0.8)
+    axis_curve.set_title("路径曲率")
+    axis_curve.set_xlabel("累计路径长度 (mm)")
+    axis_curve.set_ylabel("曲率 (1/m)")
+    axis_curve.grid(True, alpha=0.25)
+    figure.tight_layout()
+    figure.savefig(output, dpi=180)
+    plt.close(figure)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="生成带 0.5m 进出直线约束的 Plan3 平滑路径。")
+    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT, help=f"输入标记 CSV（默认 {DEFAULT_INPUT.name}）")
+    parser.add_argument("--output-csv", type=Path, help="输出路径 CSV，默认与输入同目录并追加 _planned")
+    parser.add_argument("--render", type=Path, help="输出 PNG，默认与输入同目录并追加 _planned")
+    parser.add_argument("--header", type=Path, help="可选：输出 NavRamPoint_t C 路表头文件")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    source = args.input.resolve()
+    if not source.is_file():
+        raise FileNotFoundError(f"找不到默认输入 CSV: {source}。请导出该文件或使用 --input 指定 CSV。")
+    csv_output = args.output_csv or source.with_name(f"{source.stem}_planned.csv")
+    render_output = args.render or source.with_name(f"{source.stem}_planned.png")
+
+    markers = read_markers(source)
+    samples = generate_path(markers)
+    s, yaw, curvature = calculate_yaw_and_curvature(samples)
+    write_csv(csv_output, samples, yaw, curvature)
+    render(render_output, markers, samples, s, curvature)
+    if args.header:
+        write_c_header(args.header, samples, yaw, curvature, source)
+
+    # Geometry is exact even when a 50 mm sampled row lies on a boundary.
+    # Do not estimate this from the per-sample visual tag.
+    forced_length = len(find_event_pairs(markers)) * 2.0 * STRAIGHT_LENGTH_MM
+    print(f"输入: {source}")
+    print(f"输出路径: {csv_output} ({len(samples)} 点, 总长 {s[-1]:.1f} mm)")
+    print(f"渲染图: {render_output}")
+    print(f"强制直线累计长度: {forced_length:.1f} mm")
+    if args.header:
+        print(f"C 路表: {args.header}")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"错误: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
