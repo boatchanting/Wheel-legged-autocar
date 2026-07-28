@@ -42,6 +42,18 @@ SAMPLE_STEP_MM = 50.0
 MIN_LINK_LENGTH_MM = 5.0
 NAV_ROUTE_MAX_POINTS = 5000
 
+# 与 tools/webview_nav_marker速度规划/caculate_path.py 保持一致的离线路径速度约束。
+PATH_SPEED_MAX_MM_S = 5000.0
+SPRINT_SPEED_MM_S = 3000.0
+ENABLE_FINISH_SPRINT = True
+MAX_ACCEL_MM_S2 = 1500.0
+MAX_DECEL_MM_S2 = 1500.0
+MAX_LATERAL_ACCEL_MM_S2 = 3500.0
+MAX_PATH_YAW_RATE_RAD_S = 2.8
+MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0
+SPEED_TO_MM_S = 4.79
+CURVATURE_EPS = 1e-6
+
 # Match csv_to_nav_table.py.  Each value is measured from the recorded exit
 # marker toward the matching entry marker, so the visual state-machine exit
 # is anchored where the vehicle actually leaves the task.
@@ -346,6 +358,59 @@ def calculate_yaw_and_curvature(samples: list[PathSample]) -> tuple[np.ndarray, 
     return s, yaw, curvature
 
 
+def calculate_target_speed(samples: list[PathSample], s: np.ndarray, curvature: np.ndarray) -> np.ndarray:
+    """曲率包络限速，再执行与 caculate_path.py 相同的前后向加减速扫描。"""
+    count = len(samples)
+    if count == 0:
+        return np.empty(0, dtype=float)
+
+    curvature_rate = np.zeros(count, dtype=float)
+    if count > 1:
+        ds = np.diff(s)
+        valid = ds > 1e-6
+        curvature_rate[1:][valid] = np.abs(np.diff(curvature)[valid] / ds[valid])
+        curvature_rate[0] = curvature_rate[1]
+
+    speed_limit = np.full(count, PATH_SPEED_MAX_MM_S, dtype=float)
+    for index, kappa in enumerate(curvature):
+        abs_kappa = abs(float(kappa))
+        curve_limit = PATH_SPEED_MAX_MM_S
+        yaw_rate_limit = PATH_SPEED_MAX_MM_S
+        yaw_accel_limit = PATH_SPEED_MAX_MM_S
+        if abs_kappa > CURVATURE_EPS:
+            curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / abs_kappa)
+            yaw_rate_limit = MAX_PATH_YAW_RATE_RAD_S / abs_kappa
+        if curvature_rate[index] > CURVATURE_EPS:
+            yaw_accel_limit = math.sqrt(MAX_PATH_YAW_ACCEL_RAD_S2 / curvature_rate[index])
+        speed_limit[index] = min(PATH_SPEED_MAX_MM_S, curve_limit, yaw_rate_limit, yaw_accel_limit)
+
+    # 普通点和普通结束点都连续通过，不制造零速障碍；圆环动作仍允许明确停车。
+    if ENABLE_FINISH_SPRINT:
+        last_curve_index = max((i for i, value in enumerate(curvature) if abs(value) > 0.0005), default=-1)
+        if 0 <= last_curve_index < count - 5:
+            speed_limit[last_curve_index + 5:] = np.minimum(speed_limit[last_curve_index + 5:], SPRINT_SPEED_MM_S)
+        speed_limit[-1] = min(speed_limit[-1], SPRINT_SPEED_MM_S)
+    for index, sample in enumerate(samples):
+        if sample.point_type == 1:  # NAV_POINT_CIRCLE 可能要求原地旋转。
+            speed_limit[index] = 0.0
+
+    planned_speed = np.array(speed_limit, copy=True)
+    for index in range(count - 2, -1, -1):
+        ds = s[index + 1] - s[index]
+        planned_speed[index] = min(
+            planned_speed[index],
+            math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds)),
+        )
+    for index in range(1, count):
+        ds = s[index] - s[index - 1]
+        planned_speed[index] = min(
+            planned_speed[index],
+            math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds)),
+        )
+
+    return -planned_speed / SPEED_TO_MM_S
+
+
 def generate_path(markers: list[Marker], sample_step_mm: float) -> list[PathSample]:
     pairs = find_event_pairs(markers)
     nodes, straight_links = make_nodes(markers, pairs)
@@ -372,15 +437,15 @@ def generate_path_with_point_cap(markers: list[Marker]) -> tuple[list[PathSample
     raise ValueError(f"路径即使用 {sample_step_mm:.1f} mm 采样仍超过 {NAV_ROUTE_MAX_POINTS} 点。")
 
 
-def write_csv(output: Path, samples: list[PathSample], yaw: np.ndarray, curvature: np.ndarray) -> None:
+def write_csv(output: Path, samples: list[PathSample], yaw: np.ndarray, curvature: np.ndarray, target_speed: np.ndarray) -> None:
     with output.open("w", encoding="utf-8", newline="") as csv_file:
         writer = csv.writer(csv_file)
         writer.writerow(["index", "x", "y", "target_yaw_deg", "heading", "point_type", "target_speed", "curvature", "forced_straight", "segment"])
-        for index, (sample, sample_yaw, sample_curvature) in enumerate(zip(samples, yaw, curvature)):
-            writer.writerow([index, f"{sample.x:.3f}", f"{sample.y:.3f}", f"{sample_yaw:.3f}", "0.000", sample.point_type, "0.000", f"{sample_curvature:.8f}", int(sample.forced_straight), sample.segment])
+        for index, (sample, sample_yaw, sample_curvature, speed) in enumerate(zip(samples, yaw, curvature, target_speed)):
+            writer.writerow([index, f"{sample.x:.3f}", f"{sample.y:.3f}", f"{sample_yaw:.3f}", "0.000", sample.point_type, f"{speed:.3f}", f"{sample_curvature:.8f}", int(sample.forced_straight), sample.segment])
 
 
-def write_c_header(output: Path, samples: list[PathSample], yaw: np.ndarray, curvature: np.ndarray, source: Path, start_heading: Optional[float]) -> None:
+def write_c_header(output: Path, samples: list[PathSample], yaw: np.ndarray, curvature: np.ndarray, target_speed: np.ndarray, source: Path, start_heading: Optional[float]) -> None:
     lines = [
         "#ifndef _NAV_REPLAY_ROUTE_TABLE_H_",
         "#define _NAV_REPLAY_ROUTE_TABLE_H_",
@@ -395,18 +460,19 @@ def write_c_header(output: Path, samples: list[PathSample], yaw: np.ndarray, cur
         "",
         f"static const NavRamPoint_t nav_replay_static_route_points[{len(samples)}] = {{",
     ]
-    for sample, sample_yaw, sample_curvature in zip(samples, yaw, curvature):
-        lines.append(f"    {{{sample.x:.3f}f, {sample.y:.3f}f, {sample_yaw:.3f}f, 0.0f, (uint8){sample.point_type}, 0.0f, {sample_curvature:.8f}f}},")
+    for sample, sample_yaw, sample_curvature, speed in zip(samples, yaw, curvature, target_speed):
+        # NavRamPoint_t: x, y, target_yaw_deg, heading_deg, point_type, target_speed, curvature.
+        lines.append(f"    {{{sample.x:.3f}f, {sample.y:.3f}f, {sample_yaw:.3f}f, 0.0f, (uint8){sample.point_type}, {speed:.3f}f, {sample_curvature:.8f}f}},")
     lines.extend(["};", "", "#endif // _NAV_REPLAY_ROUTE_TABLE_H_", ""])
     output.write_text("\n".join(lines), encoding="utf-8")
 
 
-def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s: np.ndarray, curvature: np.ndarray) -> None:
+def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s: np.ndarray, curvature: np.ndarray, target_speed: np.ndarray) -> None:
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
     points = np.array([(sample.x, sample.y) for sample in samples], dtype=float)
     forced = np.array([sample.forced_straight for sample in samples], dtype=bool)
-    figure, (axis_path, axis_curve) = plt.subplots(1, 2, figsize=(16, 7), gridspec_kw={"width_ratios": [1.35, 1]})
+    figure, (axis_path, axis_speed, axis_curve) = plt.subplots(1, 3, figsize=(20, 7), gridspec_kw={"width_ratios": [1.35, 1, 1]})
     axis_path.plot(points[:, 0], points[:, 1], color="#1d4ed8", linewidth=2.0, label="G2 平滑路径")
     if forced.any():
         axis_path.scatter(points[forced, 0], points[forced, 1], s=9, color="#f97316", label="强制直线段", zorder=3)
@@ -420,6 +486,12 @@ def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s
     axis_path.axis("equal")
     axis_path.grid(True, alpha=0.25)
     axis_path.legend(loc="best")
+
+    axis_speed.plot(s, -target_speed * SPEED_TO_MM_S, color="#dc2626", linewidth=1.5)
+    axis_speed.set_title("离线速度规划")
+    axis_speed.set_xlabel("累计路径长度 (mm)")
+    axis_speed.set_ylabel("目标速度 (mm/s)")
+    axis_speed.grid(True, alpha=0.25)
 
     axis_curve.plot(s, curvature * 1000.0, color="#0f766e", linewidth=1.5)
     axis_curve.axhline(0.0, color="black", linewidth=0.8)
@@ -454,9 +526,10 @@ def main() -> int:
     markers = apply_special_exit_corrections(markers, pairs)
     samples, effective_sample_step_mm = generate_path_with_point_cap(markers)
     s, yaw, curvature = calculate_yaw_and_curvature(samples)
-    write_csv(csv_output, samples, yaw, curvature)
-    render(render_output, markers, samples, s, curvature)
-    write_c_header(args.header, samples, yaw, curvature, source, start_heading)
+    target_speed = calculate_target_speed(samples, s, curvature)
+    write_csv(csv_output, samples, yaw, curvature, target_speed)
+    render(render_output, markers, samples, s, curvature, target_speed)
+    write_c_header(args.header, samples, yaw, curvature, target_speed, source, start_heading)
 
     # Geometry is exact even when a 50 mm sampled row lies on a boundary.
     # Do not estimate this from the per-sample visual tag.
@@ -464,6 +537,7 @@ def main() -> int:
     print(f"输入: {source}")
     print(f"输出路径: {csv_output} ({len(samples)} 点, 总长 {s[-1]:.1f} mm)")
     print(f"采样间距: {effective_sample_step_mm:.1f} mm（上限 {NAV_ROUTE_MAX_POINTS} 点）")
+    print(f"目标速度范围: {target_speed.min():.1f} ~ {target_speed.max():.1f}（负数为前进指令）")
     print(f"渲染图: {render_output}")
     print(f"强制直线累计长度: {forced_length:.1f} mm")
     print(f"C 路表: {args.header}")
