@@ -3,6 +3,9 @@
 #include "../../nav_replay_route_table.h"
 #include "../../../vision/vision_bridge_control.h"
 #include "../../../vision/vision_three_stage_control.h"
+#include "../../../vision/vision_slope_control.h"
+#include "../../../vision/vision_bumpy_control.h"
+#include <math.h>
 #if (CURRENT_NAV_PLAN == 3) && (NAV_PLAN3_METHOD == PLAN3_METHOD_PRECISE)
 // ========================= 内部变量 =========================
 NavReplayState_e g_replay_state = REPLAY_IDLE;
@@ -20,11 +23,17 @@ volatile uint8 exit_beep_request = 0U;
 #define NAV_REPLAY_START_HEADING_DEG 0.0f
 #endif
 
+#ifndef NAV_SPEED_SLEW_DOWN_FAST
+#define NAV_SPEED_SLEW_DOWN_FAST 95.0f
+#endif
+
 static uint8 g_start_heading_aligned = 1;
 // 特殊任务入口已交给视觉状态机后，等待其结束并消费紧邻的退出锚点。
 static uint8 s_jump_exit_pending = 0U;
 static uint8 s_bridge_exit_pending = 0U;
 static uint8 s_bumpy_exit_pending = 0U;
+static uint8 s_slope_exit_pending = 0U;
+static float s_bumpy_vision_err_filtered = 0.0f;
 #define NAV_BRIDGE_HANDOFF_TICKS            (10U)  // 100ms：视觉退出控制平滑切换至 Plan3
 #define NAV_BRIDGE_HANDOFF_SPEED_STEP        (3.0f) // 每 10ms 最大速度目标变化
 #define NAV_BRIDGE_HANDOFF_ERR_STEP_DEG      (0.5f) // 每 10ms 最大转向误差变化
@@ -40,6 +49,10 @@ static uint8 s_start_heading_stable_count = 0;
 #if CURRENT_NAV_PLAN == 1
 static void NavReplay_ResetProcessState(void);
 #endif
+
+static float s_prev_speed_cmd = 0.0f;
+static float s_special_brake_dist_ratio = 1.0f;
+static uint8 s_special_zero_brake_issued = 0U;
 
 // ========================= 辅助函数 =========================
 
@@ -94,6 +107,27 @@ static uint8 NavReplay_IsBumpyExitPoint(uint16 point_idx)
 {
     return (uint8)((point_idx < nav_ram_data.point_count) &&
                    (nav_ram_data.points[point_idx].point_type == NAV_POINT_BUMP_EXIT));
+}
+
+static uint8 NavReplay_IsSlopeExitPoint(uint16 point_idx)
+{
+    return (uint8)((point_idx < nav_ram_data.point_count) &&
+                   (nav_ram_data.points[point_idx].point_type == NAV_POINT_SLOPE_EXIT));
+}
+
+static void NavReplay_CompleteVisionSlopeExit(void)
+{
+    if (NavReplay_IsSlopeExitPoint(g_target_idx))
+    {
+        nav_vision_fusion_x = nav_ram_data.points[g_target_idx].x;
+        nav_vision_fusion_y = nav_ram_data.points[g_target_idx].y;
+        exit_beep_request = 1U;
+        g_target_idx++;
+    }
+
+    s_slope_exit_pending = 0U;
+    s_special_handoff_ticks = NAV_BRIDGE_HANDOFF_TICKS;
+    g_special_action_trigger = 0U;
 }
 
 static void NavReplay_CompleteVisionBridgeExit(void)
@@ -190,11 +224,15 @@ void NavReplay_Start(void)
     s_jump_exit_pending = 0U;
     s_bridge_exit_pending = 0U;
     s_bumpy_exit_pending = 0U;
+    s_slope_exit_pending = 0U;
+    s_bumpy_vision_err_filtered = 0.0f;
     s_special_handoff_ticks = 0U;
     s_arrival_target_idx = 0xFFFFU;
     s_arrival_min_dist = 0.0f;
     entry_beep_request = 0U;
     exit_beep_request = 0U;
+    s_prev_speed_cmd = 0.0f;
+    s_special_zero_brake_issued = 0U;
 #if IMU_CATEGORY == 3
     g_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0 : 1;
     s_start_heading_stable_count = 0;
@@ -221,9 +259,13 @@ void NavReplay_Stop(void)
     s_jump_exit_pending = 0U;
     s_bridge_exit_pending = 0U;
     s_bumpy_exit_pending = 0U;
+    s_slope_exit_pending = 0U;
+    s_bumpy_vision_err_filtered = 0.0f;
     s_special_handoff_ticks = 0U;
     s_arrival_target_idx = 0xFFFFU;
     s_arrival_min_dist = 0.0f;
+    s_prev_speed_cmd = 0.0f;
+    s_special_zero_brake_issued = 0U;
     g_start_heading_aligned = 1;
 #if IMU_CATEGORY == 3
     s_start_heading_stable_count = 0;
@@ -239,81 +281,251 @@ void NavReplay_Stop(void)
 }
 
 // ============================================================================
-// 精准复刻处理逻辑 (点到点，先转再走，加入防震荡与平滑滤波)
-// 慢慢的跑科三
+// 新版动态连续规划处理逻辑 (从 Plan2 Lite 移植)
 // ============================================================================
-// --- 角度平滑与防过冲参数 ---
-#define MAX_SPIN_ERR        2.0f   // 原地对齐时的最大输出角度(度)。越小转得越柔和，建议 20-40，彻底解决原地打转过冲！
-#define MAX_APPROACH_ERR    4.0f   // 直线逼近时的最大转角(度)。防止车子在行进中猛烈变道。
-#define ANGLE_FILTER_ALPHA  0.3f    // 角度滤波系数(0~1)。越小越丝滑，越大越跟手。防止在点旁边抽搐。
 
-static float s_prev_err_degree = 0.0f; // 用于角度滤波的静态变量
-uint8 is_arrived = 0;  // 到达判定状态锁
-
-static uint8 NavReplay_TargetArrived(uint16 target_idx, float dist)
+static uint8 IsSpecialPointType(uint8 point_type)
 {
-    if (target_idx != s_arrival_target_idx)
+    return (uint8)(point_type != NAV_POINT_PATH);
+}
+
+static float CalcBearingDeg(float x1, float y1, float x2, float y2)
+{
+    return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
+}
+
+// 速度斜率限制器
+static float NavReplay_SpeedSlew_Update_Plan3(float raw_speed)
+{
+    float diff = raw_speed - s_prev_speed_cmd;
+    float step_limit = NAV_SPEED_SLEW_DOWN_FAST;
+
+    if (diff > step_limit)
     {
-        s_arrival_target_idx = target_idx;
-        s_arrival_min_dist = dist;
+        raw_speed = s_prev_speed_cmd + step_limit;
     }
-    else if (dist < s_arrival_min_dist)
+    else if (diff < -step_limit)
     {
-        s_arrival_min_dist = dist;
+        raw_speed = s_prev_speed_cmd - step_limit;
     }
 
-    if (dist <= NAV_DIST_ARRIVE)
+    s_prev_speed_cmd = raw_speed;
+    return raw_speed;
+}
+
+// 底层对正：计算指向目标点的偏航误差
+static void SelectDriveHeading(float point_yaw_deg, float *selected_err_deg, float *speed_sign)
+{
+    *selected_err_deg = NormalizeAngle(point_yaw_deg - inertial_nav.relative_yaw);
+    *speed_sign = -1.0f; // 始终向车尾方向行驶（假设原框架负速度代表前进）
+}
+
+// 基于距离和对正角的常规降速
+static float PlanSpeedAbsByDistance(float dist_mm, float stop_radius_mm, float yaw_err_deg)
+{
+    float remain = dist_mm - stop_radius_mm;
+    float speed_abs;
+
+    if (remain <= 0.0f)
     {
-        return 1U;
+        return 0.0f;
     }
 
-    return (uint8)((s_arrival_min_dist <= NAV_DIST_PASS_CAPTURE) &&
-                   (dist >= (s_arrival_min_dist + NAV_DIST_PASS_HYSTERESIS)));
+    speed_abs = sqrtf(2.0f * NAV_POINT_SPEED_DECEL_CMD2_PER_MM * remain);
+    
+    if (speed_abs > fabsf((float)NAV_SPEED_FAST)) speed_abs = fabsf((float)NAV_SPEED_FAST);
+    if (speed_abs < 0.0f) speed_abs = 0.0f;
+
+    if (fabsf(yaw_err_deg) > NAV_POINT_YAW_SLOW_TOLERANCE)
+    {
+        speed_abs = 0.0f; // 角度误差太大，原地调整不发车
+    }
+    else if (fabsf(yaw_err_deg) > NAV_POINT_YAW_STOP_TOLERANCE)
+    {
+        speed_abs *= 0.35f; // 角度误差中等，限速行驶
+    }
+
+    return speed_abs;
+}
+
+// 计算刹车距离
+static float CalcSpecialBrakeRadius(float v_actual)
+{
+    float v_mmps = fabsf(v_actual);
+    float stop_dist = (0.00025f * v_mmps * v_mmps - 0.2877f * v_mmps + 887.0f) * s_special_brake_dist_ratio;
+    if (stop_dist < 0.0f) stop_dist = 0.0f;
+    return stop_dist;
+}
+
+// 混合刹车与带速度对正逻辑
+static uint8 HandleSpecialPointStopAndTrigger_Plan3(float dist_to_point)
+{
+    float v_actual = fabsf(inertial_nav.vx_body); 
+    float stop_dist_current = CalcSpecialBrakeRadius(v_actual);
+    float stop_dist_target = CalcSpecialBrakeRadius(NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S);
+    float required_brake_dist = stop_dist_current - stop_dist_target;
+    float brake_radius_mm;
+    float entry_yaw_err;
+    float speed_cmd;
+
+    if (required_brake_dist < 0.0f) required_brake_dist = 0.0f;
+    brake_radius_mm = NAV_POINT_SPECIAL_EXECUTE_RADIUS + NAV_POINT_SPECIAL_BRAKE_MARGIN_MM + required_brake_dist;
+
+    if (s_special_zero_brake_issued == 0U)
+    {
+        if (dist_to_point <= brake_radius_mm)
+        {
+            s_special_zero_brake_issued = 1U;
+        }
+    }
+
+    if (s_special_zero_brake_issued != 0U)
+    {
+        if (dist_to_point <= NAV_POINT_SPECIAL_EXECUTE_RADIUS)
+        {
+            if (v_actual <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S + 50.0f)
+            {
+                if (g_current_point_type == NAV_POINT_BUMP)
+                {
+                    VisionBumpyControl_SetEnable(1U);
+                    if (VisionBumpyControl_IsEnabled() && (g_vision_bumpy_control_status.state != VISION_BUMPY_CTRL_IDLE))
+                    {
+                        float raw_err = VisionBumpyControl_GetErrDegreeCmd();
+                        s_bumpy_vision_err_filtered = 0.1f * raw_err + 0.9f * s_bumpy_vision_err_filtered;
+                        entry_yaw_err = s_bumpy_vision_err_filtered;
+                    }
+                    else
+                    {
+                        entry_yaw_err = NormalizeAngle(nav_ram_data.points[g_target_idx].target_yaw_deg - inertial_nav.relative_yaw);
+                        s_bumpy_vision_err_filtered = entry_yaw_err;
+                    }
+                }
+                else
+                {
+                    entry_yaw_err = NormalizeAngle(nav_ram_data.points[g_target_idx].target_yaw_deg - inertial_nav.relative_yaw);
+                }
+                
+                if (fabsf(entry_yaw_err) <= NAV_SPECIAL_ENTRY_YAW_TOLERANCE)
+                {
+                    g_special_action_trigger = 1U;
+                    
+                    if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1U;
+                    else if (g_current_point_type == NAV_POINT_SLOPE)
+                    {
+                        entry_beep_request = 1U;
+                        s_slope_exit_pending = NavReplay_IsSlopeExitPoint(g_target_idx + 1U);
+                        VisionSlopeTask_Start();
+                    }
+                    else if (g_current_point_type == NAV_POINT_JUMP)
+                    {
+                        entry_beep_request = 1U;
+                        s_jump_exit_pending = NavReplay_IsJumpExitPoint(g_target_idx + 1U);
+                        VisionThreeStageControl_Start();
+                    }
+                    else if (g_current_point_type == NAV_POINT_BRIDGE)
+                    {
+                        entry_beep_request = 1U;
+                        s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
+                        VisionBridgeTask_Start();
+                    }
+                    else if (g_current_point_type == NAV_POINT_BUMP)
+                    {
+                        s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
+                        if (s_bumpy_exit_pending)
+                        {
+                            BumpyRoad_SetExitAnchor(nav_ram_data.points[g_target_idx + 1U].x,
+                                                    nav_ram_data.points[g_target_idx + 1U].y);
+                        }
+                        BumpyRoad_Trigger();
+                    }
+                    return 2U;
+                }
+                else
+                {
+                    speed_cmd = - (NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S / SPEED_TO_MM_S);
+                    target_speed_set = NavReplay_SpeedSlew_Update_Plan3(speed_cmd);
+                    err_degree = entry_yaw_err;
+                    return 0U;
+                }
+            }
+            else
+            {
+                target_speed_set = 0.0f;
+                s_prev_speed_cmd = 0.0f;
+                return 0U;
+            }
+        }
+        else
+        {
+            if (v_actual <= NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S + 50.0f)
+            {
+                speed_cmd = - (NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S / SPEED_TO_MM_S);
+                target_speed_set = NavReplay_SpeedSlew_Update_Plan3(speed_cmd);
+                return 0U;
+            }
+            else
+            {
+                target_speed_set = 0.0f;
+                s_prev_speed_cmd = 0.0f;
+                return 0U;
+            }
+        }
+    }
+    return 1U;
 }
 
 void NavReplay_Process(void)
 {
+    float tx, ty, nav_x, nav_y, dist_to_point;
+    float point_yaw_deg, selected_err_deg, speed_sign, stop_radius, speed_mag;
+    uint8 special_res;
+#if IMU_CATEGORY == 3
+    float heading_err;
+#endif
+
     if (g_replay_state != REPLAY_RUNNING)
     {
-        s_prev_err_degree = 0.0f; 
         return;
     }
 
-    // 三级跳结束后，消费紧邻的 30 退出锚点；只有视觉确认的正常脱出才重定位。
+    if (s_slope_exit_pending)
+    {
+        if (!VisionSlopeTask_IsActive())
+        {
+            NavReplay_CompleteVisionSlopeExit();
+        }
+        else
+        {
+            return;
+        }
+    }
     if (s_jump_exit_pending)
     {
         if (!VisionThreeStageControl_IsActive())
         {
             NavReplay_CompleteVisionJumpExit();
-            s_prev_err_degree = 0.0f;
         }
         else
         {
             return;
         }
     }
-
-    // 视觉桥任务结束后，将融合坐标钉到 40 退出锚点并直接进入后续普通点。
     if (s_bridge_exit_pending)
     {
         if (!VisionBridgeTask_IsActive())
         {
             NavReplay_CompleteVisionBridgeExit();
-            s_prev_err_degree = 0.0f;
         }
         else
         {
             return;
         }
     }
-
-    // 颠簸状态机结束后，将 50 退出锚点消费掉；视觉异常自动结束时不重定位。
     if (s_bumpy_exit_pending)
     {
         if (!BumpyRoad_Is_Active())
         {
             NavReplay_CompleteVisionBumpyExit();
-            s_prev_err_degree = 0.0f;
         }
         else
         {
@@ -323,22 +535,16 @@ void NavReplay_Process(void)
 
     if (g_special_action_trigger == 1)
     {
-        s_prev_err_degree = 0.0f;
         return;
     }
 
-    // 视觉状态机结束后，先以最后的视觉控制量向下一个点平滑过渡，避免速度/转向突变。
     if (s_special_handoff_ticks > 0U)
     {
-        float nav_x = nav_vision_fusion_x;
-        float nav_y = nav_vision_fusion_y;
-        float tx;
-        float ty;
-        float dist;
-        float target_yaw;
-        float desired_err;
-        float desired_speed;
-
+        float target_yaw, desired_err, desired_dist, desired_speed, ratio;
+        
+        nav_x = nav_vision_fusion_x;
+        nav_y = nav_vision_fusion_y;
+        
         if (g_target_idx >= nav_ram_data.point_count)
         {
             s_special_handoff_ticks = 0U;
@@ -349,60 +555,50 @@ void NavReplay_Process(void)
 
         tx = nav_ram_data.points[g_target_idx].x;
         ty = nav_ram_data.points[g_target_idx].y;
-        dist = CalcDistance(nav_x, nav_y, tx, ty);
-        target_yaw = -atan2f(ty - nav_y, -(tx - nav_x)) * 57.29578f;
+        desired_dist = CalcDistance(nav_x, nav_y, tx, ty);
+        target_yaw = CalcBearingDeg(nav_x, nav_y, tx, ty);
         desired_err = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
-        if (desired_err > MAX_APPROACH_ERR) desired_err = MAX_APPROACH_ERR;
-        if (desired_err < -MAX_APPROACH_ERR) desired_err = -MAX_APPROACH_ERR;
 
-        if (fabsf(NormalizeAngle(target_yaw - inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE)
+        if (fabsf(NormalizeAngle(target_yaw - inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE) 
         {
             desired_speed = NAV_SPEED_STOP;
         }
-        else if (dist > NAV_DIST_FAR)
+        else if (desired_dist > NAV_DIST_FAR) 
         {
             desired_speed = NAV_SPEED_FAST;
         }
-        else if (dist > NAV_DIST_NEAR)
+        else if (desired_dist > NAV_DIST_NEAR)
         {
-            float ratio = (dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
+            ratio = (desired_dist - NAV_DIST_NEAR) / (NAV_DIST_FAR - NAV_DIST_NEAR);
             desired_speed = NAV_SPEED_SLOW + (NAV_SPEED_FAST - NAV_SPEED_SLOW) * ratio;
         }
-        else
+        else 
         {
             desired_speed = NAV_SPEED_SLOW;
         }
 
         err_degree = NavReplay_RampFloat(err_degree, desired_err, NAV_BRIDGE_HANDOFF_ERR_STEP_DEG);
         target_speed_set = NavReplay_RampFloat(target_speed_set, desired_speed, NAV_BRIDGE_HANDOFF_SPEED_STEP);
-        s_prev_err_degree = err_degree;
         s_special_handoff_ticks--;
         return;
     }
 
 #if IMU_CATEGORY == 3
-    // 开局起跑角度对齐
     if (!g_start_heading_aligned)
     {
-        float heading_err = NormalizeAngle(NAV_REPLAY_START_HEADING_DEG - heading);
-        
-        if (heading_err > MAX_SPIN_ERR) heading_err = MAX_SPIN_ERR;
-        if (heading_err < -MAX_SPIN_ERR) heading_err = -MAX_SPIN_ERR;
-        
+        heading_err = NormalizeAngle(NAV_REPLAY_START_HEADING_DEG - heading);
         err_degree = heading_err;
         target_speed_set = NAV_SPEED_STOP;
 
-        if (fabsf(NormalizeAngle(NAV_REPLAY_START_HEADING_DEG - heading)) <= NAV_START_HEADING_TOLERANCE)
+        if (fabsf(heading_err) <= NAV_START_HEADING_TOLERANCE)
         {
             g_start_heading_aligned = 1;
             err_degree = 0.0f;
-            s_prev_err_degree = 0.0f;
         }
         else return;
     }
 #endif
 
-    // 1. 检查是否跑完全部点位
     if (g_target_idx >= nav_ram_data.point_count)
     {
         g_replay_state = REPLAY_FINISHED;
@@ -411,96 +607,58 @@ void NavReplay_Process(void)
         return;
     }
 
-    // 2. 获取当前目标点数据
-    float tx = nav_ram_data.points[g_target_idx].x;
-    float ty = nav_ram_data.points[g_target_idx].y;
+    tx = nav_ram_data.points[g_target_idx].x;
+    ty = nav_ram_data.points[g_target_idx].y;
     g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
 
-    // 3. 计算距离和期望位置角度
-    float nav_x = nav_vision_fusion_x;
-    float nav_y = nav_vision_fusion_y;
-    float dx = tx - nav_x;
-    float dy = ty - nav_y;
-    float dist = CalcDistance(nav_x, nav_y, tx, ty);
+    nav_x = nav_vision_fusion_x;
+    nav_y = nav_vision_fusion_y;
+    dist_to_point = CalcDistance(nav_x, nav_y, tx, ty);
 
-    float target_yaw = -atan2f(dy, -dx) * 57.29578f; 
-    float raw_err = NormalizeAngle(target_yaw - inertial_nav.relative_yaw);
-
-    // 4. 控制策略：不在点前降速；进入捕获范围或已穿点时直接切换状态机。
-    if (NavReplay_TargetArrived(g_target_idx, dist))
+    if (g_current_point_type == NAV_POINT_PATH && dist_to_point <= NAV_DIST_ARRIVE)
     {
-        if (g_current_point_type != NAV_POINT_PATH)
+        g_target_idx++;
+        s_special_zero_brake_issued = 0U;
+        return;
+    }
+
+    point_yaw_deg = CalcBearingDeg(nav_x, nav_y, tx, ty);
+    SelectDriveHeading(point_yaw_deg, &selected_err_deg, &speed_sign);
+
+    if (IsSpecialPointType(g_current_point_type))
+    {
+        uint8 special_res = HandleSpecialPointStopAndTrigger_Plan3(dist_to_point);
+        if (special_res == 2U)
         {
-            float entry_yaw_err = NormalizeAngle(
-                nav_ram_data.points[g_target_idx].target_yaw_deg - inertial_nav.relative_yaw);
-
-            // Require the recorded heading as well as the target position before
-            // handing control to a special-point state machine.
-            if (fabsf(entry_yaw_err) > NAV_SPECIAL_ENTRY_YAW_TOLERANCE)
+            if (g_target_idx < nav_ram_data.point_count - 1U)
             {
-                if (entry_yaw_err > MAX_SPIN_ERR) entry_yaw_err = MAX_SPIN_ERR;
-                if (entry_yaw_err < -MAX_SPIN_ERR) entry_yaw_err = -MAX_SPIN_ERR;
-
-                target_speed_set = NAV_SPEED_STOP;
-                err_degree = entry_yaw_err;
-                s_prev_err_degree = entry_yaw_err;
-                return;
+                g_target_idx++;
+                s_special_zero_brake_issued = 0U;
             }
-
-            // 特殊点到达后直接把控制权交给对应状态机，不停车、不原地对角。
-            if (g_current_point_type == NAV_POINT_CIRCLE) minefield_flag = 1;
-            else if (g_current_point_type == NAV_POINT_JUMP)
+            else
             {
-                entry_beep_request = 1U;
-                s_jump_exit_pending = NavReplay_IsJumpExitPoint(g_target_idx + 1U);
-                VisionThreeStageControl_Start();
+                g_replay_state = REPLAY_FINISHED;
             }
-            else if (g_current_point_type == NAV_POINT_BRIDGE)
-            {
-                entry_beep_request = 1U;
-                s_bridge_exit_pending = NavReplay_IsBridgeExitPoint(g_target_idx + 1U);
-                VisionBridgeTask_Start();
-            }
-            else if (g_current_point_type == NAV_POINT_BUMP)
-            {
-                s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
-                if (s_bumpy_exit_pending)
-                {
-                    BumpyRoad_SetExitAnchor(nav_ram_data.points[g_target_idx + 1U].x,
-                                             nav_ram_data.points[g_target_idx + 1U].y);
-                }
-                BumpyRoad_Trigger();
-            }
-
-            g_special_action_trigger = 1U;
-            g_target_idx++;
-            s_prev_err_degree = 0.0f;
+            return;
         }
-        else
+        else if (special_res == 0U)
         {
-            // 普通路径点：到达或穿过后直接切下一个点。
-            g_target_idx++;
-            s_prev_err_degree = 0.0f;
+            // 在刹车或对正阶段，HandleSpecialPointStopAndTrigger_Plan3 已经接管了 target_speed_set 和 err_degree
+            if (s_special_zero_brake_issued != 0U && dist_to_point > NAV_POINT_SPECIAL_EXECUTE_RADIUS)
+            {
+                err_degree = selected_err_deg;
+            }
+            return;
         }
     }
-    else
-    {
-        if (raw_err > MAX_APPROACH_ERR) raw_err = MAX_APPROACH_ERR;
-        if (raw_err < -MAX_APPROACH_ERR) raw_err = -MAX_APPROACH_ERR;
 
-        err_degree = ANGLE_FILTER_ALPHA * raw_err + (1.0f - ANGLE_FILTER_ALPHA) * s_prev_err_degree;
-        s_prev_err_degree = err_degree;
-
-        // 如果角度偏差过大，则原地转向；否则快速逼近
-        if (fabsf(NormalizeAngle(target_yaw - inertial_nav.relative_yaw)) > NAV_YAW_TOLERANCE)
-        {
-            target_speed_set = NAV_SPEED_STOP;
-        }
-        else
-        {
-            target_speed_set = NAV_SPEED_FAST;
-        }
-    }
+    // 6. 普通路径规划降速
+    err_degree = selected_err_deg;
+    stop_radius = IsSpecialPointType(g_current_point_type) ? NAV_POINT_SPECIAL_EXECUTE_RADIUS : NAV_DIST_ARRIVE;
+    speed_mag = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
+    
+    target_speed_set = NavReplay_SpeedSlew_Update_Plan3(speed_sign * speed_mag);
 }
 
 #endif
+
