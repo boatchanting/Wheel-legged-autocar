@@ -84,7 +84,8 @@ static void BumpyRoad_ApplyVisionSteer(void)
 {
     if (VisionBumpyControl_IsEnabled())
     {
-        err_degree = VisionBumpyControl_GetErrDegreeCmd();
+        // err_degree = VisionBumpyControl_GetErrDegreeCmd();//视觉控制方向
+        err_degree = 0.0f;
     }
     else
     {
