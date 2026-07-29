@@ -352,6 +352,19 @@
             </div>
         </div>
 
+        <div class="panel-section">
+            <h3>➕ 两点之间插点</h3>
+            <div class="edit-grid">
+                <span class="label">插入数量</span><input type="number" id="insertCount" min="1" max="1000" step="1" value="1">
+            </div>
+            <div style="display:flex; gap:8px; margin-top:6px; align-items:center;">
+                <button class="btn btn-primary" id="insertBetween" disabled>在两点间插入</button>
+            </div>
+            <div style="font-size:12px; color:#5f6c7d; margin-top:4px;">
+                Ctrl 点击或在点表中多选恰好两个点；将按路径顺序在它们之间等距插入 PATH 点，坐标和航向平滑插值。
+            </div>
+        </div>
+
         <!-- 批量平移（直角/极坐标） -->
         <div class="panel-section">
             <h3>📐 批量平移 (直角/极坐标)</h3>
@@ -503,6 +516,8 @@
     const applyEditBtn = $('applyEdit');
     const deleteBtn = $('deletePoint');
     const addBtn = $('addPoint');
+    const insertCountInput = $('insertCount');
+    const insertBetweenBtn = $('insertBetween');
     const exportBtn = $('exportBtn');
     const tableBody = $('pointTableBody');
     const fileInput = $('fileInput');
@@ -1005,6 +1020,42 @@
         fitAll();
     }
 
+    function interpolateAngle(from, to, ratio, normalize) {
+        let delta = ((to - from + 540) % 360) - 180;
+        return normalize(from + delta * ratio);
+    }
+
+    function insertPointsBetweenSelected() {
+        if (selectedIds.length !== 2) {
+            tip('请先选择恰好两个点');
+            return;
+        }
+        const count = parseInt(insertCountInput.value, 10);
+        if (!Number.isInteger(count) || count < 1 || count > 1000) {
+            tip('插入数量应为 1 到 1000 的整数');
+            return;
+        }
+        const [firstIndex, secondIndex] = [...selectedIds].sort((a, b) => a - b);
+        const first = points[firstIndex];
+        const second = points[secondIndex];
+        const inserted = [];
+        for (let i = 1; i <= count; i++) {
+            const ratio = i / (count + 1);
+            inserted.push({
+                x: first.x + (second.x - first.x) * ratio,
+                y: first.y + (second.y - first.y) * ratio,
+                relative_yaw: interpolateAngle(first.relative_yaw, second.relative_yaw, ratio, normalizeYaw),
+                heading: interpolateAngle(first.heading, second.heading, ratio, normalizeHeading),
+                point_type: 0
+            });
+        }
+        points.splice(secondIndex, 0, ...inserted);
+        selectedIds = inserted.map((_, i) => secondIndex + i);
+        updateUI();
+        draw();
+        tip(`已在点 ${firstIndex} 和 ${secondIndex} 之间插入 ${count} 个点`);
+    }
+
     function deleteSelected() {
         if (selectedIds.length === 0) return;
         const sorted = [...selectedIds].sort((a, b) => b - a);
@@ -1165,6 +1216,7 @@
         }
 
         applyBatchBtn.disabled = (selectedIds.length === 0);
+        insertBetweenBtn.disabled = (selectedIds.length !== 2);
         renderTable();
     }
 
@@ -1282,8 +1334,8 @@
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
         const now = new Date();
-        const ts = now.getFullYear() + '' + String(now.getMonth() + 1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0');
-        link.download = `points_${ts}.csv`;
+        const ts = now.getFullYear() + '' + String(now.getMonth() + 1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0') + String(now.getSeconds()).padStart(2,'0');
+        link.download = `nav_mark_points_${ts}.csv`;
         link.click();
         tip('导出成功');
     }
@@ -1327,6 +1379,7 @@
     addBtn.addEventListener('click', () => {
         addPoint(0, 0, 0, 0, 0);
     });
+    insertBetweenBtn.addEventListener('click', insertPointsBetweenSelected);
     exportBtn.addEventListener('click', exportCSV);
     applyBatchBtn.addEventListener('click', applyBatchTransform);
     clearBatchBtn.addEventListener('click', clearPreview);
