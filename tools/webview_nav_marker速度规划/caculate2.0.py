@@ -41,23 +41,27 @@ MIN_CONE_CLEARANCE_MM = 500.0
 CONE_RADIUS_MM = 140.0
 CAR_HALF_WIDTH_MM = 135.0
 
-PRE_UTURN_SPEED_MAX_MM_S = 5000.0
-PATH_SPEED_MAX_MM_S = 4000.0
-SPRINT_SPEED_MM_S = 3000.0
-UTURN_SPEED_MAX_MM_S = 4000.0
-ENABLE_FINISH_SPRINT = True
-MAX_ACCEL_MM_S2 = 1500.0
-MAX_DECEL_MM_S2 = 1500.0
-PRE_UTURN_MAX_LATERAL_ACCEL_MM_S2 = 3500.0
-UTURN_MAX_LATERAL_ACCEL_MM_S2 = 6000.0
-NORMAL_SLALOM_MAX_LATERAL_ACCEL_MM_S2 = 6000.0
-MAX_PATH_YAW_RATE_RAD_S = 2.8
-MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0
-SPEED_TO_MM_S = 4.79
-CURVATURE_EPS = 1e-9
-SLALOM_CURVE_ENTER_ABS_CURVATURE = 0.0005
-SLALOM_CURVE_EXIT_ABS_CURVATURE = 0.0003
-SLALOM_CURVE_EXIT_PERSISTENCE_MM = 150.0
+# ===== 速度规划可调参数（修改后需重新生成 nav_replay_route_table.h） =====
+PRE_UTURN_SPEED_MAX_MM_S = 5000.0  # 掉头前直线路段最高速度，单位 mm/s。
+PATH_SPEED_MAX_MM_S = 4000.0       # 绕桩及普通路径最高速度，单位 mm/s。
+SPRINT_SPEED_MM_S = 3000.0         # 终点冲线段预留速度，单位 mm/s（当前逻辑未单独使用）。
+UTURN_SPEED_MAX_MM_S = 4000.0      # 掉头区域的绝对最高速度，单位 mm/s。
+UTURN_SPEED_SAFETY_FACTOR = 0.91   # 掉头曲率限速的安全系数；越小越保守。
+UTURN_ARC_CURVATURE_REL_TOLERANCE = 0.05  # 识别恒定圆弧时允许的相对曲率误差（5%）。
+UTURN_ARC_MIN_POINTS = 3           # 识别为圆弧主体所需的最少连续点数。
+ENABLE_FINISH_SPRINT = True        # 是否启用通过终点线后的冲线段。
+MAX_ACCEL_MM_S2 = 1500.0           # 速度包络最大加速度，单位 mm/s²。
+MAX_DECEL_MM_S2 = 1500.0           # 停车速度包络最大减速度，单位 mm/s²。
+PRE_UTURN_MAX_LATERAL_ACCEL_MM_S2 = 3500.0  # 掉头前路径允许的最大横向（向心）加速度，单位 mm/s²。
+UTURN_MAX_LATERAL_ACCEL_MM_S2 = 6000.0      # 掉头圆弧允许的最大横向（向心）加速度，单位 mm/s²。
+NORMAL_SLALOM_MAX_LATERAL_ACCEL_MM_S2 = 6000.0  # 绕桩弯道允许的最大横向（向心）加速度，单位 mm/s²。
+MAX_PATH_YAW_RATE_RAD_S = 2.8       # 非掉头段最大偏航角速度，单位 rad/s；过小会额外降速。
+MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0     # 非掉头段最大偏航角加速度，单位 rad/s²；限制曲率突变处的速度。
+SPEED_TO_MM_S = 4.79                # 底盘速度指令到实际速度的换算系数：实际 mm/s = 指令 × 本值。
+CURVATURE_EPS = 1e-9                # 判定零曲率的数值阈值，通常无需调整。
+SLALOM_CURVE_ENTER_ABS_CURVATURE = 0.0005  # 绕桩段进入弯道平台的曲率阈值，单位 1/mm。
+SLALOM_CURVE_EXIT_ABS_CURVATURE = 0.0003   # 绕桩段退出弯道平台的曲率阈值，单位 1/mm。
+SLALOM_CURVE_EXIT_PERSISTENCE_MM = 150.0   # 曲率低于退出阈值后持续该距离才退出弯道，单位 mm。
 
 UTURN_OVER_LINE_MM = 400.0
 UTURN_APPROACH_DISTANCES_MM = (1200.0, 2000.0, 3200.0, 4800.0, 6500.0)
@@ -70,17 +74,20 @@ UTURN_ARC_TARGET_ROUTE_INDICES = (5,)
 UTURN_ARC_MAX_SWEEP_RAD = math.radians(260.0)
 UTURN_ARC_LENGTH_PRIORITY_WEIGHT = 1.0
 UTURN_ARC_EXIT_BEZIER_HANDLE_MM = 200.0
+UTURN_ARC_EXIT_BLEND_DISTANCE_MM = 300.0
 UTURN_YAW_ACCEL_RELAX_MARGIN_POINTS = 10
 FINISH_OVER_LINE_MM = 700.0
-ACCEL_RESERVE_MARGIN_M = 0.20
-BRAKE_RESERVE_MARGIN_M = 0.20
-ACCEL_DISTANCE_COEFF = 0.1454
-ACCEL_DISTANCE_OFFSET_M = 1.0044
-BRAKE_DISTANCE_COEFF = 0.2094
-BRAKE_DISTANCE_OFFSET_M = -0.9238
+ACCEL_RESERVE_MARGIN_M = 0.20       # 加速预留安全距离，单位 m。
+BRAKE_RESERVE_MARGIN_M = 0.20       # 掉头前制动预留安全距离，单位 m。
+ACCEL_DISTANCE_COEFF = 0.1454       # 加速距离经验模型的二次项系数。
+ACCEL_DISTANCE_OFFSET_M = 1.0044    # 加速距离经验模型的常数项，单位 m。
+BRAKE_DISTANCE_COEFF = 0.2094       # 制动距离经验模型的二次项系数。
+BRAKE_DISTANCE_OFFSET_M = -0.9238   # 制动距离经验模型的常数项，单位 m。
 LINE_SAMPLE_COUNT = 11
 GAP_SAMPLE_COUNT = 9
 BEAM_WIDTH = 96
+GATE_CROSSING_SIDE_EPS_MM = 1.0e-6
+GATE_EXIT_LEADS_MM = (420.0, 650.0, 900.0)
 
 TURN_COST_WEIGHT = 900.0
 CLEARANCE_COST_WEIGHT = 90000.0
@@ -158,6 +165,135 @@ class OptimizedPathResult:
     action_xy: Tuple[float, float]
     min_clearance_mm: float
     score: float
+    uturn_tangent_exit_xy: Optional[Tuple[float, float]] = None
+
+
+@dataclass(frozen=True)
+class OrderedConeGate:
+    """A consecutive normal-cone pair which the route must traverse once."""
+    index: int
+    first: RoutePoint
+    second: RoutePoint
+    center_x: float
+    center_y: float
+    along_x: float
+    along_y: float
+    forward_x: float
+    forward_y: float
+    opening_start_mm: float
+    opening_end_mm: float
+
+
+def build_ordered_cone_gates(
+    cones: Sequence[RoutePoint],
+    travel_axis: Tuple[float, float],
+    entry_xy: Optional[Tuple[float, float]] = None,
+    exit_xy: Optional[Tuple[float, float]] = None,
+) -> List[OrderedConeGate]:
+    """Build gates (1,2), (2,3), ... in normal-cone marking order."""
+    axis_x, axis_y = _unit_vec(float(travel_axis[0]), float(travel_axis[1]))
+    gate_data: List[Tuple[RoutePoint, RoutePoint, float, float, float, float, float]] = []
+    for index in range(max(0, len(cones) - 1)):
+        first = cones[index]
+        second = cones[index + 1]
+        dx = second.x - first.x
+        dy = second.y - first.y
+        length = math.hypot(dx, dy)
+        if length <= 1.0e-6:
+            raise PathConstraintError(f"Gate {index + 1} has overlapping cone centres.")
+        if length <= 2.0 * MIN_CONE_CLEARANCE_MM:
+            raise PathConstraintError(
+                f"Gate {index + 1} is too narrow: {length:.1f}mm centre distance, "
+                f"requires more than {2.0 * MIN_CONE_CLEARANCE_MM:.1f}mm."
+            )
+
+        along_x = dx / length
+        along_y = dy / length
+        gate_data.append((
+            first,
+            second,
+            0.5 * (first.x + second.x),
+            0.5 * (first.y + second.y),
+            along_x,
+            along_y,
+            length,
+        ))
+
+    gates: List[OrderedConeGate] = []
+    for index, (first, second, center_x, center_y, along_x, along_y, length) in enumerate(gate_data):
+        forward_x = -along_y
+        forward_y = along_x
+        if entry_xy is not None and exit_xy is not None:
+            prev_x, prev_y = entry_xy if index == 0 else (gate_data[index - 1][2], gate_data[index - 1][3])
+            next_x, next_y = exit_xy if index == len(gate_data) - 1 else (gate_data[index + 1][2], gate_data[index + 1][3])
+            direction_x = next_x - prev_x
+            direction_y = next_y - prev_y
+        else:
+            direction_x = axis_x
+            direction_y = axis_y
+        if forward_x * direction_x + forward_y * direction_y < 0.0:
+            forward_x = -forward_x
+            forward_y = -forward_y
+
+        gates.append(OrderedConeGate(
+            index=index,
+            first=first,
+            second=second,
+            center_x=center_x,
+            center_y=center_y,
+            along_x=along_x,
+            along_y=along_y,
+            forward_x=forward_x,
+            forward_y=forward_y,
+            opening_start_mm=MIN_CONE_CLEARANCE_MM,
+            opening_end_mm=length - MIN_CONE_CLEARANCE_MM,
+        ))
+    return gates
+
+
+def validate_ordered_cone_gates(
+    points: Sequence[RoutePoint],
+    gates: Sequence[OrderedConeGate],
+) -> None:
+    """Reject routes that miss, touch, repeat, or reorder a cone gate."""
+    if not gates:
+        return
+    if len(points) < 2:
+        raise PathConstraintError("path has too few points to validate cone gates")
+
+    first_xy = _point_xy(points[0])
+    crossing_counts = tuple(0 for _ in gates)
+    last_nonzero_sides = tuple(_gate_side_sign(first_xy, gate) for gate in gates)
+    opening_touches = tuple(
+        _gate_side_sign(first_xy, gate) == 0 and _gate_opening_contains_xy(first_xy, gate)
+        for gate in gates
+    )
+    crossings: List[Tuple[float, int]] = []
+    for point_index in range(len(points) - 1):
+        progressed = _advance_ordered_gate_progress(
+            _point_xy(points[point_index]),
+            _point_xy(points[point_index + 1]),
+            gates,
+            crossing_counts,
+            last_nonzero_sides,
+            opening_touches,
+            enforce_order=False,
+        )
+        if progressed is None:
+            raise PathConstraintError("invalid cone-gate progress")
+        crossing_counts, last_nonzero_sides, opening_touches, events = progressed
+        crossings.extend((point_index + ratio, gate_index) for ratio, gate_index in events)
+
+    for gate in gates:
+        if crossing_counts[gate.index] != 1:
+            raise PathConstraintError(
+                f"Gate {gate.index + 1} must be crossed once through its safe opening; "
+                f"found {crossing_counts[gate.index]} crossings."
+            )
+
+    for expected_gate_index, (_path_index, gate_index) in enumerate(crossings):
+        if gate_index != expected_gate_index:
+            raise PathConstraintError(f"Gate {gate_index + 1} was crossed out of order.")
 
 
 class PathConstraintError(ValueError):
@@ -714,6 +850,137 @@ def _gap_candidates(
     return candidates
 
 
+def _gate_exit_candidates(
+    cone_a: RoutePoint,
+    cone_b: RoutePoint,
+    gate_index: int,
+) -> List[CandidatePoint]:
+    """Offer post-gate points on both sides, so a true crossing can be selected."""
+    dx = cone_b.x - cone_a.x
+    dy = cone_b.y - cone_a.y
+    distance = math.hypot(dx, dy)
+    if distance <= 1.0e-6:
+        raise PathConstraintError(f"cone gate {gate_index + 1} has overlapping cone centres")
+
+    normal_x = -dy / distance
+    normal_y = dx / distance
+    candidates: List[CandidatePoint] = []
+    for gap in _gap_candidates(cone_a, cone_b, gate_index):
+        for lead_mm in GATE_EXIT_LEADS_MM:
+            for side in (-1.0, 1.0):
+                candidates.append(CandidatePoint(
+                    gap.x + side * normal_x * lead_mm,
+                    gap.y + side * normal_y * lead_mm,
+                    f"gate_exit{gate_index + 1}",
+                ))
+    return _dedupe_candidate_points(candidates)
+
+
+def _gate_side_xy(point_xy: Tuple[float, float], gate: OrderedConeGate) -> float:
+    return (
+        (point_xy[0] - gate.center_x) * gate.forward_x
+        + (point_xy[1] - gate.center_y) * gate.forward_y
+    )
+
+
+def _gate_side_sign(point_xy: Tuple[float, float], gate: OrderedConeGate) -> int:
+    side = _gate_side_xy(point_xy, gate)
+    if side > GATE_CROSSING_SIDE_EPS_MM:
+        return 1
+    if side < -GATE_CROSSING_SIDE_EPS_MM:
+        return -1
+    return 0
+
+
+def _gate_opening_contains_xy(point_xy: Tuple[float, float], gate: OrderedConeGate) -> bool:
+    along_mm = (
+        (point_xy[0] - gate.first.x) * gate.along_x
+        + (point_xy[1] - gate.first.y) * gate.along_y
+    )
+    return gate.opening_start_mm - 1.0e-6 <= along_mm <= gate.opening_end_mm + 1.0e-6
+
+
+def _advance_ordered_gate_progress(
+    start_xy: Tuple[float, float],
+    end_xy: Tuple[float, float],
+    gates: Sequence[OrderedConeGate],
+    crossing_counts: Sequence[int],
+    last_nonzero_sides: Sequence[int],
+    opening_touches: Sequence[bool],
+    enforce_order: bool,
+) -> Optional[Tuple[Tuple[int, ...], Tuple[int, ...], Tuple[bool, ...], List[Tuple[float, int]]]]:
+    """Advance gate state, counting only a passage which reaches the other side."""
+    next_counts = list(crossing_counts)
+    next_sides = list(last_nonzero_sides)
+    next_touches = list(opening_touches)
+    events: List[Tuple[float, int]] = []
+
+    for gate in gates:
+        gate_index = gate.index
+        end_sign = _gate_side_sign(end_xy, gate)
+        if end_sign == 0:
+            if _gate_opening_contains_xy(end_xy, gate):
+                next_touches[gate_index] = True
+            continue
+
+        previous_sign = next_sides[gate_index]
+        if previous_sign != 0 and previous_sign != end_sign:
+            if next_touches[gate_index]:
+                events.append((0.0, gate_index))
+            else:
+                direct_events = _segment_ordered_gate_crossings(start_xy, end_xy, (gate,))
+                if direct_events:
+                    events.append((direct_events[0][0], gate_index))
+
+        next_sides[gate_index] = end_sign
+        next_touches[gate_index] = False
+
+    events.sort()
+    for _ratio, gate_index in events:
+        if enforce_order:
+            if next_counts[gate_index] != 0:
+                return None
+            if any(count == 0 for count in next_counts[:gate_index]):
+                return None
+        next_counts[gate_index] += 1
+
+    return tuple(next_counts), tuple(next_sides), tuple(next_touches), events
+
+
+def _filter_candidates_for_gate_progress(
+    candidates: Sequence[CandidatePoint],
+    gates: Sequence[OrderedConeGate],
+    passed_gate_count: int,
+) -> List[CandidatePoint]:
+    """Keep candidates after passed gates and before the next required gate."""
+    filtered: List[CandidatePoint] = []
+    for candidate in candidates:
+        point_xy = (candidate.x, candidate.y)
+        if any(_gate_side_xy(point_xy, gate) <= 1.0e-6 for gate in gates[:passed_gate_count]):
+            continue
+        if passed_gate_count < len(gates) and _gate_side_xy(point_xy, gates[passed_gate_count]) >= -1.0e-6:
+            continue
+        filtered.append(candidate)
+    return filtered
+
+
+def _gate_traversal_stages(gate: OrderedConeGate, lead_mm: float = 600.0) -> List[List[CandidatePoint]]:
+    """Return the ordered pre-line, in-line and post-line stages of one gate."""
+    return [
+        [CandidatePoint(
+            gate.center_x - gate.forward_x * lead_mm,
+            gate.center_y - gate.forward_y * lead_mm,
+            f"gate{gate.index + 1}_entry",
+        )],
+        [CandidatePoint(gate.center_x, gate.center_y, f"gap{gate.index + 1}")],
+        [CandidatePoint(
+            gate.center_x + gate.forward_x * lead_mm,
+            gate.center_y + gate.forward_y * lead_mm,
+            f"gate{gate.index + 1}_exit",
+        )],
+    ]
+
+
 def _sprint_entry_candidates(
     last_cone: RoutePoint,
     finish_s: float,
@@ -855,6 +1122,36 @@ def _is_sprint_entry_stage(stage: Sequence[CandidatePoint]) -> bool:
     return bool(stage) and all(cand.label.startswith("sprint_entry") for cand in stage)
 
 
+def _segment_ordered_gate_crossings(
+    start_xy: Tuple[float, float],
+    end_xy: Tuple[float, float],
+    gates: Sequence[OrderedConeGate],
+) -> List[Tuple[float, int]]:
+    """Return safe-opening crossings of every gate, ordered along one segment."""
+    events: List[Tuple[float, int]] = []
+    for gate in gates:
+        start_side = _gate_side_xy(start_xy, gate)
+        end_side = _gate_side_xy(end_xy, gate)
+        if not (
+            (start_side < -GATE_CROSSING_SIDE_EPS_MM and end_side >= -GATE_CROSSING_SIDE_EPS_MM)
+            or (start_side > GATE_CROSSING_SIDE_EPS_MM and end_side <= GATE_CROSSING_SIDE_EPS_MM)
+        ):
+            continue
+        denominator = start_side - end_side
+        if abs(denominator) <= 1.0e-9:
+            continue
+        ratio = start_side / denominator
+        cross_x = start_xy[0] + (end_xy[0] - start_xy[0]) * ratio
+        cross_y = start_xy[1] + (end_xy[1] - start_xy[1]) * ratio
+        along_mm = (
+            (cross_x - gate.first.x) * gate.along_x
+            + (cross_y - gate.first.y) * gate.along_y
+        )
+        if gate.opening_start_mm - 1.0e-6 <= along_mm <= gate.opening_end_mm + 1.0e-6:
+            events.append((ratio, gate.index))
+    return sorted(events)
+
+
 def _select_diverse_search_states(
     states: Sequence[Tuple[float, List[Tuple[float, float]], List[str]]],
     limit: int,
@@ -893,13 +1190,24 @@ def _beam_search_routes(
     start_xy: Tuple[float, float],
     stages: Sequence[Sequence[CandidatePoint]],
     cones: Sequence[RoutePoint],
+    gates: Sequence[OrderedConeGate] = (),
 ) -> List[Tuple[float, List[Tuple[float, float]]]]:
-    routes: List[Tuple[float, List[Tuple[float, float]], List[str]]] = [(0.0, [start_xy], ["start"])]
+    routes = [(
+        0.0,
+        [start_xy],
+        ["start"],
+        tuple(0 for _ in gates),
+        tuple(_gate_side_sign(start_xy, gate) for gate in gates),
+        tuple(
+            _gate_side_sign(start_xy, gate) == 0 and _gate_opening_contains_xy(start_xy, gate)
+            for gate in gates
+        ),
+    )]
 
     for stage_idx, stage in enumerate(stages):
         next_stage = stages[stage_idx + 1] if stage_idx + 1 < len(stages) else None
-        expanded: List[Tuple[float, List[Tuple[float, float]], List[str]]] = []
-        for current_cost, route, labels in routes:
+        expanded = []
+        for current_cost, route, labels, crossing_counts, last_nonzero_sides, opening_touches in routes:
             prev_xy = route[-1]
             prev_prev_xy = route[-2] if len(route) >= 2 else None
             for cand in stage:
@@ -912,13 +1220,32 @@ def _beam_search_routes(
                     for next_cand in next_stage
                 ):
                     continue
+                progressed = _advance_ordered_gate_progress(
+                    prev_xy,
+                    cand_xy,
+                    gates,
+                    crossing_counts,
+                    last_nonzero_sides,
+                    opening_touches,
+                    enforce_order=True,
+                )
+                if progressed is None:
+                    continue
+                next_crossing_counts, next_last_nonzero_sides, next_opening_touches, _events = progressed
                 length_cost = math.hypot(cand.x - prev_xy[0], cand.y - prev_xy[1])
                 turn_cost = 0.0
                 if prev_prev_xy is not None:
                     angle = _turn_angle_rad(prev_prev_xy, prev_xy, cand_xy)
                     turn_cost = TURN_COST_WEIGHT * angle * angle
                 total = current_cost + length_cost + turn_cost + _clearance_cost(clearance)
-                expanded.append((total, route + [cand_xy], labels + [cand.label]))
+                expanded.append((
+                    total,
+                    route + [cand_xy],
+                    labels + [cand.label],
+                    next_crossing_counts,
+                    next_last_nonzero_sides,
+                    next_opening_touches,
+                ))
 
         if not expanded:
             raise PathConstraintError("no candidate route can satisfy segment clearance")
@@ -935,7 +1262,15 @@ def _beam_search_routes(
         else:
             routes = expanded[:BEAM_WIDTH]
 
-    return [(cost, route) for cost, route, _labels in routes[:MAX_FINAL_CANDIDATES]]
+    if gates:
+        routes = [state for state in routes if all(count == 1 for count in state[3])]
+        if not routes:
+            raise PathConstraintError("no candidate route traverses every cone gate exactly once")
+    return [
+        (cost, route)
+        for cost, route, _labels, _crossings, _last_nonzero_sides, _opening_touches
+        in routes[:MAX_FINAL_CANDIDATES]
+    ]
 
 
 def _sample_hermite_path(
@@ -1211,36 +1546,43 @@ def _sample_circular_uturn_variant(
     rest_route = list(route[target_idx:])
     if not rest_route:
         return None
-    if len(rest_route) >= 2:
-        rest_tangent = _unit_vec(
-            rest_route[1][0] - rest_route[0][0],
-            rest_route[1][1] - rest_route[0][1],
-        )
-    else:
-        rest_tangent = _unit_vec(
+    rest_sample_route = _add_terminal_anchor_points(rest_route)
+    rest_x, rest_y = _sample_hermite_path(rest_sample_route, tension, sample_step_mm)
+    rest_s = np.insert(
+        np.cumsum(np.hypot(np.diff(rest_x), np.diff(rest_y))),
+        0,
+        0.0,
+    )
+    blend_idx = int(np.searchsorted(rest_s, UTURN_ARC_EXIT_BLEND_DISTANCE_MM, side="left"))
+    blend_idx = min(max(0, blend_idx), len(rest_x) - 1)
+    tangent_before_idx = max(0, blend_idx - 1)
+    tangent_after_idx = min(len(rest_x) - 1, blend_idx + 1)
+    rest_tangent = _unit_vec(
+        rest_x[tangent_after_idx] - rest_x[tangent_before_idx],
+        rest_y[tangent_after_idx] - rest_y[tangent_before_idx],
+        fallback=_unit_vec(
             rest_route[0][0] - end_tangent[0],
             rest_route[0][1] - end_tangent[1],
-        )
+        ),
+    )
     arc_exit_tangent = (
         -direction * math.sin(end_tangent[2]),
         direction * math.cos(end_tangent[2]),
     )
     connector_x, connector_y = _sample_cubic_bezier_connector(
         (end_tangent[0], end_tangent[1]),
-        rest_route[0],
+        (float(rest_x[blend_idx]), float(rest_y[blend_idx])),
         arc_exit_tangent,
         rest_tangent,
         UTURN_ARC_EXIT_BEZIER_HANDLE_MM,
         sample_step_mm,
     )
-    rest_sample_route = _add_terminal_anchor_points(rest_route)
-    rest_x, rest_y = _sample_hermite_path(rest_sample_route, tension, sample_step_mm)
     line_x, line_y = _polyline_sample_xy([route[0], (start_tangent[0], start_tangent[1])], sample_step_mm)
     arc_x = np.array([p[0] for p in arc_points], dtype=float)
     arc_y = np.array([p[1] for p in arc_points], dtype=float)
 
-    dense_x = np.concatenate([line_x[:-1], arc_x, connector_x[1:], rest_x[1:]])
-    dense_y = np.concatenate([line_y[:-1], arc_y, connector_y[1:], rest_y[1:]])
+    dense_x = np.concatenate([line_x[:-1], arc_x, connector_x[1:], rest_x[blend_idx + 1:]])
+    dense_y = np.concatenate([line_y[:-1], arc_y, connector_y[1:], rest_y[blend_idx + 1:]])
 
     mid_arc = arc_points[len(arc_points) // 2]
     raw_route = [
@@ -1248,6 +1590,7 @@ def _sample_circular_uturn_variant(
         (start_tangent[0], start_tangent[1]),
         mid_arc,
         (end_tangent[0], end_tangent[1]),
+        (float(rest_x[blend_idx]), float(rest_y[blend_idx])),
     ] + list(route[target_idx:])
     return raw_route, dense_x, dense_y
 
@@ -1399,7 +1742,12 @@ def minimum_path_cone_clearance(points: Sequence[RoutePoint], cones: Sequence[Ro
     return min_clearance
 
 
-def validate_final_path(points: Sequence[RoutePoint], cones: Sequence[RoutePoint]) -> float:
+def validate_final_path(
+    points: Sequence[RoutePoint],
+    cones: Sequence[RoutePoint],
+    gates: Sequence[OrderedConeGate] = (),
+) -> float:
+    validate_ordered_cone_gates(points, gates)
     clearance = minimum_path_cone_clearance(points, cones)
     if clearance < MIN_CONE_CLEARANCE_MM - 1.0e-6:
         raise PathConstraintError(
@@ -1450,11 +1798,12 @@ def _score_final_path(
     cones: Sequence[RoutePoint],
     route_cost: float,
     sprint_entry_xy: Optional[Tuple[float, float]] = None,
+    gates: Sequence[OrderedConeGate] = (),
 ) -> Tuple[float, float]:
     s_vals = cumulative_arc_length(points)
     curvature = signed_curvature(points)
     rate = curvature_rate_per_mm2(s_vals, curvature)
-    clearance = validate_final_path(points, cones)
+    clearance = validate_final_path(points, cones, gates=gates)
     length = float(s_vals[-1]) if len(s_vals) else 0.0
     max_abs_k = float(np.max(np.abs(curvature))) if len(curvature) else 0.0
     max_abs_rate = float(np.max(np.abs(rate))) if len(rate) else 0.0
@@ -1521,6 +1870,10 @@ def build_candidate_stages(
         sorted_real_cones = [item[2] for item in cone_with_s]
         finish_s, finish_l = _to_sl(_point_xy(finish_marker), origin_xy, axis, lateral)
 
+    # Every adjacent normal-cone pair is a gate in marking order:
+    # (1,2), (2,3), ... .  Do not reorder that topology by geometry.
+    sorted_real_cones = list(real_cones)
+
     start_xy = (0.0, 0.0)
     start_s, start_l = _to_sl(start_xy, origin_xy, axis, lateral)
     _first_cone_s, first_cone_l = _to_sl(_point_xy(sorted_real_cones[0]), origin_xy, axis, lateral)
@@ -1531,20 +1884,10 @@ def build_candidate_stages(
     traversal_stages: List[List[CandidatePoint]] = [
         _pseudo_uturn_approach_candidates(start_s, start_l, origin_xy, axis, lateral),
         _pseudo_uturn_overline_candidates(
-            start_s,
-            entry_l,
-            origin_xy,
-            axis,
-            lateral,
-            label="uturn_entry",
+            start_s, entry_l, origin_xy, axis, lateral, label="uturn_entry"
         ),
         _pseudo_uturn_overline_candidates(
-            start_s,
-            first_cone_l,
-            origin_xy,
-            axis,
-            lateral,
-            label="uturn_exit",
+            start_s, first_cone_l, origin_xy, axis, lateral, label="uturn_exit"
         ),
     ]
 
@@ -1560,15 +1903,28 @@ def build_candidate_stages(
             )
         )
 
-    for i in range(max(0, len(sorted_real_cones) - 1)):
-        traversal_stages.append(_gap_candidates(sorted_real_cones[i], sorted_real_cones[i + 1], i))
-        if i + 2 < len(sorted_real_cones):
+    for gate_index in range(max(0, len(sorted_real_cones) - 1)):
+        traversal_stages.append(
+            _gap_candidates(
+                sorted_real_cones[gate_index],
+                sorted_real_cones[gate_index + 1],
+                gate_index,
+            )
+        )
+        traversal_stages.append(
+            _gate_exit_candidates(
+                sorted_real_cones[gate_index],
+                sorted_real_cones[gate_index + 1],
+                gate_index,
+            )
+        )
+        if gate_index + 2 < len(sorted_real_cones):
             traversal_stages.append(
                 _cone_guard_candidates(
-                    sorted_real_cones[i],
-                    sorted_real_cones[i + 1],
-                    sorted_real_cones[i + 2],
-                    i + 2,
+                    sorted_real_cones[gate_index],
+                    sorted_real_cones[gate_index + 1],
+                    sorted_real_cones[gate_index + 2],
+                    gate_index + 2,
                 )
             )
 
@@ -1609,8 +1965,14 @@ def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathRe
     finish_marker = _fixed_finish_marker(uturn_marker)
     start_xy = (0.0, 0.0)
 
-    stages, sorted_cones, _axis = build_candidate_stages(uturn_marker, cones, finish_marker)
-    route_candidates = _beam_search_routes(start_xy, stages, sorted_cones)
+    stages, sorted_cones, axis = build_candidate_stages(uturn_marker, cones, finish_marker)
+    gates = build_ordered_cone_gates(
+        real_cones,
+        axis,
+        entry_xy=_point_xy(uturn_marker),
+        exit_xy=_point_xy(finish_marker),
+    )
+    route_candidates = _beam_search_routes(start_xy, stages, sorted_cones, gates=gates)
 
     best: Optional[OptimizedPathResult] = None
     best_fallback: Optional[OptimizedPathResult] = None
@@ -1634,7 +1996,13 @@ def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathRe
                     points = _route_points_from_xy(out_x, out_y)
                     validate_uturn_line_crossing(points, uturn_marker, real_cones, finish_marker)
                     sprint_entry_xy = variant_route[-2] if len(variant_route) >= 2 else None
-                    score, clearance = _score_final_path(points, sorted_cones, route_cost, sprint_entry_xy)
+                    score, clearance = _score_final_path(
+                        points,
+                        sorted_cones,
+                        route_cost,
+                        sprint_entry_xy,
+                        gates=gates,
+                    )
                     score += UTURN_ARC_LENGTH_PRIORITY_WEIGHT * float(cumulative_arc_length(points)[-1])
                 except PathConstraintError:
                     continue
@@ -1646,6 +2014,7 @@ def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathRe
                     action_xy=action_xy,
                     min_clearance_mm=clearance,
                     score=score,
+                    uturn_tangent_exit_xy=variant_route[4] if len(variant_route) >= 5 else None,
                 )
                 if best is None or result.score < best.score:
                     best = result
@@ -1660,7 +2029,13 @@ def generate_optimized_path(raw_points: Sequence[RoutePoint]) -> OptimizedPathRe
                 points = _route_points_from_xy(out_x, out_y)
                 validate_uturn_line_crossing(points, uturn_marker, real_cones, finish_marker)
                 sprint_entry_xy = route[-2] if len(route) >= 2 else None
-                score, clearance = _score_final_path(points, sorted_cones, route_cost, sprint_entry_xy)
+                score, clearance = _score_final_path(
+                    points,
+                    sorted_cones,
+                    route_cost,
+                    sprint_entry_xy,
+                    gates=gates,
+                )
             except PathConstraintError:
                 continue
 
@@ -1710,6 +2085,65 @@ def uturn_curve_speed_limit_mm_s(curvature: float) -> float:
         UTURN_SPEED_MAX_MM_S,
         math.sqrt(UTURN_MAX_LATERAL_ACCEL_MM_S2 / abs_curvature),
     )
+
+
+def find_uturn_constant_arc_range(
+    curvature: Sequence[float], start_idx: int, end_idx: int
+) -> Tuple[int, int]:
+    """Return the longest same-direction, near-constant curved run in a u-turn."""
+    if len(curvature) == 0:
+        return start_idx, end_idx
+
+    start_idx = max(0, min(int(start_idx), len(curvature) - 1))
+    end_idx = max(start_idx, min(int(end_idx), len(curvature) - 1))
+    best_range: Optional[Tuple[int, int]] = None
+    run_start: Optional[int] = None
+    run_sign = 0.0
+    run_abs_curvature = 0.0
+
+    for idx in range(start_idx, end_idx + 1):
+        kappa = float(curvature[idx])
+        abs_kappa = abs(kappa)
+        sign = math.copysign(1.0, kappa) if abs_kappa > CURVATURE_EPS else 0.0
+        same_arc = (
+            run_start is not None
+            and sign == run_sign
+            and sign != 0.0
+            and math.isclose(
+                abs_kappa,
+                run_abs_curvature,
+                rel_tol=UTURN_ARC_CURVATURE_REL_TOLERANCE,
+            )
+        )
+        if same_arc:
+            continue
+
+        if run_start is not None and idx - run_start >= UTURN_ARC_MIN_POINTS:
+            if best_range is None or idx - run_start > best_range[1] - best_range[0] + 1:
+                best_range = (run_start, idx - 1)
+
+        if sign == 0.0:
+            run_start = None
+            run_sign = 0.0
+            run_abs_curvature = 0.0
+        else:
+            run_start = idx
+            run_sign = sign
+            run_abs_curvature = abs_kappa
+
+    if run_start is not None and end_idx + 1 - run_start >= UTURN_ARC_MIN_POINTS:
+        if best_range is None or end_idx + 1 - run_start > best_range[1] - best_range[0] + 1:
+            best_range = (run_start, end_idx)
+
+    return best_range if best_range is not None else (start_idx, end_idx)
+
+
+def uturn_platform_speed_mm_s(
+    speed_limits_mm_s: Sequence[float], curvature: Sequence[float], start_idx: int, end_idx: int
+) -> float:
+    """Calculate the u-turn platform from the constant-curvature arc only."""
+    arc_start, arc_end = find_uturn_constant_arc_range(curvature, start_idx, end_idx)
+    return float(np.min(speed_limits_mm_s[arc_start : arc_end + 1])) * UTURN_SPEED_SAFETY_FACTOR
 
 
 def apply_stop_braking_envelope(planned: np.ndarray, s_vals: Sequence[float]) -> None:
@@ -1812,16 +2246,25 @@ def apply_speed_plan(
     # u-turn state machine performs the actual-speed brake before its own
     # constant turn-speed section.
     planned = np.full(len(points), PRE_UTURN_SPEED_MAX_MM_S, dtype=float)
+    uturn_platform_mm_s: Optional[float] = None
     if uturn_slow_range is not None:
         uturn_start_idx, uturn_end_idx = sorted((int(uturn_slow_range[0]), int(uturn_slow_range[1])))
         uturn_start_idx = max(0, uturn_start_idx)
         uturn_end_idx = min(len(points) - 1, uturn_end_idx)
         if uturn_start_idx <= uturn_end_idx:
-            uturn_speed_mm_s = min(
-                UTURN_SPEED_MAX_MM_S,
-                float(np.min(speed_limit[uturn_start_idx : uturn_end_idx + 1])),
+            uturn_platform_mm_s = uturn_platform_speed_mm_s(
+                speed_limit,
+                curvature,
+                uturn_start_idx,
+                uturn_end_idx,
             )
-            planned[uturn_start_idx : uturn_end_idx + 1] = uturn_speed_mm_s
+            planned[uturn_start_idx : uturn_end_idx + 1] = (
+                speed_limit[uturn_start_idx : uturn_end_idx + 1] * UTURN_SPEED_SAFETY_FACTOR
+            )
+            arc_start_idx, arc_end_idx = find_uturn_constant_arc_range(
+                curvature, uturn_start_idx, uturn_end_idx
+            )
+            planned[arc_start_idx : arc_end_idx + 1] = uturn_platform_mm_s
 
     normal_platforms = build_slalom_platform_speed_plan(
         point_speed_limits=speed_limit,
@@ -1871,7 +2314,7 @@ def generate_route_plan(
 
     slalom_start_idx: Optional[int] = None
     if len(result.raw_route) >= 5 and final_points:
-        slalom_xy = result.raw_route[4]
+        slalom_xy = result.uturn_tangent_exit_xy or result.raw_route[4]
         slalom_start_idx = min(
             range(len(final_points)),
             key=lambda i: math.hypot(final_points[i].x - slalom_xy[0], final_points[i].y - slalom_xy[1]),
@@ -1880,7 +2323,7 @@ def generate_route_plan(
     uturn_slow_range: Optional[Tuple[int, int]] = None
     if len(result.raw_route) >= 4 and final_points:
         uturn_start_xy = result.raw_route[1]
-        uturn_end_xy = result.raw_route[3]
+        uturn_end_xy = result.uturn_tangent_exit_xy or result.raw_route[3]
         uturn_slow_range = (
             min(
                 range(len(final_points)),
@@ -1902,7 +2345,10 @@ def generate_route_plan(
     if len(result.raw_route) >= 4 and final_points:
         uturn_meta = (
             _nearest_point_index(final_points, result.raw_route[1]),
-            _nearest_point_index(final_points, result.raw_route[3]),
+            _nearest_point_index(
+                final_points,
+                result.uturn_tangent_exit_xy or result.raw_route[3],
+            ),
         )
     method = (
         "Plan1 Optimized 平滑避障绕桩 "
@@ -2151,6 +2597,46 @@ def plot_result(
                     linewidth=1.5,
                     label="终点线",
                     zorder=2,
+                )
+
+            axis, _lateral = _course_axis_from_markers_and_cones(cones[0], cones[1:])
+            for gate in build_ordered_cone_gates(
+                cones[1:],
+                axis,
+                entry_xy=_point_xy(cones[0]),
+                exit_xy=(0.0, cones[0].y),
+            ):
+                gate_label = "cone gate" if gate.index == 0 else "_nolegend_"
+                ax.plot(
+                    [gate.first.x, gate.second.x],
+                    [gate.first.y, gate.second.y],
+                    color="#8B5CF6",
+                    linestyle="--",
+                    linewidth=2.0,
+                    label=gate_label,
+                    zorder=3,
+                )
+                arrow_length = min(600.0, 0.25 * (gate.opening_end_mm - gate.opening_start_mm))
+                ax.arrow(
+                    gate.center_x - 0.5 * arrow_length * gate.forward_x,
+                    gate.center_y - 0.5 * arrow_length * gate.forward_y,
+                    arrow_length * gate.forward_x,
+                    arrow_length * gate.forward_y,
+                    width=18.0,
+                    head_width=110.0,
+                    head_length=140.0,
+                    color="#8B5CF6",
+                    length_includes_head=True,
+                    zorder=8,
+                )
+                ax.annotate(
+                    f"G{gate.index + 1}",
+                    (gate.center_x, gate.center_y),
+                    textcoords="offset points",
+                    xytext=(7, 7),
+                    fontsize=9,
+                    color="#6D28D9",
+                    fontweight="bold",
                 )
 
     if control_points:
