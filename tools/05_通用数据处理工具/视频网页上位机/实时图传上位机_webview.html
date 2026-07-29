@@ -171,6 +171,9 @@
       image-rendering: pixelated; 
       display: none;
     }
+    .preview-wrap.compare-mode { display: flex; }
+    .preview-wrap.compare-mode .preview { width: 50%; height: 100%; flex: 0 0 50%; }
+    .preview-wrap.compare-mode #binaryPreview { border-left: 1px solid var(--line); }
     .empty-text { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; }
 
     .logs { width: 100%; height: 100%; border-radius: 6px; border: 1px solid var(--line); background: var(--input-bg); color: #a5b4cb; resize: none; padding: 8px; font: 12px/1.5 Consolas, monospace; outline: none; }
@@ -243,7 +246,7 @@
             <div class="grid">
               <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
               <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
-              <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" /></div>
+              <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="30" /></div>
               <div class="field"><label>输出目录</label><input id="output" readonly /></div>
             </div>
             <div class="btns">
@@ -252,6 +255,8 @@
               <button class="warn" id="recordStartBtn">保存视频</button>
               <button class="stop" id="recordStopBtn">停止保存</button>
               <button class="ghost" id="saveFrameBtn">保存单帧</button>
+              <button class="ghost" id="openFramesBtn">打开图片文件夹</button>
+              <button class="ghost" id="openVideosBtn">打开视频文件夹</button>
               <button class="ghost" id="clearLogBtn">清空日志</button>
             </div>
             <div class="facts">
@@ -300,6 +305,8 @@
               <label>阈值</label>
               <input type="range" id="binaryThreshold" min="0" max="255" value="128" step="1">
               <input type="number" id="thresholdValue" value="128" min="0" max="255" step="1">
+              <label title="左侧显示原图，右侧显示二值化图">左右对比</label>
+              <input type="checkbox" id="binaryCompareToggle" disabled>
             </div>
           </div>
           <div class="content">
@@ -451,6 +458,8 @@
     const binaryToggle = document.getElementById("binaryToggle");
     const binaryThreshold = document.getElementById("binaryThreshold");
     const thresholdValue = document.getElementById("thresholdValue");
+    const binaryCompareToggle = document.getElementById("binaryCompareToggle");
+    const previewWrap = document.querySelector(".preview-wrap");
 
     const oscCanvas = document.getElementById("oscCanvas");
     const oscEmpty = document.getElementById("oscEmpty");
@@ -473,6 +482,7 @@
     let lastConnected = false;
     let lastPreviewUri = null;
     let binaryEnabled = false;
+    let binaryCompareEnabled = false;
 
     function hasApi() { return !!(window.pywebview && window.pywebview.api); }
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -512,11 +522,14 @@
           processCtx.putImageData(imageData, 0, 0);
           binaryPreview.src = processCanvas.toDataURL();
           binaryPreview.style.display = "block";
-          preview.style.display = "none";
+          preview.src = srcUri;
+          preview.style.display = binaryCompareEnabled ? "block" : "none";
+          previewWrap.classList.toggle("compare-mode", binaryCompareEnabled);
         } else {
           binaryPreview.style.display = "none";
           preview.src = srcUri;
           preview.style.display = "block";
+          previewWrap.classList.remove("compare-mode");
         }
         previewEmpty.style.display = "none";
       };
@@ -528,6 +541,7 @@
       preview.style.display = "none";
       binaryPreview.removeAttribute("src");
       binaryPreview.style.display = "none";
+      previewWrap.classList.remove("compare-mode");
       previewEmpty.style.display = "grid";
     }
 
@@ -544,6 +558,16 @@
     // 二值化控件交互
     binaryToggle.onchange = () => {
       binaryEnabled = !!binaryToggle.checked;
+      binaryCompareToggle.disabled = !binaryEnabled;
+      if (!binaryEnabled) {
+        binaryCompareEnabled = false;
+        binaryCompareToggle.checked = false;
+      }
+      if (lastPreviewUri) applyBinaryToCanvas(lastPreviewUri);
+    };
+
+    binaryCompareToggle.onchange = () => {
+      binaryCompareEnabled = binaryEnabled && !!binaryCompareToggle.checked;
       if (lastPreviewUri) applyBinaryToCanvas(lastPreviewUri);
     };
 
@@ -696,6 +720,8 @@
     document.getElementById("recordStartBtn").onclick = () => callApi("start_record_video");
     document.getElementById("recordStopBtn").onclick = () => callApi("stop_record_video");
     document.getElementById("saveFrameBtn").onclick = () => callApi("save_current_frame");
+    document.getElementById("openFramesBtn").onclick = () => callApi("open_frames_folder");
+    document.getElementById("openVideosBtn").onclick = () => callApi("open_videos_folder");
     document.getElementById("saveDataBtn").onclick = () => callApi("save_osc_data");
     document.getElementById("clearLogBtn").onclick = () => callApi("clear_logs");
     
