@@ -42,19 +42,19 @@ CONE_RADIUS_MM = 140.0
 CAR_HALF_WIDTH_MM = 135.0
 
 # ===== 速度规划可调参数（修改后需重新生成 nav_replay_route_table.h） =====
-PRE_UTURN_SPEED_MAX_MM_S = 5000.0  # 掉头前直线路段最高速度，单位 mm/s。
+PRE_UTURN_SPEED_MAX_MM_S = 4500.0  # 掉头前直线路段最高速度，单位 mm/s。
 PATH_SPEED_MAX_MM_S = 4000.0       # 绕桩及普通路径最高速度，单位 mm/s。
-SPRINT_SPEED_MM_S = 3000.0         # 终点冲线段预留速度，单位 mm/s（当前逻辑未单独使用）。
+SPRINT_SPEED_MM_S = 4500.0         # 终点冲线段预留速度，单位 mm/s（当前逻辑未单独使用）。
 UTURN_SPEED_MAX_MM_S = 4000.0      # 掉头区域的绝对最高速度，单位 mm/s。
-UTURN_SPEED_SAFETY_FACTOR = 0.91   # 掉头曲率限速的安全系数；越小越保守。
+UTURN_SPEED_SAFETY_FACTOR = 0.8   # 掉头曲率限速的安全系数；越小越保守。
 UTURN_ARC_CURVATURE_REL_TOLERANCE = 0.05  # 识别恒定圆弧时允许的相对曲率误差（5%）。
 UTURN_ARC_MIN_POINTS = 3           # 识别为圆弧主体所需的最少连续点数。
 ENABLE_FINISH_SPRINT = True        # 是否启用通过终点线后的冲线段。
 MAX_ACCEL_MM_S2 = 1500.0           # 速度包络最大加速度，单位 mm/s²。
 MAX_DECEL_MM_S2 = 1500.0           # 停车速度包络最大减速度，单位 mm/s²。
 PRE_UTURN_MAX_LATERAL_ACCEL_MM_S2 = 3500.0  # 掉头前路径允许的最大横向（向心）加速度，单位 mm/s²。
-UTURN_MAX_LATERAL_ACCEL_MM_S2 = 6000.0      # 掉头圆弧允许的最大横向（向心）加速度，单位 mm/s²。
-NORMAL_SLALOM_MAX_LATERAL_ACCEL_MM_S2 = 6000.0  # 绕桩弯道允许的最大横向（向心）加速度，单位 mm/s²。
+UTURN_MAX_LATERAL_ACCEL_MM_S2 = 3000.0      # 掉头圆弧允许的最大横向（向心）加速度，单位 mm/s²。
+NORMAL_SLALOM_MAX_LATERAL_ACCEL_MM_S2 = 4500.0  # 绕桩弯道允许的最大横向（向心）加速度，单位 mm/s²。
 MAX_PATH_YAW_RATE_RAD_S = 2.8       # 非掉头段最大偏航角速度，单位 rad/s；过小会额外降速。
 MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0     # 非掉头段最大偏航角加速度，单位 rad/s²；限制曲率突变处的速度。
 SPEED_TO_MM_S = 4.79                # 底盘速度指令到实际速度的换算系数：实际 mm/s = 指令 × 本值。
