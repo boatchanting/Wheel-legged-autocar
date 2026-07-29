@@ -206,6 +206,11 @@
       display: flex;
       align-items: center;
       gap: 6px;
+      flex-wrap: wrap;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-soft);
       pointer-events: auto;
     }
     .binary-controls label {
@@ -214,7 +219,9 @@
       white-space: nowrap;
     }
     .binary-controls input[type="range"] {
-      width: 90px;
+      flex: 1 1 140px;
+      min-width: 120px;
+      max-width: 260px;
       cursor: pointer;
     }
     .binary-controls input[type="number"] {
@@ -298,7 +305,9 @@
         <div class="card" id="cardVideo">
           <div class="head" draggable="true">
             <h2>🖥️ 实时图像</h2>
-            <!-- 二值化控件：复选框 + 滑块 + 数字输入框 -->
+          </div>
+          <div class="content">
+            <!-- 二值化控件独立于可拖拽标题栏，避免拖动滑块时带动卡片 -->
             <div class="binary-controls">
               <label>二值化</label>
               <input type="checkbox" id="binaryToggle">
@@ -308,8 +317,6 @@
               <label title="左侧显示原图，右侧显示二值化图">左右对比</label>
               <input type="checkbox" id="binaryCompareToggle" disabled>
             </div>
-          </div>
-          <div class="content">
             <div class="preview-wrap">
               <img class="preview" id="preview" />
               <img class="preview" id="binaryPreview" style="display:none;" />
