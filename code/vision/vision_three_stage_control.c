@@ -30,6 +30,7 @@ volatile uint8 g_vision_three_stage_jump1_bottom_y = VISION_THREE_STAGE_JUMP1_BO
 volatile uint8 g_vision_three_stage_jump2_top_y = VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT;
 volatile uint8 g_vision_three_stage_jump3_bottom_y = VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT;
 volatile uint8 g_vision_three_stage_exit_top_y = VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT;
+volatile uint8 g_vision_three_stage_jump1_correction_bottom_y = VISION_THREE_STAGE_JUMP1_CORRECTION_BOTTOM_Y_DEFAULT;
 
 volatile float g_vision_three_stage_speed_approach = -300.0f; /* 锁定目标靠近时的速度 */
 volatile float g_vision_three_stage_speed_jump1    = -300.0f;/* 第一跳寻找速度 */
@@ -40,6 +41,7 @@ volatile float g_vision_three_stage_speed_exit     = -300.0f; /* 最后一跳完
 
 /* 影子变量：先算完，再一次性发布，减少并发读写中间态 */
 static vision_three_stage_control_status_t s_ctrl_shadow;
+static uint8 s_jump1_correction_filter_valid = 0U;
 
 /* ---------------- 工具函数 ---------------- */
 static float vision_three_stage_abs_f(float value)
@@ -83,7 +85,9 @@ static void vision_three_stage_stop_internal(vision_three_stage_exit_reason_e re
     s_ctrl_shadow.black_gap_seen = 0U;
     s_ctrl_shadow.jump_cooldown_ticks = 0U;
     s_ctrl_shadow.exit_reason = reason;
+    s_ctrl_shadow.pvc_lateral_filtered_mm = 0.0f;
     s_ctrl_shadow.err_degree_cmd = 0.0f;
+    s_jump1_correction_filter_valid = 0U;
 
     /* 退出时释放方向控制，避免残留转向量 */
     err_degree = 0.0f;
@@ -94,21 +98,44 @@ static void vision_three_stage_stop_internal(vision_three_stage_exit_reason_e re
     g_special_action_trigger = 0U;
 }
 
-static void vision_three_stage_apply_err_from_pvc(void)
+static uint8 vision_three_stage_jump1_correction_allowed(void)
+{
+    return (uint8)(
+        ((s_ctrl_shadow.state == VISION_THREE_STAGE_CTRL_WAIT_PVC_LOCK) ||
+         (s_ctrl_shadow.state == VISION_THREE_STAGE_CTRL_WAIT_JUMP1_BOTTOM)) &&
+        (g_vision_three_stage_jump1_correction_bottom_y < g_vision_three_stage_jump1_bottom_y) &&
+        (s_ctrl_shadow.pvc_stable_detected != 0U) &&
+        (s_ctrl_shadow.pvc_entry_bottom_y < g_vision_three_stage_jump1_correction_bottom_y));
+}
+
+static void vision_three_stage_apply_err_from_pvc(uint8 packet_new)
 {
     float err;
-    const float lateral_term =
-        (float)s_ctrl_shadow.pvc_lateral_mm * VISION_THREE_STAGE_K_LAT_DEG_PER_MM;
-    const float yaw_term =
-        ((float)s_ctrl_shadow.pvc_yaw_error_deg_x100 * 0.01f) * VISION_THREE_STAGE_K_YAW_DEG_PER_DEG;
 
-    if (s_ctrl_shadow.pvc_stable_detected != 0U)
+    if (vision_three_stage_jump1_correction_allowed() != 0U)
     {
-        err = VISION_THREE_STAGE_LATERAL_SIGN * (lateral_term + yaw_term);
+        if (packet_new != 0U)
+        {
+            if (s_jump1_correction_filter_valid == 0U)
+            {
+                s_ctrl_shadow.pvc_lateral_filtered_mm = (float)s_ctrl_shadow.pvc_lateral_mm;
+                s_jump1_correction_filter_valid = 1U;
+            }
+            else
+            {
+                s_ctrl_shadow.pvc_lateral_filtered_mm +=
+                    VISION_THREE_STAGE_JUMP1_CORRECTION_LPF_ALPHA *
+                    ((float)s_ctrl_shadow.pvc_lateral_mm - s_ctrl_shadow.pvc_lateral_filtered_mm);
+            }
+        }
+
+        err = VISION_THREE_STAGE_JUMP1_CORRECTION_LATERAL_SIGN *
+              s_ctrl_shadow.pvc_lateral_filtered_mm *
+              VISION_THREE_STAGE_JUMP1_CORRECTION_K_LAT_DEG_PER_MM;
         err = vision_three_stage_constrain_f(
             err,
-            -VISION_THREE_STAGE_MAX_ERR_DEG,
-            VISION_THREE_STAGE_MAX_ERR_DEG);
+            -VISION_THREE_STAGE_JUMP1_CORRECTION_MAX_ERR_DEG,
+            VISION_THREE_STAGE_JUMP1_CORRECTION_MAX_ERR_DEG);
 
         if (vision_three_stage_abs_f(err) < VISION_THREE_STAGE_DEADBAND_DEG)
         {
@@ -305,7 +332,7 @@ void VisionThreeStageControl_Update_2ms(void)
     }
 
     /* 视觉只控制方向，不控制速度 */
-    vision_three_stage_apply_err_from_pvc();
+    vision_three_stage_apply_err_from_pvc(packet_new);
 
     switch (s_ctrl_shadow.state)
     {
