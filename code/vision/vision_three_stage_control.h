@@ -43,9 +43,9 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 
 /* 像素阈值默认值（可在线调整） */
 #define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (32U) //第一级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳
-#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (36U) //第二级台阶顶端小于该值时跳跃，增大阈值，车必须走得更近才跳
-#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (32U)//第三级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳，粗调参时候，可以用第一级台阶那个值用一下
-#define VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT            (24U)
+#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (38U) //第二级台阶顶端小于该值时跳跃，增大阈值，车必须走得更近才跳 //在30-40阈值情况下大概1cm参数加1  群里7.29早晨，大概4cm的阴影，使用的是40阈值
+#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (32U)//这个没有使用。科目三目前的逻辑最后一跳是依赖写死时间实现的//第三级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳，粗调参时候，可以用第一级台阶那个值用一下
+#define VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT            (24U)//脱出时候阈值，目前来看这个阈值会在三级跳顶部脱出，比较稳定
 
 typedef enum
 {
