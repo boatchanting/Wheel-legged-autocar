@@ -6,6 +6,7 @@
 # data
 data/
 *.csv
+*.png
 # python venv
 .venv/
 
@@ -50,3 +51,4 @@ CYT2BL3FOC/project/iar/Debug_m4/
 
 # Learning files
 /学习文件/
+
