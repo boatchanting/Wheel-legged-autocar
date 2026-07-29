@@ -21,6 +21,8 @@ extern volatile float err_degree;
 extern volatile float target_speed_set;
 extern int g_motor_enable;
 extern uint8 g_special_action_trigger;
+extern volatile uint8 entry_beep_request;
+extern volatile uint8 exit_beep_request;
 
 /* --- 全局状态 --- */
 volatile uint8 g_slope_vision_task_enable = 0U;
@@ -164,6 +166,7 @@ static void vision_slope_enter_task(void)
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
     s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
     g_special_action_trigger = 1U;
+    entry_beep_request = 1U;
 
     /* PVC 控制模块会提供方向误差；本状态机在本周期末统一强制入口速度。 */
     VisionIpc_Core0_SetPvcEnable(1U);
@@ -313,6 +316,7 @@ void VisionSlopeTask_Update_2ms(void)
             break;
 
         case VISION_SLOPE_TASK_FINISH:
+            exit_beep_request = 1U;
             /* 保留上一周期的锁角和速度输出，让主控逻辑在下一周期平滑接管。 */
             vision_slope_cleanup(0U);
             return;
