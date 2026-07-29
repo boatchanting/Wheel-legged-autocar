@@ -14,7 +14,7 @@
 // 普通路径点的通过半径（mm）；进入后直接推进索引，不停车。
 #define NAV_POINT_PATH_ARRIVE_RADIUS            70.0f
 // 特殊动作最终执行中心圈半径（mm）；小于雷区物理半径，避免边缘或外侧提前旋转。
-#define NAV_POINT_SPECIAL_EXECUTE_RADIUS        100.0f
+#define NAV_POINT_SPECIAL_EXECUTE_RADIUS        150.0f
 #define NAV_POINT_SPECIAL_PREP_STOP_RADIUS      200.0f
 #define NAV_POINT_SPECIAL_CRAWL_RELEASE_MARGIN_MM 80.0f
 // 特殊点提前刹车按当前接近速度动态计算：执行圆 + 余量 + v^2/(2a)。
@@ -32,7 +32,7 @@
 #define NAV_POINT_SPECIAL_STEP_IN_SPEED         (-240.0f)
 #define NAzV_POINT_SPECIAL_STEP_IN_START_SPEED_MM_S 250.0f
 // 执行动作允许的最大实际速度绝对值（mm/s）；进执行圈且 |实际速度| 不超过该值才开转。
-#define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    800.0f
+#define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    1500.0f
 // 高速冲过雷区中心后，目标点已明显落在车后方时，允许倒车低速补回执行圆。
 #define NAV_POINT_SPECIAL_REVERSE_RECOVER_YAW_MIN 110.0f
 // 最后点通过结束半径（mm）：只判定完成，不强制精确停车。
@@ -58,7 +58,7 @@
 // 在线速度规划的快速巡航速度指令。
 #define NAV_POINT_SPEED_FAST                    (-800.0f)
 // 在线速度规划的慢速逼近速度指令。
-#define NAV_POINT_SPEED_SLOW                    (-120.0f)
+#define NAV_POINT_SPEED_SLOW                    (-220.0f)
 // 停车速度指令。
 #define NAV_POINT_SPEED_STOP                    (0.0f)
 // v^2 = 2ad 中的“指令域减速度”。

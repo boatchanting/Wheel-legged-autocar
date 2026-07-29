@@ -130,8 +130,8 @@ tr.sel{background:#eaf2ff}
 <div id="toast" class="toast"></div>
 <script src="nav_marker_grid_scale.js"></script>
 <script>
-const TYPES=[{value:0,label:'0 PATH'},{value:1,label:'1 CIRCLE'},{value:2,label:'2 SLOPE'},{value:3,label:'3 JUMP'},{value:4,label:'4 BRIDGE'},{value:5,label:'5 BUMP'}];
-const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#059669'};
+const TYPES=[{value:0,label:'0 PATH'},{value:1,label:'1 CIRCLE'},{value:2,label:'2 SLOPE'},{value:3,label:'3 JUMP'},{value:4,label:'4 BRIDGE'},{value:5,label:'5 BUMP'},{value:6,label:'6 FLYBY'}];
+const COLORS={0:'#2f6fed',1:'#d97706',2:'#0e9f6e',3:'#d14343',4:'#7c3aed',5:'#059669',6:'#e11d48'};
 const HOST_CTRL_CLEAR_TRAJECTORY=1;
 const HOST_CTRL_START_CAR=2;
 // 在 S 中加入 vx_body 变量
@@ -154,7 +154,7 @@ function addTracePoint(kind,x,y,meta){if(!S.traces[kind])S.traces[kind]=[];const
 function syncTraceControls(){E.traceIns.checked=!!S.traceVisible.ins;E.traceGps.checked=!!S.traceVisible.gps;E.traceFusion.checked=!!S.traceVisible.fusion;E.bTraceMenu.classList.toggle('active',traceVisibleKinds().length>0)}
 function syncLogButtons(){E.bStartLog.disabled=!!S.logRecording;E.bStopLog.disabled=!S.logRecording}
 function setTraceVisible(kind,visible){S.traceVisible[kind]=!!visible;syncTraceControls();draw()}
-function clampType(v){v=Number(v);if(Number.isNaN(v))return 0;return Math.max(0,Math.min(5,Math.round(v)))}
+function clampType(v){v=Number(v);if(Number.isNaN(v))return 0;return Math.max(0,Math.min(6,Math.round(v)))}
 function normalizeYaw(v){v=Number(v);if(!Number.isFinite(v))return 0;while(v>180)v-=360;while(v<=-180)v+=360;return v}
 function normalizeHeading(v){v=Number(v);if(!Number.isFinite(v))return 0;v%=360;if(v<0)v+=360;return v}
 function fillType(sel,v){sel.innerHTML=TYPES.map(t=>`<option value="${t.value}">${t.label}</option>`).join('');sel.value=String(clampType(v))}

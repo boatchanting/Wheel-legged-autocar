@@ -17,12 +17,13 @@
 // ========================= 点类型定义 =========================
 typedef enum
 {
-    NAV_POINT_PATH = 0,     // 普通路径点
+    NAV_POINT_PATH = 0,     // 普通路点
     NAV_POINT_CIRCLE = 1,   // 转圈点
-    NAV_POINT_SLOPE = 2,    // 上坡点
-    NAV_POINT_JUMP = 3,     // 跳跃点
-    NAV_POINT_BRIDGE = 4,   // 单边桥点
-    NAV_POINT_BUMP = 5      // 颠簸路段点
+    NAV_POINT_SLOPE = 2,    // 坡道
+    NAV_POINT_JUMP = 3,     // 飞包
+    NAV_POINT_BRIDGE = 4,   // 桥道
+    NAV_POINT_BUMP = 5,     // 颠簸路段
+    NAV_POINT_FLYBY = 6     // 飞越点/绕桩点 (不减速直接切角)
 } NavPointType_e;
 
 // ========================= plan 类型 =========================

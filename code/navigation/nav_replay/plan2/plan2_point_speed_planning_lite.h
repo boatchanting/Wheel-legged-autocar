@@ -14,7 +14,7 @@
 // 普通路径点的通过半径（mm）；进入后直接推进索引，不停车。
 #define NAV_POINT_PATH_ARRIVE_RADIUS            70.0f
 // 特殊动作最终执行中心圈半径（mm）；小于雷区物理半径，避免边缘或外侧提前旋转。
-#define NAV_POINT_SPECIAL_EXECUTE_RADIUS        100.0f
+#define NAV_POINT_SPECIAL_EXECUTE_RADIUS        200.0f
 #define NAV_POINT_SPECIAL_PREP_STOP_RADIUS      200.0f
 #define NAV_POINT_SPECIAL_CRAWL_RELEASE_MARGIN_MM 80.0f
 // 特殊点提前刹车按当前接近速度动态计算：执行圆 + 余量 + v^2/(2a)。
@@ -23,7 +23,7 @@
 // 刹车半径下限：EXEC_R + BRAKE_M = 200+100 = 300 mm；低速时 stop_dist 为负，兜底到此值。
 #define NAV_POINT_SPECIAL_BRAKE_RADIUS_MIN      300.0f
 // 刹车半径上限：安全钳位，正常工况不应触及。
-#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX      3000.0f
+#define NAV_POINT_SPECIAL_BRAKE_RADIUS_MAX      4000.0f
 // 普通刹车前馈尚未明显建压时，额外放大准备区，复用 stable tag 的稳定刹停节奏。
 #define NAV_POINT_SPECIAL_BRAKE_READY_PWM       1200.0f
 #define NAV_POINT_SPECIAL_BRAKE_WEAK_FF_MARGIN  180.0f
@@ -32,7 +32,7 @@
 #define NAV_POINT_SPECIAL_STEP_IN_SPEED         (-240.0f)
 #define NAzV_POINT_SPECIAL_STEP_IN_START_SPEED_MM_S 250.0f
 // 执行动作允许的最大实际速度绝对值（mm/s）；进执行圈且 |实际速度| 不超过该值才开转。
-#define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    800.0f
+#define NAV_POINT_SPECIAL_TRIGGER_SPEED_MM_S    1500.0f
 // 高速冲过雷区中心后，目标点已明显落在车后方时，允许倒车低速补回执行圆。
 #define NAV_POINT_SPECIAL_REVERSE_RECOVER_YAW_MIN 110.0f
 // 最后点通过结束半径（mm）：只判定完成，不强制精确停车。
@@ -49,17 +49,26 @@
 // 移动对准允许的最大残余航向误差（deg）；超过后仍然原地修正，避免方向明显错误时硬冲。
 #define NAV_POINT_SPIN_EXIT_MOVE_YAW_MAX        90.0f
 // 移动对准低速上限占正常速度的比例；0.5 表示最多按正常速度的一半出发。
-#define NAV_POINT_SPIN_EXIT_SPEED_RATIO         0.5f
+#define NAV_POINT_SPIN_EXIT_SPEED_RATIO         0.9f
 // 允许优先倒车/反向朝向的偏置量（deg）。
 #define NAV_POINT_REVERSE_SELECT_BIAS_DEG       10.0f
 // 起跑前航向对齐容差（deg）。
 #define NAV_POINT_START_HEADING_TOLERANCE       0.3f
 
-// 在线速度规划的快速巡航速度指令。
+// 绕桩/飞越点提前切角半径(mm)。配合高速转弯走圆弧使用。
+#define NAV_POINT_FLYBY_ARRIVE_RADIUS           350.0f
+
+// 速度规划：各目标阶段速度指令。
 #define NAV_POINT_SPEED_FAST                    (-800.0f)
-// 在线速度规划的慢速逼近速度指令。
-#define NAV_POINT_SPEED_SLOW                    (-120.0f)
-// 停车速度指令。
+// 绕桩专属目标速度（转速制），默认 -400.0f（约 2.5 m/s），防止打滑
+#define NAV_POINT_SPEED_FLYBY                   (-1000.0f)
+// 冲刺冲线专属目标速度，默认 -1000.0f (全速冲刺)
+#define NAV_POINT_SPEED_DASH                    (-1000.0f)
+// 冲线后多跑的距离（冲过X=0线多少毫米后才刹车）
+#define NAV_POINT_DASH_OVERRUN_MM               1000.0f
+// 速度规划：降速逼近速度指令。
+#define NAV_POINT_SPEED_SLOW                    (-220.0f)
+// 停止速度指令。
 #define NAV_POINT_SPEED_STOP                    (0.0f)
 // v^2 = 2ad 中的“指令域减速度”。
 #define NAV_POINT_SPEED_DECEL_CMD2_PER_MM       110.0f

@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 """将科目二打点导出的 CSV 转换为 C 路表头文件（6 字段，速度先占位 0）。"""
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ def read_points(csv_path: Path) -> Tuple[List[RoutePoint], Optional[float]]:
                 x = float(row[key_map["x"]])
                 y = float(row[key_map["y"]])
                 point_type = int(float(row[key_map["point_type"]]))
-                point_type = max(0, min(5, point_type))
+                point_type = max(0, min(6, point_type))
 
                 target_yaw_deg = None
                 if yaw_col and row.get(yaw_col, "").strip() != "":

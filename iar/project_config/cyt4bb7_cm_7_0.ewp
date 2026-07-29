@@ -1233,7 +1233,7 @@
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_pure_pursuit.c</name>
               </file>
               <file>
-                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_point_speed_planning.h</name>
+                <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_point_speed_planning_lite.h</name>
               </file>
               <file>
                 <name>$PROJ_DIR$\..\..\code\navigation\nav_replay\plan2\plan2_point_speed_planning_lite.c</name>
