@@ -36,6 +36,9 @@ volatile uint8 g_nav_point_special_debug_zero_brake_active = 0;
 static float s_special_brake_dist_ratio = 0.8f; // 刹车修正系数
 static uint8 s_special_zero_brake_issued = 0U;
 static float s_prev_speed_cmd = 0.0f;
+static uint8 s_dash_latched = 0U;
+static float s_dash_target_x = 0.0f;
+static float s_dash_yaw_deg = 0.0f;
 
 static float NormalizeAngle(float angle)
 {
@@ -115,7 +118,7 @@ static void ConfigureSpinPlanForPoint_Lite(uint16 point_idx)
 static float NavReplay_SpeedSlew_Update_Lite(float raw_speed)
 {
     float diff = raw_speed - s_prev_speed_cmd;
-    float step_limit = NAV_SPEED_SLEW_DOWN_FAST;
+    float step_limit = NAV_POINT_SPEED_DECEL_STEP;
 
     if (diff > step_limit)
     {
@@ -285,6 +288,7 @@ void NavReplay_Start(void)
     err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
     s_special_zero_brake_issued = 0U;
+    s_dash_latched = 0U;
     
     Minefield_Init();
     Brake_NavHardStop_Reset();
@@ -300,6 +304,7 @@ void NavReplay_Stop(void)
     g_special_action_trigger = 0U;
     s_prev_speed_cmd = 0.0f;
     s_special_zero_brake_issued = 0U;
+    s_dash_latched = 0U;
     
     Minefield_Init();
     Brake_NavHardStop_Reset();
@@ -316,35 +321,40 @@ void NavReplay_Process(void)
     if (g_target_idx >= nav_ram_data.point_count)
     {
         // 终点冲刺阶段，不退出循迹以防止回正翻车
-        float target_x = -NAV_POINT_DASH_OVERRUN_MM;
-        
-        // 如果发车时是反向走的（惯导x为负），则冲刺目标应该是正向
-        if (inertial_nav.x < 0.0f && target_x < 0.0f)
+        if (s_dash_latched == 0U)
         {
-            target_x = NAV_POINT_DASH_OVERRUN_MM;
-        }
-        else if (inertial_nav.x > 0.0f && target_x > 0.0f) // 预防初始错位
-        {
-            target_x = -NAV_POINT_DASH_OVERRUN_MM;
+            s_dash_target_x = -NAV_POINT_DASH_OVERRUN_MM;
+            
+            // 如果发车时是反向走的（惯导x为负），则冲刺目标应该是正向
+            if (inertial_nav.x < 0.0f && s_dash_target_x < 0.0f)
+            {
+                s_dash_target_x = NAV_POINT_DASH_OVERRUN_MM;
+            }
+            else if (inertial_nav.x > 0.0f && s_dash_target_x > 0.0f) // 预防初始错位
+            {
+                s_dash_target_x = -NAV_POINT_DASH_OVERRUN_MM;
+            }
+
+            // 目标点在Y轴上的投影
+            float target_y = inertial_nav.y;
+            
+            // 计算冲线航向角并锁死
+            s_dash_yaw_deg = CalcBearingDeg(inertial_nav.x, inertial_nav.y, s_dash_target_x, target_y);
+            s_dash_latched = 1U;
         }
 
-        // 目标点在Y轴上的投影
-        float target_y = inertial_nav.y;
-        
-        // 计算冲线航向角（永远指向(target_x, 当前y)，即平行于X轴）
-        float dash_yaw_deg = CalcBearingDeg(inertial_nav.x, inertial_nav.y, target_x, target_y);
         float selected_err_deg, speed_sign;
-        SelectDriveHeading(dash_yaw_deg, &selected_err_deg, &speed_sign);
+        SelectDriveHeading(s_dash_yaw_deg, &selected_err_deg, &speed_sign);
         err_degree = selected_err_deg;
 
         // 判断是否已经冲过界限
         uint8 is_finished = 0;
-        if (target_x < 0.0f && inertial_nav.x <= target_x) is_finished = 1;
-        if (target_x > 0.0f && inertial_nav.x >= target_x) is_finished = 1;
+        if (s_dash_target_x < 0.0f && inertial_nav.x <= s_dash_target_x) is_finished = 1;
+        if (s_dash_target_x > 0.0f && inertial_nav.x >= s_dash_target_x) is_finished = 1;
 
         if (is_finished)
         {
-            // 越界后硬刹车并保持闭环不退出
+            // 越界后硬刹车并保持闭环不退出，使用锁死的航向防止翻转乱窜
             target_speed_set = 0.0f;
             s_prev_speed_cmd = 0.0f; 
             Control_Profile_RequestMode(CONTROL_MODE_NORMAL);

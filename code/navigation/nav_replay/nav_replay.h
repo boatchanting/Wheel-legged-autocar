@@ -62,7 +62,7 @@ typedef enum
     #elif NAV_PLAN2_METHOD == PLAN2_METHOD_PRECISE
         #include "plan2/plan2_precise.h"
     #elif NAV_PLAN2_METHOD == PLAN2_POINT_SPEED_PLANNING
-        #include "plan2/plan2_point_speed_planning.h"
+        #include "plan2/plan2_point_speed_planning_lite.h"
     #else
         // 【科目二越界检查】
         #error "[Nav Config Error] Plan 2 currently supports PLAN2_PURE_PURSUIT_SPEED_PLANNING, PLAN2_PURE_PURSUIT, PLAN2_METHOD_PRECISE and PLAN2_POINT_SPEED_PLANNING only."
