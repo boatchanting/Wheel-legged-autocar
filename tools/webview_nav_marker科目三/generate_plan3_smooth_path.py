@@ -57,7 +57,15 @@ CURVATURE_EPS = 1e-6
 # Match csv_to_nav_table.py.  Each value is measured from the recorded exit
 # marker toward the matching entry marker, so the visual state-machine exit
 # is anchored where the vehicle actually leaves the task.
+# 特殊状态机结束点的沿线修正距离（单位：CSV 坐标单位；当前导航坐标单位为毫米 mm）。
+# 30：三级台阶结束点，对应状态机进入点类型 3（3 -> 30），单位：mm。
+# 40：单边桥结束点，对应状态机进入点类型 4（4 -> 40），单位：mm。
+# 50：颠簸路段结束点，对应状态机进入点类型 5（5 -> 50），单位：mm。
+# 正值：结束点沿“结束点 -> 对应进入点”的连线靠近进入点。
+# 负值：结束点沿同一连线的反方向远离进入点。
+# 如果发现少跑了，应该增大对应距离；多跑了，减少对应距离
 SPECIAL_EXIT_DISTANCE_OFFSETS_MM = {30: 300.0, 40: 750.0, 50: 850.0}
+
 
 ENTRY_TYPES = {1, 2, 3, 4, 5}
 EXIT_TO_ENTRY = {10: 1, 20: 2, 30: 3, 40: 4, 50: 5}
