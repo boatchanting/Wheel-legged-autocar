@@ -81,6 +81,18 @@
 #define NAV_SPEED_SLEW_DOWN_FAST          800.0f
 #define NAV_SPEED_SLEW_DOWN_CROSS_ZERO    120.0f
 #define NAV_STOP_LOCK_SPEED_EPS             1.0f
+
+/*
+ * 掉头圆弧出口保护：出口后的路径只要在此前瞻窗口内仍有大曲率，
+ * 就禁止加速但允许按路表目标继续减速。窗口内的曲率还会提前计算
+ * 刹车速度上限，避免等到进入大曲率才开始降速。
+ */
+#define NAV_REPLAY_UTURN_CURVATURE_WINDOW_MM        800.0f
+#define NAV_REPLAY_UTURN_CURVATURE_BLOCK_TH        0.0003f
+#define NAV_REPLAY_UTURN_WINDOW_LATERAL_ACCEL_MM_S2 6000.0f
+#define NAV_REPLAY_UTURN_WINDOW_DECEL_MM_S2        1500.0f
+#define NAV_REPLAY_UTURN_WINDOW_SAFETY_FACTOR        0.91f
+
 #define NAV_FINISH_LINE_ARM_REMAINING_POINTS 80U
 #define NAV_FINISH_STOP_ACTUAL_SPEED_EPS   50.0f
 #define NAV_FINISH_STOP_STABLE_COUNT       10U

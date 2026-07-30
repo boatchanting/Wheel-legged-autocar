@@ -320,6 +320,99 @@ static float NavReplay_UturnBrake_Apply(uint16 base_idx, float raw_speed)
     return raw_speed;
 }
 
+/*
+ * 掉头圆弧切线出口后的速度保护。
+ * 在前方曲率窗口内预估每个急弯的安全速度及其刹车包络：允许路表继续
+ * 请求更低速度，但在窗口未清空前不允许速度目标回升。这样掉头桩筒后
+ * 仍处于弯道风险的路径不会提前加速。
+ */
+static float NavReplay_UturnPostCurveGuard_Apply(uint16 base_idx, float raw_speed)
+{
+#if NAV_REPLAY_UTURN_META_VALID
+    uint16 i;
+    uint16 last_idx;
+    float distance_mm = 0.0f;
+    float raw_abs = fabsf(raw_speed);
+    float previous_abs = fabsf(s_prev_speed_set);
+    float allowed_speed_mm_s = raw_abs * LQR_SPEED_TO_MM_S;
+    uint8 has_sharp_curve = 0U;
+
+    if ((base_idx < NAV_REPLAY_UTURN_EXIT_INDEX) ||
+        (nav_ram_data.point_count < 2U))
+    {
+        return raw_speed;
+    }
+
+    last_idx = (uint16)(nav_ram_data.point_count - 1U);
+    if (base_idx > last_idx)
+    {
+        return raw_speed;
+    }
+
+    for (i = base_idx; i <= last_idx; i++)
+    {
+        float curvature = fabsf(nav_ram_data.points[i].curvature);
+        if (curvature >= NAV_REPLAY_UTURN_CURVATURE_BLOCK_TH)
+        {
+            float curve_speed_mm_s = sqrtf(
+                NAV_REPLAY_UTURN_WINDOW_LATERAL_ACCEL_MM_S2 / curvature
+            ) * NAV_REPLAY_UTURN_WINDOW_SAFETY_FACTOR;
+            float brake_envelope_mm_s = sqrtf(
+                curve_speed_mm_s * curve_speed_mm_s +
+                2.0f * NAV_REPLAY_UTURN_WINDOW_DECEL_MM_S2 * distance_mm
+            );
+            has_sharp_curve = 1U;
+            if (brake_envelope_mm_s < allowed_speed_mm_s)
+            {
+                allowed_speed_mm_s = brake_envelope_mm_s;
+            }
+        }
+
+        if ((i == last_idx) || (distance_mm >= NAV_REPLAY_UTURN_CURVATURE_WINDOW_MM))
+        {
+            break;
+        }
+
+        {
+            float dx = nav_ram_data.points[i + 1U].x - nav_ram_data.points[i].x;
+            float dy = nav_ram_data.points[i + 1U].y - nav_ram_data.points[i].y;
+            distance_mm += sqrtf(dx * dx + dy * dy);
+        }
+    }
+
+    if (has_sharp_curve == 0U)
+    {
+        return raw_speed;
+    }
+
+    /* 路表主动请求降速时直接放行，不能被“禁止加速”逻辑挡住。 */
+    if (fabsf(raw_speed) < fabsf(s_prev_speed_set))
+    {
+        return raw_speed;
+    }
+
+    allowed_speed_mm_s = Float_Constrain(
+        allowed_speed_mm_s,
+        0.0f,
+        raw_abs * LQR_SPEED_TO_MM_S
+    );
+    raw_abs = allowed_speed_mm_s / LQR_SPEED_TO_MM_S;
+
+    /* 同方向速度目标在风险窗口内只可保持或下降，不可上调。 */
+    if (((raw_speed * s_prev_speed_set) > 0.0f) &&
+        (previous_abs > NAV_SPEED_SLEW_EPS) &&
+        (raw_abs > previous_abs))
+    {
+        raw_abs = previous_abs;
+    }
+
+    return (raw_speed < 0.0f) ? -raw_abs : raw_abs;
+#else
+    (void)base_idx;
+    return raw_speed;
+#endif
+}
+
 static void NavReplay_SlalomBrake_Reset(void)
 {
 #if NAV_REPLAY_SLALOM_META_VALID && (NAV_REPLAY_SLALOM_CURVE_COUNT > 0U)
@@ -1654,6 +1747,7 @@ void NavReplay_Process(void)
     }
     else
     {
+        raw_speed = NavReplay_UturnPostCurveGuard_Apply((uint16)base_idx, raw_speed);
         raw_speed = NavReplay_SlalomBrake_Apply((uint16)base_idx, raw_speed);
         if (s_slalom_brake_state == PLAN1_SLALOM_BRAKE_BRAKING)
         {
