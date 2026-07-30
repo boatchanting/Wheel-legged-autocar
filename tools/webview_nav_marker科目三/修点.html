@@ -463,7 +463,7 @@
         2: '#0e9f6e', 20: '#0e9f6e',
         3: '#d14343', 30: '#d14343',
         4: '#7c3aed', 40: '#7c3aed',
-        5: '#059669', 50: '#059669'
+        5: '#eab308', 50: '#eab308'
     };
 
     function getTypeLabel(val) {
@@ -718,26 +718,29 @@
                 ctx.stroke();
                 ctx.restore();
                 // 虚线箭头（方向不变，沿用原 heading）
+                if (p.point_type >= 2 && p.point_type <= 5) {
                 ctx.save();
                 ctx.strokeStyle = 'rgba(47, 111, 237, 0.5)';
                 ctx.fillStyle = 'rgba(47, 111, 237, 0.5)';
                 ctx.lineWidth = 1.5;
                 ctx.setLineDash([4, 4]);
-                const hdgRad = normalizeHeading(p.heading) * Math.PI / 180;
+                const yawRad = Math.PI - normalizeYaw(p.relative_yaw) * Math.PI / 180;
                 ctx.translate(pos.x, pos.y);
-                ctx.rotate(-hdgRad);
-                const len = 16;
+                ctx.rotate(yawRad);
+                const start = 9;
+                const len = 11;
                 ctx.beginPath();
-                ctx.moveTo(-len * 0.4, 0);
-                ctx.lineTo(len * 0.5, 0);
+                ctx.moveTo(start, 0);
+                ctx.lineTo(start + len, 0);
                 ctx.stroke();
                 ctx.beginPath();
-                ctx.moveTo(len * 0.55, 0);
-                ctx.lineTo(len * 0.15, -len * 0.25);
-                ctx.lineTo(len * 0.15, len * 0.25);
+                ctx.moveTo(start + len + 4, 0);
+                ctx.lineTo(start + len - 1, -4);
+                ctx.lineTo(start + len - 1, 4);
                 ctx.closePath();
                 ctx.fill();
                 ctx.restore();
+                }
             }
         }
 
@@ -795,34 +798,38 @@
             ctx.font = '11px sans-serif';
             ctx.fillText(p.point_type, pos.x + 9, pos.y + 7);
 
-            drawArrow(pos, p.heading, color, isSelected);
+            if (p.point_type >= 2 && p.point_type <= 5) {
+                drawRelativeYawArrow(pos, p.relative_yaw, color, isSelected);
+            }
         }
     }
 
-    function drawArrow(pos, headingDeg, color, selected) {
-        const len = selected ? 19 : 16;
-        const rad = normalizeHeading(headingDeg) * Math.PI / 180;
+    function drawRelativeYawArrow(pos, yawDeg, color, selected) {
+        const radius = selected ? 8 : 6.5;
+        const start = radius + 2;
+        const len = selected ? 14 : 12;
+        const rad = Math.PI - normalizeYaw(yawDeg) * Math.PI / 180;
         ctx.save();
         ctx.translate(pos.x, pos.y);
-        ctx.rotate(-rad);
+        ctx.rotate(rad);
         ctx.strokeStyle = '#fff';
         ctx.lineWidth = 4;
         ctx.lineCap = 'round';
         ctx.beginPath();
-        ctx.moveTo(-len * 0.45, 0);
-        ctx.lineTo(len * 0.55, 0);
+        ctx.moveTo(start, 0);
+        ctx.lineTo(start + len, 0);
         ctx.stroke();
         ctx.strokeStyle = color;
         ctx.lineWidth = 2.2;
         ctx.beginPath();
-        ctx.moveTo(-len * 0.45, 0);
-        ctx.lineTo(len * 0.55, 0);
+        ctx.moveTo(start, 0);
+        ctx.lineTo(start + len, 0);
         ctx.stroke();
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.moveTo(len * 0.62, 0);
-        ctx.lineTo(len * 0.15, -len * 0.27);
-        ctx.lineTo(len * 0.15, len * 0.27);
+        ctx.moveTo(start + len + 5, 0);
+        ctx.lineTo(start + len - 2, -5);
+        ctx.lineTo(start + len - 2, 5);
         ctx.closePath();
         ctx.fill();
         ctx.restore();
