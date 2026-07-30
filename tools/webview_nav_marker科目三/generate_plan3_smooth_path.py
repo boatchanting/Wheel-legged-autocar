@@ -41,6 +41,8 @@ STRAIGHT_LENGTH_MM = 500.0
 SAMPLE_STEP_MM = 50.0
 MIN_LINK_LENGTH_MM = 5.0
 NAV_ROUTE_MAX_POINTS = 5000
+START_POINT_X_MM = 0.0
+START_POINT_Y_MM = 0.0
 
 # 与 tools/webview_nav_marker速度规划/caculate_path.py 保持一致的离线路径速度约束。
 PATH_SPEED_MAX_MM_S = 3000.0
@@ -53,6 +55,11 @@ MAX_PATH_YAW_RATE_RAD_S = 2.8
 MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0
 SPEED_TO_MM_S = 4.79
 CURVATURE_EPS = 1e-6
+
+# These limits are expressed in the target_speed units written to
+# NavRamPoint_t.
+STAIRS_APPROACH_DISTANCE_MM = 4000.0
+STAIRS_APPROACH_TARGET_SPEED_MAX = 350.0
 
 # Match csv_to_nav_table.py.  Each value is measured from the recorded exit
 # marker toward the matching entry marker, so the visual state-machine exit
@@ -285,8 +292,10 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
 
 
 def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node], dict[tuple[int, int], bool]]:
-    """Expand each special pair to pre-entry / entry / exit / post-exit anchors."""
-    nodes: list[Node] = []
+    """Expand special pairs and prepend the unrecorded vehicle origin."""
+    # Recordings begin after the vehicle has already left (0, 0).  Including
+    # this virtual node makes the first table entry the true route origin.
+    nodes: list[Node] = [Node(START_POINT_X_MM, START_POINT_Y_MM, 0, None, "origin (0, 0)")]
     # value=True only for the requested 0.5m approach/departure corridors.
     # The entry->exit link is a direct task-zone placeholder; it is deliberately
     # not counted as a forced straight section of the navigation path.
@@ -366,7 +375,11 @@ def calculate_yaw_and_curvature(samples: list[PathSample]) -> tuple[np.ndarray, 
     return s, yaw, curvature
 
 
-def calculate_target_speed(samples: list[PathSample], s: np.ndarray, curvature: np.ndarray) -> np.ndarray:
+def calculate_target_speed(
+    samples: list[PathSample],
+    s: np.ndarray,
+    curvature: np.ndarray,
+) -> np.ndarray:
     """曲率包络限速，再执行与 caculate_path.py 相同的前后向加减速扫描。"""
     count = len(samples)
     if count == 0:
@@ -417,6 +430,25 @@ def calculate_target_speed(samples: list[PathSample], s: np.ndarray, curvature: 
         )
 
     return -planned_speed / SPEED_TO_MM_S
+
+
+def limit_stairs_approach_output_speed(
+    samples: list[PathSample],
+    s: np.ndarray,
+    target_speed: np.ndarray,
+    approach_distance_mm: float,
+) -> np.ndarray:
+    """Cap only the table output for points within the three-step approach."""
+    output_speed = np.array(target_speed, copy=True)
+    stairs_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 3]
+    for entry_s in stairs_entry_s:
+        approach = (s >= entry_s - approach_distance_mm) & (s <= entry_s)
+        output_speed[approach] = np.clip(
+            output_speed[approach],
+            -STAIRS_APPROACH_TARGET_SPEED_MAX,
+            STAIRS_APPROACH_TARGET_SPEED_MAX,
+        )
+    return output_speed
 
 
 def generate_path(markers: list[Marker], sample_step_mm: float) -> list[PathSample]:
@@ -518,11 +550,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-csv", type=Path, help="输出路径 CSV，默认与输入同目录并追加 _planned")
     parser.add_argument("--render", type=Path, help="输出 PNG，默认与输入同目录并追加 _planned")
     parser.add_argument("--header", type=Path, default=DEFAULT_HEADER, help="C 路表输出位置（默认 code/navigation/nav_replay_route_table.h）")
+    parser.add_argument(
+        "--stairs-approach-distance-mm",
+        type=float,
+        default=STAIRS_APPROACH_DISTANCE_MM,
+        help="three-step approach speed-cap distance in mm (default: 4000)",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
+    if args.stairs_approach_distance_mm < 0.0:
+        raise ValueError("Three-step approach distance must not be negative.")
     source = args.input.resolve() if args.input else find_latest_marker_csv(SCRIPT_DIR)
     if not source.is_file():
         raise FileNotFoundError(f"找不到默认输入 CSV: {source}。请导出该文件或使用 --input 指定 CSV。")
@@ -535,9 +575,15 @@ def main() -> int:
     samples, effective_sample_step_mm = generate_path_with_point_cap(markers)
     s, yaw, curvature = calculate_yaw_and_curvature(samples)
     target_speed = calculate_target_speed(samples, s, curvature)
-    write_csv(csv_output, samples, yaw, curvature, target_speed)
-    render(render_output, markers, samples, s, curvature, target_speed)
-    write_c_header(args.header, samples, yaw, curvature, target_speed, source, start_heading)
+    output_target_speed = limit_stairs_approach_output_speed(
+        samples,
+        s,
+        target_speed,
+        args.stairs_approach_distance_mm,
+    )
+    #write_csv(csv_output, samples, yaw, curvature, output_target_speed)
+    render(render_output, markers, samples, s, curvature, output_target_speed)
+    write_c_header(args.header, samples, yaw, curvature, output_target_speed, source, start_heading)
 
     # Geometry is exact even when a 50 mm sampled row lies on a boundary.
     # Do not estimate this from the per-sample visual tag.
@@ -545,7 +591,7 @@ def main() -> int:
     print(f"输入: {source}")
     print(f"输出路径: {csv_output} ({len(samples)} 点, 总长 {s[-1]:.1f} mm)")
     print(f"采样间距: {effective_sample_step_mm:.1f} mm（上限 {NAV_ROUTE_MAX_POINTS} 点）")
-    print(f"目标速度范围: {target_speed.min():.1f} ~ {target_speed.max():.1f}（负数为前进指令）")
+    print(f"目标速度范围: {output_target_speed.min():.1f} ~ {output_target_speed.max():.1f}（负数为前进指令）")
     print(f"渲染图: {render_output}")
     print(f"强制直线累计长度: {forced_length:.1f} mm")
     print(f"C 路表: {args.header}")
