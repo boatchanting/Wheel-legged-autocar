@@ -90,9 +90,10 @@ TYPE_LABEL = {
     50: "颠簸路退出",
 }
 TYPE_COLOR = {
-    0: "#3b82f6", 1: "#db2777", 2: "#d97706", 3: "#0891b2",
-    4: "#854d0e", 5: "#7e22ce", 10: "#db2777", 20: "#d97706",
-    30: "#0891b2", 40: "#854d0e", 50: "#7e22ce",
+    0: "#3b82f6", 1: "#db2777",
+    # 坡道绿色、三级跳红色、单边桥紫色、颠簸路黄色；进入/退出保持同色。
+    2: "#16a34a", 3: "#dc2626", 4: "#9333ea", 5: "#eab308",
+    10: "#db2777", 20: "#16a34a", 30: "#dc2626", 40: "#9333ea", 50: "#eab308",
 }
 
 
@@ -103,6 +104,7 @@ class Marker:
     y: float
     point_type: int
     heading: Optional[float]
+    relative_yaw: Optional[float]
 
 
 @dataclass
@@ -161,6 +163,7 @@ def read_markers(csv_path: Path) -> tuple[list[Marker], Optional[float]]:
                 raise ValueError(f"CSV 缺少必需列: {required}")
 
         index_field = fields.get("index")
+        relative_yaw_field = fields.get("relative_yaw") or fields.get("target_yaw_deg")
         heading_field = fields.get("heading")
         start_heading_field = fields.get("start_heading")
         markers: list[Marker] = []
@@ -168,13 +171,21 @@ def read_markers(csv_path: Path) -> tuple[list[Marker], Optional[float]]:
         for row_number, row in enumerate(reader, start=2):
             try:
                 order = int(row[index_field]) if index_field and row[index_field] else len(markers)
+                relative_yaw = float(row[relative_yaw_field]) if relative_yaw_field and row[relative_yaw_field] else None
                 heading = float(row[heading_field]) if heading_field and row[heading_field] else None
                 if start_heading is None and start_heading_field and row[start_heading_field]:
                     start_heading = float(row[start_heading_field])
                 point_type = int(float(row[fields["point_type"]]))
                 if point_type not in TYPE_LABEL:
                     raise ValueError(f"不支持的 point_type={point_type}")
-                markers.append(Marker(order, float(row[fields["x"]]), float(row[fields["y"]]), point_type, heading))
+                markers.append(Marker(
+                    order,
+                    float(row[fields["x"]]),
+                    float(row[fields["y"]]),
+                    point_type,
+                    heading,
+                    relative_yaw,
+                ))
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"CSV 第 {row_number} 行无效: {exc}") from exc
 
@@ -511,15 +522,45 @@ def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
     points = np.array([(sample.x, sample.y) for sample in samples], dtype=float)
+    marker_list = list(markers)
+    # Keep arrows visibly outside their marker, while scaling them to the map.
+    map_span_mm = max(float(np.ptp(points[:, 0])), float(np.ptp(points[:, 1])), 1.0)
+    arrow_length_mm = min(1200.0, max(350.0, 0.035 * map_span_mm))
     forced = np.array([sample.forced_straight for sample in samples], dtype=bool)
     figure, (axis_path, axis_speed, axis_curve) = plt.subplots(1, 3, figsize=(20, 7), gridspec_kw={"width_ratios": [1.35, 1, 1]})
     axis_path.plot(points[:, 0], points[:, 1], color="#1d4ed8", linewidth=2.0, label="G2 平滑路径")
     if forced.any():
         axis_path.scatter(points[forced, 0], points[forced, 1], s=9, color="#f97316", label="强制直线段", zorder=3)
-    for marker in markers:
+    for marker in marker_list:
         color = TYPE_COLOR[marker.point_type]
         axis_path.scatter(marker.x, marker.y, s=75, marker="o" if marker.point_type in (0, *ENTRY_TYPES) else "s", color=color, edgecolor="black", linewidth=0.6, zorder=5)
-        axis_path.annotate(f"{marker.order}: {TYPE_LABEL[marker.point_type]}", (marker.x, marker.y), xytext=(5, 5), textcoords="offset points", fontsize=8)
+        # 普通路径点只保留位置标记，避免地图被大量文字遮挡。
+        if marker.point_type != 0:
+            axis_path.annotate(f"{marker.order}: {TYPE_LABEL[marker.point_type]}", (marker.x, marker.y), xytext=(5, 5), textcoords="offset points", fontsize=8)
+        if marker.point_type in ENTRY_TYPES and marker.relative_yaw is not None:
+            # 与 calc_path_yaw_deg() 相反变换：relative_yaw=0° 指向 X 负方向。
+            yaw_rad = math.radians(marker.relative_yaw)
+            direction = np.array([-math.cos(yaw_rad), -math.sin(yaw_rad)])
+            arrow_start = np.array([marker.x, marker.y]) + 0.35 * arrow_length_mm * direction
+            arrow_end = np.array([marker.x, marker.y]) + 1.35 * arrow_length_mm * direction
+            axis_path.annotate(
+                "",
+                xy=arrow_end,
+                xytext=arrow_start,
+                arrowprops={"arrowstyle": "-|>", "color": color, "lw": 2.4, "mutation_scale": 18},
+                zorder=6,
+            )
+            yaw_label = np.array([marker.x, marker.y]) + 1.55 * arrow_length_mm * direction
+            axis_path.annotate(
+                f"relative_yaw={marker.relative_yaw:.1f}°",
+                yaw_label,
+                ha="center",
+                va="center",
+                fontsize=8,
+                fontweight="bold",
+                color=color,
+                zorder=6,
+            )
     axis_path.set_title("Plan3 生成路径（橙色为入口前/出口后直线）")
     axis_path.set_xlabel("X (mm)")
     axis_path.set_ylabel("Y (mm)")
@@ -539,8 +580,14 @@ def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s
     axis_curve.set_xlabel("累计路径长度 (mm)")
     axis_curve.set_ylabel("曲率 (1/m)")
     axis_curve.grid(True, alpha=0.25)
-    figure.tight_layout()
+    figure.suptitle(
+        "请仔细检查地图（1.状态机的种类2.坡道前的打点需要拉一下）",
+        fontsize=21,
+        fontweight="bold",
+    )
+    figure.tight_layout(rect=(0, 0, 1, 0.92))
     figure.savefig(output, dpi=180)
+    plt.show()
     plt.close(figure)
 
 
