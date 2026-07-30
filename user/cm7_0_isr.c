@@ -720,9 +720,11 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     // 6.rolling平衡环(5ms一次)
     if (loop_counter % 5 == 3){
-        // 单边桥/桥梁任务接管时不改写 roll_degree，保留原有 Rolling 流程。
-        uint8 turn_roll_task_takeover = (uint8)((VisionBridgeTask_IsActive() != 0U) ||
-                                                (Bridge_Test_Triple_SingleSide_Is_Active() != 0U));
+        // 视觉单边桥由其状态机独占 rolling；桥测试任务仍沿用原有流程。
+        uint8 vision_bridge_task_takeover = (uint8)(VisionBridgeTask_IsActive() != 0U);
+        uint8 bridge_test_task_takeover = (uint8)(Bridge_Test_Triple_SingleSide_Is_Active() != 0U);
+        uint8 turn_roll_task_takeover = (uint8)((vision_bridge_task_takeover != 0U) ||
+                                                (bridge_test_task_takeover != 0U));
         float brake_pwm_roll = Brake_Feedforward_GetPwm();
         // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；强刹时清侧倾，避免刹车叠加压低单侧车身。
         uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
@@ -773,9 +775,15 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         {
             Turn_Active_Roll_Duty_Update(0.0f, 1U);
         }
-        if (turn_roll_task_takeover != 0U)
+        if (vision_bridge_task_takeover != 0U)
         {
-            // 单边桥/桥梁任务保持原有被动 Rolling 流程。
+            /* The vision bridge state machine is the only writer of passive
+             * rolling output.  Do not reuse a turn-active-roll target here. */
+            roll_degree = 0.0f;
+        }
+        else if (bridge_test_task_takeover != 0U)
+        {
+            // 单边桥测试任务保持原有被动 Rolling 流程。
             Roll_Balance_Control(euler_angle.roll, roll_degree);
         }
         else
