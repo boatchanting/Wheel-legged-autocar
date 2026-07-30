@@ -43,7 +43,7 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 #define VISION_THREE_STAGE_STALE_TIMEOUT_TICKS           (1500U)  /* 3.0s */
 #define VISION_THREE_STAGE_STATE_TIMEOUT_TICKS           (8000U)  /* 16.0s */
 #define VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS           (22U)    /* 44ms */
-#define VISION_THREE_STAGE_JUMP3_DELAY_AFTER_JUMP2_TICKS (251U)    /* 180ms，2ms tick */
+#define VISION_THREE_STAGE_JUMP3_DELAY_AFTER_JUMP2_TICKS (211U)    /* 180ms，2ms tick */
 #define VISION_THREE_STAGE_LOCK_STABLE_FRAMES            (3U)
 #define VISION_THREE_STAGE_BLACK_GAP_LOST_FRAMES         (2U)
 #define VISION_THREE_STAGE_REACQUIRE_STABLE_FRAMES       (2U)
