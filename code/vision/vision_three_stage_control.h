@@ -35,7 +35,7 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 // 三级跳轻微修正逻辑，将成功率从80%拉到几乎100%，在台阶前进行一定量的轻微修正，这个参数是默认的，不是很好【优化点】
 #define VISION_THREE_STAGE_JUMP1_CORRECTION_BOTTOM_Y_DEFAULT (24U) //按行号由上到下递增：在远景 bottom_y < 修正阈值 时允许轻微修正；进入近景后停止更新并平滑回正，
 #define VISION_THREE_STAGE_JUMP1_CORRECTION_LPF_ALPHA        (0.25f)
-#define VISION_THREE_STAGE_JUMP1_CORRECTION_LATERAL_SIGN     (-1.0f)
+#define VISION_THREE_STAGE_JUMP1_CORRECTION_LATERAL_SIGN     (0.0f) //上台阶前修正 -1.0f是使用，cxz发车不使用
 #define VISION_THREE_STAGE_JUMP1_CORRECTION_K_LAT_DEG_PER_MM (0.04f)
 #define VISION_THREE_STAGE_JUMP1_CORRECTION_MAX_ERR_DEG      (4.0f)
 
