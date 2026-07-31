@@ -11,12 +11,12 @@ extern volatile uint8 exit_beep_request;
 /* ========================= 参数区 ========================= */
 #define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (1500.0f)
 
-#define BUMPY_ROAD_INIT_SPEED_SET        (-800.0f)      // 接近时的初始速度
+#define BUMPY_ROAD_INIT_SPEED_SET        (-400.0f)      // 接近时的初始速度  //7段颠簸给-400.0f // 4段给-800.0f
 #define BUMPY_ROAD_LOCK_SPEED_SET        (-800.0f)      // 颠簸段目标速度
 #define BUMPY_ROAD_SPEED_INC_STEP        (1.0f)         // 每1ms速度增量 (斜率加速)
 
 #define BUMPY_ROAD_VISUAL_EXIT_MIN_DISTANCE_MM (1000.0f) // 累计满 1m 后才允许由视觉确认出口
-#define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
+#define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务 // 
 #define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms更新一次距离
 
 #define BUMPY_ROAD_STEER_FILTER_ALPHA    (0.05f)        // 方向偏差轻度低通滤波系数 (0~1，越小越平滑)
@@ -324,11 +324,13 @@ void BumpyRoad_Update_1ms(void)
                 (s_bumpy_ctx.correction_applied == 0U) &&
                 VisionBumpyControl_IsExitConfirmed())
             {
+                /* 视觉确认出口即提示；遥控触发时也可能没有导航出口锚点。 */
+                exit_beep_request = 1U;
                 if (s_bumpy_ctx.exit_anchor_valid != 0U)
                 {
                     nav_vision_fusion_x = s_bumpy_ctx.exit_anchor_x_mm;
                     nav_vision_fusion_y = s_bumpy_ctx.exit_anchor_y_mm;
-                    exit_beep_request = 1U;
+                    //exit_beep_request = 1U;
                 }
                 s_bumpy_ctx.correction_start_x_mm = inertial_nav.x;
                 s_bumpy_ctx.correction_start_y_mm = inertial_nav.y;
