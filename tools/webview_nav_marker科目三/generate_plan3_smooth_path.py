@@ -59,7 +59,7 @@ CURVATURE_EPS = 1e-6
 # These limits are expressed in the target_speed units written to
 # NavRamPoint_t.
 STAIRS_APPROACH_DISTANCE_MM = 4000.0
-STAIRS_APPROACH_TARGET_SPEED_MAX = 350.0
+STAIRS_APPROACH_TARGET_SPEED_MAX = 300.0
 
 # Match csv_to_nav_table.py.  Each value is measured from the recorded exit
 # marker toward the matching entry marker, so the visual state-machine exit
