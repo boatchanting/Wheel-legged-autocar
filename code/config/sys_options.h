@@ -13,7 +13,7 @@
 #define CAMERA_MENU_DEBUG_LOG_ENABLE 0U  // 【图像调试日志】1: 打开1核 camera_menu 串口调试打印  0: 关闭
 #define CAMERA_MENU_DEBUG_LOG_DIV 20U    // 【日志打印分频】1核 camera_menu 串口打印分频，每N帧打印一次
 
-#define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
+#define REMOTE_CONTROL 0                 //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
 #define ACCEL_FF_ENABLE 0U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
 #define ACCEL_FF_MODE 1U // 【加速前馈模式】0:关闭  1:直接叠加 PWM 前馈  2:加速时临时增强舵机速度环 Kp
