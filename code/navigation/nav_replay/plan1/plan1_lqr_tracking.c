@@ -2,6 +2,7 @@
 #include "../../../common.h"
 #include "../../../calculate/pid-new.h"
 #include "../../nav_replay_route_table.h"
+#include "plan1_speed_target_limit.h"
 
 #if (CURRENT_NAV_PLAN == 1) && (NAV_PLAN1_METHOD == PLAN1_LQR_TRACKING)
 
@@ -1164,7 +1165,11 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
     if (((raw_speed * s_prev_speed_set) >= 0.0f) &&
         (abs_raw > (abs_prev + NAV_SPEED_SLEW_EPS)))
     {
-        return raw_speed;
+        return Plan1_ApplyActualSpeedLeadLimit(
+            raw_speed,
+            raw_speed,
+            current_actual_speed,
+            NAV_SPEED_ACTUAL_LEAD_LIMIT_MM_S / LQR_SPEED_TO_MM_S);
     }
 
     if ((raw_speed * s_prev_speed_set) < 0.0f)
@@ -1184,7 +1189,11 @@ static float NavReplay_SpeedSlew_Update(float raw_speed)
         step_limit = NAV_SPEED_SLEW_UP_NORMAL;
     }
 
-    return s_prev_speed_set + Float_Constrain(diff, -step_limit, step_limit);
+    return Plan1_ApplyActualSpeedLeadLimit(
+        raw_speed,
+        s_prev_speed_set + Float_Constrain(diff, -step_limit, step_limit),
+        current_actual_speed,
+        NAV_SPEED_ACTUAL_LEAD_LIMIT_MM_S / LQR_SPEED_TO_MM_S);
 }
 
 #if IMU_CATEGORY == 3

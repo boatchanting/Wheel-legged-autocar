@@ -80,6 +80,8 @@
 #define NAV_SPEED_SLEW_DOWN_NORMAL        400.0f
 #define NAV_SPEED_SLEW_DOWN_FAST          800.0f
 #define NAV_SPEED_SLEW_DOWN_CROSS_ZERO    120.0f
+/* Same-direction acceleration target may lead actual speed by at most 4 m/s. */
+#define NAV_SPEED_ACTUAL_LEAD_LIMIT_MM_S 3000.0f
 #define NAV_STOP_LOCK_SPEED_EPS             1.0f
 
 /*
