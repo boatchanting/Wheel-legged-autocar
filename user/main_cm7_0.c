@@ -74,7 +74,11 @@ float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
 int g_motor_enable =G_MOTOR_ENABLE_INIT; // 电机使能安全开关，1为使能，0为关机
+#if REMOTE_CONTROL
 volatile bool g_fallen = false; // 主动起立/倒下控制，false为尝试起立，true为保持倒下
+#else
+volatile bool g_fallen = true;  // 无遥控器时默认保持倒下，等待菜单触发起立发车
+#endif
 // =================================================================================
 
 // =================================================================================
