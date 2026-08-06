@@ -15,7 +15,7 @@ matplotlib.rcParams['font.sans-serif'] = ['SimHei', 'Microsoft YaHei', 'DejaVu S
 matplotlib.rcParams['axes.unicode_minus'] = False
 
 # 车型参数 (CAR_SELECT == 3)
-SPEED_TO_MM_S = 4.936  # 转速换算系数
+SPEED_TO_MM_S = 4.79  # 转速换算系数
 WHEEL_BASE_MM = 175.0  # 轮距 mm
 
 # 日志文件配置

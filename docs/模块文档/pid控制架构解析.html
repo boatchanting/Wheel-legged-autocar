@@ -509,7 +509,7 @@
       这份文档把你当前底层控制拆成小白能跟上的数学链路：速度怎么量、PID 怎么算、限幅为什么会饱和、舵机单次增量怎样影响加速度，以及哪些参数值得按公式重新测试。
     </p>
     <div class="meta-row">
-      <span class="pill">速度换算：rpm × 4.936 = mm/s</span>
+      <span class="pill">速度换算：rpm × 4.79 = mm/s</span>
       <span class="pill">舵机速度环：9ms</span>
       <span class="pill">角度环：3ms</span>
       <span class="pill">角速度环：1ms</span>
@@ -545,7 +545,7 @@
       <div class="grid three">
         <div class="card prominent">
           <h3>1. PID 不是直接算出“真实速度”</h3>
-          <p class="muted">PID 算出的是控制指令：舵机 duty 调整量、目标角速度、电机 PWM。真实速度由车轮编码器测出来，再用 <code>rpm × 4.936</code> 换成 <code>mm/s</code> 反馈回来。</p>
+          <p class="muted">PID 算出的是控制指令：舵机 duty 调整量、目标角速度、电机 PWM。真实速度由车轮编码器测出来，再用 <code>rpm × 4.79</code> 换成 <code>mm/s</code> 反馈回来。</p>
         </div>
         <div class="card prominent">
           <h3>2. 现在速度主调节在舵机速度环</h3>
@@ -574,16 +574,16 @@
           <p>当前 1ms 中断每 9ms 读取左右轮编码器速度，并计算中间变量：</p>
           <span class="formula">current_actual_speed = 0.5 × (right_rpm - left_rpm)</span>
           <p>然后把它当作“实际速度 rpm 单位量”送入舵机速度环。你给出的实车换算是：</p>
-          <span class="formula">v_mm_s = rpm × 4.936</span>
+          <span class="formula">v_mm_s = rpm × 4.79</span>
           <p>如果要从期望线速度反推 PID 目标速度：</p>
-          <span class="formula">target_rpm = v_mm_s / 4.936</span>
+          <span class="formula">target_rpm = v_mm_s / 4.79</span>
         </div>
         <div class="card">
           <h3>这个系数代表什么</h3>
           <p>轮子每分钟转 <code>rpm</code> 圈，线速度等于轮周长乘转速再除以 60 秒：</p>
           <span class="formula">v_mm_s = rpm × C_mm / 60</span>
-          <p>已知 <code>v_mm_s = rpm × 4.936</code>，所以：</p>
-          <span class="formula">C_mm = 4.936 × 60 = 296.16 mm</span>
+          <p>已知 <code>v_mm_s = rpm × 4.79</code>，所以：</p>
+          <span class="formula">C_mm = 4.79 × 60 = 296.16 mm</span>
           <span class="formula">D_mm = C_mm / π ≈ 94.27 mm</span>
           <p class="muted">这说明你的速度系数大约对应直径 94mm 的轮子，和小车轮径是一个合理量级。</p>
         </div>
@@ -598,7 +598,7 @@
         <div class="card">
           <h3>纵向速度与平衡</h3>
           <div class="flow">
-            <div class="node"><strong>目标速度</strong><code>target_speed_set</code>，单位与编码器速度一致，换算到线速度用 <code>×4.936</code>。</div>
+            <div class="node"><strong>目标速度</strong><code>target_speed_set</code>，单位与编码器速度一致，换算到线速度用 <code>×4.79</code>。</div>
             <div class="arrow"></div>
             <div class="node"><strong>实际速度</strong><code>current_actual_speed = 0.5 × (right - left)</code>。</div>
             <div class="arrow"></div>
@@ -855,12 +855,12 @@
         <div class="card">
           <h3>1. 先把速度和加速度算出来</h3>
           <p>每 9ms 记录一次实际 rpm，就能算实车线速度和加速度：</p>
-          <span class="formula">v[k] = 4.936 × rpm[k]  (mm/s)</span>
+          <span class="formula">v[k] = 4.79 × rpm[k]  (mm/s)</span>
           <span class="formula">a[k] = (v[k] - v[k-1]) / 0.009  (mm/s²)</span>
           <span class="formula">a_m_s2[k] = a[k] / 1000</span>
           <p>如果你希望从 <code>v0</code> 在 <code>t</code> 秒内变到 <code>v1</code>：</p>
           <span class="formula">a_des = (v1 - v0) / t</span>
-          <span class="formula">每 9ms 应变化 Δrpm = a_des × 0.009 / 4.936</span>
+          <span class="formula">每 9ms 应变化 Δrpm = a_des × 0.009 / 4.79</span>
         </div>
         <div class="card">
           <h3>2. 再看限幅是否合理</h3>
@@ -1420,14 +1420,14 @@ else trend = HOLD;</code></pre>
               <input id="speedTargetMm" type="number" value="800" step="10" />
             </label>
             <label>速度换算系数
-              <input id="speedFactor" type="number" value="4.936" step="0.001" />
+              <input id="speedFactor" type="number" value="4.79" step="0.001" />
             </label>
           </div>
           <div class="kpi" style="margin-top:14px">
             <div class="metric"><span class="label">current_actual_speed</span><span id="speedActualRpm" class="value">--</span><span class="hint">0.5 × (right - left)</span></div>
-            <div class="metric"><span class="label">实际线速度</span><span id="speedActualMm" class="value">--</span><span class="hint">rpm × 4.936</span></div>
+            <div class="metric"><span class="label">实际线速度</span><span id="speedActualMm" class="value">--</span><span class="hint">rpm × 4.79</span></div>
             <div class="metric"><span class="label">实际 m/s</span><span id="speedActualM" class="value">--</span><span class="hint">mm/s ÷ 1000</span></div>
-            <div class="metric"><span class="label">目标 rpm</span><span id="speedTargetRpm" class="value">--</span><span class="hint">mm/s ÷ 4.936</span></div>
+            <div class="metric"><span class="label">目标 rpm</span><span id="speedTargetRpm" class="value">--</span><span class="hint">mm/s ÷ 4.79</span></div>
           </div>
         </div>
 
@@ -1450,7 +1450,7 @@ else trend = HOLD;</code></pre>
           <div class="kpi" style="margin-top:14px">
             <div class="metric"><span class="label">所需加速度</span><span id="accA" class="value">--</span><span class="hint">mm/s² 与 m/s²</span></div>
             <div class="metric"><span class="label">每周期速度变化</span><span id="accDvTick" class="value">--</span><span class="hint">mm/s per tick</span></div>
-            <div class="metric"><span class="label">每周期 rpm 变化</span><span id="accRpmTick" class="value">--</span><span class="hint">Δrpm = Δv / 4.936</span></div>
+            <div class="metric"><span class="label">每周期 rpm 变化</span><span id="accRpmTick" class="value">--</span><span class="hint">Δrpm = Δv / 4.79</span></div>
             <div class="metric"><span class="label">理想等效倾角</span><span id="accTilt" class="value">--</span><span class="hint">atan(a/g)，只做物理估算</span></div>
           </div>
           <canvas id="accChart" width="760" height="260" aria-label="速度规划曲线"></canvas>
@@ -1487,7 +1487,7 @@ else trend = HOLD;</code></pre>
             </label>
           </div>
           <div class="kpi" style="margin-top:14px">
-            <div class="metric"><span class="label">当前线速度</span><span id="raceNowSpeed" class="value">--</span><span class="hint">rpm × 4.936</span></div>
+            <div class="metric"><span class="label">当前线速度</span><span id="raceNowSpeed" class="value">--</span><span class="hint">rpm × 4.79</span></div>
             <div class="metric"><span class="label">加到直道目标时间</span><span id="raceAccelTime" class="value">--</span><span class="hint">按允许加速度估算</span></div>
             <div class="metric"><span class="label">弯前刹车距离</span><span id="raceBrakeDist" class="value">--</span><span class="hint">含安全余量</span></div>
             <div class="metric"><span class="label">当前横向加速度</span><span id="raceLatA" class="value">--</span><span class="hint">a_lat = v × yaw_rate</span></div>
@@ -1703,7 +1703,7 @@ pwm_right = -gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out;</code></pre>
 
   <script>
     const CONST = {
-      speedFactor: 4.936,
+      speedFactor: 4.79,
       servoKp: -4.5,
       servoKi: 0,
       servoKd: -0.17,

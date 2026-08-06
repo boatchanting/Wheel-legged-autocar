@@ -35,7 +35,7 @@ static const ControlProfile_t g_control_profile_normal = {
 };
 
 static const ControlProfile_t g_control_profile_accel = {
-    -5.4f, SERVO_SPEED_KI, -0.14f, 2600.0f, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
+    -5.4f, SERVO_SPEED_KI, -0.14f, 2000.0f, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
     -13.2f, ANG_KI, -11.8f, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO,
     GYR_KP, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE,
     TURN_ANG_KP, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE,
