@@ -42,6 +42,7 @@
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
+#include "vision/vision_slope_control.h"
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
@@ -302,6 +303,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         VisionPvcControl_Update_2ms();
         VisionBumpyControl_Update_2ms();
         VisionBridgeTask_Update_2ms();
+        VisionSlopeTask_Update_2ms();
         VisionThreeStageControl_Update_2ms();
     }
 
@@ -404,7 +406,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ------------------------------------------------------
     if (loop_counter % 10 == 3) {  // 10ms 一次
         // 颠簸状态机激活时，暂停导航复现，避免覆盖锁速目标
-        if (g_motor_enable && (!g_fallen) && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) 
+        if (g_motor_enable && (!g_fallen) && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U) && (VisionSlopeTask_IsActive() == 0U))
         { 
             NavReplay_Process();
             #if GNSS_NAV == 1
@@ -414,13 +416,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
-        if(g_motor_enable && (!g_fallen) && (VisionBridgeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
+        if(g_motor_enable && (!g_fallen) && (VisionBridgeTask_IsActive() == 0U) && (VisionSlopeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
         } //复现控制
     };//【测试】抬高双腿
 
     Control_Profile_Update1ms();//pid参数调度更新
 
-    // 自转结束蜂鸣器提示
+    // 自转结束蜂鸣器提示【优化点】不要放中断
     if (g_minefield_beep_request != 0U)
     {
         g_minefield_beep_request = 0U;
@@ -512,6 +514,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                     (BumpyRoad_Is_Active() != 0U) ||
                     (VisionThreeStageControl_IsActive() != 0U) ||
                     (VisionBridgeTask_IsActive() != 0U) ||
+                    (VisionSlopeTask_IsActive() != 0U) ||
                     (Bridge_Test_Triple_SingleSide_Is_Active()) ||
                     (g_pvc_control_enable != 0U)
                     #if GNSS_NAV == 1
@@ -872,6 +875,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             (BumpyRoad_Is_Active() != 0U) ||
             (VisionThreeStageControl_IsActive() != 0U) ||
             (VisionBridgeTask_IsActive() != 0U) ||
+            (VisionSlopeTask_IsActive() != 0U) ||
             (Bridge_Test_Triple_SingleSide_Is_Active()) ||
             (g_pvc_control_enable != 0U)
             #if GNSS_NAV == 1
@@ -1029,6 +1033,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
+        && (VisionSlopeTask_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
@@ -1037,6 +1042,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
+        && (VisionSlopeTask_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif

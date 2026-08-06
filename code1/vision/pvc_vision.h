@@ -68,7 +68,7 @@ extern "C" {
  * 尺寸门槛：过滤掉太小、太窄、太稀疏的“假 PVC”
  */
 #define PVC_VISION_MIN_AREA               (120)   /* 面积：白点少于 120 个不要 */
-#define PVC_VISION_MIN_WIDTH              (12)    /* 宽度：不够宽不要 */
+#define PVC_VISION_MIN_WIDTH              (20)    /* 宽度：不够宽不要 */ //为了放止反光，这个应该调大一点，以过滤蓝布反光侧向的情形 //下午反光调大该参数，20左右
 #define PVC_VISION_MIN_HEIGHT             (4)     /* 高度：不够高不要 */
 #define PVC_VISION_MIN_FILL_RATIO         (0.25f) /* 填充率：如果是零零散散的白点（不到 25%）也不要 */
 

@@ -90,10 +90,8 @@ uint16 NavRam_GetPointCount(void)
  * @param point_type 点类型枚举值
  * @note 调用位置：打点成功反馈；实际鸣叫次数 = point_type + 1
  */
-void Buzzer_Beep_By_PointType(uint8 point_type)
+void Buzzer_Beep_Times(uint8 beep_times)
 {
-    uint8 beep_times = point_type + 1;
-
     for (uint8 i = 0; i < beep_times; i++)
     {
         gpio_set_level(BUZZER_PIN, 1);
@@ -105,4 +103,9 @@ void Buzzer_Beep_By_PointType(uint8 point_type)
             system_delay_ms(50);
         }
     }
+}
+
+void Buzzer_Beep_By_PointType(uint8 point_type)
+{
+    Buzzer_Beep_Times(point_type + 1U);
 }

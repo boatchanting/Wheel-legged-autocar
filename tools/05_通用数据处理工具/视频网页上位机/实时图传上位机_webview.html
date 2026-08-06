@@ -111,7 +111,7 @@
       border-radius: 10px;
       background: var(--card-bg);
       backdrop-filter: blur(8px);
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+      box-shadow: 0 4px 16px rgba(0,0,0,0.08);
       overflow: hidden;
       transition: border-color 0.3s, background 0.3s;
     }
@@ -171,6 +171,9 @@
       image-rendering: pixelated; 
       display: none;
     }
+    .preview-wrap.compare-mode { display: flex; }
+    .preview-wrap.compare-mode .preview { width: 50%; height: 100%; flex: 0 0 50%; }
+    .preview-wrap.compare-mode #binaryPreview { border-left: 1px solid var(--line); }
     .empty-text { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; pointer-events: none; }
 
     .logs { width: 100%; height: 100%; border-radius: 6px; border: 1px solid var(--line); background: var(--input-bg); color: #a5b4cb; resize: none; padding: 8px; font: 12px/1.5 Consolas, monospace; outline: none; }
@@ -197,6 +200,40 @@
       background: var(--card-bg); border: 1px solid var(--line); box-shadow: 0 4px 12px rgba(0,0,0,0.2);
       color: var(--text); backdrop-filter: blur(8px);
     }
+
+    /* 二值化控件样式 */
+    .binary-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--panel-soft);
+      pointer-events: auto;
+    }
+    .binary-controls label {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .binary-controls input[type="range"] {
+      flex: 1 1 140px;
+      min-width: 120px;
+      max-width: 260px;
+      cursor: pointer;
+    }
+    .binary-controls input[type="number"] {
+      width: 55px;
+      background: var(--input-bg);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      padding: 2px 4px;
+      font-size: 12px;
+      text-align: center;
+    }
   </style>
 </head>
 <body>
@@ -216,7 +253,7 @@
             <div class="grid">
               <div class="field"><label>监听地址</label><input id="host" value="0.0.0.0" /></div>
               <div class="field"><label>端口</label><input id="port" type="number" value="8086" /></div>
-              <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="120" /></div>
+              <div class="field"><label>目标帧率(FPS)</label><input id="fps" type="number" value="30" /></div>
               <div class="field"><label>输出目录</label><input id="output" readonly /></div>
             </div>
             <div class="btns">
@@ -225,6 +262,8 @@
               <button class="warn" id="recordStartBtn">保存视频</button>
               <button class="stop" id="recordStopBtn">停止保存</button>
               <button class="ghost" id="saveFrameBtn">保存单帧</button>
+              <button class="ghost" id="openFramesBtn">打开图片文件夹</button>
+              <button class="ghost" id="openVideosBtn">打开视频文件夹</button>
               <button class="ghost" id="clearLogBtn">清空日志</button>
             </div>
             <div class="facts">
@@ -264,10 +303,24 @@
       <!-- 槽位 3 -->
       <div class="slot" style="flex: 1.2;">
         <div class="card" id="cardVideo">
-          <div class="head" draggable="true"><h2>🖥️ 实时图像 (94x60 像素缩放)</h2></div>
+          <div class="head" draggable="true">
+            <h2>🖥️ 实时图像</h2>
+          </div>
           <div class="content">
+            <!-- 二值化控件独立于可拖拽标题栏，避免拖动滑块时带动卡片 -->
+            <div class="binary-controls">
+              <label>二值化</label>
+              <input type="checkbox" id="binaryToggle">
+              <label>阈值</label>
+              <input type="range" id="binaryThreshold" min="0" max="255" value="128" step="1">
+              <input type="number" id="thresholdValue" value="128" min="0" max="255" step="1">
+              <label title="左侧显示原图，右侧显示二值化图">左右对比</label>
+              <input type="checkbox" id="binaryCompareToggle" disabled>
+            </div>
             <div class="preview-wrap">
               <img class="preview" id="preview" />
+              <img class="preview" id="binaryPreview" style="display:none;" />
+              <canvas id="processCanvas" width="94" height="60" style="display:none;"></canvas>
               <div class="empty-text" id="previewEmpty">等待视频帧...</div>
             </div>
             <div class="status-line" id="metaText" style="margin-top: 6px;">暂无图像</div>
@@ -309,7 +362,7 @@
 
   <script>
     // ==========================================
-    // 1. UI 交互功能扩展：主题切换 & 拖拽调节
+    // 1. 主题与布局拖拽
     // ==========================================
     
     // -- 主题切换 --
@@ -329,41 +382,32 @@
     let draggedCard = null;
     document.querySelectorAll('.card').forEach(card => {
       const head = card.querySelector('.head');
-      
       head.addEventListener('dragstart', (e) => {
         draggedCard = card;
         e.dataTransfer.effectAllowed = 'move';
-        setTimeout(() => card.style.opacity = '0.4', 0); // 视觉反馈
+        setTimeout(() => card.style.opacity = '0.4', 0);
       });
-      
       head.addEventListener('dragend', () => {
         draggedCard.style.opacity = '1';
         draggedCard = null;
       });
-
-      card.addEventListener('dragover', (e) => {
-        e.preventDefault(); // 允许放置
-      });
-
+      card.addEventListener('dragover', (e) => e.preventDefault());
       card.addEventListener('drop', (e) => {
         e.preventDefault();
         if (draggedCard && draggedCard !== card) {
-          // 巧妙逻辑：只交换内部的 card，而不交换 slot 和 resizer，这样分割线永远不会乱！
           const slotA = draggedCard.parentNode;
           const slotB = card.parentNode;
           slotA.appendChild(card);
           slotB.appendChild(draggedCard);
-          window.dispatchEvent(new Event('resize')); // 触发图表重绘
+          window.dispatchEvent(new Event('resize'));
         }
       });
     });
 
-    // -- 面板大小调节 (Resizer) --
     document.querySelectorAll('.resizer').forEach(resizer => {
       let isDragging = false;
       let startPos, startSize;
       const isV = resizer.classList.contains('v-resizer');
-      // 分割线控制的元素是它前面的那个 slot / col
       const prevEl = resizer.previousElementSibling;
 
       resizer.addEventListener('mousedown', e => {
@@ -372,9 +416,8 @@
         startPos = isV ? e.clientX : e.clientY;
         startSize = isV ? prevEl.getBoundingClientRect().width : prevEl.getBoundingClientRect().height;
         document.body.style.cursor = isV ? 'col-resize' : 'row-resize';
-        document.body.style.userSelect = 'none'; // 防遮挡
+        document.body.style.userSelect = 'none';
       });
-
       window.addEventListener('mousemove', e => {
         if (!isDragging) return;
         const currentPos = isV ? e.clientX : e.clientY;
@@ -384,24 +427,22 @@
         } else {
           prevEl.style.height = `${newSize}px`;
         }
-        prevEl.style.flex = 'none'; // 解除按比例分配，锁定绝对像素大小
+        prevEl.style.flex = 'none';
       });
-
       window.addEventListener('mouseup', () => {
         if (isDragging) {
           isDragging = false;
           resizer.classList.remove('active');
           document.body.style.cursor = '';
           document.body.style.userSelect = '';
-          window.dispatchEvent(new Event('resize')); // 手松开时触发Canvas重绘
+          window.dispatchEvent(new Event('resize'));
         }
       });
     });
 
     // ==========================================
-    // 2. 原有核心业务逻辑 (兼容原代码)
+    // 2. 核心业务逻辑（含二值化）
     // ==========================================
-    
     const hostEl = document.getElementById("host");
     const portEl = document.getElementById("port");
     const fpsEl = document.getElementById("fps");
@@ -414,10 +455,19 @@
     const kdsNow = document.getElementById("kdsNow");
     const sizeNow = document.getElementById("sizeNow");
     const preview = document.getElementById("preview");
+    const binaryPreview = document.getElementById("binaryPreview");
+    const processCanvas = document.getElementById("processCanvas");
+    const processCtx = processCanvas.getContext("2d");
     const previewEmpty = document.getElementById("previewEmpty");
     const metaText = document.getElementById("metaText");
     const logs = document.getElementById("logs");
     
+    const binaryToggle = document.getElementById("binaryToggle");
+    const binaryThreshold = document.getElementById("binaryThreshold");
+    const thresholdValue = document.getElementById("thresholdValue");
+    const binaryCompareToggle = document.getElementById("binaryCompareToggle");
+    const previewWrap = document.querySelector(".preview-wrap");
+
     const oscCanvas = document.getElementById("oscCanvas");
     const oscEmpty = document.getElementById("oscEmpty");
     const oscLegend = document.getElementById("oscLegend");
@@ -437,6 +487,9 @@
     let streamStartTs = 0; let oscTimeRunning = false; let oscViewWindowSec = OSC_WINDOW_SEC;
     let oscViewNowSec = 0; let oscDragActive = false; let oscDragStartX = 0; let oscDragStartViewNow = 0;
     let lastConnected = false;
+    let lastPreviewUri = null;
+    let binaryEnabled = false;
+    let binaryCompareEnabled = false;
 
     function hasApi() { return !!(window.pywebview && window.pywebview.api); }
     function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
@@ -456,10 +509,88 @@
     }
 
     function setStatus(msg) { statusText.textContent = msg; }
-    function setPreview(src) {
-      if (src) { preview.src = src; preview.style.display = "block"; previewEmpty.style.display = "none"; }
-      else { preview.removeAttribute("src"); preview.style.display = "none"; previewEmpty.style.display = "grid"; }
+
+    // 二值化处理函数
+    function applyBinaryToCanvas(srcUri) {
+      const img = new Image();
+      img.onload = () => {
+        processCanvas.width = img.naturalWidth;
+        processCanvas.height = img.naturalHeight;
+        processCtx.drawImage(img, 0, 0);
+        if (binaryEnabled) {
+          const imageData = processCtx.getImageData(0, 0, processCanvas.width, processCanvas.height);
+          const data = imageData.data;
+          const th = parseInt(binaryThreshold.value, 10) || 128;
+          for (let i = 0; i < data.length; i += 4) {
+            const gray = data[i];
+            const val = gray < th ? 0 : 255;
+            data[i] = data[i+1] = data[i+2] = val;
+          }
+          processCtx.putImageData(imageData, 0, 0);
+          binaryPreview.src = processCanvas.toDataURL();
+          binaryPreview.style.display = "block";
+          preview.src = srcUri;
+          preview.style.display = binaryCompareEnabled ? "block" : "none";
+          previewWrap.classList.toggle("compare-mode", binaryCompareEnabled);
+        } else {
+          binaryPreview.style.display = "none";
+          preview.src = srcUri;
+          preview.style.display = "block";
+          previewWrap.classList.remove("compare-mode");
+        }
+        previewEmpty.style.display = "none";
+      };
+      img.src = srcUri;
     }
+
+    function clearPreviews() {
+      preview.removeAttribute("src");
+      preview.style.display = "none";
+      binaryPreview.removeAttribute("src");
+      binaryPreview.style.display = "none";
+      previewWrap.classList.remove("compare-mode");
+      previewEmpty.style.display = "grid";
+    }
+
+    function setPreview(src) {
+      if (src) {
+        lastPreviewUri = src;
+        applyBinaryToCanvas(src);
+      } else {
+        lastPreviewUri = null;
+        clearPreviews();
+      }
+    }
+
+    // 二值化控件交互
+    binaryToggle.onchange = () => {
+      binaryEnabled = !!binaryToggle.checked;
+      binaryCompareToggle.disabled = !binaryEnabled;
+      if (!binaryEnabled) {
+        binaryCompareEnabled = false;
+        binaryCompareToggle.checked = false;
+      }
+      if (lastPreviewUri) applyBinaryToCanvas(lastPreviewUri);
+    };
+
+    binaryCompareToggle.onchange = () => {
+      binaryCompareEnabled = binaryEnabled && !!binaryCompareToggle.checked;
+      if (lastPreviewUri) applyBinaryToCanvas(lastPreviewUri);
+    };
+
+    binaryThreshold.oninput = () => {
+      thresholdValue.value = binaryThreshold.value;
+      if (binaryEnabled && lastPreviewUri) applyBinaryToCanvas(lastPreviewUri);
+    };
+
+    thresholdValue.addEventListener('input', function() {
+      let val = parseInt(this.value, 10);
+      if (isNaN(val)) val = 128;
+      val = clamp(val, 0, 255);
+      this.value = val;               // 显示修正后的整数
+      binaryThreshold.value = val;    // 滑块同步
+      if (binaryEnabled && lastPreviewUri) applyBinaryToCanvas(lastPreviewUri);
+    });
 
     function rebuildLegend(names) {
       oscLegend.innerHTML = "";
@@ -596,6 +727,8 @@
     document.getElementById("recordStartBtn").onclick = () => callApi("start_record_video");
     document.getElementById("recordStopBtn").onclick = () => callApi("stop_record_video");
     document.getElementById("saveFrameBtn").onclick = () => callApi("save_current_frame");
+    document.getElementById("openFramesBtn").onclick = () => callApi("open_frames_folder");
+    document.getElementById("openVideosBtn").onclick = () => callApi("open_videos_folder");
     document.getElementById("saveDataBtn").onclick = () => callApi("save_osc_data");
     document.getElementById("clearLogBtn").onclick = () => callApi("clear_logs");
     

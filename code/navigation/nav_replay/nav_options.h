@@ -1,7 +1,7 @@
 #ifndef _NAV_OPTIONS_H_
 #define _NAV_OPTIONS_H_
 
-#include "../config/sys_options.h"
+#include "../../config/sys_options.h"
 
 
 
@@ -67,11 +67,12 @@
 // [ 科目三 (Plan 3) 算法方案定义 ]
 // ========================================================
 #define PLAN3_METHOD_PRECISE      1 // 方案A：点到点慢速精准对齐方案
+#define PLAN3_METHOD_LQR_SPEED_PLANNING 2 // 方案2：LQR速度规划方案
 // #define PLAN3_xxx       n // 预留：未来可能的其他策略
 
 // 科目三方案
 #ifndef NAV_PLAN3_METHOD
-#define NAV_PLAN3_METHOD PLAN3_METHOD_PRECISE
+#define NAV_PLAN3_METHOD PLAN3_METHOD_LQR_SPEED_PLANNING
 #endif
 
 #endif // _NAV_OPTIONS_H_

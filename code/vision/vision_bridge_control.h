@@ -26,13 +26,12 @@ extern "C" {
 /* (注意：这些 TICKS 都是基于 2ms 中断的，所以 1000 TICKS = 2 秒) */
 #define VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS       (1500U)     /* 对齐超时：3秒还没对齐好，强行上桥 */
 #define VISION_BRIDGE_TASK_ALIGN_OK_TICKS            (60U)       /* 连续对齐好的帧数：大约 0.12秒 都稳定，认为对齐成功 */
-#define VISION_BRIDGE_TASK_RUN_MIN_MM                (1000.0f)   /* 上桥后，至少跑 1 米才允许判定下桥（防误判） */
-#define VISION_BRIDGE_TASK_RUN_MAX_MM                (3400.0f)   /* 桥上最多跑 3.4 米，跑到就强制下桥 */
-#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1200.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
+#define VISION_BRIDGE_TASK_RUN_MIN_MM                (2300.0f)   /* 上桥后至少行驶 1m，才允许根据视觉出口线脱出 */
+#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1100.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
 #define VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE        (2.0f)      /* 超过视觉控制距离后，速度提高倍率 */
-#define VISION_BRIDGE_TASK_EXIT_BUFFER_MM            (300.0f)    /* 下桥后，再往前缓冲 30 厘米才算任务彻底结束 */
-#define VISION_BRIDGE_TASK_EXIT_LOST_TICKS           (150U)      /* 连续 0.3 秒看不到桥，认为桥已经走完了 */
 #define VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS         (220U)      /* 看到桥梁黑块后，保持“桥梁模式”0.44秒，防抖 */
+#define VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS       (5000U)     /* 视觉长期异常时，10 秒后自动进入退出阶段，不停车等待 */
+#define VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS         (1000U)     /* 退出阶段最长 2 秒，随后自动交还导航 */
 
 /* --- 3. 角度与偏差阈值 --- */
 #define VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG         (3.0f)      /* 对齐时，车头偏角误差允许的范围（小于 4 度算对齐） */
@@ -59,10 +58,10 @@ extern "C" {
 
 /* --- 5. 各阶段速度与姿态设置 --- */
 #define VISION_BRIDGE_TASK_ALIGN_SPEED_SET           (0.0f)      /* 对齐时：速度为 0（边停边对） */
-#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-150.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
-#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-110.0f)   /* 看见黑块时：速度 110 */
-#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-90.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
-#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-90.0f)    /* 下桥缓冲时：速度 90 */
+#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-350.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
+#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-350.0f)   /* 看见黑块时：速度 110 */
+#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-350.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
+#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-350.0f)    /* 下桥缓冲时：速度 90 */
 #define VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE         (0.10f)     /* 舵机升降的高度步进步长比例 */
 
 /* --- 6. 数据结构定义 --- */
@@ -79,6 +78,13 @@ typedef enum
     VISION_BRIDGE_TASK_FINISH,           /* 完成：成功过桥，把控制权还给主程序 */
     VISION_BRIDGE_TASK_FAILSAFE,         /* 故障：出了问题，紧急放弃 */
 } vision_bridge_task_state_e;
+
+typedef enum
+{
+    VISION_BRIDGE_EXIT_NONE = 0,
+    VISION_BRIDGE_EXIT_VISUAL_CONFIRMED,
+    VISION_BRIDGE_EXIT_AUTO_TIMEOUT
+} vision_bridge_exit_reason_e;
 
 /**
  * @brief 桥梁任务运行时的状态信息（供监控或调试看）
@@ -104,13 +110,13 @@ typedef struct
     uint8 center_filter_pending_jump;
     float filtered_lookahead_x;
     float filtered_heading_deg;          /* IPM 前视点相对标定直行方向的差角 */
-    uint16 exit_lost_ticks;              /* 下桥时，连续看不到桥的计时 */
     uint16 bridge_hold_ticks;            /* 看见黑块后的保持倒计时 */
 } vision_bridge_task_status_t;
 
 /* --- 7. 外部变量与函数接口 --- */
 extern volatile uint8 g_bridge_vision_task_enable;           /* 桥梁任务总开关 */
 extern volatile vision_bridge_task_status_t g_bridge_vision_task_status; /* 任务状态大表 */
+extern volatile vision_bridge_exit_reason_e g_bridge_vision_task_exit_reason;
 
 /**
  * @brief 初始化桥梁任务

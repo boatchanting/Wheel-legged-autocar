@@ -1,5 +1,6 @@
 import base64
 import csv
+import os
 import re
 import struct
 import threading
@@ -620,6 +621,20 @@ class DiffHostApi:
             return {"ok": False, "message": f"save frame failed: {exc}"}
         self._log(f"frame saved: {out}")
         return {"ok": True, "message": "frame saved", "path": str(out)}
+
+    def _open_output_folder(self, folder: Path, label: str):
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            os.startfile(str(folder))
+        except OSError as exc:
+            return {"ok": False, "message": f"open {label} folder failed: {exc}"}
+        return {"ok": True, "message": f"opened {label} folder", "path": str(folder)}
+
+    def open_frames_folder(self):
+        return self._open_output_folder(self.frames_dir, "frames")
+
+    def open_videos_folder(self):
+        return self._open_output_folder(self.videos_dir, "videos")
 
     def save_osc_data(self):
         with self.lock:

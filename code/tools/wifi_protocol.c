@@ -54,6 +54,11 @@ static void write_u32_or_float(const void *val_ptr)
     }
 }
 
+static inline void write_float(volatile float *value) {
+    write_u32_or_float((void const *)value);
+}
+
+
 static void write_float_value(float val)
 {
     write_u32_or_float(&val);
@@ -363,8 +368,13 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&loop_counter);
 
     // B. inertial nav
-    write_u32_or_float(&inertial_nav.x);
-    write_u32_or_float(&inertial_nav.y);
+    // write_u32_or_float(&inertial_nav.x);
+    // write_u32_or_float(&inertial_nav.y);
+    
+    // 视觉融合惯导测试
+    write_float(&nav_vision_fusion_x);
+    write_float(&nav_vision_fusion_y);
+
     write_u32_or_float(&inertial_nav.vx_body);
     write_u32_or_float(&inertial_nav.vy_body);
 
