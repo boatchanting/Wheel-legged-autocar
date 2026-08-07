@@ -1,23 +1,17 @@
 #!/usr/bin/env python3
-"""Generate and render a G2-continuous Plan3 path from marked entry/exit points.
+"""生成并渲染一条基于标记的进出点、具备G2连续性的Plan3路径。
 
-The marker CSV describes route events.  A special event is represented by an
-entry tag (1..5) and its matching exit tag (10..50).  The generator preserves
-the two markers exactly and reserves two *straight* corridors:
+标记CSV文件描述了路线事件。一个特殊事件由一个入口标记（1..5）和其匹配的出口标记（10..50）表示。生成器会精确保留这两个标记，并预留两条*直*线走廊：
 
-* 500 mm immediately before an entry marker;
-* 500 mm immediately after its exit marker.
+* 入口标记前方的500毫米；
+* 出口标记后方的500毫米。
 
-All remaining links are quintic Bezier curves whose curvature is zero at both
-ends.  Adjacent links therefore share tangent and curvature with the straight
-corridors (G2 continuity).  The generated path is intended as the route input
-for continuous tracking; it does not command a stop at ordinary samples.
+所有剩余的连接段均为五次贝塞尔曲线，且其两端的曲率为零。因此，相邻的连接段与直线走廊共享切线和曲率（即G2连续性）。生成的路径旨在作为连续跟踪的路线输入；它在普通采样点处不会发出停止指令。
 
-Example:
+示例：
     .venv\\Scripts\\python.exe tools\\webview_nav_marker科目三\\generate_plan3_smooth_path.py
 
-The default CSV is deliberately the latest Plan3 recording requested by the
-project.  Pass ``--input`` when generating from another recording.
+默认的CSV文件特意指定为项目要求的最新Plan3记录。如果需要基于其他记录生成路径，请传入 ``--input`` 参数。
 """
 
 from __future__ import annotations
@@ -310,13 +304,15 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
 
 
 def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node], dict[tuple[int, int], bool]]:
-    """Expand special pairs and prepend the unrecorded vehicle origin."""
-    # Recordings begin after the vehicle has already left (0, 0).  Including
-    # this virtual node makes the first table entry the true route origin.
+    """展开特殊标记对，并在开头补充未记录的车辆原点。"""
+    # 录制是在车辆驶离 (0, 0) 原点之后才开始的。
+    # 包含这个虚拟节点可以使得表中的第一条记录成为真正的路线起点。
+
     nodes: list[Node] = [Node(START_POINT_X_MM, START_POINT_Y_MM, 0, None, "origin (0, 0)")]
-    # value=True only for the requested 0.5m approach/departure corridors.
-    # The entry->exit link is a direct task-zone placeholder; it is deliberately
-    # not counted as a forced straight section of the navigation path.
+    # 仅针对所要求的0.5米驶入/驶出走廊，将值设为True。
+    # 入口到出口的连接段是一个直接的任务区域占位符；故意的，
+    # 它不被算作导航路径的强制直线段。
+
     straight_links: dict[tuple[int, int], bool] = {}
     entry_by_exit = {exit_index: entry_index for entry_index, exit_index in pairs.items()}
     marker_index = 0
