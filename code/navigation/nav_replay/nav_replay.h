@@ -79,6 +79,16 @@ typedef enum
         #error "[Nav Config Error] Plan 3 (CURRENT_NAV_PLAN == 3) has no valid NAV_PLAN3_METHOD selected!"
     #endif
 
+#elif CURRENT_NAV_PLAN == 4
+    // ---------------- [ 科目四路由 ] ---------------  ----
+    #if NAV_PLAN4_METHOD == PLAN4_METHOD_LQR_SPEED_PLANNING
+        #include "plan4/plan4_lqr_speed_planning.h"
+        
+    #else
+        // 【越界检查】
+        #error "[Nav Config Error] Plan 4 (CURRENT_NAV_PLAN == 4) has no valid NAV_PLAN3_METHOD selected!"
+    #endif
+
 #elif CURRENT_NAV_PLAN == 99
     // ---------------- [ 空白测试路由 ] ----------------
     // 保留数字99：供队员后续开发完全独立的新算法沙盒时使用，避免污染主线代码

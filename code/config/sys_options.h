@@ -3,7 +3,7 @@
 
 #define JUMP_ENABLE_LANDING_BUFFER 0U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 
-#define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 1// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
 #define WIFI_PROTOCOL_SELECT  2// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
@@ -13,7 +13,7 @@
 #define CAMERA_MENU_DEBUG_LOG_ENABLE 0U  // 【图像调试日志】1: 打开1核 camera_menu 串口调试打印  0: 关闭
 #define CAMERA_MENU_DEBUG_LOG_DIV 20U    // 【日志打印分频】1核 camera_menu 串口打印分频，每N帧打印一次
 
-#define REMOTE_CONTROL 0                 //【全局开关】1：开启遥控器 0:关闭
+#define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
 #define ACCEL_FF_ENABLE 0U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
 #define ACCEL_FF_MODE 1U // 【加速前馈模式】0:关闭  1:直接叠加 PWM 前馈  2:加速时临时增强舵机速度环 Kp
@@ -26,7 +26,7 @@
 #define SLIP_DETECTION_ENABLE 1U //【全局开关】1:开启基于侧向加速度的纯横向打滑检测  0:关闭（默认正常抓地权重）
 // ---------------- plan 配置 ----------------
 #define GNSS_NAV 0 // 【全局开关】gps寻迹还是惯导寻迹，现阶段暂时还没联合(date0511)，联合后考虑去除该开关，1表示使用gnss寻迹，0表示不使用gnss寻迹，惯导开关常开
-#define CURRENT_NAV_PLAN   3   // 【全局开关】在这里切换科目几，科目一为1，科目二2，科目三3，nav_replay模版函数99，每个科目的主要逻辑会单独优化，上层控制参数层不共享，互不干扰，后面做到各自独立优化，这个开关现在对惯导寻迹和gps方案均有效(date0520)
+#define CURRENT_NAV_PLAN   4   // 【全局开关】在这里切换科目几，科目一为1，科目二2，科目三3，科目四4(国赛科目2和3融合版本)，nav_replay模版函数99，每个科目的主要逻辑会单独优化，上层控制参数层不共享，互不干扰，后面做到各自独立优化，这个开关现在对惯导寻迹和gps方案均有效(date0520)
 #define PLAN1_FAST_UTURN_ENABLE 0               // 【科目一极速掉头开关】0=关闭，沿用普通科目一路径跟踪；1=开启极速掉头运行逻辑
 
 /*

@@ -106,7 +106,7 @@ int main(void)
 
     while(true)
     {
-#if CURRENT_NAV_PLAN == 3
+#if CURRENT_NAV_PLAN == 3 || CURRENT_NAV_PLAN == 4
         // 导航/视觉状态机只置请求标志；蜂鸣器在主循环执行，绝不阻塞中断控制周期。
         if (entry_beep_request != 0U)
         {
