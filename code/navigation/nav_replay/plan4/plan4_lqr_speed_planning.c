@@ -5,6 +5,7 @@
 #include "../../../vision/vision_three_stage_control.h"
 #include "../../../vision/vision_slope_control.h"
 #include "../../../plan/bumpy_road.h"
+#include "../../../plan/minefield.h"
 
 #if (CURRENT_NAV_PLAN == 4) && (NAV_PLAN4_METHOD == PLAN4_METHOD_LQR_SPEED_PLANNING)
 
@@ -14,7 +15,8 @@ typedef enum
     PLAN4_SPECIAL_SLOPE,
     PLAN4_SPECIAL_JUMP,
     PLAN4_SPECIAL_BRIDGE,
-    PLAN4_SPECIAL_BUMP
+    PLAN4_SPECIAL_BUMP,
+    PLAN4_SPECIAL_MINEFIELD
 } Plan4Special_e;
 
 typedef struct
@@ -43,7 +45,9 @@ static float s_prev_speed_cmd = 0.0f;
 static uint8 s_start_heading_aligned = 1U;
 static Plan4Special_e s_active_special = PLAN4_SPECIAL_NONE;
 static uint16 s_active_exit_idx = 0xFFFFU;
+static uint16 s_active_entry_idx = 0xFFFFU;
 static uint8 s_handoff_ticks = 0U;
+static uint8 s_minefield_zero_brake_issued = 0U;
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
 #define NAV_REPLAY_START_HEADING_VALID 0
@@ -66,6 +70,18 @@ static float Plan4_NormalizeAngle(float angle)
     return angle;
 }
 
+static float Plan4_PositiveAngle360(float angle)
+{
+    while (angle < 0.0f) angle += 360.0f;
+    while (angle >= 360.0f) angle -= 360.0f;
+    return angle;
+}
+
+static float Plan4_CalcBearingDeg(float x1, float y1, float x2, float y2)
+{
+    return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
+}
+
 static float Plan4_LerpBySpeed(float low_value, float high_value, float speed_mm_s)
 {
     float ratio = (speed_mm_s - PLAN4_LQR_LOW_SPEED_MM_S) /
@@ -82,7 +98,8 @@ static float Plan4_Ramp(float current, float target, float step)
 
 static uint8 Plan4_IsEntryType(uint8 point_type)
 {
-    return (uint8)((point_type == NAV_POINT_SLOPE) ||
+    return (uint8)((point_type == NAV_POINT_CIRCLE) ||
+                   (point_type == NAV_POINT_SLOPE) ||
                    (point_type == NAV_POINT_JUMP) ||
                    (point_type == NAV_POINT_BRIDGE) ||
                    (point_type == NAV_POINT_BUMP));
@@ -99,6 +116,7 @@ static uint8 Plan4_ExitTypeForEntry(uint8 point_type)
 
 static Plan4Special_e Plan4_SpecialForEntry(uint8 point_type)
 {
+    if (point_type == NAV_POINT_CIRCLE) return PLAN4_SPECIAL_MINEFIELD;
     if (point_type == NAV_POINT_SLOPE) return PLAN4_SPECIAL_SLOPE;
     if (point_type == NAV_POINT_JUMP) return PLAN4_SPECIAL_JUMP;
     if (point_type == NAV_POINT_BRIDGE) return PLAN4_SPECIAL_BRIDGE;
@@ -121,6 +139,7 @@ static uint16 Plan4_FindMatchingExit(uint16 entry_idx)
     uint16 i;
     uint8 exit_type;
     if (entry_idx >= nav_ram_data.point_count) return 0xFFFFU;
+    if (nav_ram_data.points[entry_idx].point_type == NAV_POINT_CIRCLE) return 0xFFFFU;
     exit_type = Plan4_ExitTypeForEntry(nav_ram_data.points[entry_idx].point_type);
     for (i = (uint16)(entry_idx + 1U); i < nav_ram_data.point_count; i++)
     {
@@ -305,6 +324,14 @@ static float Plan4_SafeSpeed(const Plan4LqrReference_t *reference)
 
 static uint8 Plan4_SpecialIsActive(void)
 {
+    if (s_active_special == PLAN4_SPECIAL_MINEFIELD)
+    {
+        /* minefield_flag is consumed by the fast gyro task.  Keep Plan4 in
+         * the handoff state while the request is pending, otherwise the
+         * slower navigation task could complete/retrigger the entry before
+         * the spin controller has latched it. */
+        return (uint8)((minefield_flag != 0U) || (Minefield_Is_Active() != 0U));
+    }
     if (s_active_special == PLAN4_SPECIAL_SLOPE) return VisionSlopeTask_IsActive();
     if (s_active_special == PLAN4_SPECIAL_JUMP) return VisionThreeStageControl_IsActive();
     if (s_active_special == PLAN4_SPECIAL_BRIDGE) return VisionBridgeTask_IsActive();
@@ -326,12 +353,23 @@ static void Plan4_CompleteSpecial(void)
         nav_vision_fusion_y = nav_ram_data.points[s_active_exit_idx].y;
         exit_beep_request = 1U;
     }
-    if (s_active_exit_idx < nav_ram_data.point_count)
+    if (s_active_special == PLAN4_SPECIAL_MINEFIELD)
+    {
+        /* The minefield has no exit marker and must not rebase the fused
+         * position.  Resume at the first route sample after its entry. */
+        if ((s_active_entry_idx + 1U) < nav_ram_data.point_count)
+        {
+            g_target_idx = (uint16)(s_active_entry_idx + 1U);
+        }
+    }
+    else if (s_active_exit_idx < nav_ram_data.point_count)
     {
         g_target_idx = (uint16)(s_active_exit_idx + 1U);
     }
     s_active_special = PLAN4_SPECIAL_NONE;
     s_active_exit_idx = 0xFFFFU;
+    s_active_entry_idx = 0xFFFFU;
+    s_minefield_zero_brake_issued = 0U;
     g_special_action_trigger = 0U;
     s_handoff_ticks = PLAN4_SPECIAL_HANDOFF_TICKS;
     s_prev_err_degree = err_degree;
@@ -343,10 +381,45 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     uint8 point_type = nav_ram_data.points[entry_idx].point_type;
     s_active_special = Plan4_SpecialForEntry(point_type);
     s_active_exit_idx = Plan4_FindMatchingExit(entry_idx);
+    s_active_entry_idx = entry_idx;
     g_current_point_type = point_type;
     g_special_action_trigger = 1U;
 
-    if (point_type == NAV_POINT_SLOPE)
+    if (point_type == NAV_POINT_CIRCLE)
+    {
+        uint16 next_idx = (uint16)(entry_idx + 1U);
+        float exit_yaw;
+        float current_yaw = inertial_nav.relative_yaw;
+        float delta_cw;
+        float delta_ccw;
+        float total_cw;
+        float total_ccw;
+        float spin_sign = 1.0f;
+
+        if (next_idx < nav_ram_data.point_count)
+        {
+            exit_yaw = Plan4_CalcBearingDeg(nav_ram_data.points[entry_idx].x,
+                                            nav_ram_data.points[entry_idx].y,
+                                            nav_ram_data.points[next_idx].x,
+                                            nav_ram_data.points[next_idx].y);
+        }
+        else
+        {
+            exit_yaw = nav_ram_data.points[entry_idx].target_yaw_deg;
+        }
+        delta_cw = Plan4_PositiveAngle360(current_yaw - exit_yaw);
+        delta_ccw = Plan4_PositiveAngle360(exit_yaw - current_yaw);
+        total_cw = MINEFIELD_SPIN_MIN_TOTAL_ANGLE + delta_cw;
+        total_ccw = MINEFIELD_SPIN_MIN_TOTAL_ANGLE + delta_ccw;
+        if (total_ccw < total_cw) spin_sign = -1.0f;
+        Minefield_SetSpinPlan((total_ccw < total_cw) ? total_ccw : total_cw,
+                              exit_yaw,
+                              spin_sign);
+        minefield_flag = 1U;
+        target_speed_set = 0.0f;
+        s_prev_speed_cmd = 0.0f;
+    }
+    else if (point_type == NAV_POINT_SLOPE)
     {
         VisionSlopeTask_Start();
     }
@@ -369,6 +442,89 @@ static void Plan4_StartSpecial(uint16 entry_idx)
         }
         BumpyRoad_Trigger();
     }
+}
+
+/* Plan2-style online approach for an entry-only minefield marker.  Unlike
+ * normal Plan4 special tasks, this is direct point tracking: the car aims at
+ * the type=1 marker, brakes from the measured body speed, then creeps into
+ * the execution circle before starting the spin state machine. */
+static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
+{
+    const NavRamPoint_t *entry = &nav_ram_data.points[entry_idx];
+    float dx = entry->x - nav_vision_fusion_x;
+    float dy = entry->y - nav_vision_fusion_y;
+    float dist_mm = sqrtf(dx * dx + dy * dy);
+    float point_yaw_deg = Plan4_CalcBearingDeg(nav_vision_fusion_x,
+                                               nav_vision_fusion_y,
+                                               entry->x,
+                                               entry->y);
+    float yaw_err_deg = Plan4_NormalizeAngle(point_yaw_deg - inertial_nav.relative_yaw);
+    float actual_speed_mm_s = fabsf(inertial_nav.vx_body);
+    float speed_mag;
+
+    g_current_point_type = NAV_POINT_CIRCLE;
+    err_degree = yaw_err_deg;
+
+    if (s_minefield_zero_brake_issued == 0U)
+    {
+        float brake_dist_mm = (0.00025f * actual_speed_mm_s * actual_speed_mm_s -
+                               0.2877f * actual_speed_mm_s + 887.0f) *
+                              PLAN4_MINEFIELD_BRAKE_DIST_RATIO;
+        if (brake_dist_mm < 0.0f) brake_dist_mm = 0.0f;
+        brake_dist_mm += PLAN4_MINEFIELD_BRAKE_MARGIN_MM;
+        if (dist_mm <= brake_dist_mm) s_minefield_zero_brake_issued = 1U;
+    }
+
+    if (s_minefield_zero_brake_issued != 0U)
+    {
+        if (dist_mm <= PLAN4_MINEFIELD_EXECUTE_RADIUS_MM)
+        {
+            if (actual_speed_mm_s <= PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S)
+            {
+                Plan4_StartSpecial(entry_idx);
+                return;
+            }
+            target_speed_set = 0.0f;
+            s_prev_speed_cmd = 0.0f;
+            return;
+        }
+
+        if (actual_speed_mm_s <= PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S)
+        {
+            speed_mag = PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S / (2.0f * SPEED_TO_MM_S);
+            target_speed_set = Plan4_Ramp(s_prev_speed_cmd, -speed_mag, PLAN4_SPEED_ACCEL_STEP);
+            s_prev_speed_cmd = target_speed_set;
+            return;
+        }
+
+        target_speed_set = 0.0f;
+        s_prev_speed_cmd = 0.0f;
+        return;
+    }
+
+    if (dist_mm <= PLAN4_MINEFIELD_EXECUTE_RADIUS_MM)
+    {
+        speed_mag = 0.0f;
+    }
+    else
+    {
+        speed_mag = sqrtf(2.0f * PLAN4_MINEFIELD_SPEED_DECEL_CMD2_PER_MM *
+                          (dist_mm - PLAN4_MINEFIELD_EXECUTE_RADIUS_MM));
+        speed_mag = Plan4_Clamp(speed_mag, 0.0f, fabsf(PLAN4_MINEFIELD_SPEED_FAST));
+    }
+
+    if (fabsf(yaw_err_deg) > PLAN4_MINEFIELD_YAW_SLOW_TOLERANCE_DEG)
+    {
+        speed_mag = 0.0f;
+    }
+    else if (fabsf(yaw_err_deg) > PLAN4_MINEFIELD_YAW_STOP_TOLERANCE_DEG)
+    {
+        speed_mag *= 0.35f;
+    }
+    target_speed_set = Plan4_Ramp(s_prev_speed_cmd, -speed_mag,
+                                  (speed_mag > fabsf(s_prev_speed_cmd)) ?
+                                  PLAN4_SPEED_ACCEL_STEP : PLAN4_SPEED_DECEL_STEP);
+    s_prev_speed_cmd = target_speed_set;
 }
 
 uint16 NavReplay_LoadStaticRouteToRam(void)
@@ -398,11 +554,14 @@ void NavReplay_Start(void)
     g_special_action_trigger = 0U;
     s_active_special = PLAN4_SPECIAL_NONE;
     s_active_exit_idx = 0xFFFFU;
+    s_active_entry_idx = 0xFFFFU;
+    s_minefield_zero_brake_issued = 0U;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
     entry_beep_request = 0U;
     exit_beep_request = 0U;
+    Minefield_Init();
 #if IMU_CATEGORY == 3
     s_start_heading_aligned = (NAV_REPLAY_START_HEADING_VALID == 1) ? 0U : 1U;
 #else
@@ -418,10 +577,13 @@ void NavReplay_Stop(void)
     g_special_action_trigger = 0U;
     s_active_special = PLAN4_SPECIAL_NONE;
     s_active_exit_idx = 0xFFFFU;
+    s_active_entry_idx = 0xFFFFU;
+    s_minefield_zero_brake_issued = 0U;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
     s_start_heading_aligned = 1U;
+    Minefield_Init();
 }
 
 void NavReplay_Process(void)
@@ -481,6 +643,16 @@ void NavReplay_Process(void)
     }
     base_idx = Plan4_FindClosestSegment(g_target_idx, search_end, (s_handoff_ticks != 0U));
     g_target_idx = base_idx;
+
+    if ((next_special != 0xFFFFU) &&
+        (nav_ram_data.points[next_special].point_type == NAV_POINT_CIRCLE))
+    {
+        /* From the preceding task/path samples into type=1, use the complete
+         * Plan2-style online point approach.  After the spin, Plan4 resumes
+         * its ordinary LQR route tracking from the following type=0 sample. */
+        Plan4_ProcessMinefieldApproach(next_special);
+        return;
+    }
 
     if ((next_special != 0xFFFFU) &&
         (Plan4_PathDistance(base_idx, next_special) <= PLAN4_SPECIAL_HANDOFF_LEAD_MM))

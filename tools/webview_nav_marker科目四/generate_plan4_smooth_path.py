@@ -74,8 +74,10 @@ STAIRS_APPROACH_TARGET_SPEED_MAX = 300.0
 SPECIAL_EXIT_DISTANCE_OFFSETS_MM = {30: 300.0, 40: 750.0, 50: 850.0}
 
 
+# 雷区（1）只有驶入点，不记录/匹配驶出点；其余视觉任务仍为入口/出口成对点。
 ENTRY_TYPES = {1, 2, 3, 4, 5}
-EXIT_TO_ENTRY = {10: 1, 20: 2, 30: 3, 40: 4, 50: 5}
+PAIRED_ENTRY_TYPES = {2, 3, 4, 5}
+EXIT_TO_ENTRY = {20: 2, 30: 3, 40: 4, 50: 5}
 TYPE_LABEL = {
     0: "普通路径",
     1: "圆环进入",
@@ -200,10 +202,15 @@ def find_event_pairs(markers: list[Marker]) -> dict[int, int]:
     pairs: dict[int, int] = {}
     pending: dict[int, int] = {}
     for index, marker in enumerate(markers):
-        if marker.point_type in ENTRY_TYPES:
+        if marker.point_type == 1:
+            # 雷区只在驶入时触发状态机，入口点本身保留在路径上，不能要求 type=10 出口。
+            continue
+        if marker.point_type in PAIRED_ENTRY_TYPES:
             if marker.point_type in pending:
                 raise ValueError(f"第 {index} 个进入点前，类型 {marker.point_type} 的上一个任务尚未退出。")
             pending[marker.point_type] = index
+        elif marker.point_type == 10:
+            raise ValueError("雷区 point_type=1 仅支持驶入点，不应存在 point_type=10 的驶出点。")
         elif marker.point_type in EXIT_TO_ENTRY:
             entry_type = EXIT_TO_ENTRY[marker.point_type]
             if entry_type not in pending:

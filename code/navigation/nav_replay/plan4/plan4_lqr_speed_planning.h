@@ -49,12 +49,24 @@
 #define PLAN4_SPEED_ACCEL_STEP                       35.0f
 #define PLAN4_SPEED_DECEL_STEP                      110.0f
 
-/* Start a visual task while travelling through the generated 500 mm straight
- * approach corridor.  The navigation controller never stops at its marker. */
+/* Start a paired visual task while travelling through the generated 500 mm
+ * approach corridor. */
 #define PLAN4_SPECIAL_HANDOFF_LEAD_MM               500.0f
 #define PLAN4_SPECIAL_HANDOFF_TICKS                  10U
 #define PLAN4_SPECIAL_HANDOFF_SPEED_STEP             40.0f
 #define PLAN4_SPECIAL_HANDOFF_ERR_STEP_DEG            1.0f
+
+/* NAV_POINT_CIRCLE is an entry-only minefield marker.  Its approach uses the
+ * Plan2-style online point-to-point speed plan; it does not use the generic
+ * visual-task handoff distance and it never rebases nav_vision_fusion_x/y. */
+#define PLAN4_MINEFIELD_EXECUTE_RADIUS_MM            250.0f
+#define PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S          1500.0f
+#define PLAN4_MINEFIELD_BRAKE_DIST_RATIO               0.6f
+#define PLAN4_MINEFIELD_BRAKE_MARGIN_MM                0.0f
+#define PLAN4_MINEFIELD_SPEED_FAST                  (-1300.0f)
+#define PLAN4_MINEFIELD_SPEED_DECEL_CMD2_PER_MM       110.0f
+#define PLAN4_MINEFIELD_YAW_STOP_TOLERANCE_DEG         18.0f
+#define PLAN4_MINEFIELD_YAW_SLOW_TOLERANCE_DEG         35.0f
 
 #define PLAN4_START_HEADING_TOLERANCE_DEG             0.3f
 #define PLAN4_START_HEADING_ERR_LIMIT_DEG             2.0f
