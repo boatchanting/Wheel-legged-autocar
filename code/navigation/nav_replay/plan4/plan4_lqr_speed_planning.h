@@ -49,22 +49,56 @@
 #define PLAN4_SPEED_ACCEL_STEP                       35.0f
 #define PLAN4_SPEED_DECEL_STEP                      110.0f
 
-/* Start a paired visual task while travelling through the generated 500 mm
- * approach corridor. */
+/* 成对视觉任务在生成的 500 mm 入口直线段内提前交接。 */
 #define PLAN4_SPECIAL_HANDOFF_LEAD_MM               500.0f
 #define PLAN4_SPECIAL_HANDOFF_TICKS                  10U
 #define PLAN4_SPECIAL_HANDOFF_SPEED_STEP             40.0f
 #define PLAN4_SPECIAL_HANDOFF_ERR_STEP_DEG            1.0f
 
-/* NAV_POINT_CIRCLE is an entry-only minefield marker.  Its approach uses the
- * Plan2-style online point-to-point speed plan; it does not use the generic
- * visual-task handoff distance and it never rebases nav_vision_fusion_x/y. */
+/* NAV_POINT_CIRCLE（type=1）是仅有入口的雷区标记。驶入雷区前使用
+ * Plan2 风格的在线点对点速度规划，不使用普通视觉任务的提前交接距离，
+ * 雷区结束后也绝不重定位 nav_vision_fusion_x/y。
+ *
+ * 以下数值从 plan2_point_speed_planning_lite 迁移而来。Plan4 唯一的适配是：
+ * 距离和航向使用 nav_vision_fusion_x/y 计算，以继承前一视觉任务的位置校正；
+ * 实际速度仍使用 inertial_nav.vx_body。 */
+
+/* type=1 标记周围允许触发旋转的最终执行圆半径。
+ * 调大：更早触发、较不易冲过点，但转圈中心可能偏离标记；
+ * 调小：中心更准确，但刹车误差和 IMU 漂移更容易导致冲过头。 */
 #define PLAN4_MINEFIELD_EXECUTE_RADIUS_MM            250.0f
+
+/* 允许触发旋转时的最大实测纵向速度（mm/s）。
+ * 调大：更早进入转圈、节省时间，但可能带着滑移旋转；
+ * 调小：要求更接近静止，稳定性更好，但耗时更长。 */
 #define PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S          1500.0f
-#define PLAN4_MINEFIELD_BRAKE_DIST_RATIO               0.6f
+
+/* 动态刹车距离模型，v 的单位为 mm/s：
+ * brake_distance_mm = (A*v*v + B*v + C) * RATIO + MARGIN。
+ * A/B/C 应根据不同接近速度下的实测刹停距离拟合；RATIO 是场地整体修正系数，
+ * 调大则更早刹车，调小则更晚刹车；MARGIN 是额外安全距离。 */
+#define PLAN4_MINEFIELD_BRAKE_POLY_A                  0.00025f
+#define PLAN4_MINEFIELD_BRAKE_POLY_B                 (-0.2877f)
+#define PLAN4_MINEFIELD_BRAKE_POLY_C                887.0f
+#define PLAN4_MINEFIELD_BRAKE_DIST_RATIO               1.0f //华东用的0.7f，夜间跑的0.6f白天跑不了
 #define PLAN4_MINEFIELD_BRAKE_MARGIN_MM                0.0f
-#define PLAN4_MINEFIELD_SPEED_FAST                  (-1300.0f)
+
+/* 正常接近阶段的最大速度指令（负号表示前进），也是
+ * v=sqrt(2*a*剩余距离) 的上限。若进入刹车区仍过快，应优先减小此值。 */
+#define PLAN4_MINEFIELD_SPEED_FAST                  (-1000.0f)   //华东赛1300.0f
+
+/* 在线速度曲线 v^2=2*a*s 中的 a（mm/s^2）。
+ * 调大：更晚减速、减速更陡；调小：更早减速、接近过程更平缓。 */
 #define PLAN4_MINEFIELD_SPEED_DECEL_CMD2_PER_MM       110.0f
+
+/* 已开始刹车但仍在执行圆外时，速度降到阈值后以“触发速度 × 本比例”蠕行补进。
+ * 调大：提前刹停后的补进更快；调小：更不易穿过标记点，但耗时更长。 */
+#define PLAN4_MINEFIELD_CRAWL_SPEED_RATIO               0.5f
+
+/* 仅用于 type=1 点对点接近的航向门限。
+ * 偏差超过 SLOW 门限时停车原地对正；处于 STOP 与 SLOW 门限之间时，
+ * 接近速度乘以 0.35。调大门限允许更大的斜向行驶；调小则对点更严格，
+ * 但可能频繁停车再转向。 */
 #define PLAN4_MINEFIELD_YAW_STOP_TOLERANCE_DEG         18.0f
 #define PLAN4_MINEFIELD_YAW_SLOW_TOLERANCE_DEG         35.0f
 

@@ -326,10 +326,8 @@ static uint8 Plan4_SpecialIsActive(void)
 {
     if (s_active_special == PLAN4_SPECIAL_MINEFIELD)
     {
-        /* minefield_flag is consumed by the fast gyro task.  Keep Plan4 in
-         * the handoff state while the request is pending, otherwise the
-         * slower navigation task could complete/retrigger the entry before
-         * the spin controller has latched it. */
+        /* minefield_flag 由高速陀螺仪任务消费。请求尚未被锁存时仍保持
+         * Plan4 的动作交接状态，避免较慢的导航任务先判定结束并重复触发。 */
         return (uint8)((minefield_flag != 0U) || (Minefield_Is_Active() != 0U));
     }
     if (s_active_special == PLAN4_SPECIAL_SLOPE) return VisionSlopeTask_IsActive();
@@ -355,8 +353,7 @@ static void Plan4_CompleteSpecial(void)
     }
     if (s_active_special == PLAN4_SPECIAL_MINEFIELD)
     {
-        /* The minefield has no exit marker and must not rebase the fused
-         * position.  Resume at the first route sample after its entry. */
+        /* 雷区没有出口标记，不能重定位融合坐标；从入口后的首个路表点恢复。 */
         if ((s_active_entry_idx + 1U) < nav_ram_data.point_count)
         {
             g_target_idx = (uint16)(s_active_entry_idx + 1U);
@@ -444,10 +441,8 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     }
 }
 
-/* Plan2-style online approach for an entry-only minefield marker.  Unlike
- * normal Plan4 special tasks, this is direct point tracking: the car aims at
- * the type=1 marker, brakes from the measured body speed, then creeps into
- * the execution circle before starting the spin state machine. */
+/* 仅有入口标记的雷区采用 Plan2 风格在线接近。不同于普通 Plan4 特殊任务，
+ * 此处直接点对点指向 type=1 标记，按实测车速刹车，并蠕行进入执行圆后才启动转圈。 */
 static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
 {
     const NavRamPoint_t *entry = &nav_ram_data.points[entry_idx];
@@ -467,8 +462,9 @@ static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
 
     if (s_minefield_zero_brake_issued == 0U)
     {
-        float brake_dist_mm = (0.00025f * actual_speed_mm_s * actual_speed_mm_s -
-                               0.2877f * actual_speed_mm_s + 887.0f) *
+        float brake_dist_mm = (PLAN4_MINEFIELD_BRAKE_POLY_A * actual_speed_mm_s * actual_speed_mm_s +
+                               PLAN4_MINEFIELD_BRAKE_POLY_B * actual_speed_mm_s +
+                               PLAN4_MINEFIELD_BRAKE_POLY_C) *
                               PLAN4_MINEFIELD_BRAKE_DIST_RATIO;
         if (brake_dist_mm < 0.0f) brake_dist_mm = 0.0f;
         brake_dist_mm += PLAN4_MINEFIELD_BRAKE_MARGIN_MM;
@@ -491,7 +487,8 @@ static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
 
         if (actual_speed_mm_s <= PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S)
         {
-            speed_mag = PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S / (2.0f * SPEED_TO_MM_S);
+            speed_mag = PLAN4_MINEFIELD_TRIGGER_SPEED_MM_S *
+                        PLAN4_MINEFIELD_CRAWL_SPEED_RATIO / SPEED_TO_MM_S;
             target_speed_set = Plan4_Ramp(s_prev_speed_cmd, -speed_mag, PLAN4_SPEED_ACCEL_STEP);
             s_prev_speed_cmd = target_speed_set;
             return;
@@ -647,9 +644,8 @@ void NavReplay_Process(void)
     if ((next_special != 0xFFFFU) &&
         (nav_ram_data.points[next_special].point_type == NAV_POINT_CIRCLE))
     {
-        /* From the preceding task/path samples into type=1, use the complete
-         * Plan2-style online point approach.  After the spin, Plan4 resumes
-         * its ordinary LQR route tracking from the following type=0 sample. */
+        /* 从前一特殊任务/普通路点经 type=0 接近 type=1 时，使用完整的
+         * Plan2 风格在线点对点接近；转圈结束后从后续 type=0 恢复普通 LQR。 */
         Plan4_ProcessMinefieldApproach(next_special);
         return;
     }
