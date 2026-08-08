@@ -1,6 +1,8 @@
 #ifndef __SYS_OPTIONS_H__
 #define __SYS_OPTIONS_H__
-
+/*
+重要！添加新config时请在code\config\generate_sys_option_headers.ps1同步进行配置
+*/
 #define JUMP_ENABLE_LANDING_BUFFER 0U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 
 #define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用

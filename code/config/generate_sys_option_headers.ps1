@@ -7,9 +7,9 @@
 [CmdletBinding()]
 param()
 
-$projectRoot = Split-Path -Parent $PSScriptRoot
-$sourcePath = Join-Path $projectRoot 'code\config\sys_options.h'
-$outputDirectory = Join-Path $projectRoot 'code\config\generated'
+$projectRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
+$sourcePath = Join-Path $PSScriptRoot 'sys_options.h'
+$outputDirectory = Join-Path $PSScriptRoot 'generated'
 
 if (-not (Test-Path -LiteralPath $sourcePath)) {
     throw "Cannot find configuration source: $sourcePath"

@@ -1111,7 +1111,7 @@
             <name>BUILDACTION</name>
             <archiveVersion>2</archiveVersion>
             <data>
-                <prebuild>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PROJ_DIR$\..\..\tools\generate_sys_option_headers.ps1"</prebuild>
+                <prebuild>powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PROJ_DIR$\..\..\code\config\generate_sys_option_headers.ps1"</prebuild>
                 <postbuild></postbuild>
             </data>
         </settings>
