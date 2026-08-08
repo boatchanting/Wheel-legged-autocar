@@ -1,5 +1,6 @@
 #include "wifi_protocol.h"
 #include "wifi.h"
+#include "vision/bridge_v2_arbiter.h"
 #include "vision/telemetry_ipc_core1.h"
 #include <string.h>
 
@@ -13,7 +14,11 @@
 
 static uint8_t rx_stream[WIFI_RX_STREAM_SIZE];
 static uint16_t rx_len = 0U;
-static uint32_t g_last_telemetry_seq = 0U;
+
+/* 1核 上位机示波器: 本地 bridge 数据源 (C29 修订版 — 1核 直接发, 无跨核共享内存) */
+static telemetry_ipc_packet_t g_telemetry_shadow;
+static uint32_t g_osc_seq = 0U;
+extern volatile runtime_profiler_t g_bridge_v2_cost_profiler;   /* 定义于 main_cm7_1.c */
 
 static void wifi_protocol_send_simple_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
 {
@@ -211,31 +216,42 @@ void wifi_protocol_poll_rx(void)
 
 void wifi_protocol_send_oscilloscope(void)
 {
-    telemetry_ipc_packet_t packet;
+    const bridge_v2_arb_t *arb = bridge_v2_arbiter_get();
     uint8_t frame[43];
     uint16_t idx = 0U;
     uint8_t check_sum = 0U;
 
-    if (TelemetryIpc_Core1_ReadLatest(&packet) == 0U)
+    if (bridge_v2_arbiter_is_busy())
     {
         return;
     }
-    if (packet.seq == g_last_telemetry_seq)
-    {
-        return;
-    }
+
+    /* 8 通道 bridge 数据 (曲线名由上位机从本文件 data[i]= 表达式自动解析) */
+    g_telemetry_shadow.magic = TELEMETRY_IPC_MAGIC;
+    g_telemetry_shadow.size = (uint16_t)sizeof(telemetry_ipc_packet_t);
+    g_telemetry_shadow.version = TELEMETRY_IPC_VERSION;
+    g_telemetry_shadow.channel_count = TELEMETRY_IPC_CHANNELS;
+    g_telemetry_shadow.seq = ++g_osc_seq;
+    g_telemetry_shadow.data[0] = (float)(arb->line_a_x1000 * 25) / 1000.0f + (float)(arb->line_b_x100) / 100.0f;
+    g_telemetry_shadow.data[1] = (float)arb->valid;
+    g_telemetry_shadow.data[2] = (float)arb->mode;
+    g_telemetry_shadow.data[3] = (float)arb->gate;
+    g_telemetry_shadow.data[4] = (float)arb->has_top;
+    g_telemetry_shadow.data[5] = (float)(arb->top_a_x1000 * 47) / 1000.0f + (float)(arb->top_b_x100) / 100.0f;
+    g_telemetry_shadow.data[6] = (float)g_bridge_v2_cost_profiler.last_us;
+    g_telemetry_shadow.data[7] = (float)arb->source;
 
     frame[idx++] = WIFI_OSC_SYNC0;
     frame[idx++] = WIFI_OSC_SYNC1;
     frame[idx++] = TELEMETRY_IPC_VERSION;
     frame[idx++] = C1_WIFI_CMD_OSCILLOSCOPE;
-    frame[idx++] = (uint8_t)(packet.seq & 0xFFU);
-    frame[idx++] = (uint8_t)((packet.seq >> 8) & 0xFFU);
-    frame[idx++] = (uint8_t)((packet.seq >> 16) & 0xFFU);
-    frame[idx++] = (uint8_t)((packet.seq >> 24) & 0xFFU);
-    frame[idx++] = packet.channel_count;
+    frame[idx++] = (uint8_t)(g_telemetry_shadow.seq & 0xFFU);
+    frame[idx++] = (uint8_t)((g_telemetry_shadow.seq >> 8) & 0xFFU);
+    frame[idx++] = (uint8_t)((g_telemetry_shadow.seq >> 16) & 0xFFU);
+    frame[idx++] = (uint8_t)((g_telemetry_shadow.seq >> 24) & 0xFFU);
+    frame[idx++] = g_telemetry_shadow.channel_count;
 
-    memcpy(&frame[idx], packet.data, TELEMETRY_IPC_CHANNELS * sizeof(float));
+    memcpy(&frame[idx], g_telemetry_shadow.data, TELEMETRY_IPC_CHANNELS * sizeof(float));
     idx = (uint16_t)(idx + TELEMETRY_IPC_CHANNELS * sizeof(float));
 
     for (uint16_t i = 0U; i < idx; i++)
@@ -246,5 +262,4 @@ void wifi_protocol_send_oscilloscope(void)
     frame[idx++] = WIFI_OSC_TAIL;
 
     wifi_spi_send_buffer(frame, idx);
-    g_last_telemetry_seq = packet.seq;
 }

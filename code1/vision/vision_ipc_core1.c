@@ -1,4 +1,5 @@
-﻿#include "vision_ipc_core1.h"
+#include "vision_ipc_core1.h"
+#include "bridge_v2_arbiter.h"
 #include <string.h>
 
 #if defined(__ICCARM__)
@@ -127,60 +128,40 @@ static void vision_ipc_core1_fill_pvc(vision_ipc_packet_t *packet,
     packet->pvc_candidate_count = ctrl->candidate_count;
 }
 
-/**
- * @brief 将视觉检测结果提取并填充到 IPC 数据包中
- * 
- * @param packet 将要发送给 0 核的数据包
- * @param bridge_output 当前最新的单边桥检测输出结果
- */
-static void vision_ipc_core1_fill_bridge(vision_ipc_packet_t *packet,
-                                         const volatile bridge_vision_output_t *bridge_output)
-{
-    bridge_vision_output_t bridge;
-    const bridge_vision_frame_result_t *ctrl;
+/* 新单边桥管线计时 (main_cm7_1.c 定义) */
+extern volatile runtime_profiler_t g_bridge_v2_cost_profiler;
 
-    /* 如果没有有效数据，直接退出 */
-    if ((bridge_output == NULL) || (bridge_output->frame_id == 0U))
+/**
+ * @brief 填充新单边桥管线 (bridge_detect) 的仲裁输出 b2_* 字段 (C04/C21)
+ * @note  数据来自 bridge_v2_arbiter (仲裁层); 写忙时跳过 (防撕裂)。
+ */
+static void vision_ipc_core1_fill_bridge_v2(vision_ipc_packet_t *packet)
+{
+    const bridge_v2_arb_t *arb;
+
+    if (bridge_v2_arbiter_is_busy())
     {
         return;
     }
+    arb = bridge_v2_arbiter_get();
 
-    /* 拷贝数据，防止并发修改 */
-    bridge = *bridge_output;
-    ctrl = (bridge.stable_detected || bridge.bridge_stable_detected) ? &bridge.stable : &bridge.raw;
+    packet->valid_mask = (uint16)(packet->valid_mask | VISION_VALID_BRIDGE | VISION_VALID_BRIDGE_V2);
+    packet->frame_id = vision_max_u32(packet->frame_id, bridge_v2_arbiter_get_frame_id());
+    packet->cost_us = (uint16)g_bridge_v2_cost_profiler.last_us;
 
-    packet->valid_mask = (uint16)(packet->valid_mask | VISION_VALID_BRIDGE | VISION_VALID_PROFILE);
-    packet->frame_id = vision_max_u32(packet->frame_id, bridge.frame_id);
-    packet->frame_dt_us = (uint16)g_bridge_vision_frame_profiler.last_us;
-    packet->cost_us = (uint16)g_bridge_vision_cost_profiler.last_us;
-
-    packet->bridge_detected = bridge.bridge_raw_detected;
-    packet->bridge_stable_detected = bridge.bridge_stable_detected;
-    packet->bridge_geometry_detected = bridge.raw_detected;
-    packet->bridge_geometry_stable_detected = bridge.stable_detected;
-    packet->bridge_state = ctrl->state;
-    packet->bridge_geometry_valid = ctrl->geometry_valid;
-
-    packet->bridge_left_line_x0 = ctrl->left_line_x0;
-    packet->bridge_left_line_y0 = ctrl->left_line_y0;
-    packet->bridge_left_line_x1 = ctrl->left_line_x1;
-    packet->bridge_left_line_y1 = ctrl->left_line_y1;
-    packet->bridge_right_line_x0 = ctrl->right_line_x0;
-    packet->bridge_right_line_y0 = ctrl->right_line_y0;
-    packet->bridge_right_line_x1 = ctrl->right_line_x1;
-    packet->bridge_right_line_y1 = ctrl->right_line_y1;
-    packet->bridge_down_line_x0 = ctrl->down_line_x0;
-    packet->bridge_down_line_y0 = ctrl->down_line_y0;
-    packet->bridge_down_line_x1 = ctrl->down_line_x1;
-    packet->bridge_down_line_y1 = ctrl->down_line_y1;
-    packet->bridge_up_line_x0 = ctrl->up_line_x0;
-    packet->bridge_up_line_y0 = ctrl->up_line_y0;
-    packet->bridge_up_line_x1 = ctrl->up_line_x1;
-    packet->bridge_up_line_y1 = ctrl->up_line_y1;
-    packet->bridge_center_line_x0 = ctrl->center_line_x0;
-    packet->bridge_center_line_y0 = ctrl->center_line_y0;
-    packet->bridge_center_line_x1 = ctrl->center_line_x1;
-    packet->bridge_center_line_y1 = ctrl->center_line_y1;
+    packet->b2_valid        = arb->valid;
+    packet->b2_source       = arb->source;
+    packet->b2_mode         = arb->mode;
+    packet->b2_gate         = arb->gate;
+    packet->b2_has_top      = arb->has_top;
+    packet->b2_line_u_lo    = arb->u_lo;
+    packet->b2_line_u_hi    = arb->u_hi;
+    packet->b2_line_a_x1000 = arb->line_a_x1000;
+    packet->b2_line_b_x100  = arb->line_b_x100;
+    packet->b2_top_a_x1000  = arb->top_a_x1000;
+    packet->b2_top_b_x100   = arb->top_b_x100;
+    packet->b2_spacing_x100 = arb->spacing_x100;
+    packet->b2_mid_ratio_x1000 = arb->mid_ratio_x1000;
 }
 
 static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
@@ -266,9 +247,13 @@ void VisionIpc_Core1_Update_2ms(void)
     {
         pvc_frame_id = pvc_vision_get_output()->frame_id;
     }
-    if ((g_core1_bridge_enabled != 0U) && (g_bridge_vision_output_write_busy == 0U))
+    if (g_core1_bridge_enabled != 0U)
     {
-        bridge_frame_id = bridge_vision_get_output()->frame_id;
+        /* 桥检测源 = 新管线仲裁层 */
+        if (bridge_v2_arbiter_is_busy() == 0U)
+        {
+            bridge_frame_id = bridge_v2_arbiter_get_frame_id();
+        }
     }
     if ((g_core1_bumpy_enabled != 0U) && (g_bumpy_vision_output_write_busy == 0U))
     {
@@ -483,9 +468,13 @@ void VisionIpc_Core1_PublishCurrent(void)
     {
         vision_ipc_core1_fill_pvc(&packet, pvc_vision_get_output());
     }
-    if ((g_core1_bridge_enabled != 0U) && (g_bridge_vision_output_write_busy == 0U))
+    if (g_core1_bridge_enabled != 0U)
     {
-        vision_ipc_core1_fill_bridge(&packet, bridge_vision_get_output());
+        /* 发布 b2_* (仲裁层输出) */
+        if (bridge_v2_arbiter_is_busy() == 0U)
+        {
+            vision_ipc_core1_fill_bridge_v2(&packet);
+        }
     }
     if ((g_core1_bumpy_enabled != 0U) && (g_bumpy_vision_output_write_busy == 0U))
     {
@@ -495,14 +484,12 @@ void VisionIpc_Core1_PublishCurrent(void)
     /* 根据当前的活跃目标，将相应模块的数据提取到包的通用字段中供 0 核直接使用 */
     if (packet.active_target == VISION_TARGET_BRIDGE)
     {
-        /* 桥梁模式下，综合直线和桥梁的结果 */
-        packet.stable_detected = packet.bridge_geometry_stable_detected;
-        packet.detected = packet.bridge_geometry_stable_detected ? 1U :
-                          packet.bridge_geometry_detected;
-        packet.raw_detected = packet.bridge_geometry_detected;
-        packet.confidence_u16 = packet.bridge_geometry_stable_detected ? 1000U :
-                                (packet.bridge_stable_detected ? 500U : 0U);
-        
+        /* 桥梁模式下, 用新管线仲裁输出 (b2_valid) 填通用字段 */
+        packet.stable_detected = packet.b2_valid;
+        packet.detected = packet.b2_valid ? 1U : 0U;
+        packet.raw_detected = packet.b2_valid;
+        packet.confidence_u16 = packet.b2_valid ? 1000U : 0U;
+
         if (packet.stable_detected)
         {
             packet.stable_target = VISION_TARGET_BRIDGE;

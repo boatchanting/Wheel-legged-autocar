@@ -39,7 +39,8 @@
 #include "../code1/wifi.h"
 #include "../code1/wifi_diff_stream.h"
 #include "../code1/wifi_protocol.h"
-#include "../code1/vision/bridge_vision.h"
+#include "../code1/vision/bridge_detect.h"                                          // 新单边桥管线 (bridge_detect v13c)
+#include "../code1/vision/bridge_v2_arbiter.h"                                       // 新管线仲裁层 (C21)
 #include "../code1/vision/pvc_vision.h"
 #include "../code1/vision/bumpy_vision.h"
 #include "../code1/vision/vision_ipc_core1.h"
@@ -54,6 +55,12 @@
 
 // **************************** 代码区域 ****************************
 #define VISION_IPC_PIT_NUM     (PIT_CH2)
+
+/* ---- 新单边桥管线 (bridge_detect v13c) 接线状态 ---- */
+#define BRIDGE_VISION_V2_PROFILE_TIMER   (TC_TIME2_CH1)  // 计时通道: 与 pvc_vision 共用
+static bridge_state_t  s_bridge_v2_st;                   // 跨帧状态 (间距先验自校准/底部变白门控锁存)
+static bridge_result_t s_bridge_v2_res;                  // 单帧结果
+volatile runtime_profiler_t g_bridge_v2_cost_profiler = {0};  // 算法耗时统计
 
 int main(void)
 {
@@ -88,7 +95,10 @@ int main(void)
     mt9v03x_init();//初始化摄像头
 #endif
     pvc_vision_init();                                                          // 初始化 PVC 入口视觉检测与帧率/耗时统计
-    bridge_vision_init();                                                       // 初始化单边桥视觉检测
+    timer_init(BRIDGE_VISION_V2_PROFILE_TIMER, TIMER_US);                       // 新单边桥管线: 计时初始化
+    timer_start(BRIDGE_VISION_V2_PROFILE_TIMER);
+    RUNTIME_PROFILE_RESET(&g_bridge_v2_cost_profiler);
+    bridge_detect_init(&s_bridge_v2_st);                                        // 初始化新单边桥视觉管线 (bridge_detect)
     bumpy_vision_init();                                                        // 初始化颠簸路段视觉检测
     VisionIpc_Core1_Init();                                                     // 初始化1核视觉共享内存结果发布
     pit_ms_init(VISION_IPC_PIT_NUM, 2);                                          // 2ms 中断中处理0/1核视觉通信
@@ -119,8 +129,8 @@ int main(void)
         }
         #if WIFI_CORE1_USE && WIFI_CORE1_CUSTOM_IMAGE
         wifi_protocol_poll_rx();
+        wifi_protocol_send_oscilloscope();   // C29: 1核 示波器帧 → 网页上位机 (tools/05/视频网页上位机)
         #endif
-        //wifi_protocol_send_oscilloscope();
         // 此处编写需要循环执行的代码
                 // 处理摄像头图像数据
         if(mt9v03x_finish_flag)
@@ -138,7 +148,7 @@ int main(void)
             }
             if(VisionIpc_Core1_TakeBridgeResetRequest())
             {
-                bridge_vision_reset_filter();
+                bridge_detect_init(&s_bridge_v2_st);                            // 重置=重初始化 (清间距先验/门控)
             }
             if(VisionIpc_Core1_TakeBumpyResetRequest())
             {
@@ -155,8 +165,32 @@ int main(void)
             }
             if(VisionIpc_Core1_ShouldRunBridge()) // VisionIpc_Core1_ShouldRunBridge() ，测试时用 1 0
             {
-                bridge_vision_process_camera_frame(compressed_image_copy[0]);
-                render_bridge_vision_to_image();
+                /* 新单边桥管线 (bridge_detect): 检测 + 仲裁 → b2_* 供 IPC 发布 */
+                RUNTIME_PROFILE_BEGIN(g_bridge_v2_cost_profiler, BRIDGE_VISION_V2_PROFILE_TIMER);
+                bridge_detect_frame(compressed_image_copy[0], &s_bridge_v2_st, &s_bridge_v2_res);
+                RUNTIME_PROFILE_END(&g_bridge_v2_cost_profiler, BRIDGE_VISION_V2_PROFILE_TIMER);
+                bridge_v2_arbiter_process(&s_bridge_v2_res);                    // 仲裁 → b2_* 供 IPC 发布
+                render_bridge_vision_to_image();                                // 渲染 b2 控制线/退出线 (画在图像上, 不影响算法输入)
+                #if DEBUG_LOG_ENABLE
+                {
+                    static uint32 v2_log_div = 0U;
+                    if ((v2_log_div++ % 50U) == 0U)     // 100fps 下约 0.5s 一条
+                    {
+                        printf("[BridgeV2] mode=%d R=%d G=%d B=%d top=%d gate=%d nl=%d cost=%lu us avg=%lu max=%lu cnt=%lu\r\n",
+                               (int)s_bridge_v2_res.mode,
+                               (int)s_bridge_v2_res.has_red,
+                               (int)s_bridge_v2_res.has_green,
+                               (int)s_bridge_v2_res.has_blue,
+                               (int)s_bridge_v2_res.has_top,
+                               (int)s_bridge_v2_res.gate,
+                               (int)s_bridge_v2_res.n_lines,
+                               (unsigned long)g_bridge_v2_cost_profiler.last_us,
+                               (unsigned long)g_bridge_v2_cost_profiler.avg_us,
+                               (unsigned long)g_bridge_v2_cost_profiler.max_us,
+                               (unsigned long)g_bridge_v2_cost_profiler.count);
+                    }
+                }
+                #endif
             }
             if(VisionIpc_Core1_ShouldRunBumpy()) //  ，测试时用 1 0
             {

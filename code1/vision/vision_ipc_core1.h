@@ -11,7 +11,6 @@
 #define VISION_IPC_CORE1_H
 
 #include "pvc_vision.h"
-#include "bridge_vision.h"
 #include "bumpy_vision.h"
 #include "vision/vision_ipc.h"
 
