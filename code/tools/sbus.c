@@ -1,5 +1,6 @@
 #include "sbus.h"
 #include "config/generated/sys_options_sbus.h"
+#include "config/generated/sys_options_debug.h"
 #include "../common.h"
 #include "../vision/vision_bridge_control.h"
 #include "../vision/vision_slope_control.h"

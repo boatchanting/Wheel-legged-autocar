@@ -39,6 +39,7 @@
 #include "../code/config/generated/sys_options_motion.h"
 #include "../code/config/generated/sys_options_navigation.h"
 #include "../code/config/wifi_options.h"
+#include "../code/config/generated/sys_options_display.h"
 
 // 全局变量定义区域 (已在 init_main0.h 外部声明)
 uint8 uart_get_data[64];                                                        // 串口接收数据缓冲区

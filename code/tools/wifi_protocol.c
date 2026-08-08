@@ -1,4 +1,6 @@
 #include "wifi_protocol.h"
+#include "../config/generated/sys_options_debug.h"
+#include "../config/generated/sys_options_imu.h"
 #include "menu.h"
 #include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"

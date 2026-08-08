@@ -1,4 +1,5 @@
 #include "menu.h"
+#include "../config/generated/sys_options_debug.h"
 #include "tools/sbus.h"
 #include "calculate/ekf.h" // For g_initial_yaw
 #include "calculate/matrix.h" // For euler_angle

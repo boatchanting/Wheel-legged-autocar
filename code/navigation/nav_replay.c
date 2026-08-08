@@ -1,4 +1,6 @@
 #include "nav_replay/plan1/plan1_pure_pursuit_speed_planning.c"
+#include "../config/generated/sys_options_debug.h"
+#include "../config/generated/sys_options_imu.h"
 #include "nav_replay/plan1/plan1_pure_pursuit.c"
 #include "nav_replay/plan1/plan1_gnss.c"
 #include "nav_replay/plan1/plan1_lqr_tracking.c"

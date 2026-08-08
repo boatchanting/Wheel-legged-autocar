@@ -1,4 +1,6 @@
 #include "../nav_replay.h"
+#include "../../../config/generated/sys_options_debug.h"
+#include "../../../config/generated/sys_options_imu.h"
 #include "../../../common.h"
 #include "../../nav_replay_route_table.h"
 #include "../../../vision/vision_bridge_control.h"
