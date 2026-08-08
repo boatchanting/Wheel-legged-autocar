@@ -53,7 +53,7 @@ CURVATURE_EPS = 1e-6
 # These limits are expressed in the target_speed units written to
 # NavRamPoint_t.
 STAIRS_APPROACH_DISTANCE_MM = 4000.0
-STAIRS_APPROACH_TARGET_SPEED_MAX = 300.0
+STAIRS_APPROACH_TARGET_SPEED_MAX = 220.0
 
 # Match csv_to_nav_table.py.  Each value is measured from the recorded exit
 # marker toward the matching entry marker, so the visual state-machine exit
@@ -452,17 +452,22 @@ def limit_stairs_approach_output_speed(
     target_speed: np.ndarray,
     approach_distance_mm: float,
 ) -> np.ndarray:
-    """Cap only the table output for points within the three-step approach."""
+    """Cap the table output for points within the three-step approach and the entire stairs segment."""
     output_speed = np.array(target_speed, copy=True)
     stairs_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 3]
-    for entry_s in stairs_entry_s:
-        approach = (s >= entry_s - approach_distance_mm) & (s <= entry_s)
-        output_speed[approach] = np.clip(
-            output_speed[approach],
+    stairs_exit_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 30]
+    
+    # 将入口和出口配对，确保完整覆盖整个stairs段
+    for entry_s, exit_s in zip(stairs_entry_s, stairs_exit_s):
+        # 限制范围：从 (入口 - approach_distance_mm) 到 (出口 + approach_distance_mm)
+        full_stairs_range = (s >= entry_s - approach_distance_mm) & (s <= exit_s + approach_distance_mm)
+        output_speed[full_stairs_range] = np.clip(
+            output_speed[full_stairs_range],
             -STAIRS_APPROACH_TARGET_SPEED_MAX,
             STAIRS_APPROACH_TARGET_SPEED_MAX,
         )
     return output_speed
+
 
 
 def generate_path(markers: list[Marker], sample_step_mm: float) -> list[PathSample]:
