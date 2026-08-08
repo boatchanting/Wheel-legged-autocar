@@ -3,7 +3,7 @@
 
 #define JUMP_ENABLE_LANDING_BUFFER 0U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 
-#define WIFI_USE 1// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
+#define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
 #define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
 #define WIFI_PROTOCOL_SELECT  1// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
@@ -13,8 +13,9 @@
 #define CAMERA_MENU_DEBUG_LOG_ENABLE 0U  // 【图像调试日志】1: 打开1核 camera_menu 串口调试打印  0: 关闭
 #define CAMERA_MENU_DEBUG_LOG_DIV 20U    // 【日志打印分频】1核 camera_menu 串口打印分频，每N帧打印一次
 
-#define REMOTE_CONTROL 0                 //【全局开关】1：开启遥控器 0:关闭
+#define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
+#define CONTROL_PROFILE_PID_ENABLE 1U // 【多预设PID开关】1:按正常/加速/刹车预设每1ms平滑回写PID；0:仅初始化加载宏定义，允许WiFi持续调参
 #define ACCEL_FF_ENABLE 0U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
 #define ACCEL_FF_MODE 1U // 【加速前馈模式】0:关闭  1:直接叠加 PWM 前馈  2:加速时临时增强舵机速度环 Kp
 #define ACCEL_FF_BUZZER_ENABLE 0U // 【全局开关】1:大幅加速前馈触发时蜂鸣提示  0:关闭
@@ -70,6 +71,10 @@
 
 #if (JUMP_ENABLE_LANDING_BUFFER != 0U) && (JUMP_ENABLE_LANDING_BUFFER != 1U)
 #error "JUMP config error: JUMP_ENABLE_LANDING_BUFFER must be 0 or 1."
+#endif
+
+#if (CONTROL_PROFILE_PID_ENABLE != 0U) && (CONTROL_PROFILE_PID_ENABLE != 1U)
+#error "PID config error: CONTROL_PROFILE_PID_ENABLE must be 0 or 1."
 #endif
 
 #define DEBUG_DISPLAY_CORE0 (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT == 0))

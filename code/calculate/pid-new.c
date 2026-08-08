@@ -923,6 +923,7 @@ static const ControlProfile_t *Control_Profile_GetPreset(ControlMode_e mode)
     return &g_control_profile_normal;
 }
 
+#if CONTROL_PROFILE_PID_ENABLE
 static float Control_Profile_Follow(float current, float target, float alpha, float epsilon)
 {
     float next = current + (target - current) * alpha;
@@ -933,6 +934,7 @@ static float Control_Profile_Follow(float current, float target, float alpha, fl
     }
     return next;
 }
+#endif
 
 static void Control_Profile_ApplyToControllers(const ControlProfile_t *profile)
 {
@@ -1013,6 +1015,7 @@ void Control_Profile_Init(void)
 
 void Control_Profile_Update1ms(void)
 {
+#if CONTROL_PROFILE_PID_ENABLE
     const float pid_alpha = 0.12f;
     const float ff_alpha = 0.10f;
     const float limit_alpha = 0.18f;
@@ -1084,6 +1087,7 @@ void Control_Profile_Update1ms(void)
 
     Control_Profile_ApplyToControllers(&g_control_profile_active);
     g_control_mode_applied = g_control_mode_requested;
+#endif
 }
 
 /**
@@ -1191,7 +1195,9 @@ void PID_Param_Init(void) {
     // 重置目标速度
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
+#if CONTROL_PROFILE_PID_ENABLE
     Control_Profile_ApplyToControllers(&g_control_profile_active);
+#endif
 }
 
 /**
@@ -1240,7 +1246,9 @@ void PID_Data_Reset(void) {
     // 重置目标速度
     target_speed_set = 0.0f;
     Accel_Feedforward_Reset();
+#if CONTROL_PROFILE_PID_ENABLE
     Control_Profile_ApplyToControllers(&g_control_profile_active);
+#endif
 }
 
 /**
