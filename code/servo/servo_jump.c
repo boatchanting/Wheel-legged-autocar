@@ -1,6 +1,6 @@
 #include "servo_jump.h"
 #include "servo_executor.h"
-#include "../config/sys_options.h"
+#include "../config/generated/sys_options_jump.h"
 #include "../config/car_select.h"//根据小车选择配置不同的跳跃参数
 #include "../calculate/pid-new.h" // 包含ANG_MECH_ZERO机械零点定义
 // 状态变量

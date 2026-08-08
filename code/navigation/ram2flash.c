@@ -1,5 +1,5 @@
 #include "ram2flash.h"
-#include "config/config.h"//【提醒】配置请在这里修改
+#include "config/generated/sys_options_debug.h"
 #include "../common.h"
 
 /**

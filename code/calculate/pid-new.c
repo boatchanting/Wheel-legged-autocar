@@ -1,4 +1,5 @@
 #include "zf_common_headfile.h"
+#include "../config/generated/sys_options_motion.h"
 #include "../servo/servo.h"
 #include "../servo/servo_executor.h"
 

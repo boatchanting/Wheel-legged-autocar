@@ -1,7 +1,7 @@
 ﻿#ifndef CODE__PID_NEW_H__
 #define CODE__PID_NEW_H__
 #include "zf_common_headfile.h"
-#include "../config/sys_options.h"//系统配置开关
+#include "../config/generated/sys_options_accel.h"//系统配置开关
 #include "../config/car_select.h"//根据小车选择配置不同的PID参数
 
 #ifndef ACCEL_FF_ENABLE

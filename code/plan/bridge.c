@@ -1,4 +1,5 @@
 #include "bridge.h"
+#include "../config/generated/sys_options_motion.h"
 // 必须包含你的全局变量声明头文件，确保能拿到下方的 extern 变量
 // #include "zf_common_headfile.h"
 // #include "pid.h"  

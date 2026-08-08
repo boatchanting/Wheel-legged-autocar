@@ -1,7 +1,7 @@
 #ifndef __WIFI_OPTIONS_H__
 #define __WIFI_OPTIONS_H__
 
-#include "sys_options.h"
+#include "generated/sys_options_wifi.h"
 
 #define WIFI_CORE_0 0
 #define WIFI_CORE_1 1

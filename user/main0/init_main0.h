@@ -2,7 +2,6 @@
 #define _INIT_MAIN0_H_
 
 #include "zf_common_headfile.h"//【提醒！！！】导入了新模块添加到这个文件里
-#include "config/config.h"//【提醒】配置请在这里修改
 #include "tools/runtime_profiler.h"
 #include "vision/vision_ipc_core0.h"
 #include "tools/telemetry_ipc_core0.h"

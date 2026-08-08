@@ -1,4 +1,5 @@
 #include "bumpy_road.h"
+#include "../config/generated/sys_options_motion.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_bumpy_control.h"
 #include "navigation/inertial_nav.h"

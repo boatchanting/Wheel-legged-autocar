@@ -1,5 +1,5 @@
 #include "inertial_nav.h"
-#include "../config/sys_options.h"
+#include "../config/generated/sys_options_imu.h"
 #include "../plan/minefield.h"
 
 // --- 宏定义 ---

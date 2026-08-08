@@ -1,4 +1,8 @@
 #include "main0/init_main0.h"
+#include "../../code/config/generated/sys_options_display.h"
+#include "../../code/config/generated/sys_options_wifi.h"
+#include "../../code/config/generated/sys_options_imu.h"
+#include "../../code/config/generated/sys_options_motion.h"
 
 #pragma location = 0x28026024
 __root __no_init uint8 mt9v03x_dma_reserved_for_core1[0x5820];

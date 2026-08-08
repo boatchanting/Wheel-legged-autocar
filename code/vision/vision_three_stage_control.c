@@ -10,6 +10,7 @@
  * =================================================================================
  */
 #include "vision/vision_three_stage_control.h"
+#include "../config/generated/sys_options_motion.h"
 
 #if VISION_THREE_STAGE_CONTROL_ENABLE
 

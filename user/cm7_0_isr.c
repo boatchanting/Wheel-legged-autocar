@@ -35,7 +35,11 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
-#include "config/config.h"//【提醒】配置请在这里修改
+#include "../code/config/generated/sys_options_accel.h"
+#include "../code/config/generated/sys_options_debug.h"
+#include "../code/config/generated/sys_options_imu.h"
+#include "../code/config/generated/sys_options_motion.h"
+#include "../code/config/generated/sys_options_navigation.h"
 #include "tools/runtime_profiler.h"
 #include "plan/bumpy_road.h"
 #include "vision/vision_ipc_core0.h"

@@ -8,6 +8,7 @@
  * =================================================================================
  */
 #include "vision/vision_slope_control.h"
+#include "../config/generated/sys_options_motion.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "navigation/inertial_nav.h"

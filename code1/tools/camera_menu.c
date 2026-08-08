@@ -1,6 +1,7 @@
 #include "camera_menu.h"
 
-#include "../../code/config/config.h"
+#include "../../code/config/generated/sys_options_display.h"
+#include "../../code/config/generated/sys_options_camera_menu.h"
 #include "../wifi.h"
 #include "../vision/bumpy_vision.h"
 #include "../vision/bridge_vision.h"

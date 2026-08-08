@@ -8,6 +8,7 @@
  * =================================================================================
  */
 #include "vision/vision_bridge_control.h"
+#include "../config/generated/sys_options_motion.h"
 #include "vision/vision_ipc_core0.h"
 #include "../../code1/vision/ipm_transform.h"
 #include "plan/bridge.h"

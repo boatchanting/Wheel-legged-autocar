@@ -1,5 +1,5 @@
 #include "sbus.h"
-#include "config/config.h"//【提醒】配置请在这里修改
+#include "config/generated/sys_options_sbus.h"
 #include "../common.h"
 #include "../vision/vision_bridge_control.h"
 #include "../vision/vision_slope_control.h"

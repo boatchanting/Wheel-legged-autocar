@@ -1,7 +1,7 @@
 #ifndef _NAV_OPTIONS_H_
 #define _NAV_OPTIONS_H_
 
-#include "../../config/sys_options.h"
+#include "../../config/generated/sys_options_navigation.h"
 
 
 

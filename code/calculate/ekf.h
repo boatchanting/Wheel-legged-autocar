@@ -1,7 +1,7 @@
 #ifndef CODE_EKF_H_
 #define CODE_EKF_H_
 #include "zf_common_headfile.h"
-#include "../config/sys_options.h"
+#include "../config/generated/sys_options_imu.h"
 // 角度转弧度转换系数 (180/π)
 #define DEG_TO_RAD      (57.295779513082320876798154814105f)
 // 采样时间间隔 (秒)

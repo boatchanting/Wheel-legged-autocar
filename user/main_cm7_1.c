@@ -34,7 +34,8 @@
 ********************************************************************************************************************/
 
 #include "zf_common_headfile.h"
-#include "../code/config/config.h"
+#include "../code/config/generated/sys_options_display.h"
+#include "../code/config/wifi_options.h"
 #include "../code1/tools/camera_menu.h"
 #include "../code1/wifi.h"
 #include "../code1/wifi_diff_stream.h"
