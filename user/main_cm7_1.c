@@ -177,7 +177,7 @@ int main(void)
                     static uint32 v2_log_div = 0U;
                     if ((v2_log_div++ % 50U) == 0U)     // 100fps 下约 0.5s 一条
                     {
-                        printf("[BridgeV2] mode=%d R=%d G=%d B=%d top=%d gate=%d nl=%d cost=%lu us avg=%lu max=%lu cnt=%lu\r\n",
+                        printf("[BridgeV2] mode=%d R=%d G=%d B=%d top=%d gate=%d nl=%d valid=%d cost=%lu us avg=%lu max=%lu cnt=%lu\r\n",
                                (int)s_bridge_v2_res.mode,
                                (int)s_bridge_v2_res.has_red,
                                (int)s_bridge_v2_res.has_green,
@@ -185,6 +185,7 @@ int main(void)
                                (int)s_bridge_v2_res.has_top,
                                (int)s_bridge_v2_res.gate,
                                (int)s_bridge_v2_res.n_lines,
+                               (int)s_bridge_v2_res.valid,
                                (unsigned long)g_bridge_v2_cost_profiler.last_us,
                                (unsigned long)g_bridge_v2_cost_profiler.avg_us,
                                (unsigned long)g_bridge_v2_cost_profiler.max_us,

@@ -91,6 +91,19 @@ static int s_edge_dbg = 0;
 #define EDGE_MARGIN 10.0f               /* 边框伪线判定: 线@Y_REF 距画面边缘<此 视为贴边框
                                              (2026-08-07 晚 用户: 太靠边用先验/配对一致性滤掉) */
 
+/* ---- 有效检测 valid 判定 (2026-08-09 用户定案, 取消帧级白像素层, 线级恒真) ----
+   线级级联全通才有桥: 边线 maxr>VALID_MXR → 夹角<VALID_ANGLE → 靠近点y<VALID_YC
+     → 间距 w_min>=VALID_WMIN → 边线包裹区条带白>VALID_STRIP_W。
+   全部帧统一走此级联 (无 wh/botwhite 快速通道)。 ---- */
+#define VALID_MXR     0.35f              /* 边线原图亮度差(4段二次矩差比和)下限 */
+#define VALID_ANGLE   90.0f              /* 线对夹角上限 (真桥 50-76°)      */
+#define VALID_YC      30.0f              /* 线对交点(靠近点)行坐标上限: 交点须在画面上方(远处);
+                                             交点在下方=严重夹角错误 (v02_00240/241 交点y>200) */
+#define VALID_WMIN    15.0f              /* 线对最小间距下限 (过近 10-14 无效) */
+#define VALID_STRIP_W 0.5f               /* 边线包裹区最大条带近白比例下限 */
+#define VALID_NSTRIP  12                 /* 条带白分带数 */
+#define VALID_WHITE   200                /* 近白像素灰度阈值 */
+
 /* ---- 三线平行约束 (2026-08-07 用户): 三线近似平行(共消失点), 否则否决绿线 ---- */
 #define PAR_A_TOL    0.15f               /* G 斜率与 R/B 中位斜率最大偏差 */
 
@@ -155,7 +168,10 @@ DTCM_BSS int16_t s_ringx[4][GW + 1];    /* GW+1=92: 行起始保持 4 字节对�
 DTCM_BSS int16_t s_ringy[4][GW + 1];
 
 /* 候选点 / RANSAC 工作区 */
-static bpt_t    s_pos[MAX_CAND], s_neg[MAX_CAND], s_topc[MAX_TOPC];
+static bpt_t    s_pos[MAX_CAND], s_neg[MAX_CAND];
+#if TOP_GRAD
+static bpt_t    s_topc[MAX_TOPC];       /* 顶线候选 (旧梯度法 TOP_GRAD=1 用) */
+#endif
 static bpt_t    s_rem[MAX_TOPC];        /* 序贯 RANSAC 剩余点 (取大者)    */
 static uint8_t  s_mask[MAX_TOPC];
 static iline_t  s_lines[MAX_LINES];
@@ -169,12 +185,14 @@ static int16_t  s_bnx[GH][2], s_bnm[GH][2];
 /* lock box-diff 行缓存: 每行一次计算, step3/4 复用 (消除重复 gvar/hvar) */
 static int16_t  s_gvar_r[GW], s_hvar_r[GW];
 
+#if 0   /* 亮区法缓冲: 仅供 extract_top_region 使用 (已被 MLP 结束线取代), 保留参考不编译 (2026-08-09) */
 /* 脱出线 (亮区法): 区域位图 + BFS 队列 + 逐行包络 */
 #define REG_WORDS   ((W + 31) / 32)
 static uint32_t s_region[H][REG_WORDS];
 static uint16_t s_bfs_q[W * H];
 static int16_t  s_env_lo[H], s_env_hi[H];
 static int8_t   s_col_top[W];
+#endif
 
 /* ================================ 小工具 ================================ */
 static int cmp_f32(const void *a, const void *b)
@@ -183,10 +201,13 @@ static int cmp_f32(const void *a, const void *b)
     return (d > 0) - (d < 0);
 }
 
+#if TOP_GRAD
+/* 仅旧梯度法 (TOP_GRAD=1) 的 bright_ok_top 使用 */
 static int cmp_u8(const void *a, const void *b)
 {
     return (int)*(const uint8_t *)a - (int)*(const uint8_t *)b;
 }
+#endif
 
 /* gvar: 中间两列垂直 box-diff (抑制 gx 的水平边缘响应), 输出点 (r,j) */
 static int gvar_at(int r, int j)
@@ -531,16 +552,141 @@ static void edge_dbg_print(const iline_t *L, int side)
     }
 }
 
+#if 0   /* 被 line_edge_status 取代, 保留参考不编译 (2026-08-09) */
 /* 边线差分校验 (差比和): 正常分支用。有边线证据或贴边 → 边线; 否则中线 */
 static int line_is_edge(const iline_t *L, int side)
 {
     return line_edge_ratio(L, side) != 0;
 }
+#endif
 
 /* 边线状态: 1=有效边线, 0=非边线(中线), -1=贴边无法校验 (外侧全段出画) */
 static int line_edge_status(const iline_t *L, int side)
 {
     return line_edge_ratio(L, side);
+}
+
+/* ==================== 有效检测 valid (线级级联, 2026-08-09) ====================
+   与 PC 端 review_bridge_gui.line_maxr 一致: 沿线分 4 段, 每段两侧二次矩差比
+   r=|内²-外²|/(内²+外²), 取 4 段最大值。真边线>0.5, 幻觉线<0.1。
+   采样 x 用 round (与 PC 一致; 原 line_edge_ratio 用 truncate 会差 1px)。 */
+static float line_maxr_valid(const bridge_line_t *L, int side)
+{
+    int k, s;
+    float maxr = 0.0f;
+    for (s = 0; s < EDGE_SEG; s++) {
+        int y0 = s * H / EDGE_SEG, y1 = (s + 1) * H / EDGE_SEG, y;
+        float ls2 = 0, rs2 = 0;
+        int lc = 0, rc = 0;
+        for (y = y0; y < y1; y++) {
+            int x = (int)(L->a * (float)y + L->b + 0.5f);
+            for (k = 0; k < 6; k++) {
+                int xl = x - 11 + k, xr = x + 6 + k;   /* 间隔2px */
+                if (xl >= 0 && xl < W) {
+                    float v = s_img[y][xl] / 255.0f;
+                    ls2 += v * v; lc++;
+                }
+                if (xr >= 0 && xr < W) {
+                    float v = s_img[y][xr] / 255.0f;
+                    rs2 += v * v; rc++;
+                }
+            }
+        }
+        if (lc >= 6 && rc >= 6) {
+            float i2 = (side < 0) ? rs2 / rc : ls2 / lc;   /* 内侧二次矩 */
+            float o2 = (side < 0) ? ls2 / lc : rs2 / rc;   /* 外侧二次矩 */
+            float r = fabsf(i2 - o2) / (i2 + o2 + 1e-3f);
+            if (r > maxr) maxr = r;
+        }
+    }
+    return maxr;
+}
+
+/* 边线包裹区条带白 (与 PC interline_maxwhite 一致): 两线之间区域按 VALID_NSTRIP
+   条带分, 每条带统计近白(I>VALID_WHITE)比例, 返回最大带比例。
+   用户: 全局平均 wh 会被区域外稀释, 条带法凸显局部桥面白带。 */
+static float interline_maxwhite(const bridge_line_t *l1,
+                                 const bridge_line_t *l2)
+{
+    int s;
+    float mx = 0.0f;
+    for (s = 0; s < VALID_NSTRIP; s++) {
+        int y0 = s * H / VALID_NSTRIP, y1 = (s + 1) * H / VALID_NSTRIP;
+        int br = 0, tot = 0, y;
+        for (y = y0; y < y1; y++) {
+            float xl = l1->a * (float)y + l1->b;
+            float xr = l2->a * (float)y + l2->b;
+            int x0 = (int)(xl < xr ? xl : xr) + 2;
+            int x1 = (int)(xl > xr ? xl : xr) - 2;
+            int x;
+            if (x0 < 0) x0 = 0;
+            if (x1 > W - 1) x1 = W - 1;
+            for (x = x0; x <= x1; x++) {
+                if (s_img[y][x] > VALID_WHITE)
+                    br++;
+                tot++;
+            }
+        }
+        if (tot && (float)br / tot > mx)
+            mx = (float)br / tot;
+    }
+    return mx;
+}
+
+/* 有效检测判定: 纯线级级联全通 (2026-08-09 用户定案, 取消 wh 层)。
+   入参: has_red/green/blue + 三条线 (未检出线可 NULL)。
+   规则: 纯绿线→无效; 无边线→无效; 边线maxr<=VALID_MXR→无效;
+   线对: R&B→(R,B); 仅单边线+有G→(边线,G); 仅单边线→无效;
+   级联: 夹角<VALID_ANGLE → 靠近点y<VALID_YC → w_min>=VALID_WMIN → 条带白>VALID_STRIP_W。 */
+static int valid_detect(const bridge_line_t *red, const bridge_line_t *green,
+                        const bridge_line_t *blue)
+{
+    const bridge_line_t *l1, *l2;
+    int has_r = red != NULL, has_g = green != NULL, has_b = blue != NULL;
+    float a1, b1, a2, b2, cc, ang, yc, wmin, mxw;
+    int da, y;
+
+    if (!has_r && !has_b)
+        return 0;                        /* 无边线 (含纯绿线) */
+    if (has_r && has_b) {                /* 线对 = R-B */
+        l1 = red;
+        l2 = blue;
+    } else if (has_g) {                  /* 单边线+中线 */
+        l1 = has_r ? red : blue;
+        l2 = green;
+    } else {
+        return 0;                        /* 仅单边线, 无中线可配对 */
+    }
+    a1 = l1->a; b1 = l1->b;
+    a2 = l2->a; b2 = l2->b;
+    /* 边线亮度差: 所有边线 maxr>VALID_MXR (原图亮度差, 4段二次矩差比和) */
+    if (has_r && line_maxr_valid(red, -1) <= VALID_MXR)
+        return 0;
+    if (has_b && line_maxr_valid(blue, +1) <= VALID_MXR)
+        return 0;
+    /* 级联: 夹角 → 靠近点 → 间距 → 白带 */
+    cc = (a1 * a2 + 1.0f) /
+         (sqrtf(a1 * a1 + 1.0f) * sqrtf(a2 * a2 + 1.0f));
+    ang = acosf(cc < -1.0f ? -1.0f : (cc > 1.0f ? 1.0f : cc)) * 57.29578f;
+    if (ang > VALID_ANGLE)
+        return 0;
+    da = (int)((a2 - a1) * 1000.0f);     /* 交点 y = -(b2-b1)/(a2-a1) */
+    if (da != 0) {
+        yc = -(b2 - b1) / (a2 - a1);
+        if (yc > VALID_YC)
+            return 0;                    /* 靠近点在画面下方 → 严重夹角错误 */
+    }
+    wmin = 1e9f;
+    for (y = 0; y < H; y++) {
+        float w = fabsf((a2 * y + b2) - (a1 * y + b1));
+        if (w < wmin) wmin = w;
+    }
+    if (wmin < VALID_WMIN)
+        return 0;
+    mxw = interline_maxwhite(l1, l2);
+    if (mxw <= VALID_STRIP_W)
+        return 0;
+    return 1;
 }
 
 /* 由 中线+有效边线 推断缺失的另一侧边线 (中线≈红蓝平分线):
@@ -1110,7 +1256,7 @@ static float yexp_at(float x, int nanc,
 }
 #endif /* TOP_GRAD */
 
-#if !TOP_GRAD
+#if 0   /* 亮区顶边界法: 已被 MLP 结束线 (mlp_end_detect) 取代, 保留参考不编译 (2026-08-09) */
 /* ================================ 脱出线 (亮区顶边界法) ================================ */
 /* 与 pc_tools/bridge_v6.py top_from_bright 一致:
    门控行亮像素为种子做 4-连通 BFS (限红蓝包络内) 得桥面亮区,
@@ -1291,7 +1437,7 @@ static int extract_top_region(const iline_t *lf, const iline_t *rf,
     tf->u_lo = tf->u_hi = 0;
     return 1;
 }
-#endif /* !TOP_GRAD */
+#endif /* #if 0: 亮区法 (已被 MLP 取代) */
 
 /* ========================================================================
  * MLP 结束线 (行级 int8 推理) —— 替换亮区法 (与 pc_tools/bridge_mlp_end.py 一致)
@@ -1972,6 +2118,17 @@ void bridge_detect_frame(const uint8_t *img94,
         { out->has_green = 1; out->green = s_lines[ig].f; }
     if (ib >= 0)
         { out->has_blue = 1; out->blue = s_lines[ib].f; }
+
+    /* ---- 10.5) 有效检测 valid (线级级联, 2026-08-09 用户定案) ----
+       取消帧级白像素层, 全部帧统一走线级级联。
+       后处理门控 (本工程小优化): valid==0 → mode 覆写为 BRIDGE_MODE_RB_Q(8),
+       下游仲裁 default 分支 → source=2 失能回锁角, 不新增 IPC/仲裁字段。 */
+    out->valid = (uint8_t)valid_detect(
+        out->has_red ? &out->red : NULL,
+        out->has_green ? &out->green : NULL,
+        out->has_blue ? &out->blue : NULL);
+    if (out->valid == 0U)
+        out->mode = BRIDGE_MODE_RB_Q;
 
 #if TOP_GRAD
     if (st->gate && ir >= 0 && ib >= 0) {
