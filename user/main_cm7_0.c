@@ -119,6 +119,13 @@ int main(void)
             exit_beep_request = 0U;
             Buzzer_Beep_Times(2U);
         }
+
+        // 单边桥兜底退出(AUTO_TIMEOUT): 响 1 声 (区别于视觉确认的 2 声) (2026-08-08)
+        if (g_bridge_exit_timeout_beep_request != 0U)
+        {
+            g_bridge_exit_timeout_beep_request = 0U;
+            Buzzer_Beep_Times(1U);
+        }
 #endif
 
 #if IMU_REFRESH_TEST_ENABLE

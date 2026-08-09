@@ -163,7 +163,8 @@ int main(void)
                 // 4. 将 PVC 检测框直接画在 compressed_image_copy[0] 上，供 WIFI 发送显示
                 render_pvc_vision_to_image();//算法执行完毕后，将 PVC 检测框画在 image_copy 上,必须放在这！如果放在算法前面，画的黑线会破坏算法寻找白色的逻辑
             }
-            if(VisionIpc_Core1_ShouldRunBridge()) // VisionIpc_Core1_ShouldRunBridge() ，测试时用 1 0
+            // if(VisionIpc_Core1_ShouldRunBridge()) // 0808 调试: 强制 1核 一直跑 bridge 检测(无视 0核 enable 门控)。⚠️ 仅自测用, 忘改回会持续占 CPU!
+            if(1) // 0808 调试强制检测 (需仅 1核 自测时用; 正式逻辑恢复 ShouldRunBridge 门控)
             {
                 /* 新单边桥管线 (bridge_detect): 检测 + 仲裁 → b2_* 供 IPC 发布 */
                 RUNTIME_PROFILE_BEGIN(g_bridge_v2_cost_profiler, BRIDGE_VISION_V2_PROFILE_TIMER);

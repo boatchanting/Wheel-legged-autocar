@@ -26,11 +26,13 @@ extern uint8_t roll_balance_enable;         /* 滚转平衡（过单边桥防翻
 extern int32 acc_limit;                     /* 加速度限制 */
 extern int32 dec_limit;                     /* 减速度限制 */
 extern float servo_height;                  /* 舵机高度（比如过桥时可能要抬高底盘） */
+extern volatile uint8 exit_beep_request;    /* 出口蜂鸣请求(视觉确认2声): 脱出判定处置位 (定义于 nav_replay/plan4, 主循环消费) */
 
 /* --- 全局变量 --- */
 volatile uint8 g_bridge_vision_task_enable = 0U; /* 任务总开关，别人可以把它设为 1 来启动任务 */
 volatile vision_bridge_task_status_t g_bridge_vision_task_status = {0}; /* 记录当前任务的详细状态供外人看 */
 volatile vision_bridge_exit_reason_e g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_NONE;
+volatile uint8 g_bridge_exit_timeout_beep_request = 0U; /* 兜底退出(AUTO_TIMEOUT)蜂鸣请求: 主循环消费响1声 (2026-08-08) */
 
 /* --- 内部数据结构 --- */
 /**
@@ -786,12 +788,14 @@ void VisionBridgeTask_Update_2ms(void)
             if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM) && (exit_fire != 0U))
             {
                 g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_VISUAL_CONFIRMED;
+                exit_beep_request = 1U; /* 脱出时刻: 视觉确认响 2 声 (侧键/Plan4 驱动都响) */
                 vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
             }
             else if (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS)
             {
                 // 视觉异常时自动继续；Plan3/Plan4 会知道这不是已确认的视觉出口，不会重定位。
                 g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_AUTO_TIMEOUT;
+                g_bridge_exit_timeout_beep_request = 1U; /* 兜底退出: 主循环响 1 声 (区别于视觉确认的 2 声) */
                 vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
             }
             break;

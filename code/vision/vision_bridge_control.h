@@ -128,6 +128,7 @@ typedef struct
 extern volatile uint8 g_bridge_vision_task_enable;           /* 桥梁任务总开关 */
 extern volatile vision_bridge_task_status_t g_bridge_vision_task_status; /* 任务状态大表 */
 extern volatile vision_bridge_exit_reason_e g_bridge_vision_task_exit_reason;
+extern volatile uint8 g_bridge_exit_timeout_beep_request;    /* 兜底退出(AUTO_TIMEOUT)蜂鸣请求 (主循环响1声; 视觉确认用 exit_beep_request 响2声) */
 
 /**
  * @brief 初始化桥梁任务
