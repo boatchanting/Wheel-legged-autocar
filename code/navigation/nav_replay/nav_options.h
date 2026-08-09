@@ -75,4 +75,15 @@
 #define NAV_PLAN3_METHOD PLAN3_METHOD_LQR_SPEED_PLANNING
 #endif
 
+// ========================================================
+// [ 科目四 (Plan 4) 算法方案定义 ]
+// ========================================================
+#define PLAN4_METHOD_LQR_SPEED_PLANNING      1 // 方案1：点到点慢速精准对齐方案
+// #define PLAN4_xxx       n // 预留：未来可能的其他策略
+
+// 科目四方案
+#ifndef NAV_PLAN4_METHOD
+#define NAV_PLAN4_METHOD PLAN4_METHOD_LQR_SPEED_PLANNING
+#endif
+
 #endif // _NAV_OPTIONS_H_

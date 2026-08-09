@@ -31,8 +31,8 @@ OSC_FRAME_SIZE = 43
 OSC_RECORD_MAX = 50000
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-TELEMETRY_MAP_FILE = PROJECT_ROOT / "code" / "tools" / "telemetry_ipc_core0.c"
-TELEMETRY_MAP_FUNC = "TelemetryIpc_Core0_PublishPvcDefault"
+TELEMETRY_MAP_FILE = PROJECT_ROOT / "code1" / "wifi_protocol.c"
+TELEMETRY_MAP_FUNC = "wifi_protocol_send_oscilloscope"
 DEFAULT_OSC_NAMES = [f"CH{i}" for i in range(OSC_CHANNELS)]
 
 

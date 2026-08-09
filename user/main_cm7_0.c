@@ -106,7 +106,7 @@ int main(void)
 
     while(true)
     {
-#if CURRENT_NAV_PLAN == 3
+#if CURRENT_NAV_PLAN == 3 || CURRENT_NAV_PLAN == 4
         // 导航/视觉状态机只置请求标志；蜂鸣器在主循环执行，绝不阻塞中断控制周期。
         if (entry_beep_request != 0U)
         {
@@ -118,6 +118,13 @@ int main(void)
         {
             exit_beep_request = 0U;
             Buzzer_Beep_Times(2U);
+        }
+
+        // 单边桥兜底退出(AUTO_TIMEOUT): 响 1 声 (区别于视觉确认的 2 声) (2026-08-08)
+        if (g_bridge_exit_timeout_beep_request != 0U)
+        {
+            g_bridge_exit_timeout_beep_request = 0U;
+            Buzzer_Beep_Times(1U);
         }
 #endif
 
@@ -224,6 +231,17 @@ int main(void)
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.pitch;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw; 
+
+                // 4.【调试单边桥新管线: 0核 输入 b2_* + 状态机 (输入对了=九成, C14 状态大表)】
+                // 启用: 取消下面 8 行注释, 并注释掉上方"1.直立环"组
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)g_bridge_vision_task_status.b2_valid;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)g_bridge_vision_task_status.b2_mode;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)g_bridge_vision_task_status.b2_gate;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)g_bridge_vision_task_status.b2_has_top;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)g_bridge_vision_task_status.state;
+                // seekfree_assistant_oscilloscope_data.data[5] = g_bridge_vision_task_status.exit_line_y;
+                // seekfree_assistant_oscilloscope_data.data[6] = g_bridge_vision_task_status.traveled_mm;
+                // seekfree_assistant_oscilloscope_data.data[7] = g_bridge_vision_task_status.err_degree_cmd;
 
                 // 4.【调节pvc识别】
                 // data[0] 左轮速度

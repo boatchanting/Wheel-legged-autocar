@@ -47,7 +47,20 @@ extern "C" {
 #define VISION_BRIDGE_TASK_CENTER_JUMP_REJECT_DEG    (8.0f)
 #define VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_PX    (3.0f)
 #define VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_DEG   (3.0f)
-#define VISION_BRIDGE_TASK_CENTER_LOST_FRAMES        (3U)
+
+/* --- 3.5 新管线 (b2_*) 专用参数 (C15) --- */
+#define VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM       (900.0f)  /* 上桥惯导门: 从交接点起 traveled 达此值进 RUN (桥入口→桥面起点+余量, 现场标定) */
+#define VISION_BRIDGE_TASK_VALID_LOST_FRAMES          (8U)      /* b2_valid 失能连续帧数: 达到回锁角 (N, C09) */
+#define VISION_BRIDGE_TASK_VALID_RECOVER_FRAMES       (4U)      /* b2_valid 恢复连续帧数: 达到回视觉 (M, C09) */
+#define VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG          (0.5f)    /* 视觉↔锁角换源 ramp: 每 2ms 最多变化 (C10) */
+/* --- 3.6 退出线视觉确认: exit_y>阈值 + 衰减累计 (简单版, 2026-08-09) ---
+   旧单帧 y<10 无选择性 (远场 exit_y≈4 恒满足, 接近时反而爬升>10);
+   复杂滤波(远场EMA/相对爬升/锁存/消失)过度设计——录像是手持的, 不具唯一性。
+   简单版: exit_y>15 = 退出线进入近场带 (IPM 透视, 物理≈桥尾≤0.85m);
+   衰减累计(+1/-1)≥3 tick 过滤单帧杂散, 容忍 has_top 抖动 (轻微递增感)。
+   回放 230901: 8 次 FIRE 全命中真实接近(y=16~40), 远场 y≈4~11 零误触发。 */
+#define VISION_BRIDGE_TASK_EXIT_Y_TH_PX               (15.0f)   /* 退出线下移带 (图像行) */
+#define VISION_BRIDGE_TASK_EXIT_HOLD_TICKS            (3U)      /* 确认: 衰减累计 ≥N tick (2ms) */
 
 /* --- 4. 转向指令参数 --- */
 /* IPM 坐标为 X 向右、Y 向前；底层航向环的正方向与其相反，因此默认取 -1。
@@ -98,14 +111,12 @@ typedef struct
     float traveled_mm;                   /* 从上桥到现在跑了多远 */
     float err_degree_cmd;                /* 当前给方向盘下发的指令 */
     float speed_cmd;                     /* 当前给电机下发的速度指令 */
-    uint8 bridge_stable;                 /* 1 核是否稳定检测到桥 */
-    uint8 geometry_stable;               /* 1 核是否稳定得到可控的桥中心线 */
-    uint8 geometry_valid;                /* 当前 IPC 中心线坐标是否有效 */
-    uint8 bridge_state;                  /* BridgeDetectionState */
-    int16 center_line_x0;
-    int16 center_line_y0;
-    int16 center_line_x1;
-    int16 center_line_y1;
+    uint8 b2_valid;                      /* 仲裁后控制线原始可信 */
+    uint8 b2_source;                     /* 0=红蓝中点 1=绿线 2=失能 */
+    uint8 b2_mode;                       /* 原始 mode */
+    uint8 b2_gate;                       /* 底部变白锁存 */
+    uint8 b2_has_top;                    /* 退出线有效 */
+    float exit_line_y;                   /* 退出线在图像中心列 x=47 处的行坐标(调试用, 无效为 -1) */
     uint8 center_filter_valid;
     uint8 center_filter_pending_jump;
     float filtered_lookahead_x;
@@ -117,6 +128,7 @@ typedef struct
 extern volatile uint8 g_bridge_vision_task_enable;           /* 桥梁任务总开关 */
 extern volatile vision_bridge_task_status_t g_bridge_vision_task_status; /* 任务状态大表 */
 extern volatile vision_bridge_exit_reason_e g_bridge_vision_task_exit_reason;
+extern volatile uint8 g_bridge_exit_timeout_beep_request;    /* 兜底退出(AUTO_TIMEOUT)蜂鸣请求 (主循环响1声; 视觉确认用 exit_beep_request 响2声) */
 
 /**
  * @brief 初始化桥梁任务

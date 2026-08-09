@@ -42,7 +42,7 @@
 // 【新增】引入 PVC 视觉模块头文件
 // 目的：为了获取 PVC_IMAGE_W (94) 和 PVC_IMAGE_H (60) 的宏定义，用于压缩数组的大小声明
 #include "vision/pvc_vision.h"
-#include "vision/bridge_vision.h"
+#include "vision/bridge_v2_arbiter.h"
 #include  "vision/bumpy_vision.h"
 // *************************** 例程使用步骤说明 ***************************
 // 1.根据硬件连接说明连接好模块，使用电源供电(下载器供电会导致模块电压不足)
