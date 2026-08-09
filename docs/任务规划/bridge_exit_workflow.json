@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "单边桥脱出（EXIT）判定链路",
+    "subtitle": "1核 bridge_detect → IPC b2_* → 0核 RUN 出口判定 → EXIT/FINISH → Plan4 重定位（精确到函数调用）",
+    "animation": "trace",
+    "visual_preset": "signal-flow",
+    "quality_profile": "showcase",
+    "views": [
+      {
+        "id": "visual-exit",
+        "label": "视觉确认主链路",
+        "focus": ["detect", "arb", "pack", "pkt", "get", "update", "travel", "measure", "g_visual", "set_v", "exit_state", "settle", "finish", "navreplay", "complete"],
+        "note": "从退出线检测到 VISUAL_CONFIRMED 脱出并 rebase 的完整主路径。"
+      },
+      {
+        "id": "timeout-fallback",
+        "label": "超时兜底",
+        "focus": ["g_visual", "timeout", "exit_state"],
+        "note": "视觉长期异常时 AUTO_TIMEOUT 继续前进，不 rebase。"
+      },
+      {
+        "id": "plan4-rebase",
+        "label": "Plan4 重定位",
+        "focus": ["finish", "navreplay", "complete"],
+        "note": "仅 VISUAL_CONFIRMED 才把融合坐标 rebase 到出口路点。"
+      }
+    ],
+    "output": "docs/任务规划/单边桥脱出逻辑.html",
+    "viewBox": [1180, 900]
+  },
+  "lanes": [
+    { "id": "core1", "label": "1核 视觉检测" },
+    { "id": "ipc", "label": "跨核 IPC" },
+    { "id": "run", "label": "0核 RUN 状态机 (2ms)" },
+    { "id": "exit", "label": "0核 EXIT / FINISH" },
+    { "id": "plan4", "label": "Plan4 交接" }
+  ],
+  "phases": [
+    { "id": "detect_arb", "label": "检测 · 仲裁 · 打包", "fromCol": 0, "toCol": 2 },
+    { "id": "exit_judge", "label": "出口判定", "fromCol": 3, "toCol": 5, "variant": "emphasis" },
+    { "id": "exit_finish", "label": "下桥缓冲 · 交还", "fromCol": 4, "toCol": 5 },
+    { "id": "plan4_take", "label": "Plan4 重定位", "fromCol": 5, "toCol": 5, "variant": "dashed" }
+  ],
+  "groups": [
+    { "id": "b2_chain", "label": "新管线 b2_* 链路", "lane": "core1", "fromCol": 0, "toCol": 2 },
+    { "id": "exit_gates", "label": "里程门 + 视觉确认 + 超时兜底", "lane": "run", "fromCol": 3, "toCol": 5, "variant": "emphasis" }
+  ],
+  "mainPath": ["detect", "arb", "pack", "pkt", "get", "update", "travel", "measure", "g_visual", "set_v", "exit_state", "settle", "finish", "navreplay", "complete"],
+  "nodes": [
+    { "id": "detect", "lane": "core1", "col": 0, "type": "backend", "label": "bridge_detect_frame()", "sublabel": "gate锁存→粉线退出线", "tag": "Core1", "width": 150 },
+    { "id": "arb", "lane": "core1", "col": 1, "type": "backend", "label": "bridge_v2_arbitrate()", "sublabel": "gate/has_top/top", "tag": "Core1", "width": 150 },
+    { "id": "pack", "lane": "core1", "col": 2, "type": "backend", "label": "fill_bridge_v2()", "sublabel": "打包 b2_* 字段", "tag": "Core1", "width": 150 },
+    { "id": "pkt", "lane": "ipc", "col": 2, "type": "database", "label": "vision_ipc_packet_t", "sublabel": "共享区 b2_*", "width": 150 },
+    { "id": "get", "lane": "ipc", "col": 3, "type": "messagebus", "label": "GetLatest()", "sublabel": "0核读最新包", "width": 150 },
+    { "id": "update", "lane": "run", "col": 3, "type": "backend", "label": "VisionBridgeTask_Update_2ms()", "sublabel": "state==RUN", "tag": "2ms", "width": 150 },
+    { "id": "travel", "lane": "run", "col": 3, "type": "backend", "label": "vision_bridge_distance_from()", "sublabel": "traveled_mm", "tag": "每tick", "width": 150 },
+    { "id": "measure", "lane": "run", "col": 4, "type": "backend", "label": "exit_line_measure_y()", "sublabel": "exit_line_y@x=47", "tag": "每tick", "width": 150 },
+    { "id": "g_visual", "lane": "run", "col": 4, "type": "security", "label": "exit_line_confirmed()", "sublabel": "里程门+视觉确认", "tag": "RUN_MIN_MM", "width": 150 },
+    { "id": "set_v", "lane": "run", "col": 5, "type": "backend", "label": "set_state(EXIT)", "sublabel": "VISUAL_CONFIRMED", "width": 150 },
+    { "id": "timeout", "lane": "run", "col": 5, "type": "security", "label": "超时兜底 set_state(EXIT)", "sublabel": "AUTO_TIMEOUT", "tag": "5000tick", "width": 150 },
+    { "id": "exit_state", "lane": "exit", "col": 4, "type": "backend", "label": "EXIT: 降底盘+锁航向", "sublabel": "apply_normal_posture", "tag": "EXIT_SPEED", "width": 150 },
+    { "id": "settle", "lane": "exit", "col": 5, "type": "security", "label": "交还判定", "sublabel": "高度到位/超时", "tag": "EXIT_SETTLE", "width": 150 },
+    { "id": "finish", "lane": "exit", "col": 5, "type": "backend", "label": "FINISH: cleanup(0)", "sublabel": "停检测/清trigger", "width": 150 },
+    { "id": "navreplay", "lane": "plan4", "col": 5, "type": "backend", "label": "NavReplay_Process()", "sublabel": "IsActive()==0", "tag": "10ms", "width": 150 },
+    { "id": "complete", "lane": "plan4", "col": 5, "type": "backend", "label": "Plan4_CompleteSpecial()", "sublabel": "rebase 出口点", "tag": "exit_beep", "width": 150 }
+  ],
+  "edges": [
+    { "id": "detect-arb", "from": "detect", "to": "arb" },
+    { "id": "arb-pack", "from": "arb", "to": "pack" },
+    { "id": "pack-pkt", "from": "pack", "to": "pkt", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "pkt-get", "from": "pkt", "to": "get" },
+    { "id": "get-update", "from": "get", "to": "update", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "update-travel", "from": "update", "to": "travel", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "travel-measure", "from": "travel", "to": "measure" },
+    { "id": "measure-gvisual", "from": "measure", "to": "g_visual", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "gvisual-setv", "from": "g_visual", "to": "set_v", "variant": "emphasis", "role": "main" },
+    { "id": "gvisual-timeout", "from": "g_visual", "to": "timeout", "label": "不满足", "variant": "default", "role": "branch" },
+    { "id": "timeout-loop", "from": "timeout", "to": "update", "label": "未超时→继续", "variant": "dashed", "role": "branch", "fromSide": "bottom", "toSide": "bottom", "route": "bottom-channel" },
+    { "id": "setv-exit", "from": "set_v", "to": "exit_state", "variant": "emphasis", "role": "main" },
+    { "id": "timeout-exit", "from": "timeout", "to": "exit_state", "label": "超时", "variant": "dashed", "role": "branch" },
+    { "id": "exit-settle", "from": "exit_state", "to": "settle" },
+    { "id": "settle-finish", "from": "settle", "to": "finish" },
+    { "id": "finish-navreplay", "from": "finish", "to": "navreplay", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "id": "navreplay-complete", "from": "navreplay", "to": "complete" }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "视觉确认脱出",
+      "items": [
+        "traveled ≥ RUN_MIN_MM (2300mm)",
+        "exit_line_y@x=47 < EXIT_LINE_TOP_Y_PX (10px)",
+        "exit_reason = VISUAL_CONFIRMED",
+        "Plan4 将融合坐标 rebase 到出口路点"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "超时兜底",
+      "items": [
+        "RUN 内 state_ticks ≥ 5000 (10s)",
+        "exit_reason = AUTO_TIMEOUT",
+        "不 rebase，避免错误重定位",
+        "仍进入 EXIT 缓冲后交还 Plan4"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "关键函数链",
+      "items": [
+        "bridge_detect_frame → bridge_v2_arbitrate → vision_ipc_core1_fill_bridge_v2",
+        "VisionIpc_Core0_GetLatest → VisionBridgeTask_Update_2ms",
+        "vision_bridge_exit_line_measure_y → vision_bridge_exit_line_confirmed",
+        "set_state(EXIT) → apply_normal_posture → cleanup(0) → Plan4_CompleteSpecial"
+      ]
+    }
+  ]
+}
