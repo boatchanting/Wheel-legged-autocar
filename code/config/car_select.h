@@ -1,7 +1,7 @@
 #ifndef __CAR_SELECT_H__
 #define __CAR_SELECT_H__
 
-#define CAR_SELECT 3 // 【全局配置】选择哪个小车，这里改动之后会全局改变对应的引脚，重新编译会自动选择
+#define CAR_SELECT 4 // 【全局配置】选择哪个小车，这里改动之后会全局改变对应的引脚，重新编译会自动选择
 
 //【请在下方撰写小车具体包含什么硬件及对应的配置在哪里】
 
@@ -44,6 +44,12 @@
 5.pid参数配置，来自code/calculate/pid-new.h
 6.GNSS的配置：zf_driver_uart.c末尾的检测要注释掉，参考语雀文档，来自zf_driver/zf_driver_uart.c;zf_driver_uart.h更改;zf_device_gnss.h中引脚和uart配置
 7.摄像头的配置：来自zf_device_mt9v03x.h
+*/
+
+/*
+4代表 【小车4】 初版参数与小车3相同，待实车标定。
+需要重新确认：舵机中位/极性、PID、IMU安装方向、轮径/轮距、
+GNSS、WiFi、屏幕、按键、摄像头和串口引脚配置。
 */
 
 #endif // __CAR_SELECT_H__

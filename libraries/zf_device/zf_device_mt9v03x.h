@@ -74,6 +74,10 @@
 #define MT9V03X_COF_IIC_SCL     ( P17_2 )                                       // 总钻风 IIC-SCL 引脚
 #define MT9V03X_COF_IIC_SDA     ( P17_1 )                                       // 总钻风 IIC-SDA 引脚
 #endif
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版引脚与小车3相同，待实车标定
+#define MT9V03X_COF_IIC_SCL     ( P17_2 )                                       // 总钻风 IIC-SCL 引脚
+#define MT9V03X_COF_IIC_SDA     ( P17_1 )                                       // 总钻风 IIC-SDA 引脚
+#endif
 
 #define MT9V03X_PCLK_PIN        ( P06_5 )                                       // 总钻风 PCLK 触发信号引脚
 #define MT9V03X_VSYNC_PIN       ( P06_6 )                                       // 总钻风 场中断  引脚

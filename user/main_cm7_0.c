@@ -198,7 +198,7 @@ int main(void)
                 seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
                 seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
                 seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)pid_gyro.kp;
 
 
                 // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
@@ -268,23 +268,23 @@ int main(void)
                 // // data[7] 远端白边行号
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                // 5.【调试跳跃】
-                // data[0] LF 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[0] = get_servo_angle(0U);
-                // data[1] RF 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[1] = get_servo_angle(1U);
-                // data[2] RR 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[2] = get_servo_angle(2U);
-                // data[3] LR 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[3] = get_servo_angle(3U);
-                // data[4] LF 跳跃目标 PWM
-                seekfree_assistant_oscilloscope_data.data[4] = (float)g_jump_target_pwm_lf;
-                // data[5] RF 跳跃目标 PWM
-                seekfree_assistant_oscilloscope_data.data[5] = (float)g_jump_target_pwm_rf;
-                // data[6] 舵机收到伸腿命令的时间，单位 ms，相对本次起跳
-                seekfree_assistant_oscilloscope_data.data[6] = (float)g_jump_launch_cmd_time_ms;
-                // data[7] 舵机收到收腿命令的时间，单位 ms，相对本次起跳
-                seekfree_assistant_oscilloscope_data.data[7] = (float)g_jump_flight_cmd_time_ms;
+                // // 5.【调试跳跃】
+                // // data[0] LF 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[0] = get_servo_angle(0U);
+                // // data[1] RF 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[1] = get_servo_angle(1U);
+                // // data[2] RR 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[2] = get_servo_angle(2U);
+                // // data[3] LR 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[3] = get_servo_angle(3U);
+                // // data[4] LF 跳跃目标 PWM
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)g_jump_target_pwm_lf;
+                // // data[5] RF 跳跃目标 PWM
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)g_jump_target_pwm_rf;
+                // // data[6] 舵机收到伸腿命令的时间，单位 ms，相对本次起跳
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)g_jump_launch_cmd_time_ms;
+                // // data[7] 舵机收到收腿命令的时间，单位 ms，相对本次起跳
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)g_jump_flight_cmd_time_ms;
 
                     // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;

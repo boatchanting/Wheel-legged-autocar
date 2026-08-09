@@ -15,6 +15,7 @@
 
 #define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
+#define CONTROL_PROFILE_PID_ENABLE 1U // 【多预设PID开关】1:按正常/加速/刹车预设每1ms平滑回写PID；0:仅初始化加载宏定义，允许WiFi持续调参
 #define ACCEL_FF_ENABLE 0U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
 #define ACCEL_FF_MODE 1U // 【加速前馈模式】0:关闭  1:直接叠加 PWM 前馈  2:加速时临时增强舵机速度环 Kp
 #define ACCEL_FF_BUZZER_ENABLE 0U // 【全局开关】1:大幅加速前馈触发时蜂鸣提示  0:关闭
@@ -70,6 +71,10 @@
 
 #if (JUMP_ENABLE_LANDING_BUFFER != 0U) && (JUMP_ENABLE_LANDING_BUFFER != 1U)
 #error "JUMP config error: JUMP_ENABLE_LANDING_BUFFER must be 0 or 1."
+#endif
+
+#if (CONTROL_PROFILE_PID_ENABLE != 0U) && (CONTROL_PROFILE_PID_ENABLE != 1U)
+#error "PID config error: CONTROL_PROFILE_PID_ENABLE must be 0 or 1."
 #endif
 
 #define DEBUG_DISPLAY_CORE0 (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT == 0))
