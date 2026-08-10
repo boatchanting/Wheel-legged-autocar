@@ -33,6 +33,10 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_HEADER = PROJECT_ROOT / "code" / "navigation" / "nav_replay_route_table.h"
 STRAIGHT_LENGTH_MM = 500.0
 SAMPLE_STEP_MM = 50.0
+# Build geometry at a much finer resolution first, then perform one global
+# arc-length resampling pass.  This keeps curvature estimation independent of
+# the final route-table point spacing.
+DENSE_SAMPLE_STEP_MM = 5.0
 MIN_LINK_LENGTH_MM = 5.0
 NAV_ROUTE_MAX_POINTS = 5000
 START_POINT_X_MM = 0.0
@@ -46,9 +50,15 @@ MAX_ACCEL_MM_S2 = 1500.0
 MAX_DECEL_MM_S2 = 1500.0
 MAX_LATERAL_ACCEL_MM_S2 = 3500.0
 MAX_PATH_YAW_RATE_RAD_S = 2.8
-MAX_PATH_YAW_ACCEL_RAD_S2 = 8.0
 SPEED_TO_MM_S = 4.79
 CURVATURE_EPS = 1e-6
+
+# Local corner rounding.  The handle is additionally limited by the two
+# neighbouring node distances, so sparse or sharp marker layouts cannot make
+# a Bezier control polygon swing far outside the local corridor.
+LOCAL_CORNER_HANDLE_RATIO = 0.18
+LOCAL_CORNER_NEIGHBOR_RATIO = 0.35
+LOCAL_CORNER_HANDLE_MAX_MM = 800.0
 
 # These limits are expressed in the target_speed units written to
 # NavRamPoint_t.
@@ -110,6 +120,7 @@ class Node:
     point_type: int = 0
     tangent: Optional[np.ndarray] = None
     name: str = ""
+    corner_handle_mm: Optional[float] = None
 
 
 @dataclass
@@ -269,7 +280,7 @@ def bezier_quintic(control: np.ndarray, t: np.ndarray) -> np.ndarray:
 
 
 def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: str, sample_step_mm: float) -> None:
-    """Append a quintic Bezier link with zero end curvature (G2 with straight)."""
+    """Append a dense quintic G2 link; the whole route is resampled later."""
     start_vec = np.array([start.x, start.y], dtype=float)
     end_vec = np.array([end.x, end.y], dtype=float)
     chord = end_vec - start_vec
@@ -280,18 +291,22 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
 
     tangent_start = unit(start.tangent if start.tangent is not None else chord)
     tangent_end = unit(end.tangent if end.tangent is not None else chord)
-    # 0.18 L keeps control polygons local even for tight, sparse marker layouts.
-    handle = min(0.18 * chord_length, 800.0)
+    # Use independently bounded handles at both ends.  This is a local
+    # corner-fillet analogue: the blend remains near the adjacent anchors and
+    # cannot become oversized when one neighbouring segment is very short.
+    default_handle = min(LOCAL_CORNER_HANDLE_RATIO * chord_length, LOCAL_CORNER_HANDLE_MAX_MM)
+    start_handle = min(default_handle, start.corner_handle_mm or default_handle)
+    end_handle = min(default_handle, end.corner_handle_mm or default_handle)
     control = np.array([
         start_vec,
-        start_vec + handle * tangent_start,
-        start_vec + 2.0 * handle * tangent_start,
-        end_vec - 2.0 * handle * tangent_end,
-        end_vec - handle * tangent_end,
+        start_vec + start_handle * tangent_start,
+        start_vec + 2.0 * start_handle * tangent_start,
+        end_vec - 2.0 * end_handle * tangent_end,
+        end_vec - end_handle * tangent_end,
         end_vec,
     ])
 
-    dense = bezier_quintic(control, np.linspace(0.0, 1.0, max(80, int(chord_length / 5.0))))
+    dense = bezier_quintic(control, np.linspace(0.0, 1.0, max(80, int(chord_length / sample_step_mm))))
     chord_lengths = np.linalg.norm(np.diff(dense, axis=0), axis=1)
     arclength = np.concatenate(([0.0], np.cumsum(chord_lengths)))
     sample_s = np.arange(0.0, arclength[-1], sample_step_mm)
@@ -346,6 +361,8 @@ def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node]
         raise ValueError("展开后路径锚点不足。")
 
     # Untagged waypoints use a bisector tangent so neighbouring G2 links are C1.
+    # Also calculate a local handle from the adjacent edge lengths.  This is
+    # the bounded local-corner behaviour used by chazhi.py's corner fillet.
     for index, node in enumerate(nodes):
         if node.tangent is not None:
             continue
@@ -360,7 +377,64 @@ def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node]
                 node.tangent = unit(incoming + outgoing)
             except ValueError:
                 node.tangent = outgoing
+            incoming_length = distance(nodes[index - 1], node)
+            outgoing_length = distance(node, nodes[index + 1])
+            node.corner_handle_mm = min(
+                LOCAL_CORNER_HANDLE_MAX_MM,
+                LOCAL_CORNER_NEIGHBOR_RATIO * min(incoming_length, outgoing_length),
+            )
     return nodes, straight_links
+
+
+def resample_path_by_arclength(dense_samples: list[PathSample], sample_step_mm: float) -> list[PathSample]:
+    """Resample the complete dense route at one arc-length spacing.
+
+    Special points and forced-straight transitions are inserted into the
+    sampling grid before interpolation, then their original coordinates and
+    event tags are written back exactly.  This mirrors chazhi.py while keeping
+    Plan4's special-task corridor geometry intact.
+    """
+    if not dense_samples:
+        return []
+    if len(dense_samples) == 1:
+        return list(dense_samples)
+
+    points = np.array([(sample.x, sample.y) for sample in dense_samples], dtype=float)
+    ds = np.linalg.norm(np.diff(points, axis=0), axis=1)
+    s_dense = np.concatenate(([0.0], np.cumsum(ds)))
+    total_length = float(s_dense[-1])
+    if total_length < MIN_LINK_LENGTH_MM:
+        return list(dense_samples)
+
+    mandatory_indices = {0, len(dense_samples) - 1}
+    for index, sample in enumerate(dense_samples):
+        if sample.point_type != 0:
+            mandatory_indices.add(index)
+        if index > 0 and sample.forced_straight != dense_samples[index - 1].forced_straight:
+            mandatory_indices.add(index)
+
+    base_s = np.arange(0.0, total_length, sample_step_mm, dtype=float)
+    if len(base_s) == 0 or not math.isclose(float(base_s[-1]), total_length, abs_tol=0.01):
+        base_s = np.append(base_s, total_length)
+    target_s = np.unique(np.concatenate((base_s, s_dense[sorted(mandatory_indices)])))
+
+    x = np.interp(target_s, s_dense, points[:, 0])
+    y = np.interp(target_s, s_dense, points[:, 1])
+    output: list[PathSample] = []
+    for target_index, arc in enumerate(target_s):
+        exact = int(np.argmin(np.abs(s_dense - arc)))
+        if abs(float(s_dense[exact] - arc)) <= 0.01:
+            source = dense_samples[exact]
+            point = points[exact]
+            point_type = source.point_type
+        else:
+            source_index = int(np.searchsorted(s_dense, arc, side="right") - 1)
+            source_index = max(0, min(source_index, len(dense_samples) - 1))
+            source = dense_samples[source_index]
+            point = np.array([x[target_index], y[target_index]], dtype=float)
+            point_type = 0
+        add_sample(output, point, point_type, source.forced_straight, source.segment)
+    return output
 
 
 def calculate_yaw_and_curvature(samples: list[PathSample]) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -389,6 +463,24 @@ def calculate_yaw_and_curvature(samples: list[PathSample]) -> tuple[np.ndarray, 
     return s, yaw, curvature
 
 
+def apply_longitudinal_speed_envelope(speed_limit: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """Make a speed ceiling physically reachable in both travel directions."""
+    planned_speed = np.array(speed_limit, copy=True)
+    for index in range(len(planned_speed) - 2, -1, -1):
+        ds = s[index + 1] - s[index]
+        planned_speed[index] = min(
+            planned_speed[index],
+            math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds)),
+        )
+    for index in range(1, len(planned_speed)):
+        ds = s[index] - s[index - 1]
+        planned_speed[index] = min(
+            planned_speed[index],
+            math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds)),
+        )
+    return planned_speed
+
+
 def calculate_target_speed(
     samples: list[PathSample],
     s: np.ndarray,
@@ -399,25 +491,15 @@ def calculate_target_speed(
     if count == 0:
         return np.empty(0, dtype=float)
 
-    curvature_rate = np.zeros(count, dtype=float)
-    if count > 1:
-        ds = np.diff(s)
-        valid = ds > 1e-6
-        curvature_rate[1:][valid] = np.abs(np.diff(curvature)[valid] / ds[valid])
-        curvature_rate[0] = curvature_rate[1]
-
     speed_limit = np.full(count, PATH_SPEED_MAX_MM_S, dtype=float)
     for index, kappa in enumerate(curvature):
         abs_kappa = abs(float(kappa))
         curve_limit = PATH_SPEED_MAX_MM_S
         yaw_rate_limit = PATH_SPEED_MAX_MM_S
-        yaw_accel_limit = PATH_SPEED_MAX_MM_S
         if abs_kappa > CURVATURE_EPS:
             curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / abs_kappa)
             yaw_rate_limit = MAX_PATH_YAW_RATE_RAD_S / abs_kappa
-        if curvature_rate[index] > CURVATURE_EPS:
-            yaw_accel_limit = math.sqrt(MAX_PATH_YAW_ACCEL_RAD_S2 / curvature_rate[index])
-        speed_limit[index] = min(PATH_SPEED_MAX_MM_S, curve_limit, yaw_rate_limit, yaw_accel_limit)
+        speed_limit[index] = min(PATH_SPEED_MAX_MM_S, curve_limit, yaw_rate_limit)
 
     # 普通点和普通结束点都连续通过，不制造零速障碍；圆环动作仍允许明确停车。
     if ENABLE_FINISH_SPRINT:
@@ -429,21 +511,7 @@ def calculate_target_speed(
         if sample.point_type == 1:  # NAV_POINT_CIRCLE 可能要求原地旋转。
             speed_limit[index] = 0.0
 
-    planned_speed = np.array(speed_limit, copy=True)
-    for index in range(count - 2, -1, -1):
-        ds = s[index + 1] - s[index]
-        planned_speed[index] = min(
-            planned_speed[index],
-            math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds)),
-        )
-    for index in range(1, count):
-        ds = s[index] - s[index - 1]
-        planned_speed[index] = min(
-            planned_speed[index],
-            math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds)),
-        )
-
-    return -planned_speed / SPEED_TO_MM_S
+    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
 
 
 def limit_stairs_approach_output_speed(
@@ -453,7 +521,9 @@ def limit_stairs_approach_output_speed(
     approach_distance_mm: float,
 ) -> np.ndarray:
     """Cap the table output for points within the three-step approach and the entire stairs segment."""
-    output_speed = np.array(target_speed, copy=True)
+    # Work in physical speed units so the same acceleration constraints used
+    # by the base plan can be applied after task-specific caps are inserted.
+    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
     stairs_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 3]
     stairs_exit_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 30]
     
@@ -461,27 +531,26 @@ def limit_stairs_approach_output_speed(
     for entry_s, exit_s in zip(stairs_entry_s, stairs_exit_s):
         # 限制范围：从 (入口 - approach_distance_mm) 到 (出口 + approach_distance_mm)
         full_stairs_range = (s >= entry_s - approach_distance_mm) & (s <= exit_s + approach_distance_mm)
-        output_speed[full_stairs_range] = np.clip(
-            output_speed[full_stairs_range],
-            -STAIRS_APPROACH_TARGET_SPEED_MAX,
-            STAIRS_APPROACH_TARGET_SPEED_MAX,
+        speed_limit[full_stairs_range] = np.minimum(
+            speed_limit[full_stairs_range],
+            STAIRS_APPROACH_TARGET_SPEED_MAX * SPEED_TO_MM_S,
         )
-    return output_speed
+    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
 
 
 
 def generate_path(markers: list[Marker], sample_step_mm: float) -> list[PathSample]:
     pairs = find_event_pairs(markers)
     nodes, straight_links = make_nodes(markers, pairs)
-    samples: list[PathSample] = []
+    dense_samples: list[PathSample] = []
     for index in range(len(nodes) - 1):
         if (index, index + 1) in straight_links:
             is_forced_corridor = straight_links[(index, index + 1)]
             label = "强制直线" if is_forced_corridor else "任务区直连"
-            append_line(samples, nodes[index], nodes[index + 1], f"{label}: {nodes[index].name} -> {nodes[index + 1].name}", is_forced_corridor, sample_step_mm)
+            append_line(dense_samples, nodes[index], nodes[index + 1], f"{label}: {nodes[index].name} -> {nodes[index + 1].name}", is_forced_corridor, DENSE_SAMPLE_STEP_MM)
         else:
-            append_g2_link(samples, nodes[index], nodes[index + 1], f"G2: {nodes[index].name} -> {nodes[index + 1].name}", sample_step_mm)
-    return samples
+            append_g2_link(dense_samples, nodes[index], nodes[index + 1], f"G2: {nodes[index].name} -> {nodes[index + 1].name}", DENSE_SAMPLE_STEP_MM)
+    return resample_path_by_arclength(dense_samples, sample_step_mm)
 
 
 def generate_path_with_point_cap(markers: list[Marker]) -> tuple[list[PathSample], float]:
