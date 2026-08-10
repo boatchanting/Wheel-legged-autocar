@@ -11,6 +11,7 @@
  */
 #include "pvc_vision.h"
 #include "ipm_transform.h"
+#include <string.h>
 
 #if PVC_VISION_ENABLE
 
@@ -35,14 +36,50 @@ typedef struct
     float score;           /* 算法给它打的“长得像不像 PVC”的综合分数 */
 } pvc_component_t;
 
+/* --- 游程提取（Run-Length）相关常量 --- */
+#define PVC_RUN_MAX_CURR_RUNS    64u    /* 单行游程上限：94 宽最坏交替白/黑 47 个，留余量 */
+#define PVC_RUN_MAX_PREV_RUNS    192u   /* 跨行累积游程上限：47 × (PVC_RUN_MAX_SKIP_LINES+1) 留余量 */
+#define PVC_RUN_MAX_SKIP_LINES   2u     /* 容忍跨行数：组件中间断连续 N 行仍视为同一组件 */
+
+/**
+ * @brief 单个水平游程（连续前景像素段）
+ * @note  seed_idx=0xFF 表示尚未归属任何组件
+ */
+typedef struct
+{
+    uint8 y;             /* 所在行 */
+    uint8 x0;            /* 左端点（含） */
+    uint8 x1;            /* 右端点（含） */
+    uint8 seed_idx;      /* 归属组件索引（0xFF=未分配） */
+    uint8 skip_cnt;      /* 连续未继承的行数 */
+    uint32 gray_sum;     /* 该游程内灰度累加（算 mean_gray 用） */
+} pvc_run_t;
+
+/**
+ * @brief 组件池：游程提取时一次算完所有统计量
+ */
+typedef struct
+{
+    uint32 area;         /* 前景像素数 */
+    uint32 sum_x;        /* Σx（用等差数列求和公式，不逐像素累加） */
+    uint32 sum_y;        /* Σy = y×len */
+    uint32 sum_gray;     /* Σ灰度 */
+    uint8 x_min, y_min, x_max, y_max;  /* 包围框 */
+    uint8 is_valid;      /* 是否已被分配 */
+} pvc_pool_comp_t;
+
 /**
  * @brief 处理每一张照片时用到的临时“草稿纸”
  * @note  放在全局区是为了防止撑爆内存栈。
  */
 typedef struct
 {
-    uint8 visited[PVC_IMAGE_SIZE];                           /* 记录每个像素点是不是已经看过了，防止重复看 */
-    uint16 stack[PVC_IMAGE_SIZE];                            /* 找白斑时用的“记忆栈”，记录接下来要去哪找 */
+    /* 游程提取缓冲（替代旧的 visited[5640]+stack[5640] 逐像素 Flood Fill） */
+    pvc_run_t curr_runs[PVC_RUN_MAX_CURR_RUNS];      /* 当前行游程 */
+    pvc_run_t prev_runs[PVC_RUN_MAX_PREV_RUNS];      /* 上一行保留下来的游程 */
+    pvc_run_t next_prev_runs[PVC_RUN_MAX_PREV_RUNS]; /* 下一行的“上一行游程” */
+    pvc_pool_comp_t pool[PVC_VISION_MAX_COMPONENTS]; /* 组件统计池 */
+    uint8 parent[PVC_VISION_MAX_COMPONENTS];         /* 组件并查集父节点 */
     pvc_component_t components[PVC_VISION_MAX_COMPONENTS];   /* 画面里所有的白斑档案 */
     pvc_component_t candidates[PVC_VISION_MAX_COMPONENTS];   /* 淘汰掉太小的白斑后，剩下的候选名单 */
 } pvc_scratch_t;
@@ -339,158 +376,360 @@ static void pvc_sort_by_area(pvc_component_t *components, uint8 count)
 
 /* --- 7. 核心逻辑：找白斑与筛选 --- */
 
+/* ============================
+ * 连通域提取：游程(Run-Length) + 跨行融合
+ * 说明：替代旧的逐像素 Flood Fill。逐行提取水平前景游程，
+ *       用“跨行区间重叠”判定归属（与 4 邻域 Flood Fill 语义等价），
+ *       用并查集合并同一组件；组件可容忍中间断 PVC_RUN_MAX_SKIP_LINES 行。
+ *       面积/包围框/质心/平均亮度全部在提取过程中一次算完。
+ * ============================ */
+
 /**
- * @brief 在照片上找到一块连在一起的白色区域（找白斑）
- * 
- * @param gray 灰度照片数据（94x60）
- * @param start_index 从照片的哪个点开始找
- * @param out 找完之后，把这个白斑的特征填到这个档案里
- * 
- * @note 【算法解释：Flood Fill 漫水填充法】
- *       就像用画图软件的“油漆桶”工具。点一下白色的地方，
- *       程序就会自动往上下左右找，把所有连在一起的白色点都涂上颜色，
- *       顺便记下它们一共有多大、最靠左/右/上/下在哪里。
- *       这里没有用“递归”，而是用了一个数组当做“栈”，防止车机的内存爆掉。
+ * @brief 并查集查找组件根节点（带路径压缩）
+ * @param idx 组件索引
+ * @return uint8 根节点索引
  */
-static void pvc_flood_component(const uint8 *gray, uint16 start_index, pvc_component_t *out)
+static uint8 pvc_pool_find(uint8 idx)
 {
-    uint16 stack_top = 0U; /* 栈顶指针，记录栈里有几个点 */
-    uint16 area = 0U;      /* 这个白斑一共有多少个像素 */
-    uint8 xmin = (uint8)(PVC_IMAGE_W - 1U); /* 初始化为最大值 */
-    uint8 ymin = (uint8)(PVC_IMAGE_H - 1U); /* 初始化为最大值 */
-    uint8 xmax = 0U;       /* 初始化为最小值 */
-    uint8 ymax = 0U;       /* 初始化为最小值 */
-    uint32 sum_x = 0U;     /* 累加所有 x 坐标，算重心用 */
-    uint32 sum_y = 0U;     /* 累加所有 y 坐标，算重心用 */
-    uint32 sum_gray = 0U;  /* 累加亮度，算平均亮度用 */
-
-    /* 把第一个点放进栈，并标记为已访问 */
-    g_pvc_scratch.stack[stack_top++] = start_index;
-    g_pvc_scratch.visited[start_index] = 1U;
-
-    /* 只要栈里还有点没处理完，就一直循环 */
-    while (stack_top > 0U)
+    uint8 root = idx;
+    while (g_pvc_scratch.parent[root] != root)
     {
-        /* 从栈里拿出一个点 */
-        const uint16 index = g_pvc_scratch.stack[--stack_top];
-        /* 算出这个点的 x（列）和 y（行） */
-        const uint8 y = (uint8)(index / PVC_IMAGE_W);
-        const uint8 x = (uint8)(index - (uint16)y * PVC_IMAGE_W);
-
-        /* 统计数据累加 */
-        area++;
-        sum_x += x;
-        sum_y += y;
-        sum_gray += gray[index];
-
-        /* 更新上下左右的边界 */
-        if (x < xmin) { xmin = x; }
-        if (x > xmax) { xmax = x; }
-        if (y < ymin) { ymin = y; }
-        if (y > ymax) { ymax = y; }
-
-        /* 检查上面的邻居点 */
-        if (y > 0U)
-        {
-            const uint16 ni = (uint16)(index - PVC_IMAGE_W);
-            /* 如果没访问过，且也是白色，就放进栈里待会儿处理 */
-            if ((g_pvc_scratch.visited[ni] == 0U) && (gray[ni] >= PVC_VISION_WHITE_THRESHOLD))
-            {
-                g_pvc_scratch.visited[ni] = 1U;
-                g_pvc_scratch.stack[stack_top++] = ni;
-            }
-        }
-        /* 检查下面的邻居点 */
-        if (y < (PVC_IMAGE_H - 1U))
-        {
-            const uint16 ni = (uint16)(index + PVC_IMAGE_W);
-            if ((g_pvc_scratch.visited[ni] == 0U) && (gray[ni] >= PVC_VISION_WHITE_THRESHOLD))
-            {
-                g_pvc_scratch.visited[ni] = 1U;
-                g_pvc_scratch.stack[stack_top++] = ni;
-            }
-        }
-        /* 检查左边的邻居点 */
-        if (x > 0U)
-        {
-            const uint16 ni = (uint16)(index - 1U);
-            if ((g_pvc_scratch.visited[ni] == 0U) && (gray[ni] >= PVC_VISION_WHITE_THRESHOLD))
-            {
-                g_pvc_scratch.visited[ni] = 1U;
-                g_pvc_scratch.stack[stack_top++] = ni;
-            }
-        }
-        /* 检查右边的邻居点 */
-        if (x < (PVC_IMAGE_W - 1U))
-        {
-            const uint16 ni = (uint16)(index + 1U);
-            if ((g_pvc_scratch.visited[ni] == 0U) && (gray[ni] >= PVC_VISION_WHITE_THRESHOLD))
-            {
-                g_pvc_scratch.visited[ni] = 1U;
-                g_pvc_scratch.stack[stack_top++] = ni;
-            }
-        }
+        root = g_pvc_scratch.parent[root];
     }
-
+    /* 路径压缩：把沿路的节点直接挂到根上 */
+    while (g_pvc_scratch.parent[idx] != root)
     {
-        /* 连通域搜索完成后，把累计量转成可评分的特征。 */
-        const uint16 bbox_area = (uint16)((xmax - xmin + 1U) * (ymax - ymin + 1U));
-        out->area = area;
-        out->xmin = xmin;
-        out->ymin = ymin;
-        out->xmax = xmax;
-        out->ymax = ymax;
-        out->centroid_x = (float)sum_x / (float)area; /* 计算平均 x 作为重心 */
-        out->centroid_y = (float)sum_y / (float)area; /* 计算平均 y 作为重心 */
-        out->fill_ratio = (float)area / (float)bbox_area; /* 计算填充率 */
-        /* 判断有没有碰到照片边缘 */
-        out->touches_border = (uint8)((xmin == 0U) || (ymin == 0U) || (xmax == (PVC_IMAGE_W - 1U)) || (ymax == (PVC_IMAGE_H - 1U)));
-        out->mean_gray = (float)sum_gray / (float)area; /* 计算平均亮度 */
-        out->score = 0.0f; /* 此时还没打分 */
+        const uint8 nxt = g_pvc_scratch.parent[idx];
+        g_pvc_scratch.parent[idx] = root;
+        idx = nxt;
     }
+    return root;
 }
 
 /**
- * @brief 扫描整张照片，找出所有的白斑
- * 
- * @param gray 灰度照片数据
- * @return uint8 找出了几个白斑
+ * @brief 把组件 b 合并进组件 a（统计量相加，包围框取并集）
  */
-static uint8 pvc_collect_components(const uint8 *gray)
+static void pvc_pool_union(uint8 a, uint8 b)
 {
-    uint8 component_count = 0U;
-
-    /* 每处理一帧新照片前，先把“草稿纸”擦干净 */
-    memset(g_pvc_scratch.visited, 0, sizeof(g_pvc_scratch.visited));
-
-    /* 逐个像素扫描整张图（94x60） */
-    for (uint16 i = 0U; i < PVC_IMAGE_SIZE; i++)
+    const uint8 ra = pvc_pool_find(a);
+    const uint8 rb = pvc_pool_find(b);
+    if (ra == rb)
     {
-        /* 如果这个点已经看过了，或者不是白色，就跳过 */
-        if ((g_pvc_scratch.visited[i] != 0U) || (gray[i] < PVC_VISION_WHITE_THRESHOLD))
+        return;
+    }
+
+    pvc_pool_comp_t *da = &g_pvc_scratch.pool[ra];
+    pvc_pool_comp_t *db = &g_pvc_scratch.pool[rb];
+
+    da->area += db->area;
+    da->sum_x += db->sum_x;
+    da->sum_y += db->sum_y;
+    da->sum_gray += db->sum_gray;
+    if (db->x_min < da->x_min) { da->x_min = db->x_min; }
+    if (db->y_min < da->y_min) { da->y_min = db->y_min; }
+    if (db->x_max > da->x_max) { da->x_max = db->x_max; }
+    if (db->y_max > da->y_max) { da->y_max = db->y_max; }
+    db->is_valid = 0U;
+    g_pvc_scratch.parent[rb] = ra;
+}
+
+/**
+ * @brief 扫描一行，提取所有前景游程并顺手累加灰度
+ * @param gray 整幅灰度图数据
+ * @param y 当前行号
+ * @return uint8 这一行找到的游程个数
+ */
+static uint8 pvc_extract_row_runs(const uint8 *gray, uint8 y)
+{
+    uint8 count = 0U;
+    const uint16 base = (uint16)y * PVC_IMAGE_W;
+    uint8 x = 0U;
+
+    while (x < PVC_IMAGE_W)
+    {
+        /* 找游程起点：跳过背景像素 */
+        while ((x < PVC_IMAGE_W) && (gray[base + x] < PVC_VISION_WHITE_THRESHOLD))
+        {
+            x++;
+        }
+        if (x >= PVC_IMAGE_W)
+        {
+            break;
+        }
+
+        /* 向右延伸，同时累加灰度 */
+        const uint8 x0 = x;
+        uint32 gsum = 0U;
+        while ((x < PVC_IMAGE_W) && (gray[base + x] >= PVC_VISION_WHITE_THRESHOLD))
+        {
+            gsum += gray[base + x];
+            x++;
+        }
+        const uint8 x1 = (uint8)(x - 1U);
+
+        if (count < PVC_RUN_MAX_CURR_RUNS)
+        {
+            pvc_run_t *r = &g_pvc_scratch.curr_runs[count];
+            r->y = y;
+            r->x0 = x0;
+            r->x1 = x1;
+            r->seed_idx = 0xFFU;
+            r->skip_cnt = 0U;
+            r->gray_sum = gsum;
+            count++;
+        }
+        /* 游程数超上限则丢弃（极端碎片，与旧版 MAX_COMPONENTS 保护一致） */
+    }
+    return count;
+}
+
+/**
+ * @brief 把组件池里的统计量换算成对外输出的白斑档案，并按面积降序
+ * @return uint8 有效组件个数
+ */
+static uint8 pvc_pool_to_components(void)
+{
+    uint8 out_count = 0U;
+
+    for (uint8 i = 0U; i < PVC_VISION_MAX_COMPONENTS; i++)
+    {
+        /* 只处理根节点（被合并的组件统计已并入根） */
+        if (pvc_pool_find(i) != i)
         {
             continue;
         }
+        const pvc_pool_comp_t *s = &g_pvc_scratch.pool[i];
+        if (s->is_valid == 0U)
+        {
+            continue;
+        }
+        if (out_count >= PVC_VISION_MAX_COMPONENTS)
+        {
+            break;
+        }
 
-        /* 发现了一个新的白色点，开始用“油漆桶”工具找出整个白斑 */
-        if (component_count < PVC_VISION_MAX_COMPONENTS)
-        {
-            pvc_flood_component(gray, i, &g_pvc_scratch.components[component_count]);
-            component_count++;
-        }
-        else
-        {
-            /* 
-             * 如果画面太乱，白斑太多超过了限制，
-             * 为了防止程序卡死，就只标记一下，不再去详细找它了。
-             */
-            g_pvc_scratch.visited[i] = 1U;
-        }
+        const uint16 w = (uint16)(s->x_max - s->x_min + 1U);
+        const uint16 h = (uint16)(s->y_max - s->y_min + 1U);
+        pvc_component_t *c = &g_pvc_scratch.components[out_count];
+
+        c->area = (uint16)s->area;
+        c->xmin = s->x_min;
+        c->ymin = s->y_min;
+        c->xmax = s->x_max;
+        c->ymax = s->y_max;
+        c->centroid_x = (float)s->sum_x / (float)s->area;
+        c->centroid_y = (float)s->sum_y / (float)s->area;
+        c->fill_ratio = (float)s->area / (float)(w * h);
+        c->touches_border = (uint8)((s->x_min == 0U) || (s->y_min == 0U) ||
+                                    (s->x_max == (PVC_IMAGE_W - 1U)) ||
+                                    (s->y_max == (PVC_IMAGE_H - 1U)));
+        c->mean_gray = (float)s->sum_gray / (float)s->area;
+        c->score = 0.0f;
+        out_count++;
     }
 
-    /* 找完之后，按照白斑的大小（面积）排个队，大的在前面 */
-    pvc_sort_by_area(g_pvc_scratch.components, component_count);
-    return component_count;
+    pvc_sort_by_area(g_pvc_scratch.components, out_count);
+    return out_count;
+}
+
+/**
+ * @brief 扫描整张照片，用游程提取 + 跨行融合找出所有的白斑
+ * 
+ * @param gray 灰度照片数据
+ * @return uint8 找出了几个白斑
+ * 
+ * @note 逐行提取水平游程，通过“跨行区间重叠”判定归属（与 4 邻域 Flood Fill
+ *       语义等价），用并查集合并同一组件；组件可容忍中间断
+ *       PVC_RUN_MAX_SKIP_LINES 行。面积/包围框/质心/平均亮度在提取过程中一次算完。
+ */
+static uint8 pvc_collect_components(const uint8 *gray)
+{
+    uint8 next_seed_idx = 0U;
+    uint8 prev_count = 0U;
+
+    /* 每帧先重置并查集与组件池 */
+    for (uint8 i = 0U; i < PVC_VISION_MAX_COMPONENTS; i++)
+    {
+        g_pvc_scratch.parent[i] = i;
+        g_pvc_scratch.pool[i].is_valid = 0U;
+    }
+
+    for (uint8 y = 0U; y < PVC_IMAGE_H; y++)
+    {
+        const uint8 *row = &gray[(uint16)y * PVC_IMAGE_W];
+        const uint8 curr_count = pvc_extract_row_runs(row, y);
+        uint8 next_prev_count = 0U;
+
+        /* ---- 全黑行：只做跳行继承 ---- */
+        if (curr_count == 0U)
+        {
+            for (uint8 j = 0U; j < prev_count; j++)
+            {
+                if (g_pvc_scratch.prev_runs[j].skip_cnt < PVC_RUN_MAX_SKIP_LINES)
+                {
+                    pvc_run_t t = g_pvc_scratch.prev_runs[j];
+                    t.skip_cnt++;
+                    if (next_prev_count < PVC_RUN_MAX_PREV_RUNS)
+                    {
+                        g_pvc_scratch.next_prev_runs[next_prev_count++] = t;
+                    }
+                }
+            }
+            prev_count = next_prev_count;
+            memcpy(g_pvc_scratch.prev_runs, g_pvc_scratch.next_prev_runs,
+                   (uint32)prev_count * sizeof(pvc_run_t));
+            continue;
+        }
+
+        /* ---- 跨行融合（双指针区间匹配）---- */
+        {
+            uint8 i = 0U;
+            uint8 j = 0U;
+            while ((i < curr_count) && (j < prev_count))
+            {
+                pvc_run_t *c = &g_pvc_scratch.curr_runs[i];
+                const pvc_run_t *p = &g_pvc_scratch.prev_runs[j];
+
+                if (p->x1 < c->x0)
+                {
+                    /* 上一行游程在当前行所有游程左侧，未覆盖 → 跳行计数 */
+                    if (p->skip_cnt < PVC_RUN_MAX_SKIP_LINES)
+                    {
+                        pvc_run_t t = *p;
+                        t.skip_cnt++;
+                        if (next_prev_count < PVC_RUN_MAX_PREV_RUNS)
+                        {
+                            g_pvc_scratch.next_prev_runs[next_prev_count++] = t;
+                        }
+                    }
+                    j++;
+                }
+                else if (c->x1 < p->x0)
+                {
+                    /* 当前游程在左侧，暂不归属（可能重叠更右边的上一行游程） */
+                    i++;
+                }
+                else
+                {
+                    /* 区间重叠：继承组件或合并组件 */
+                    if (c->seed_idx == 0xFFU)
+                    {
+                        c->seed_idx = p->seed_idx;
+                    }
+                    else if (pvc_pool_find(c->seed_idx) != pvc_pool_find(p->seed_idx))
+                    {
+                        pvc_pool_union(c->seed_idx, p->seed_idx);
+                    }
+
+                    if (c->x1 >= p->x1)
+                    {
+                        /* 上一行游程被覆盖：继续保留为轨道，跳行清零 */
+                        pvc_run_t t = *p;
+                        t.seed_idx = pvc_pool_find(t.seed_idx);
+                        t.skip_cnt = 0U;
+                        if (next_prev_count < PVC_RUN_MAX_PREV_RUNS)
+                        {
+                            g_pvc_scratch.next_prev_runs[next_prev_count++] = t;
+                        }
+                        j++;
+                    }
+                    else
+                    {
+                        /* 上一行游程向右延伸超过当前游程：先处理当前行下一个游程 */
+                        i++;
+                    }
+                }
+            }
+
+            /* 尾部残留的上一行游程：跳行计数 */
+            while (j < prev_count)
+            {
+                const pvc_run_t *p = &g_pvc_scratch.prev_runs[j];
+                if (p->skip_cnt < PVC_RUN_MAX_SKIP_LINES)
+                {
+                    pvc_run_t t = *p;
+                    t.skip_cnt++;
+                    if (next_prev_count < PVC_RUN_MAX_PREV_RUNS)
+                    {
+                        g_pvc_scratch.next_prev_runs[next_prev_count++] = t;
+                    }
+                }
+                j++;
+            }
+        }
+
+        /* ---- 孤儿游程：分配新组件 ---- */
+        for (uint8 i = 0U; i < curr_count; i++)
+        {
+            pvc_run_t *c = &g_pvc_scratch.curr_runs[i];
+            if (c->seed_idx != 0xFFU)
+            {
+                continue;
+            }
+            if (next_seed_idx >= PVC_VISION_MAX_COMPONENTS)
+            {
+                continue; /* 组件池满：丢弃（与旧版上限保护一致） */
+            }
+
+            const uint8 sidx = next_seed_idx++;
+            c->seed_idx = sidx;
+            g_pvc_scratch.parent[sidx] = sidx;
+            g_pvc_scratch.pool[sidx].is_valid = 1U;
+            g_pvc_scratch.pool[sidx].area = 0U;
+            g_pvc_scratch.pool[sidx].sum_x = 0U;
+            g_pvc_scratch.pool[sidx].sum_y = 0U;
+            g_pvc_scratch.pool[sidx].sum_gray = 0U;
+            g_pvc_scratch.pool[sidx].x_min = c->x0;
+            g_pvc_scratch.pool[sidx].x_max = c->x1;
+            g_pvc_scratch.pool[sidx].y_min = y;
+            g_pvc_scratch.pool[sidx].y_max = y;
+        }
+
+        /* ---- 统计量并入组件池（面积/质心/灰度一次算完）---- */
+        for (uint8 i = 0U; i < curr_count; i++)
+        {
+            const pvc_run_t *c = &g_pvc_scratch.curr_runs[i];
+            if (c->seed_idx == 0xFFU)
+            {
+                continue;
+            }
+            pvc_pool_comp_t *s = &g_pvc_scratch.pool[pvc_pool_find(c->seed_idx)];
+            const uint32 len = (uint32)(c->x1 - c->x0 + 1U);
+
+            s->area += len;
+            s->sum_x += ((uint32)c->x0 + (uint32)c->x1) * len / 2U; /* 等差数列求和公式 */
+            s->sum_y += (uint32)c->y * len;
+            s->sum_gray += c->gray_sum;
+            if (c->x0 < s->x_min) { s->x_min = c->x0; }
+            if (c->x1 > s->x_max) { s->x_max = c->x1; }
+            s->y_max = y; /* 逐行扫描保证 y 单调不减 */
+        }
+
+        /* ---- 行交接：当前行游程成为下一行的上一行游程 ---- */
+        for (uint8 i = 0U; i < curr_count; i++)
+        {
+            const pvc_run_t *c = &g_pvc_scratch.curr_runs[i];
+            if (c->seed_idx == 0xFFU)
+            {
+                continue;
+            }
+            if (next_prev_count >= PVC_RUN_MAX_PREV_RUNS)
+            {
+                break;
+            }
+            pvc_run_t t = *c;
+            t.seed_idx = pvc_pool_find(t.seed_idx);
+            t.skip_cnt = 0U;
+            g_pvc_scratch.next_prev_runs[next_prev_count++] = t;
+        }
+
+        prev_count = next_prev_count;
+        memcpy(g_pvc_scratch.prev_runs, g_pvc_scratch.next_prev_runs,
+               (uint32)prev_count * sizeof(pvc_run_t));
+    }
+
+    /* 把组件池换算成对外白斑档案 */
+    return pvc_pool_to_components();
 }
 
 /**
