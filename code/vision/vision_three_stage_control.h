@@ -48,6 +48,8 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 #define VISION_THREE_STAGE_BLACK_GAP_LOST_FRAMES         (2U)
 #define VISION_THREE_STAGE_REACQUIRE_STABLE_FRAMES       (2U)
 #define VISION_THREE_STAGE_EXIT_STABLE_FRAMES            (2U)
+#define VISION_THREE_STAGE_POST_EXIT_DISTANCE_MM         (800.0f)
+#define VISION_THREE_STAGE_POST_EXIT_SPEED_SET           (-350.0f)
 
 /* 像素阈值默认值（可在线调整） */
 #define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (32U) //第一级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳
@@ -66,6 +68,7 @@ typedef enum
     VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC,
     VISION_THREE_STAGE_CTRL_WAIT_JUMP3_BOTTOM,
     VISION_THREE_STAGE_CTRL_WAIT_EXIT_TOP,
+    VISION_THREE_STAGE_CTRL_POST_EXIT_RUNOUT,
     VISION_THREE_STAGE_CTRL_FINISH,
     VISION_THREE_STAGE_CTRL_FAILSAFE,
 } vision_three_stage_ctrl_state_e;
@@ -123,6 +126,7 @@ uint8 VisionThreeStageControl_IsEnabled(void);
 void VisionThreeStageControl_Start(void);
 void VisionThreeStageControl_Stop(void);
 uint8 VisionThreeStageControl_IsActive(void);
+void VisionThreeStageControl_SetExitAnchor(float x_mm, float y_mm);
 
 void VisionThreeStageControl_Update_2ms(void);
 

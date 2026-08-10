@@ -15,6 +15,9 @@
 
 #include "vision/vision_ipc_core0.h"
 #include "servo/servo_jump.h"
+#include "navigation/inertial_nav.h"
+
+extern volatile uint8 exit_beep_request;
 
 // /* ---------------- 外部控制量 ---------------- */
 // extern volatile float err_degree; /* 底盘方向控制输入 */
@@ -42,6 +45,11 @@ volatile float g_vision_three_stage_speed_exit     = -320.0f; /* 最后一跳完
 /* 影子变量：先算完，再一次性发布，减少并发读写中间态 */
 static vision_three_stage_control_status_t s_ctrl_shadow;
 static uint8 s_jump1_correction_filter_valid = 0U;
+static float s_exit_anchor_x_mm = 0.0f;
+static float s_exit_anchor_y_mm = 0.0f;
+static float s_post_exit_start_x_mm = 0.0f;
+static float s_post_exit_start_y_mm = 0.0f;
+static uint8 s_exit_anchor_valid = 0U;
 
 /* ---------------- 工具函数 ---------------- */
 static float vision_three_stage_abs_f(float value)
@@ -88,6 +96,7 @@ static void vision_three_stage_stop_internal(vision_three_stage_exit_reason_e re
     s_ctrl_shadow.pvc_lateral_filtered_mm = 0.0f;
     s_ctrl_shadow.err_degree_cmd = 0.0f;
     s_jump1_correction_filter_valid = 0U;
+    s_exit_anchor_valid = 0U;
 
     /* 退出时释放方向控制，避免残留转向量 */
     err_degree = 0.0f;
@@ -235,6 +244,16 @@ uint8 VisionThreeStageControl_IsActive(void)
     return s_ctrl_shadow.active;
 }
 
+void VisionThreeStageControl_SetExitAnchor(float x_mm, float y_mm)
+{
+    if (s_ctrl_shadow.active == 0U)
+    {
+        s_exit_anchor_x_mm = x_mm;
+        s_exit_anchor_y_mm = y_mm;
+        s_exit_anchor_valid = 1U;
+    }
+}
+
 void VisionThreeStageControl_Update_2ms(void)
 {
     const volatile vision_ipc_packet_t *packet;
@@ -301,7 +320,8 @@ void VisionThreeStageControl_Update_2ms(void)
         s_ctrl_shadow.state_ticks++;
     }
 
-    if (s_ctrl_shadow.stale_ticks > VISION_THREE_STAGE_STALE_TIMEOUT_TICKS)
+    if ((s_ctrl_shadow.state != VISION_THREE_STAGE_CTRL_POST_EXIT_RUNOUT) &&
+        (s_ctrl_shadow.stale_ticks > VISION_THREE_STAGE_STALE_TIMEOUT_TICKS))
     {
         vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_STALE);
         vision_three_stage_publish_status();
@@ -332,7 +352,15 @@ void VisionThreeStageControl_Update_2ms(void)
     }
 
     /* 视觉只控制方向，不控制速度 */
-    vision_three_stage_apply_err_from_pvc(packet_new);
+    if (s_ctrl_shadow.state == VISION_THREE_STAGE_CTRL_POST_EXIT_RUNOUT)
+    {
+        s_ctrl_shadow.err_degree_cmd = 0.0f;
+        err_degree = 0.0f;
+    }
+    else
+    {
+        vision_three_stage_apply_err_from_pvc(packet_new);
+    }
 
     switch (s_ctrl_shadow.state)
     {
@@ -442,7 +470,16 @@ void VisionThreeStageControl_Update_2ms(void)
                 s_ctrl_shadow.stable_count++;
                 if (s_ctrl_shadow.stable_count >= VISION_THREE_STAGE_EXIT_STABLE_FRAMES)
                 {
-                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_FINISH);
+                    if (s_exit_anchor_valid != 0U)
+                    {
+                        nav_vision_fusion_x = s_exit_anchor_x_mm;
+                        nav_vision_fusion_y = s_exit_anchor_y_mm;
+                    }
+                    exit_beep_request = 1U;
+                    s_post_exit_start_x_mm = inertial_nav.x;
+                    s_post_exit_start_y_mm = inertial_nav.y;
+                    VisionIpc_Core0_SetTask(VISION_TARGET_NONE, 0U);
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_POST_EXIT_RUNOUT);
                 }
             }
             else
@@ -450,6 +487,23 @@ void VisionThreeStageControl_Update_2ms(void)
                 s_ctrl_shadow.stable_count = 0U;
             }
             break;
+
+        case VISION_THREE_STAGE_CTRL_POST_EXIT_RUNOUT:
+        {
+            float dx;
+            float dy;
+
+            target_speed_set = VISION_THREE_STAGE_POST_EXIT_SPEED_SET;
+            dx = inertial_nav.x - s_post_exit_start_x_mm;
+            dy = inertial_nav.y - s_post_exit_start_y_mm;
+            if ((dx * dx + dy * dy) >=
+                (VISION_THREE_STAGE_POST_EXIT_DISTANCE_MM * VISION_THREE_STAGE_POST_EXIT_DISTANCE_MM))
+            {
+                exit_beep_request = 1U;
+                vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_FINISH);
+            }
+            break;
+        }
 
         case VISION_THREE_STAGE_CTRL_FINISH:
             vision_three_stage_stop_internal(VISION_THREE_STAGE_EXIT_SUCCESS);

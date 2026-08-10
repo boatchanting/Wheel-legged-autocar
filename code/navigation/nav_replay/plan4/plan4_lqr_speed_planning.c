@@ -372,8 +372,6 @@ static uint8 Plan4_SpecialIsActive(void)
 static void Plan4_CompleteSpecial(void)
 {
     uint8 rebase = 0U;
-    if ((s_active_special == PLAN4_SPECIAL_JUMP) &&
-        (g_vision_three_stage_control_status.exit_reason == VISION_THREE_STAGE_EXIT_SUCCESS)) rebase = 1U;
     if ((s_active_special == PLAN4_SPECIAL_BRIDGE) &&
         (g_bridge_vision_task_exit_reason == VISION_BRIDGE_EXIT_VISUAL_CONFIRMED)) rebase = 1U;
 
@@ -459,6 +457,11 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     else if (point_type == NAV_POINT_JUMP)
     {
         entry_beep_request = 1U;
+        if (s_active_exit_idx < nav_ram_data.point_count)
+        {
+            VisionThreeStageControl_SetExitAnchor(nav_ram_data.points[s_active_exit_idx].x,
+                                                  nav_ram_data.points[s_active_exit_idx].y);
+        }
         VisionThreeStageControl_Start();
     }
     else if (point_type == NAV_POINT_BRIDGE)
