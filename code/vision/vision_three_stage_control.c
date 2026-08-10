@@ -49,6 +49,7 @@ static float s_exit_anchor_x_mm = 0.0f;
 static float s_exit_anchor_y_mm = 0.0f;
 static float s_post_exit_start_x_mm = 0.0f;
 static float s_post_exit_start_y_mm = 0.0f;
+static float s_locked_relative_yaw_deg = 0.0f;
 static uint8 s_exit_anchor_valid = 0U;
 
 /* ---------------- 工具函数 ---------------- */
@@ -68,6 +69,19 @@ static float vision_three_stage_constrain_f(float value, float min_value, float 
         return max_value;
     }
     return value;
+}
+
+static float vision_three_stage_normalize_angle(float angle)
+{
+    while (angle > 180.0f)
+    {
+        angle -= 360.0f;
+    }
+    while (angle <= -180.0f)
+    {
+        angle += 360.0f;
+    }
+    return angle;
 }
 
 static void vision_three_stage_publish_status(void)
@@ -165,6 +179,13 @@ static void vision_three_stage_apply_err_from_pvc(uint8 packet_new)
     err_degree = s_ctrl_shadow.err_degree_cmd;
 }
 
+static void vision_three_stage_apply_locked_heading(void)
+{
+    s_ctrl_shadow.err_degree_cmd = vision_three_stage_normalize_angle(
+        s_locked_relative_yaw_deg - inertial_nav.relative_yaw);
+    err_degree = s_ctrl_shadow.err_degree_cmd;
+}
+
 static uint8 vision_three_stage_try_trigger_step_jump(void)
 {
     if ((jump_flag == 0U) &&
@@ -223,6 +244,7 @@ void VisionThreeStageControl_Start(void)
     s_ctrl_shadow.active = 1U;
     s_ctrl_shadow.exit_reason = VISION_THREE_STAGE_EXIT_NONE;
     s_ctrl_shadow.jump_cooldown_ticks = VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS;
+    s_locked_relative_yaw_deg = inertial_nav.relative_yaw;
     vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_PVC_LOCK);
 
     /* 切到 PVC 视觉任务，获取入口 top/bottom 行号 */
@@ -355,12 +377,12 @@ void VisionThreeStageControl_Update_2ms(void)
     if (s_ctrl_shadow.state == VISION_THREE_STAGE_CTRL_POST_EXIT_RUNOUT)
     {
         s_ctrl_shadow.err_degree_cmd = 0.0f;
-        err_degree = 0.0f;
     }
     else
     {
         vision_three_stage_apply_err_from_pvc(packet_new);
     }
+    vision_three_stage_apply_locked_heading();
 
     switch (s_ctrl_shadow.state)
     {
@@ -526,5 +548,6 @@ uint8 VisionThreeStageControl_IsEnabled(void) { return 0U; }
 void VisionThreeStageControl_Start(void) {}
 void VisionThreeStageControl_Stop(void) {}
 uint8 VisionThreeStageControl_IsActive(void) { return 0U; }
+void VisionThreeStageControl_SetExitAnchor(float x_mm, float y_mm) {(void)x_mm; (void)y_mm;}
 void VisionThreeStageControl_Update_2ms(void) {}
 #endif
