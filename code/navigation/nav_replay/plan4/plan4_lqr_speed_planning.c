@@ -48,6 +48,8 @@ static uint16 s_active_exit_idx = 0xFFFFU;
 static uint16 s_active_entry_idx = 0xFFFFU;
 static uint8 s_handoff_ticks = 0U;
 static uint8 s_minefield_zero_brake_issued = 0U;
+static float s_minefield_exit_speed_cmd = 0.0f;
+static uint16 s_minefield_exit_speed_end_idx = 0xFFFFU;
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
 #define NAV_REPLAY_START_HEADING_VALID 0
@@ -165,8 +167,32 @@ static float Plan4_PathDistance(uint16 first_idx, uint16 last_idx)
     return distance;
 }
 
-/* Select the closest *segment* ahead of the monotonic index.  The search is
- * clamped before the next task entry so normal tracking cannot skip a task. */
+/* 沿路径向前查找指定距离处的速度，用于雷区转圈后的起步恢复。 */
+static float Plan4_FindMinefieldExitSpeed(uint16 entry_idx, uint16 *speed_end_idx)
+{
+    uint16 i;
+    float distance = 0.0f;
+    float speed = PLAN4_TRACK_MIN_SPEED_CMD;
+
+    *speed_end_idx = (uint16)(entry_idx + 1U);
+
+    for (i = (uint16)(entry_idx + 1U); i < nav_ram_data.point_count; i++)
+    {
+        float dx = nav_ram_data.points[i].x - nav_ram_data.points[i - 1U].x;
+        float dy = nav_ram_data.points[i].y - nav_ram_data.points[i - 1U].y;
+        distance += sqrtf(dx * dx + dy * dy);
+        if (distance >= PLAN4_MINEFIELD_EXIT_SPEED_LOOKAHEAD_MM)
+        {
+            speed = nav_ram_data.points[i].target_speed;
+            *speed_end_idx = i;
+            break;
+        }
+    }
+    if (speed >= 0.0f) speed = PLAN4_TRACK_MIN_SPEED_CMD;
+    return speed;
+}
+
+/* 从单调递增索引的前方选择最近线段，并在下一任务入口前截断搜索，避免普通跟踪跳过任务。 */
 static uint16 Plan4_FindClosestSegment(uint16 start_idx, uint16 end_idx, uint8 recovering)
 {
     uint16 i;
@@ -302,6 +328,12 @@ static float Plan4_SafeSpeed(const Plan4LqrReference_t *reference)
      * sample into a zero-speed point. */
     if (raw >= 0.0f) raw = PLAN4_TRACK_MIN_SPEED_CMD;
     magnitude = fabsf(raw);
+    if ((s_minefield_exit_speed_end_idx != 0xFFFFU) &&
+        (g_target_idx < s_minefield_exit_speed_end_idx) &&
+        (fabsf(s_minefield_exit_speed_cmd) > magnitude))
+    {
+        magnitude = fabsf(s_minefield_exit_speed_cmd);
+    }
     if (lateral > PLAN4_TRACK_CROSS_TRACK_SOFT_MM)
     {
         factor = (PLAN4_TRACK_CROSS_TRACK_HARD_MM - lateral) /
@@ -357,6 +389,8 @@ static void Plan4_CompleteSpecial(void)
         if ((s_active_entry_idx + 1U) < nav_ram_data.point_count)
         {
             g_target_idx = (uint16)(s_active_entry_idx + 1U);
+            s_minefield_exit_speed_cmd = Plan4_FindMinefieldExitSpeed(
+                s_active_entry_idx, &s_minefield_exit_speed_end_idx);
         }
     }
     else if (s_active_exit_idx < nav_ram_data.point_count)
@@ -381,6 +415,8 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     s_active_entry_idx = entry_idx;
     g_current_point_type = point_type;
     g_special_action_trigger = 1U;
+    s_minefield_exit_speed_cmd = 0.0f;
+    s_minefield_exit_speed_end_idx = 0xFFFFU;
 
     if (point_type == NAV_POINT_CIRCLE)
     {
@@ -553,6 +589,8 @@ void NavReplay_Start(void)
     s_active_exit_idx = 0xFFFFU;
     s_active_entry_idx = 0xFFFFU;
     s_minefield_zero_brake_issued = 0U;
+    s_minefield_exit_speed_cmd = 0.0f;
+    s_minefield_exit_speed_end_idx = 0xFFFFU;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
@@ -576,6 +614,8 @@ void NavReplay_Stop(void)
     s_active_exit_idx = 0xFFFFU;
     s_active_entry_idx = 0xFFFFU;
     s_minefield_zero_brake_issued = 0U;
+    s_minefield_exit_speed_cmd = 0.0f;
+    s_minefield_exit_speed_end_idx = 0xFFFFU;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
@@ -640,6 +680,12 @@ void NavReplay_Process(void)
     }
     base_idx = Plan4_FindClosestSegment(g_target_idx, search_end, (s_handoff_ticks != 0U));
     g_target_idx = base_idx;
+    if ((s_minefield_exit_speed_end_idx != 0xFFFFU) &&
+        (g_target_idx >= s_minefield_exit_speed_end_idx))
+    {
+        s_minefield_exit_speed_cmd = 0.0f;
+        s_minefield_exit_speed_end_idx = 0xFFFFU;
+    }
 
     if ((next_special != 0xFFFFU) &&
         (nav_ram_data.points[next_special].point_type == NAV_POINT_CIRCLE))

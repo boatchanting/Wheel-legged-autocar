@@ -33,9 +33,7 @@ PROJECT_ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_HEADER = PROJECT_ROOT / "code" / "navigation" / "nav_replay_route_table.h"
 STRAIGHT_LENGTH_MM = 500.0
 SAMPLE_STEP_MM = 50.0
-# Build geometry at a much finer resolution first, then perform one global
-# arc-length resampling pass.  This keeps curvature estimation independent of
-# the final route-table point spacing.
+# 先以更密的几何点生成路径，再统一按弧长重采样，避免最终路表点距影响曲率估计。
 DENSE_SAMPLE_STEP_MM = 5.0
 MIN_LINK_LENGTH_MM = 5.0
 NAV_ROUTE_MAX_POINTS = 5000
@@ -53,21 +51,19 @@ MAX_PATH_YAW_RATE_RAD_S = 2.8
 SPEED_TO_MM_S = 4.79
 CURVATURE_EPS = 1e-6
 
-# Local corner rounding.  The handle is additionally limited by the two
-# neighbouring node distances, so sparse or sharp marker layouts cannot make
-# a Bezier control polygon swing far outside the local corridor.
+# 局部圆角控制柄同时受相邻边长限制，避免稀疏或急转标记使 Bezier 曲线偏离局部走廊。
 LOCAL_CORNER_HANDLE_RATIO = 0.18
 LOCAL_CORNER_NEIGHBOR_RATIO = 0.35
 LOCAL_CORNER_HANDLE_MAX_MM = 800.0
 
-# These limits are expressed in the target_speed units written to
-# NavRamPoint_t.
+# 以下限速值使用写入 NavRamPoint_t 的 target_speed 指令单位。
 STAIRS_APPROACH_DISTANCE_MM = 4000.0
 STAIRS_APPROACH_TARGET_SPEED_MAX = 220.0
+BRIDGE_APPROACH_DISTANCE_MM = 1000.0
+BRIDGE_APPROACH_TARGET_SPEED_MAX = 380.0
 
-# Match csv_to_nav_table.py.  Each value is measured from the recorded exit
-# marker toward the matching entry marker, so the visual state-machine exit
-# is anchored where the vehicle actually leaves the task.
+# 与 csv_to_nav_table.py 保持一致：每个值都从记录的出口点朝对应入口点测量，
+# 使视觉状态机出口锚定在车辆实际离开任务的位置。
 # 特殊状态机结束点的沿线修正距离（单位：CSV 坐标单位；当前导航坐标单位为毫米 mm）。
 # 30：三级台阶结束点，对应状态机进入点类型 3（3 -> 30），单位：mm。
 # 40：单边桥结束点，对应状态机进入点类型 4（4 -> 40），单位：mm。
@@ -248,7 +244,7 @@ def apply_special_exit_corrections(markers: list[Marker], pairs: dict[int, int])
 
 def add_sample(samples: list[PathSample], point: np.ndarray, point_type: int, forced: bool, segment: str) -> None:
     if samples and math.hypot(samples[-1].x - point[0], samples[-1].y - point[1]) < 0.01:
-        # Preserve an event tag if it coincides with the previous geometric point.
+        # 若事件点与前一个几何点重合，保留事件标签。
         if point_type != 0:
             samples[-1].point_type = point_type
         samples[-1].forced_straight |= forced
@@ -291,9 +287,7 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
 
     tangent_start = unit(start.tangent if start.tangent is not None else chord)
     tangent_end = unit(end.tangent if end.tangent is not None else chord)
-    # Use independently bounded handles at both ends.  This is a local
-    # corner-fillet analogue: the blend remains near the adjacent anchors and
-    # cannot become oversized when one neighbouring segment is very short.
+    # 两端控制柄独立限幅，等效于局部圆角，使曲线靠近相邻锚点，避免短边引起过度外扩。
     default_handle = min(LOCAL_CORNER_HANDLE_RATIO * chord_length, LOCAL_CORNER_HANDLE_MAX_MM)
     start_handle = min(default_handle, start.corner_handle_mm or default_handle)
     end_handle = min(default_handle, end.corner_handle_mm or default_handle)
@@ -360,9 +354,7 @@ def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node]
     if len(nodes) < 2:
         raise ValueError("展开后路径锚点不足。")
 
-    # Untagged waypoints use a bisector tangent so neighbouring G2 links are C1.
-    # Also calculate a local handle from the adjacent edge lengths.  This is
-    # the bounded local-corner behaviour used by chazhi.py's corner fillet.
+    # 无标签路点使用角平分线切向量，使相邻 G2 曲线满足 C1 连续；同时根据相邻边长计算局部控制柄。
     for index, node in enumerate(nodes):
         if node.tangent is not None:
             continue
@@ -521,8 +513,7 @@ def limit_stairs_approach_output_speed(
     approach_distance_mm: float,
 ) -> np.ndarray:
     """Cap the table output for points within the three-step approach and the entire stairs segment."""
-    # Work in physical speed units so the same acceleration constraints used
-    # by the base plan can be applied after task-specific caps are inserted.
+    # 先转换为物理速度单位，使任务限速插入后仍可应用与基础规划相同的加减速约束。
     speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
     stairs_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 3]
     stairs_exit_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 30]
@@ -535,6 +526,22 @@ def limit_stairs_approach_output_speed(
             speed_limit[full_stairs_range],
             STAIRS_APPROACH_TARGET_SPEED_MAX * SPEED_TO_MM_S,
         )
+    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+
+
+def limit_bridge_approach_output_speed(
+    samples: list[PathSample],
+    s: np.ndarray,
+    target_speed: np.ndarray,
+    approach_distance_mm: float,
+    target_speed_max: float,
+) -> np.ndarray:
+    """限制单边桥状态机入口前的速度，并重新建立纵向速度包络。"""
+    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
+    bridge_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 4]
+    for current_entry_s in bridge_entry_s:
+        approach_range = (s >= current_entry_s - approach_distance_mm) & (s <= current_entry_s)
+        speed_limit[approach_range] = np.minimum(speed_limit[approach_range], target_speed_max * SPEED_TO_MM_S)
     return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
 
 
@@ -560,7 +567,7 @@ def generate_path_with_point_cap(markers: list[Marker]) -> tuple[list[PathSample
         samples = generate_path(markers, sample_step_mm)
         if len(samples) <= NAV_ROUTE_MAX_POINTS:
             return samples, sample_step_mm
-        # A small margin avoids a second pass caused by ceil() on every segment.
+        # 预留少量余量，避免各段 ceil() 后仍需再次调整采样间距。
         sample_step_mm *= max(1.05, len(samples) / (NAV_ROUTE_MAX_POINTS - 4))
     raise ValueError(f"路径即使用 {sample_step_mm:.1f} mm 采样仍超过 {NAV_ROUTE_MAX_POINTS} 点。")
 
@@ -589,7 +596,7 @@ def write_c_header(output: Path, samples: list[PathSample], yaw: np.ndarray, cur
         f"static const NavRamPoint_t nav_replay_static_route_points[{len(samples)}] = {{",
     ]
     for sample, sample_yaw, sample_curvature, speed in zip(samples, yaw, curvature, target_speed):
-        # NavRamPoint_t: x, y, target_yaw_deg, heading_deg, point_type, target_speed, curvature.
+        # NavRamPoint_t 字段顺序：x、y、目标航向、记录航向、点类型、目标速度、曲率。
         lines.append(f"    {{{sample.x:.3f}f, {sample.y:.3f}f, {sample_yaw:.3f}f, 0.0f, (uint8){sample.point_type}, {speed:.3f}f, {sample_curvature:.8f}f}},")
     lines.extend(["};", "", "#endif // _NAV_REPLAY_ROUTE_TABLE_H_", ""])
     output.write_text("\n".join(lines), encoding="utf-8")
@@ -600,7 +607,7 @@ def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s
     plt.rcParams["axes.unicode_minus"] = False
     points = np.array([(sample.x, sample.y) for sample in samples], dtype=float)
     marker_list = list(markers)
-    # Keep arrows visibly outside their marker, while scaling them to the map.
+    # 箭头与标记点保持可见间隔，并根据地图尺度自适应长度。
     map_span_mm = max(float(np.ptp(points[:, 0])), float(np.ptp(points[:, 1])), 1.0)
     arrow_length_mm = min(1200.0, max(350.0, 0.035 * map_span_mm))
     forced = np.array([sample.forced_straight for sample in samples], dtype=bool)
@@ -668,6 +675,35 @@ def render(output: Path, markers: Iterable[Marker], samples: list[PathSample], s
     plt.close(figure)
 
 
+def render_speed_heatmap(output: Path, samples: list[PathSample], target_speed: np.ndarray) -> None:
+    """单独绘制路径速度热力图，颜色表示物理目标速度。"""
+    plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
+    plt.rcParams["axes.unicode_minus"] = False
+    points = np.array([(sample.x, sample.y) for sample in samples], dtype=float)
+    speed_mm_s = -target_speed * SPEED_TO_MM_S
+    figure, axis = plt.subplots(figsize=(10, 8))
+    heatmap = axis.scatter(
+        points[:, 0],
+        points[:, 1],
+        c=speed_mm_s,
+        cmap="turbo",
+        s=18,
+        linewidths=0.0,
+    )
+    axis.plot(points[:, 0], points[:, 1], color="#334155", linewidth=0.8, alpha=0.45, zorder=0)
+    axis.set_title("Plan4 路径速度热力图")
+    axis.set_xlabel("X (mm)")
+    axis.set_ylabel("Y (mm)")
+    axis.axis("equal")
+    axis.grid(True, alpha=0.25)
+    colorbar = figure.colorbar(heatmap, ax=axis, pad=0.02)
+    colorbar.set_label("目标速度 (mm/s)")
+    figure.tight_layout()
+    figure.savefig(output, dpi=180)
+    plt.show()
+    plt.close(figure)
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="生成带 0.5m 进出直线约束的 Plan3 平滑路径。")
     parser.add_argument("--input", type=Path, help="输入标记 CSV（默认自动选择本目录最新原始 CSV）")
@@ -705,12 +741,22 @@ def main() -> int:
         target_speed,
         args.stairs_approach_distance_mm,
     )
-    #write_csv(csv_output, samples, yaw, curvature, output_target_speed)
+    output_target_speed = limit_bridge_approach_output_speed(
+        samples,
+        s,
+        output_target_speed,
+        BRIDGE_APPROACH_DISTANCE_MM,
+        BRIDGE_APPROACH_TARGET_SPEED_MAX,
+    )
+    speed_heatmap_output = render_output.with_name(f"{render_output.stem}_speed_heatmap{render_output.suffix}")
+    # 如需导出路径 CSV，取消下一行注释。
+    # write_csv(csv_output, samples, yaw, curvature, output_target_speed)
     render(render_output, markers, samples, s, curvature, output_target_speed)
+    render_speed_heatmap(speed_heatmap_output, samples, output_target_speed)
     write_c_header(args.header, samples, yaw, curvature, output_target_speed, source, start_heading)
+    print(f"速度热力图: {speed_heatmap_output}")
 
-    # Geometry is exact even when a 50 mm sampled row lies on a boundary.
-    # Do not estimate this from the per-sample visual tag.
+    # 即使 50 mm 采样点恰好落在边界上，几何长度仍按任务锚点精确计算，不从可视标签估算。
     forced_length = len(pairs) * 2.0 * STRAIGHT_LENGTH_MM
     print(f"输入: {source}")
     print(f"输出路径: {csv_output} ({len(samples)} 点, 总长 {s[-1]:.1f} mm)")

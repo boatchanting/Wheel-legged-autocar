@@ -55,6 +55,10 @@
 #define PLAN4_SPECIAL_HANDOFF_SPEED_STEP             40.0f
 #define PLAN4_SPECIAL_HANDOFF_ERR_STEP_DEG            1.0f
 
+/* 雷区转圈结束后，路径表从零速点开始会按离线加速度缓慢恢复。此处设置恢复时
+ * 读取前方安全速度的最短前瞻距离，避免出雷区后长期维持低速。 */
+#define PLAN4_MINEFIELD_EXIT_SPEED_LOOKAHEAD_MM      800.0f
+
 /* NAV_POINT_CIRCLE（type=1）是仅有入口的雷区标记。驶入雷区前使用
  * Plan2 风格的在线点对点速度规划，不使用普通视觉任务的提前交接距离，
  * 雷区结束后也绝不重定位 nav_vision_fusion_x/y。
