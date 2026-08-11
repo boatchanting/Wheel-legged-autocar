@@ -30,6 +30,7 @@ typedef struct
     BumpyRoadState_e state;
     float start_x_mm;
     float start_y_mm;
+        float locked_yaw_deg;
     float traveled_mm;
     
     uint16_t sample_div_cnt;
@@ -63,6 +64,19 @@ typedef struct
 
 static BumpyRoadContext_t s_bumpy_ctx = {BUMPY_ROAD_STATE_IDLE};
 
+static float BumpyRoad_NormalizeAngle(float angle_deg)
+{
+    while (angle_deg > 180.0f)
+    {
+        angle_deg -= 360.0f;
+    }
+    while (angle_deg < -180.0f)
+    {
+        angle_deg += 360.0f;
+    }
+    return angle_deg;
+}
+
 static void BumpyRoad_PublishEvent(BumpyRoadEvent_e event)
 {
     s_bumpy_ctx.last_event = event;
@@ -83,18 +97,19 @@ static float BumpyRoad_CalcCorrectionDistanceMm(void)
     return sqrtf(dx * dx + dy * dy);
 }
 
-static void BumpyRoad_ApplyVisionSteer(void)
+static void BumpyRoad_ApplyYawHold(void)
 {
-    float target_err = 0.0f;
-    if (VisionBumpyControl_IsEnabled())
-    {
-        // err_degree = VisionBumpyControl_GetErrDegreeCmd();//视觉控制方向
-        err_degree = 0.0f;
-    }
-    else
-    {
-        err_degree = 0.0f;
-    }
+    const float target_err = BumpyRoad_NormalizeAngle(
+        s_bumpy_ctx.locked_yaw_deg - inertial_nav.relative_yaw);
+    // if (VisionBumpyControl_IsEnabled())
+    // {
+    //     // err_degree = VisionBumpyControl_GetErrDegreeCmd();//视觉控制方向
+    //     err_degree = 0.0f;
+    // }
+    // else
+    // {
+    //     err_degree = 0.0f;
+    // }
     
     // 一阶低通滤波 (EMA)，减少视觉识别跳变带来的左右扭动
     s_bumpy_ctx.filtered_err_degree = (target_err * BUMPY_ROAD_STEER_FILTER_ALPHA) + 
@@ -131,6 +146,7 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
     s_bumpy_ctx.start_x_mm = 0.0f;
     s_bumpy_ctx.start_y_mm = 0.0f;
+    s_bumpy_ctx.locked_yaw_deg = 0.0f;
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
     
@@ -185,6 +201,7 @@ void BumpyRoad_Trigger(void)
 
     s_bumpy_ctx.start_x_mm = inertial_nav.x;
     s_bumpy_ctx.start_y_mm = inertial_nav.y;
+    s_bumpy_ctx.locked_yaw_deg = inertial_nav.relative_yaw;
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
     
@@ -246,7 +263,7 @@ void BumpyRoad_Update_1ms(void)
         }
         else
         {
-            BumpyRoad_ApplyVisionSteer();
+            BumpyRoad_ApplyYawHold();
         }
         
         // 1. Gyro Z 滑动窗口标准差计算
