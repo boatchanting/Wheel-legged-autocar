@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+from __future__ import annotations
 """
 这个代码对比求path来说进行了路径优化，允许路径进行少量偏移以弥补打点所造成的不准确，是一次成功的尝试，但是方案尚且不成熟
 """
@@ -23,7 +24,7 @@ PS generate_plan4_speed_optimized_path.py --step-sizes-mm 300,150,75,35 --sweeps
 工具没有赛道边界或障碍物地图，导出的路线必须先审图、再进行低速实车验证。
 """
 
-from __future__ import annotations
+
 
 import argparse
 import csv
