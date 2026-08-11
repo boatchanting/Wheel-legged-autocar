@@ -31,7 +31,7 @@ import numpy as np
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_HEADER = PROJECT_ROOT / "code" / "navigation" / "nav_replay_route_table.h"
-STRAIGHT_LENGTH_MM = 500.0
+STRAIGHT_LENGTH_MM = 600.0
 SAMPLE_STEP_MM = 50.0
 # 先以更密的几何点生成路径，再统一按弧长重采样，避免最终路表点距影响曲率估计。
 DENSE_SAMPLE_STEP_MM = 5.0
@@ -54,13 +54,13 @@ CURVATURE_EPS = 1e-6
 # 局部圆角控制柄同时受相邻边长限制，避免稀疏或急转标记使 Bezier 曲线偏离局部走廊。
 LOCAL_CORNER_HANDLE_RATIO = 0.18
 LOCAL_CORNER_NEIGHBOR_RATIO = 0.35
-LOCAL_CORNER_HANDLE_MAX_MM = 800.0
+LOCAL_CORNER_HANDLE_MAX_MM = 600.0
 
 # 以下限速值使用写入 NavRamPoint_t 的 target_speed 指令单位。
 STAIRS_APPROACH_DISTANCE_MM = 4000.0
 STAIRS_APPROACH_TARGET_SPEED_MAX = 220.0
-BRIDGE_APPROACH_DISTANCE_MM = 1000.0
-BRIDGE_APPROACH_TARGET_SPEED_MAX = 380.0
+BRIDGE_APPROACH_DISTANCE_MM = 2000.0
+BRIDGE_APPROACH_TARGET_SPEED_MAX = 300.0
 
 # 与 csv_to_nav_table.py 保持一致：每个值都从记录的出口点朝对应入口点测量，
 # 使视觉状态机出口锚定在车辆实际离开任务的位置。
