@@ -73,6 +73,57 @@ FIELD_NAMES_V1 = [
 
 FIELD_NAMES_V2 = FIELD_NAMES_V1 + ["mark_trigger", "point_type"]
 
+# CSV 包含每个已解析字段；payload_hex 保留 WiFi 收到的完整原始载荷，
+# 因此即使后续固件在尾部增加字段，记录文件也不会丢失数据。
+WIFI_LOG_FIELD_NAMES = [
+    "received_at_unix_ms",
+    "received_at",
+    "payload_hex",
+    "payload_size",
+    "time_str",
+] + FIELD_NAMES_V2 + [
+    "pid_mode",
+    "slip_flag",
+    "minefield_is_active",
+    "target_speed",
+    "speed_L",
+    "speed_R",
+    "theoretical_yaw_rate",
+    "actual_yaw_rate",
+    "nav_replay_state",
+    "nav_special_action_trigger",
+    "nav_current_point_type",
+    "nav_special_target_idx",
+    "nav_special_target_x",
+    "nav_special_target_y",
+    "nav_special_dist_mm",
+    "nav_special_brake_radius_mm",
+    "nav_special_speed_ref_mm_s",
+    "nav_special_zero_brake_issued",
+    "nav_special_zero_brake_active",
+    "nav_special_crawl_active",
+    "nav_special_prep_zero_latched",
+    "brake_ff_pwm",
+    "accel_ff_pwm",
+    "motor_enable",
+    "fallen",
+    "remote_brake_active",
+    "remote_reverse_brake_active",
+    "minefield_accumulated_angle",
+    "minefield_angle_cmd",
+    "minefield_feedforward_speed",
+    "minefield_current_speed_cmd",
+    "minefield_stall_elapsed_s",
+    "minefield_spin_abort_reason",
+    "gps_x",
+    "gps_y",
+    "gps_valid",
+    "gps_origin_set",
+    "fusion_x",
+    "fusion_y",
+    "fusion_valid",
+]
+
 MAX_HISTORY = 20000
 MAX_NEW_BUFFER = 4000
 START_POINT_CAPTURE_RADIUS_MM = 120.0
@@ -93,6 +144,11 @@ ack_cond = threading.Condition()
 ack_seq = 0
 ack_events = []
 ACK_EVENT_MAX = 64
+wifi_log_active = False
+wifi_log_file = None
+wifi_log_writer = None
+wifi_log_path = ""
+wifi_log_record_count = 0
 
 
 def _build_frame(cmd, payload_bytes=b""):
@@ -419,10 +475,27 @@ def _decode_payload(payload_bytes):
     return data
 
 
-def _push_data(data):
+def _write_wifi_log_row_locked(data):
+    global wifi_log_record_count
+
+    if not wifi_log_active or wifi_log_writer is None:
+        return
+
+    now = time.time()
+    row = dict(data)
+    row["received_at_unix_ms"] = int(now * 1000)
+    row["received_at"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now))
+    wifi_log_writer.writerow(row)
+    wifi_log_record_count += 1
+
+
+def _push_data(data, payload):
     global last_rx_time, last_payload_size
 
     with state_lock:
+        log_data = dict(data)
+        log_data["payload_hex"] = payload.hex().upper()
+        _write_wifi_log_row_locked(log_data)
         all_history_data.append(data)
         if len(all_history_data) > MAX_HISTORY:
             del all_history_data[: len(all_history_data) - MAX_HISTORY]
@@ -433,6 +506,78 @@ def _push_data(data):
 
         last_rx_time = time.time()
         last_payload_size = data.get("payload_size", 0)
+
+
+def _record_raw_telemetry(payload):
+    """Keep a valid but currently undecodable telemetry packet in the CSV."""
+    with state_lock:
+        _write_wifi_log_row_locked({
+            "payload_size": len(payload),
+            "payload_hex": payload.hex().upper(),
+        })
+
+
+def _start_wifi_logging():
+    global wifi_log_active, wifi_log_file, wifi_log_writer, wifi_log_path
+    global wifi_log_record_count
+
+    with state_lock:
+        if wifi_log_active:
+            return {
+                "success": False,
+                "msg": "日志正在记录中",
+                "path": wifi_log_path,
+                "record_count": wifi_log_record_count,
+            }
+
+        now = time.time()
+        stamp = time.strftime("%Y%m%d_%H%M%S", time.localtime(now))
+        millis = int((now % 1.0) * 1000)
+        filename = f"wifi_telemetry_{stamp}_{millis:03d}.csv"
+        filepath = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+
+        try:
+            log_file = open(filepath, "w", newline="", encoding="utf-8-sig")
+            writer = csv.DictWriter(log_file, fieldnames=WIFI_LOG_FIELD_NAMES, extrasaction="ignore")
+            writer.writeheader()
+            log_file.flush()
+        except Exception as exc:
+            return {"success": False, "msg": f"创建日志文件失败: {exc}"}
+
+        wifi_log_file = log_file
+        wifi_log_writer = writer
+        wifi_log_path = filepath
+        wifi_log_record_count = 0
+        wifi_log_active = True
+        return {"success": True, "msg": f"开始记录 WiFi 日志: {filepath}", "path": filepath}
+
+
+def _stop_wifi_logging():
+    global wifi_log_active, wifi_log_file, wifi_log_writer
+
+    with state_lock:
+        if not wifi_log_active:
+            return {"success": False, "msg": "当前没有正在记录的日志"}
+
+        wifi_log_active = False
+        log_file = wifi_log_file
+        filepath = wifi_log_path
+        record_count = wifi_log_record_count
+        wifi_log_file = None
+        wifi_log_writer = None
+
+        try:
+            if log_file is not None:
+                log_file.close()
+        except Exception as exc:
+            return {"success": False, "msg": f"关闭日志文件失败: {exc}"}
+
+        return {
+            "success": True,
+            "msg": f"日志已保存: {filepath} ({record_count} 帧)",
+            "path": filepath,
+            "record_count": record_count,
+        }
 
 
 def _parse_frame_stream(raw_buffer):
@@ -482,7 +627,9 @@ def _parse_frame_stream(raw_buffer):
 
         data = _decode_payload(payload)
         if data is not None:
-            _push_data(data)
+            _push_data(data, payload)
+        else:
+            _record_raw_telemetry(payload)
 
         del raw_buffer[:frame_len]
 
@@ -590,6 +737,9 @@ class Api:
                 "server_error": server_error,
                 "host_ip": listen_ip,
                 "host_port": HOST_PORT,
+                "wifi_log_active": wifi_log_active,
+                "wifi_log_record_count": wifi_log_record_count,
+                "wifi_log_path": wifi_log_path,
             }
 
     def clear_history(self):
@@ -597,6 +747,12 @@ class Api:
             all_history_data.clear()
             new_data_buffer.clear()
         return {"success": True, "msg": "历史数据已清空"}
+
+    def start_wifi_logging(self):
+        return _start_wifi_logging()
+
+    def stop_wifi_logging(self):
+        return _stop_wifi_logging()
 
     def send_host_control(self, control_code):
         try:
