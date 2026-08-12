@@ -472,6 +472,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
+            if (jump_flag != 0U)
+            {
+                /* 【跳跃冻结速度环 2026-08-12】
+                 * 跳跃期间速度环不参与控制：
+                 * 1) 跳过 Servo_Speed_Control 计算——跳跃中轮子空转，速度误差巨大，
+                 *    若继续计算会把 g_target_pwm_speed_adj 顶到限幅并污染 PID 状态；
+                 * 2) 清零速度环运行态（含输入滤波），跳跃结束后从干净状态起步，D 项无突跳；
+                 * 3) g_target_pwm_speed_adj 归零——跳跃结束后 servo_executor_update 的
+                 *    目标=基础身高(平衡态)，与跳跃恢复位置一致，关节舵机不乱动。 */
+                Servo_Speed_Control_Reset();
+                g_target_pwm_speed_adj = 0;
+            }
+            else
+            {
             // 2.2 全局刹车前馈
             uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
             if ((Minefield_Is_Active() != 0U) || (g_special_action_trigger != 0U))
@@ -559,6 +573,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 }
             }
             g_target_pwm_speed_adj = (int16)duty_adjustment;
+            } /* end if (jump_flag == 0) */
         }
     }
     else if(g_is_push_mode==1)
