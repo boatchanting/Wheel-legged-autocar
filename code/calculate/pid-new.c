@@ -1481,6 +1481,24 @@ float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
 //内部静态变量，用于舵机速度环的滤波
 static float servo_speed_last = 0.0f;
 static float servo_speed_prelast = 0.0f;
+
+/**
+ * @brief 重置舵机速度环运行态（不重置参数）
+ * @note 跳跃/推车等需要冻结速度环的场景调用：
+ *       - 清零 PID 误差/积分/输出，避免跳跃中轮子空转污染误差与 D 项；
+ *       - 清零输入滤波历史，避免恢复后第一拍带上跳跃前的旧速度。
+ */
+void Servo_Speed_Control_Reset(void)
+{
+    pid_servo_speed.error = 0.0f;
+    pid_servo_speed.last_error = 0.0f;
+    pid_servo_speed.prev_error = 0.0f;
+    pid_servo_speed.error_integral = 0.0f;
+    pid_servo_speed.output = 0.0f;
+    servo_speed_last = 0.0f;
+    servo_speed_prelast = 0.0f;
+}
+
 /**
  * @brief 舵机速度闭环控制器 (移植并使用 PID_Param_t 结构)
  * @param target_speed 目标速度

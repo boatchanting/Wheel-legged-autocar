@@ -455,6 +455,7 @@ float Float_Constrain(float val, float min, float max);//限幅函数
 float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
 float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
 float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)
+void Servo_Speed_Control_Reset(void);//重置速度环运行态（不重置参数），跳跃/推车冻结时调用
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
