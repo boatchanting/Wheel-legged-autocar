@@ -236,13 +236,13 @@ static void load_jump_profile(JumpType_e type, float current_height)
             
         case JUMP_TYPE_NORMAL: // 【普通平地跳】
         default:
-            g_jump_profile.t_launch = 110;
+            g_jump_profile.t_launch = 100;
             g_jump_profile.t_flight = 160;
-            g_jump_profile.t_landing = 220;
-            g_jump_profile.t_recovery = 220;
+            g_jump_profile.t_landing = 260;
+            g_jump_profile.t_recovery = 260;
             g_jump_profile.offset_launch = 3000; 
             g_jump_profile.offset_flight = -200;
-            g_jump_profile.offset_land = 500;
+            g_jump_profile.offset_land = 700;
             g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
             g_jump_profile.post_jump_height = current_height; // 落地高度不变
             break;
@@ -537,12 +537,32 @@ void servo_jump_executor(void)
         target_lr = get_joint_target(current_duties_jump[3], SERVO_MOTOR_PWM4_DIR, h_duty, 0);
     }
 #endif
-    // --- 阶段 E: 结束 ---
+    // --- 阶段 E: 动作时间轴结束，恢复基础身高后退出 ---
     else
     {
-        jump_flag = 0; // 动作完成，交还控制权
-        g_current_jump_phase = JUMP_PHASE_NONE;
-        return;
+        /* 【修复 2026-08-12】跳跃动作时间轴结束后不立即退出：
+         * 先把四腿以慢斜率(20/ms)平滑恢复到基础身高(offset=0)，
+         * 全部到位后再交还控制权，避免上一次跳跃残留腿高被带入下一次跳跃，
+         * 导致三级跳逐次升高、姿态失控。 */
+        g_current_jump_phase = JUMP_PHASE_RECOVERY;
+        dynamic_slope_limit = 20; /* 慢速恢复，模拟弹簧阻尼，消化落地冲击 */
+
+        target_lf = get_joint_target(current_duties_jump[0], SERVO_MOTOR_PWM1_DIR, h_duty, 0);
+        target_rf = get_joint_target(current_duties_jump[1], SERVO_MOTOR_PWM2_DIR, h_duty, 0);
+        target_rr = get_joint_target(current_duties_jump[2], SERVO_MOTOR_PWM3_DIR, h_duty, 0);
+        target_lr = get_joint_target(current_duties_jump[3], SERVO_MOTOR_PWM4_DIR, h_duty, 0);
+
+        /* 四腿均回到基础身高附近，才真正退出跳跃状态 */
+        if ((ABS(target_lf - PWM_CH1_LAST) <= TARGET_TOLERANCE) &&
+            (ABS(target_rf - PWM_CH2_LAST) <= TARGET_TOLERANCE) &&
+            (ABS(target_rr - PWM_CH3_LAST) <= TARGET_TOLERANCE) &&
+            (ABS(target_lr - PWM_CH4_LAST) <= TARGET_TOLERANCE))
+        {
+            jump_flag = 0; /* 动作完成，交还控制权 */
+            g_current_jump_phase = JUMP_PHASE_NONE;
+            return;
+        }
+        /* 未全部到位：不 return，继续执行下方斜率限制输出，逐步收敛回 h_duty */
     }
 
     g_jump_target_pwm_lf = target_lf;
