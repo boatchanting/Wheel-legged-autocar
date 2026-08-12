@@ -1476,6 +1476,15 @@ float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
     return pid_turn_gyro.output;
 }
 
+void Turn_Gyro_Loop_Reset(void)
+{
+    pid_turn_gyro.error = 0.0f;
+    pid_turn_gyro.last_error = 0.0f;
+    pid_turn_gyro.prev_error = 0.0f;
+    pid_turn_gyro.error_integral = 0.0f;
+    pid_turn_gyro.output = 0.0f;
+}
+
 
 
 //内部静态变量，用于舵机速度环的滤波

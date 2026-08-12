@@ -78,6 +78,7 @@ static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避�
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
 static uint16 profile_switch_beep_ticks = 0U;      // 复刻PID切换蜂鸣剩余时间，1ms 递减
 static uint16 minefield_beep_ticks = 0U;           // 自转结束蜂鸣剩余时间，1ms 递减
+static uint8_t minefield_was_coasting = 0U;
 static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
@@ -689,7 +690,24 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         }
         //==================== [雷区旋转调用结束] =================
         // 将雷区旋转指令或者正常转向角速度指令送入内环PID
-        turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+        if (Minefield_IsCoasting())
+        {
+            if (minefield_was_coasting == 0U)
+            {
+                Turn_Gyro_Loop_Reset();
+                minefield_was_coasting = 1U;
+            }
+            turn_gyro_loop_out = 0.0f;
+        }
+        else
+        {
+            if (minefield_was_coasting != 0U)
+            {
+                Turn_Gyro_Loop_Reset();
+                minefield_was_coasting = 0U;
+            }
+            turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+        }
     }
 
     // ==========================================================

@@ -357,6 +357,7 @@ float Float_Constrain(float val, float min, float max);//限幅函数
 
 float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
 float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
+void Turn_Gyro_Loop_Reset(void);
 float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)

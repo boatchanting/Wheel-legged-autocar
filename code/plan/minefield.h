@@ -14,6 +14,14 @@ extern volatile uint8_t minefield_flag;
 #define MINEFIELD_SPIN_ABORT_NONE                 0U
 #define MINEFIELD_SPIN_ABORT_TIMEOUT              1U
 #define MINEFIELD_SPIN_ABORT_STALLED              2U
+
+typedef enum
+{
+    MINEFIELD_SPIN_PHASE_IDLE = 0,
+    MINEFIELD_SPIN_PHASE_DRIVE,
+    MINEFIELD_SPIN_PHASE_COAST,
+    MINEFIELD_SPIN_PHASE_CAPTURE
+} MinefieldSpinPhase_e;
 extern uint8 vision_detected_marker;//雷区调用,测试用
 extern volatile uint8_t g_minefield_spin_abort_reason;
 extern volatile uint8_t g_minefield_beep_request; // 自转结束蜂鸣器请求标志
@@ -24,6 +32,8 @@ extern volatile float g_minefield_debug_angle_cmd;
 extern volatile float g_minefield_debug_feedforward_speed;
 extern volatile float g_minefield_debug_current_speed_cmd;
 extern volatile float g_minefield_debug_stall_elapsed_s;
+extern volatile uint8_t g_minefield_debug_phase;
+extern volatile float g_minefield_debug_exit_yaw_error;
 
 /**
  * @brief 初始化/复位旋转控制的相关变量
@@ -43,6 +53,8 @@ void Minefield_SetSpinPlanExact(float total_spin_deg, float spin_speed_sign, uin
  * @return 1: 正在旋转, 0: 空闲/正常行驶
  */
 uint8_t Minefield_Is_Active(void);
+uint8_t Minefield_IsCoasting(void);
+MinefieldSpinPhase_e Minefield_GetSpinPhase(void);
 
 /**
  * @brief 旋转动作核心控制函数 (需在2ms Gyro环中调用，当前Core0调度1ms)
