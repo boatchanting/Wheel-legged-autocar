@@ -33,7 +33,7 @@
 |10|`pid_mode`|`uint8`|-|当前已应用的控制模式 `g_control_mode_applied`。|
 |11|`slip_flag`|`uint8`|-|惯导滑移标志，是通过雷区状态机给的，其他地方没用 `inertial_nav.slip_flag`；`0` 表示未标记滑移，非 0 表示存在滑移/特殊工况。|
 |12|`nav_replay_point_type`|`uint8`|-|导航回放状态机当前点类型，即 `g_current_point_type`。与 `point_type` 分别表示“回放执行点”和“上位机打点点”。|
-|13|`g_replay_state`|`uint8`|-|导航回放状态：`0=REPLAY_IDLE`、`1=REPLAY_RUNNING`、`2=REPLAY_FINISHED`。|
+|13|`g_replay_state`|`uint8`|-|导航回放状态：`0=REPLAY_IDLE`、`1=REPLAY_RUNNING`、`2=REPLAY_FINISHED`。重要！！！通过这个数据去筛选小车自己跑的片段！|
 |14|`err_degree`|`float32`|°|导航/特殊任务给底盘的预期转向控制量。|
 |15|`minefield_is_active`|`uint8`|-|雷区状态机是否运行，`Minefield_Is_Active()` 返回值。|
 |16|`g_special_action_trigger`|`uint8`|-|导航特殊动作接管开关；非 0 表示特殊任务接管导航。|
