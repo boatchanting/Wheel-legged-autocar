@@ -363,12 +363,32 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
             #endif
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+                euler_angle.yaw,
+                -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),
+                (float)motor_value.receive_left_speed_data,
+                (float)motor_value.receive_right_speed_data,
+                filtered_gyro_z * 0.0174532925f
+            );
+            #endif
             #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
             
             InertialNav_Update(
             euler_angle.yaw,                                 // 当前偏航角
             9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
             9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
+            (float)motor_value.receive_left_speed_data,
+            (float)motor_value.receive_right_speed_data,
+            filtered_gyro_z * 0.0174532925f
+            );
+            #endif
+            #if IMU_CATEGORY == 3 &&CAR_SELECT == 4//imu963ra，小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+            euler_angle.yaw,
+            9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x),
+            9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y),
             (float)motor_value.receive_left_speed_data,
             (float)motor_value.receive_right_speed_data,
             filtered_gyro_z * 0.0174532925f
@@ -718,11 +738,17 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = -imu_data.gyro_y * 57.2957795f;
+    #endif
     #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号
     #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = imu_data.gyro_x * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
+    #endif
+    #if IMU_CATEGORY == 3&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = imu_data.gyro_x * 57.2957795f;
     #endif
 
     // 5.2 简单的低通滤波 (平滑噪声)

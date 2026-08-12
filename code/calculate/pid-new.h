@@ -418,8 +418,10 @@ extern volatile uint8 g_reverse_brake_active;
 #define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0034596f  /* current_actual_speed 到 m/s 的换算系数，CAR_SELECT 0 */
 #elif CAR_SELECT == 2
 #define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0051830f  /* current_actual_speed 到 m/s 的换算系数，CAR_SELECT 2 */
+#elif CAR_SELECT == 4
+#define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.004790f  /* current_actual_speed 到 m/s 的换算系数，小车4初版与小车3相同 */
 #else
-#define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.0049360f  /* current_actual_speed 到 m/s 的换算系数，其他车型默认值 */
+#define TURN_ACTIVE_ROLL_SPEED_TO_MPS      0.004790f  /* current_actual_speed 到 m/s 的换算系数，其他车型默认值 */
 #endif
 #define TURN_ACTIVE_ROLL_FORWARD_SPEED_SIGN (-1.0f)    /* 纵向速度符号修正：当前车前进时 current_actual_speed 为负 */
 #define TURN_ACTIVE_ROLL_GRAVITY_MPS2      9.80665f    /* 重力加速度，用于 atan2(a_lat, g) */

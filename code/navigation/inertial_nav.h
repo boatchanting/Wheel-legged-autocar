@@ -28,6 +28,13 @@
 #define SPEED_TO_MM_S       4.79f//大致为车轮半径
 #endif
 
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版参数与小车3相同，待实车标定
+
+#define NAV_DISTANCE_SCALE_FACTOR   1.0f // 小车4初版与小车3相同
+#define WHEEL_BASE_MM       175.0f  // 小车4轮距 (单位: mm)
+#define SPEED_TO_MM_S       4.79f//小车4初版与小车3相同
+#endif
+
 // --- 坐标系数据结构 ---
 typedef struct {
     // [输出] 世界坐标系下的位置 (单位: mm)

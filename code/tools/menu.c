@@ -30,6 +30,10 @@ float current_angles[4] = {0.0f, 0.0f, 0.0f, 0.0f};
 #define MENU_KEY_RIGHT              KEY_5
 #define MENU_KEY_ONE_CLICK_START    KEY_4
 #define MENU_HAS_ONE_CLICK_START    1
+#elif CAR_SELECT == 4
+#define MENU_KEY_RIGHT              KEY_5
+#define MENU_KEY_ONE_CLICK_START    KEY_4
+#define MENU_HAS_ONE_CLICK_START    1
 #else
 #define MENU_KEY_RIGHT              KEY_4
 #define MENU_HAS_ONE_CLICK_START    0

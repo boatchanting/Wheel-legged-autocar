@@ -78,8 +78,10 @@ uint8 g_plan1_fast_uturn_lead = 0U;
 #define NAV_REPLAY_SPEED_TO_MPS             0.0034596f
 #elif CAR_SELECT == 2
 #define NAV_REPLAY_SPEED_TO_MPS             0.0051830f
+#elif CAR_SELECT == 4
+#define NAV_REPLAY_SPEED_TO_MPS             0.004790f /* 小车4初版与小车3相同 */
 #else
-#define NAV_REPLAY_SPEED_TO_MPS             0.0049360f
+#define NAV_REPLAY_SPEED_TO_MPS             0.004790f
 #endif
 #endif
 #ifndef NAV_REPLAY_BRAKE_RELEASE_MARGIN_MPS
