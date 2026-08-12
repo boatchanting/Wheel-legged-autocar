@@ -200,6 +200,55 @@ static void load_jump_profile(JumpType_e type, float current_height)
             break;
            
         #endif
+
+        #if CAR_SELECT == 4 // 4代表 【小车4】 初版参数与小车3相同，待实车标定
+        // 小车4跳跃参数初版完整复用小车3；后续调参只修改本分支。
+        case JUMP_TYPE_HURDLE: // 【跨杆模式】
+             // === 时间轴参数 (ms) ===
+            // 滞空时间与高度的平方根成正比，高度减半，总时间约缩短 25%~30%
+            g_jump_profile.t_launch = 80;        // 行程变短，起跳发力时间相应减少 (原100)
+            g_jump_profile.t_flight = 150;       // 腾空时间变短，提前结束空中姿态 (原200)
+            g_jump_profile.t_landing = 170;      // 落地伸腿准备时间保持20ms左右 (原220)
+            g_jump_profile.t_recovery = 230;     // 冲击力小了，恢复时间可以缩短 (原280)
+            
+            // === 动作幅度参数 (Duty Offset) ===
+            // 由于机器人自重和机械损耗，占空比直接减半可能导致离不开地，所以取一半偏上
+            g_jump_profile.offset_launch = 1500; // 起跳推力：约为原推力(2700)的一半多一点
+            g_jump_profile.offset_flight = -800; // 空中收腿：跳得低，不需要大幅度收腿 (原-1500)
+            g_jump_profile.offset_land = 1000;   // 落地缓冲：下落冲击力小，伸腿幅度减小 (原1700)
+            
+            // === 姿态与其他 ===
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
+            g_jump_profile.post_jump_height = current_height; 
+            break;
+            
+        case JUMP_TYPE_STEP_UP: // 【上台阶模式】
+            g_jump_profile.t_launch = 90;
+            g_jump_profile.t_flight = 100;
+            g_jump_profile.t_landing = 130;
+            g_jump_profile.t_recovery = 1500;
+            g_jump_profile.offset_launch = 3000; 
+            g_jump_profile.offset_flight = -1000;
+            g_jump_profile.offset_land = 1700;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
+            g_jump_profile.post_jump_height = current_height;// 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
+            break;
+            
+        case JUMP_TYPE_NORMAL: // 【普通平地跳】
+        default:
+            g_jump_profile.t_launch = 110;
+            g_jump_profile.t_flight = 160;
+            g_jump_profile.t_landing = 220;
+            g_jump_profile.t_recovery = 220;
+            g_jump_profile.offset_launch = 3000; 
+            g_jump_profile.offset_flight = -200;
+            g_jump_profile.offset_land = 500;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
+            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            break;
+           
+        #endif
+
     }
     
     // 同步更新动量轮的控制目标
