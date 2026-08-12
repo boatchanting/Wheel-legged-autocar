@@ -29,6 +29,12 @@
 
 #define WIFI_TX_BUFFER_SIZE     256
 
+/* Telemetry payload layout (little-endian, 108 bytes):
+ * loop, nav/fusion position and body velocity, heading, relative yaw,
+ * marker fields, control flags, replay status, state-machine flags,
+ * Euler/IMU values, then RF/RR/LF/LR servo angles. */
+#define WIFI_TELEMETRY_PAYLOAD_SIZE  108U
+
 // Send telemetry frame to host
 void wifi_protocol_send_data(void);
 

@@ -36,6 +36,8 @@ input{width:108px}
 .box{border:1px solid var(--bd);border-radius:8px;padding:8px}
 .box h3{margin:0 0 8px;font-size:14px}
 .kv{display:grid;grid-template-columns:88px 1fr;gap:5px;font-size:12px}
+.debug-kv{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px 12px;font-size:12px}
+.debug-kv div:nth-child(odd){color:var(--muted)}
 .k{color:var(--muted)}
 .ops{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;align-items:center}
 .table-wrap{flex:1;min-height:0;overflow:auto;border:1px solid var(--bd);border-radius:8px}
@@ -66,8 +68,6 @@ tr.sel{background:#eaf2ff}
       <button id="bTraceMenu">轨迹 ▾</button>
       <div class="trace-menu">
         <label><input id="traceIns" type="checkbox" checked />惯导轨迹</label>
-        <label><input id="traceGps" type="checkbox" />GPS轨迹</label>
-        <label><input id="traceFusion" type="checkbox" />融合轨迹</label>
       </div>
     </div>
     <button id="bAdaptive">自适应视角</button>
@@ -106,6 +106,19 @@ tr.sel{background:#eaf2ff}
         <div id="txState" class="tag warn">尚未回传</div>
       </div>
     </div>
+    <div class="box">
+      <h3>运行调试</h3>
+      <div class="debug-kv">
+        <div>回放状态</div><div id="dbgReplay">-</div>
+        <div>导航点类型</div><div id="dbgNavPoint">-</div>
+        <div>转向预期</div><div id="dbgErrDegree">-</div>
+        <div>特殊动作</div><div id="dbgSpecial">-</div>
+        <div>状态机</div><div id="dbgTasks">-</div>
+        <div>欧拉角 R/P/Y</div><div id="dbgEuler">-</div>
+        <div>舵机 RF/RR</div><div id="dbgServoFront">-</div>
+        <div>舵机 LF/LR</div><div id="dbgServoRear">-</div>
+      </div>
+    </div>
     <div class="box" style="display:flex;flex-direction:column;min-height:0;flex:1">
       <h3>标记点列表</h3>
       <div class="table-wrap">
@@ -142,7 +155,7 @@ const HOST_CTRL_START_CAR=2;
     const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
     const TRACE_STYLE={ins:{line:'#2f6fed',point:'#114da5'},gps:{line:'#16a34a',point:'#0f7a37'},fusion:{line:'#8b5cf6',point:'#6d28d9'}};
     // 在 E 元素绑定中加入 vxBody 节点映射
-    const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,traceGps:traceGps,traceFusion:traceFusion,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bStartLog:bStartLog,bStopLog:bStopLog,logState:logState,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpHeading:inpHeading,toast:toast};
+    const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bStartLog:bStartLog,bStopLog:bStopLog,logState:logState,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpHeading:inpHeading,toast:toast,dbgReplay:dbgReplay,dbgNavPoint:dbgNavPoint,dbgErrDegree:dbgErrDegree,dbgSpecial:dbgSpecial,dbgTasks:dbgTasks,dbgEuler:dbgEuler,dbgServoFront:dbgServoFront,dbgServoRear:dbgServoRear};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -152,7 +165,7 @@ let txStatusTimer=null;
     function traceColor(kind,point){const style=TRACE_STYLE[kind]||TRACE_STYLE.ins;if(kind==='ins'&&point){const mode=Number(point.pid_mode)||0;if(mode===1)return '#ef4444';if(mode===2)return '#eab308'}return style.line}
     function tracePointColor(kind){const style=TRACE_STYLE[kind]||TRACE_STYLE.ins;return style.point}
     function addTracePoint(kind,x,y,meta){if(!S.traces[kind])S.traces[kind]=[];const pt={x:Number(x),y:Number(y)};if(meta&&Number.isFinite(meta.pid_mode))pt.pid_mode=Number(meta.pid_mode);if(meta&&Number.isFinite(meta.slip_flag))pt.slip_flag=Number(meta.slip_flag);S.traces[kind].push(pt);if(S.traces[kind].length>S.maxTraj)S.traces[kind].splice(0,S.traces[kind].length-S.maxTraj);if(kind==='ins')S.traj=S.traces.ins;return pt}
-    function syncTraceControls(){E.traceIns.checked=!!S.traceVisible.ins;E.traceGps.checked=!!S.traceVisible.gps;E.traceFusion.checked=!!S.traceVisible.fusion;E.bTraceMenu.classList.toggle('active',traceVisibleKinds().length>0)}
+    function syncTraceControls(){E.traceIns.checked=!!S.traceVisible.ins;E.bTraceMenu.classList.toggle('active',traceVisibleKinds().length>0)}
     function setTraceVisible(kind,visible){S.traceVisible[kind]=!!visible;syncTraceControls();draw()}
     function clampType(v){v=Math.round(Number(v));return TYPES.some(t=>t.value===v)?v:0}
 function normalizeYaw(v){v=Number(v);if(!Number.isFinite(v))return 0;while(v>180)v-=360;while(v<=-180)v+=360;return v}
@@ -182,6 +195,8 @@ function axis(w,h){const c=center();ctx.strokeStyle='#b7cadf';ctx.lineWidth=1.2;
     function draw(){const s=size();ctx.clearRect(0,0,s.w,s.h);grid(s.w,s.h);axis(s.w,s.h);drawTraces();drawMarks()}
 // 渲染 vxBody 内容
 function syncTop(){E.fps.textContent='FPS:'+S.fps;E.trajN.textContent='轨迹:'+S.traj.length;E.markN.textContent='标记:'+S.marks.length;E.payload.textContent='Payload:'+S.payload;E.vxBody.textContent='Vx:'+S.vx_body}
+function fmt(v,d=2){const n=Number(v);return Number.isFinite(n)?n.toFixed(d):'-'}
+function syncDebug(it){if(!it)return;E.dbgReplay.textContent=String(it.g_replay_state??'-');E.dbgNavPoint.textContent=String(it.nav_replay_point_type??'-');E.dbgErrDegree.textContent=fmt(it.err_degree)+'°';E.dbgSpecial.textContent=String(it.g_special_action_trigger??'-');E.dbgTasks.textContent=`雷${Number(it.minefield_is_active)||0} 颠${Number(it.bumpy_road_is_active)||0} 桥${Number(it.vision_bridge_task_is_active)||0} 坡${Number(it.vision_slope_task_is_active)||0} 跳${Number(it.vision_three_stage_control_is_active)||0}`;E.dbgEuler.textContent=`${fmt(it.euler_roll)}/${fmt(it.euler_pitch)}/${fmt(it.euler_yaw)}`;E.dbgServoFront.textContent=`${fmt(it.servo_angle_rf,1)}/${fmt(it.servo_angle_rr,1)}`;E.dbgServoRear.textContent=`${fmt(it.servo_angle_lf,1)}/${fmt(it.servo_angle_lr,1)}`}
 function syncSel(){const m=getSel();if(!m){E.si.textContent='-';E.sx.textContent='-';E.sy.textContent='-';E.syaw.textContent='-';E.sheading.textContent='-';E.ss.textContent='-';fillType(E.selType,0);E.inpHeading.value='';return}const idx=S.marks.findIndex(v=>v.id===m.id);E.si.textContent=String(idx);E.sx.textContent=m.x.toFixed(1);E.sy.textContent=m.y.toFixed(1);E.syaw.textContent=markerYaw(idx).toFixed(1);E.sheading.textContent=m.heading.toFixed(1);E.ss.textContent=m.src;fillType(E.selType,m.type);E.inpHeading.value=m.heading.toFixed(1)}
 function syncRows(){E.rows.innerHTML=S.marks.map((m,i)=>{const opts=TYPES.map(t=>`<option value="${t.value}" ${m.type===t.value?'selected':''}>${t.value}</option>`).join('');return `<tr class="${m.id===S.sel?'sel':''}"><td>${i}</td><td>${m.x.toFixed(0)}</td><td>${m.y.toFixed(0)}</td><td>${markerYaw(i).toFixed(1)}</td><td>${m.heading.toFixed(1)}</td><td><select class="rt" data-id="${m.id}">${opts}</select></td><td><button class="rf" data-id="${m.id}">选中</button><button class="rd" data-id="${m.id}">删</button></td></tr>`}).join('');E.rows.querySelectorAll('.rf').forEach(b=>b.onclick=()=>{S.sel=Number(b.dataset.id);syncMarks();draw()});E.rows.querySelectorAll('.rd').forEach(b=>b.onclick=()=>{const id=Number(b.dataset.id);S.marks=S.marks.filter(v=>v.id!==id);if(S.sel===id)S.sel=S.marks.length?S.marks[S.marks.length-1].id:null;syncMarks();draw()});E.rows.querySelectorAll('.rt').forEach(s=>s.onchange=()=>{const id=Number(s.dataset.id);const m=S.marks.find(v=>v.id===id);if(!m)return;m.type=clampType(s.value);syncMarks();draw()})}
 function syncMarks(){syncTop();syncSel();syncRows()}
@@ -200,19 +215,12 @@ async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pyweb
           S.last={x,y,loop:Number(it.loop)||0,pt:clampType(it.point_type||0),heading:hdg,relative_yaw:rawYaw,pid_mode:pid_mode,slip_flag:slip_flag};
           addTracePoint('ins',x,y,{pid_mode:pid_mode,slip_flag:slip_flag})
         }
-        if(Number(it.gps_valid)&&Number(it.gps_origin_set)){
-          const gx=Number(it.gps_x),gy=Number(it.gps_y);
-          if(Number.isFinite(gx)&&Number.isFinite(gy))addTracePoint('gps',gx,gy)
-        }
-        if(Number(it.fusion_valid)){
-          const fx=Number(it.fusion_x),fy=Number(it.fusion_y);
-          if(Number.isFinite(fx)&&Number.isFinite(fy))addTracePoint('fusion',fx,fy)
-        }
         const trig=Number(it.mark_trigger)||0;
         if(trig===1&&S.lastTrigger===0&&S.last){addMark(S.last.x,S.last.y,it.point_type||0,'device',hdg,rawYaw);S.lastMarkLoop=Number(it.loop)||0}
         S.lastTrigger=trig;
         S.payload=it.payload_size||'--';
         S.vx_body=it.vx_body!=null?Number(it.vx_body).toFixed(3):'--';
+        syncDebug(it);
       }
       S.traj=S.traces.ins;
       S.rx+=frames.length;S.lastDataAt=performance.now();
@@ -229,8 +237,6 @@ function updateSelectedHeading(){const m=getSel();if(!m)return;const raw=Number(
     fillType(E.selType,0);
     syncTraceControls();
     E.traceIns.onchange=()=>setTraceVisible('ins',E.traceIns.checked);
-    E.traceGps.onchange=()=>setTraceVisible('gps',E.traceGps.checked);
-    E.traceFusion.onchange=()=>setTraceVisible('fusion',E.traceFusion.checked);
     E.selType.onchange=()=>{const m=getSel();if(!m)return;m.type=clampType(E.selType.value);syncRows();draw()};
 E.inpHeading.onchange=updateSelectedHeading;
 E.bFollow.onclick=()=>{V.follow=!V.follow;E.bFollow.classList.toggle('active',V.follow);if(V.follow){follow();draw()}};

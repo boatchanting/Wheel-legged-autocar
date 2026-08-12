@@ -27,51 +27,49 @@ HOST_ACK_UNKNOWN_CMD = 0x02
 HOST_ACK_INVALID_PAYLOAD = 0x03
 HOST_ACK_TIMEOUT_SEC = 1.5
 
-PAYLOAD_SIZE_V1 = 84
-PAYLOAD_SIZE_V2 = 86
-PAYLOAD_CTRL_BYTES = 3
-PAYLOAD_DEBUG_BYTES = 20
-PAYLOAD_NAV_DIAG_BYTES = 100
-PAYLOAD_SIZE_CTRL = PAYLOAD_SIZE_V2 + PAYLOAD_CTRL_BYTES
-PAYLOAD_SIZE_CTRL_DEBUG = PAYLOAD_SIZE_CTRL + PAYLOAD_DEBUG_BYTES
-PAYLOAD_SIZE_CTRL_NAV_DIAG = PAYLOAD_SIZE_CTRL_DEBUG + PAYLOAD_NAV_DIAG_BYTES
+PAYLOAD_SIZE_V3 = 108
+STRUCT_FMT_V3 = "<I6f6Bf6B16f"
 
-STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
-
-FIELD_NAMES_V1 = [
+# Protocol V3 removes the GNSS segment.  All values below are in the exact
+# wire order emitted by code/tools/wifi_protocol.c.
+FIELD_NAMES_V3 = [
     "loop",
     "nav_x",
     "nav_y",
     "vx_body",
     "vy_body",
-    "year",
-    "month",
-    "day",
-    "hour",
-    "minute",
-    "second",
-    "state",
-    "lat_deg",
-    "lat_cent",
-    "lat_sec",
-    "lon_deg",
-    "lon_cent",
-    "lon_sec",
-    "latitude",
-    "longitude",
-    "ns",
-    "ew",
-    "speed",
-    "direction",
-    "ant_state",
-    "ant_direction",
-    "sat_used",
-    "height",
     "heading",
     "relative_yaw",
+    "mark_trigger",
+    "point_type",
+    "pid_mode",
+    "slip_flag",
+    "nav_replay_point_type",
+    "g_replay_state",
+    "err_degree",
+    "minefield_is_active",
+    "g_special_action_trigger",
+    "bumpy_road_is_active",
+    "vision_bridge_task_is_active",
+    "vision_slope_task_is_active",
+    "vision_three_stage_control_is_active",
+    "euler_roll",
+    "euler_pitch",
+    "euler_yaw",
+    "imu_acc_x",
+    "imu_acc_y",
+    "imu_acc_z",
+    "imu_gyro_x",
+    "imu_gyro_y",
+    "imu_gyro_z",
+    "imu_grav_x",
+    "imu_grav_y",
+    "imu_grav_z",
+    "servo_angle_rf",
+    "servo_angle_rr",
+    "servo_angle_lf",
+    "servo_angle_lr",
 ]
-
-FIELD_NAMES_V2 = FIELD_NAMES_V1 + ["mark_trigger", "point_type"]
 
 # CSV 包含每个已解析字段；payload_hex 保留 WiFi 收到的完整原始载荷，
 # 因此即使后续固件在尾部增加字段，记录文件也不会丢失数据。
@@ -80,49 +78,7 @@ WIFI_LOG_FIELD_NAMES = [
     "received_at",
     "payload_hex",
     "payload_size",
-    "time_str",
-] + FIELD_NAMES_V2 + [
-    "pid_mode",
-    "slip_flag",
-    "minefield_is_active",
-    "target_speed",
-    "speed_L",
-    "speed_R",
-    "theoretical_yaw_rate",
-    "actual_yaw_rate",
-    "nav_replay_state",
-    "nav_special_action_trigger",
-    "nav_current_point_type",
-    "nav_special_target_idx",
-    "nav_special_target_x",
-    "nav_special_target_y",
-    "nav_special_dist_mm",
-    "nav_special_brake_radius_mm",
-    "nav_special_speed_ref_mm_s",
-    "nav_special_zero_brake_issued",
-    "nav_special_zero_brake_active",
-    "nav_special_crawl_active",
-    "nav_special_prep_zero_latched",
-    "brake_ff_pwm",
-    "accel_ff_pwm",
-    "motor_enable",
-    "fallen",
-    "remote_brake_active",
-    "remote_reverse_brake_active",
-    "minefield_accumulated_angle",
-    "minefield_angle_cmd",
-    "minefield_feedforward_speed",
-    "minefield_current_speed_cmd",
-    "minefield_stall_elapsed_s",
-    "minefield_spin_abort_reason",
-    "gps_x",
-    "gps_y",
-    "gps_valid",
-    "gps_origin_set",
-    "fusion_x",
-    "fusion_y",
-    "fusion_valid",
-]
+] + FIELD_NAMES_V3
 
 MAX_HISTORY = 20000
 MAX_NEW_BUFFER = 4000
@@ -368,110 +324,16 @@ def _estimate_start_heading():
     return best_heading
 
 
-def _resolve_trace_layout(size):
-    return {
-        "has_ctrl": size >= PAYLOAD_SIZE_CTRL,
-        "has_debug": size >= PAYLOAD_SIZE_CTRL_DEBUG,
-        "has_nav_diag": size >= PAYLOAD_SIZE_CTRL_NAV_DIAG,
-        "ctrl_base": PAYLOAD_SIZE_V2,
-        "debug_base": PAYLOAD_SIZE_CTRL,
-        "nav_diag_base": PAYLOAD_SIZE_CTRL_DEBUG,
-    }
-
-
 def _decode_payload(payload_bytes):
     size = len(payload_bytes)
 
-    if size < PAYLOAD_SIZE_V1:
+    if size != PAYLOAD_SIZE_V3:
         return None
 
-    # 兼容扩展 payload：基础字段始终按 V1 解析，后续字段按可用字节补齐。
-    unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes[:PAYLOAD_SIZE_V1])
-    data = dict(zip(FIELD_NAMES_V1, unpacked))
-    layout = _resolve_trace_layout(size)
-
-    if size >= PAYLOAD_SIZE_V2:
-        data["mark_trigger"] = payload_bytes[PAYLOAD_SIZE_V1]
-        data["point_type"] = payload_bytes[PAYLOAD_SIZE_V1 + 1]
-    else:
-        data["mark_trigger"] = 0
-        data["point_type"] = 0
-
-    if layout["has_ctrl"]:
-        ctrl_base = layout["ctrl_base"]
-        data["pid_mode"] = payload_bytes[ctrl_base]
-        data["slip_flag"] = payload_bytes[ctrl_base + 1]
-        data["minefield_is_active"] = payload_bytes[ctrl_base + 2]
-    else:
-        data["pid_mode"] = None
-        data["slip_flag"] = None
-        data["minefield_is_active"] = None
-
-    debug_fields = [
-        "target_speed",
-        "speed_L",
-        "speed_R",
-        "theoretical_yaw_rate",
-        "actual_yaw_rate",
-    ]
-    if layout["has_debug"]:
-        debug_values = struct.unpack(
-            "<5f",
-            payload_bytes[layout["debug_base"] : layout["debug_base"] + PAYLOAD_DEBUG_BYTES],
-        )
-        data.update(zip(debug_fields, debug_values))
-    else:
-        data.update({field: None for field in debug_fields})
-
-    nav_diag_fields = [
-        "nav_replay_state",
-        "nav_special_action_trigger",
-        "nav_current_point_type",
-        "nav_special_target_idx",
-        "nav_special_target_x",
-        "nav_special_target_y",
-        "nav_special_dist_mm",
-        "nav_special_brake_radius_mm",
-        "nav_special_speed_ref_mm_s",
-        "nav_special_zero_brake_issued",
-        "nav_special_zero_brake_active",
-        "nav_special_crawl_active",
-        "nav_special_prep_zero_latched",
-        "brake_ff_pwm",
-        "accel_ff_pwm",
-        "motor_enable",
-        "fallen",
-        "remote_brake_active",
-        "remote_reverse_brake_active",
-        "minefield_accumulated_angle",
-        "minefield_angle_cmd",
-        "minefield_feedforward_speed",
-        "minefield_current_speed_cmd",
-        "minefield_stall_elapsed_s",
-        "minefield_spin_abort_reason",
-    ]
-    if layout["has_nav_diag"]:
-        nav_diag_values = struct.unpack(
-            "<25f",
-            payload_bytes[
-                layout["nav_diag_base"] : layout["nav_diag_base"] + PAYLOAD_NAV_DIAG_BYTES
-            ],
-        )
-        data.update(zip(nav_diag_fields, nav_diag_values))
-    else:
-        data.update({field: None for field in nav_diag_fields})
-
-    # This firmware revision does not append GPS/fusion traces after V2.
-    data["gps_x"] = None
-    data["gps_y"] = None
-    data["gps_valid"] = 0
-    data["gps_origin_set"] = 0
-    data["fusion_x"] = None
-    data["fusion_y"] = None
-    data["fusion_valid"] = 0
+    unpacked = struct.unpack(STRUCT_FMT_V3, payload_bytes)
+    data = dict(zip(FIELD_NAMES_V3, unpacked))
 
     data["payload_size"] = size
-    data["time_str"] = f"{data['hour']:02d}:{data['minute']:02d}:{data['second']:02d}"
     return data
 
 
