@@ -123,7 +123,15 @@
 //2026/1/31新车所用引脚结束
 #endif
 
-// 如果使用的是八位并口的两寸屏幕 并口驱动控制引脚 可以修改
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版引脚与小车3相同，待实车标定
+//【小车4】屏幕 SPI 控制引脚
+#define IPS200_RST_PIN_SPI              (P12_5)
+#define IPS200_DC_PIN_SPI               (P12_4)
+#define IPS200_CS_PIN_SPI               (P12_3)
+#define IPS200_BLk_PIN_SPI              (P11_0)
+#endif
+
+// 如果使用的是八位并口的两寸屏幕 并口驱动控制引脚 可以修改
 #define IPS200_RD_PIN_PARALLEL8         (P12_2)                                 // (八位并口)液晶读取位引脚定义
 #define IPS200_WR_PIN_PARALLEL8         (P12_1)                                 // (八位并口)液晶写入位引脚定义
 #define IPS200_RST_PIN_PARALLEL8        (P22_3)                                 // (八位并口)液晶复位引脚定义

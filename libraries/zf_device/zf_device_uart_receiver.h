@@ -68,7 +68,15 @@
 #endif
 
 
-#define UART_RECEVIER_COUNTER               (TC_TIME2_CH2)      // 定义遥控器接受间隔计数器通道
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版引脚与小车3相同，待实车标定
+
+// *************************** 【小车4】硬件引脚定义开始 ***************************
+#define UART_RECEVIER_RX_PIN               UART1_RX_P04_0      // 串口接收机的TX引脚 连接单片机的RX引脚
+// *************************** 【小车4】硬件引脚定义结束***************************
+
+#endif
+
+#define UART_RECEVIER_COUNTER               (TC_TIME2_CH2)      // 定义遥控器接受间隔计数器通道
 #define SBUS_UART_BAUDRATE                  (100000)            // 指定 SBUS 串口所使用的的串口波特率 (用户不可修改)
 #define UART_RECEVIER_CHANNEL_NUM           ( 6 )               // 定义遥控器通道数量 (用户不可修改)器通道数量 (用户不可修改)
 
