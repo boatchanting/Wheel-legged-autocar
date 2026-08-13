@@ -149,6 +149,7 @@ def find_latest_marker_csv(script_dir: Path) -> Path:
     candidates = [
         path for path in script_dir.glob("nav_mark_points_*.csv")
         if not path.stem.endswith("_planned")
+        and len(path.stem[len("nav_mark_points_"):]) == 15  # 新增：严格校验时间戳部分长度为15
     ]
     if not candidates:
         raise FileNotFoundError(f"{script_dir} 中没有原始 nav_mark_points_*.csv。")
