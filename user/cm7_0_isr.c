@@ -44,6 +44,7 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_slope_control.h"
 #include "vision/vision_three_stage_control.h"
+#include "servo/servo.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
 
@@ -79,10 +80,17 @@ static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于�
 static uint16 profile_switch_beep_ticks = 0U;      // 复刻PID切换蜂鸣剩余时间，1ms 递减
 static uint16 minefield_beep_ticks = 0U;           // 自转结束蜂鸣剩余时间，1ms 递减
 static uint8_t minefield_was_coasting = 0U;
+static uint8_t minefield_was_active = 0U;
+static uint16 minefield_turn_handoff_ticks = 0U;
+static float minefield_saved_servo_height = 0.0f;
+static uint8_t minefield_height_restore_pending = 0U;
 static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
 #define FALLEN_STANDUP_GRACE_MS (1500U)
+#define MINEFIELD_TURN_HANDOFF_MS (120U)
+#define MINEFIELD_SERVO_HEIGHT (3.0f)
+#define MINEFIELD_TURN_PWM_LIMIT (6500.0f)
 
 #if IMU_REFRESH_TEST_ENABLE
 #define IMU_REFRESH_TEST_TIME_MS (10000U)
@@ -364,12 +372,32 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
             #endif
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+                euler_angle.yaw,
+                -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),
+                (float)motor_value.receive_left_speed_data,
+                (float)motor_value.receive_right_speed_data,
+                filtered_gyro_z * 0.0174532925f
+            );
+            #endif
             #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
             
             InertialNav_Update(
             euler_angle.yaw,                                 // 当前偏航角
             9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
             9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
+            (float)motor_value.receive_left_speed_data,
+            (float)motor_value.receive_right_speed_data,
+            filtered_gyro_z * 0.0174532925f
+            );
+            #endif
+            #if IMU_CATEGORY == 3 &&CAR_SELECT == 4//imu963ra，小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+            euler_angle.yaw,
+            9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x),
+            9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y),
             (float)motor_value.receive_left_speed_data,
             (float)motor_value.receive_right_speed_data,
             filtered_gyro_z * 0.0174532925f
@@ -461,6 +489,27 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次，现改为9ms)
     // ==========================================================
+    if (Minefield_Is_Active() != 0U)
+    {
+        if (minefield_height_restore_pending == 0U)
+        {
+            minefield_saved_servo_height = servo_height;
+            minefield_height_restore_pending = 1U;
+        }
+
+        // 雷区由自身接管车身高度；退出后立即归还给原有规划状态机。
+        servo_height = MINEFIELD_SERVO_HEIGHT;
+        // 清除入区前的纵向前馈，给俯仰平衡环保留转向 PWM 余量。
+        Brake_Feedforward_Reset();
+        Accel_Feedforward_Reset();
+    }
+    else if (minefield_height_restore_pending != 0U)
+    {
+        // 雷区结束后恢复入区前高度；舵机执行器按自身斜率限制平滑回位。
+        servo_height = minefield_saved_servo_height;
+        minefield_height_restore_pending = 0U;
+    }
+
     if(g_is_push_mode==0)
     {  
 
@@ -473,6 +522,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
+            if ((jump_flag != 0U) || (Minefield_Is_Active() != 0U))
+            {
+                /* 【跳跃冻结速度环 2026-08-12】
+                 * 跳跃期间速度环不参与控制：
+                 * 1) 跳过 Servo_Speed_Control 计算——跳跃中轮子空转，速度误差巨大，
+                 *    若继续计算会把 g_target_pwm_speed_adj 顶到限幅并污染 PID 状态；
+                 * 2) 清零速度环运行态（含输入滤波），跳跃结束后从干净状态起步，D 项无突跳；
+                 * 3) g_target_pwm_speed_adj 归零——跳跃结束后 servo_executor_update 的
+                 *    目标=基础身高(平衡态)，与跳跃恢复位置一致，关节舵机不乱动。 */
+                Servo_Speed_Control_Reset();
+                g_target_pwm_speed_adj = 0;
+            }
+            else
+            {
             // 2.2 全局刹车前馈
             uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
             if ((Minefield_Is_Active() != 0U) || (g_special_action_trigger != 0U))
@@ -560,6 +623,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 }
             }
             g_target_pwm_speed_adj = (int16)duty_adjustment;
+            } /* end if (jump_flag == 0) */
         }
     }
     else if(g_is_push_mode==1)
@@ -679,14 +743,23 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;
+        uint8_t minefield_active = Minefield_Is_Active();
         
-        if (Minefield_Is_Active()) 
+        if (minefield_active != 0U)
         {
             final_turn_cmd = spin_cmd; // 使用平滑的旋转指令
+            minefield_was_active = 1U;
+            minefield_turn_handoff_ticks = 0U;
         }
         else
         {
             final_turn_cmd = turn_angle_loop_out; // 使用正常的PID外环指令
+            if (minefield_was_active != 0U)
+            {
+                Turn_Gyro_Loop_Reset();
+                minefield_was_active = 0U;
+                minefield_turn_handoff_ticks = MINEFIELD_TURN_HANDOFF_MS;
+            }
         }
         //==================== [雷区旋转调用结束] =================
         // 将雷区旋转指令或者正常转向角速度指令送入内环PID
@@ -707,6 +780,22 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 minefield_was_coasting = 0U;
             }
             turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+            if (minefield_active != 0U)
+            {
+                // 雷区转向最多占用 6500 PWM，预留 1500 PWM 给俯仰平衡及纵向补偿。
+                turn_gyro_loop_out = Float_Constrain(turn_gyro_loop_out,
+                                                      -MINEFIELD_TURN_PWM_LIMIT,
+                                                      MINEFIELD_TURN_PWM_LIMIT);
+            }
+            if (minefield_turn_handoff_ticks != 0U)
+            {
+                float handoff_weight = (float)(MINEFIELD_TURN_HANDOFF_MS - minefield_turn_handoff_ticks) /
+                                       (float)MINEFIELD_TURN_HANDOFF_MS;
+
+                // 雷区余旋尚未消失时，逐步把正常转向环交还给底盘，避免反向 PWM 突跳。
+                turn_gyro_loop_out *= handoff_weight;
+                minefield_turn_handoff_ticks--;
+            }
         }
     }
 
@@ -721,11 +810,17 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = -imu_data.gyro_y * 57.2957795f;
+    #endif
     #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号
     #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = imu_data.gyro_x * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
+    #endif
+    #if IMU_CATEGORY == 3&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = imu_data.gyro_x * 57.2957795f;
     #endif
 
     // 5.2 简单的低通滤波 (平滑噪声)
