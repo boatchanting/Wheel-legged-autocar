@@ -46,11 +46,7 @@ typedef enum
 #define VISION_VALID_STAIR              (1U << 4)
 #define VISION_VALID_GRASS              (1U << 5)
 #define VISION_VALID_PROFILE            (1U << 6)
-
-#define VISION_BRIDGE_STATE_NONE          (0U)
-#define VISION_BRIDGE_STATE_PREPARE_ENTER (1U)
-#define VISION_BRIDGE_STATE_ON_BRIDGE     (2U)
-#define VISION_BRIDGE_STATE_PREPARE_EXIT  (3U)
+#define VISION_VALID_BRIDGE_V2          (1U << 7)   /* 新单边桥管线(bridge_detect)仲裁+中值滤波输出 */
 
 typedef struct
 {
@@ -120,40 +116,6 @@ typedef struct
     uint8 pvc_component_count;
     uint8 pvc_candidate_count;
 
-    /* bridge begin */
-    /* Single-bridge result. Coordinates are in the 94x60 camera image;
-     * -1 denotes an unavailable endpoint. */
-    uint8 bridge_detected;
-    uint8 bridge_stable_detected;
-    uint8 bridge_geometry_detected;
-    uint8 bridge_geometry_stable_detected;
-    uint8 bridge_state;
-    uint8 bridge_geometry_valid;
-    uint16 bridge_reserved0;
-
-    int16 bridge_left_line_x0;
-    int16 bridge_left_line_y0;
-    int16 bridge_left_line_x1;
-    int16 bridge_left_line_y1;
-    int16 bridge_right_line_x0;
-    int16 bridge_right_line_y0;
-    int16 bridge_right_line_x1;
-    int16 bridge_right_line_y1;
-    int16 bridge_down_line_x0;
-    int16 bridge_down_line_y0;
-    int16 bridge_down_line_x1;
-    int16 bridge_down_line_y1;
-    int16 bridge_up_line_x0;
-    int16 bridge_up_line_y0;
-    int16 bridge_up_line_x1;
-    int16 bridge_up_line_y1;
-    int16 bridge_center_line_x0;
-    int16 bridge_center_line_y0;
-    int16 bridge_center_line_x1;
-    int16 bridge_center_line_y1;
-
-    /* bridge end */
-
     /* Bumpy road start */
     uint8 bumpy_detected;
     float bumpy_direction_x;
@@ -174,6 +136,24 @@ typedef struct
     uint8 grass_start_seen;
     uint8 grass_end_seen;
     uint16 reserved0;
+
+    /* bridge V2 begin (C01: 新单边桥管线 bridge_detect 仲裁输出, 设计文档 §4.3;
+   2026-08-14 起数据源为 bridge_output_filter 中值滤波层, valid/source/mode/gate 直通, 线系数为窗内中值, has_top 经多帧门控) */
+    /* 控制线 x=a*y+b, 图像坐标 94x60; 定点 a×1000 b×100; 支撑 u_lo/u_hi 为 y 范围 */
+    uint8 b2_valid;              /* 本帧仲裁后控制线原始可信 (0=失能回锁角) */
+    uint8 b2_source;             /* 0=红蓝中点 1=绿线 2=失能 (诊断) */
+    uint8 b2_mode;               /* 原始 mode 0~8 (bridge_mode_t) */
+    uint8 b2_gate;               /* 底部变白锁存 */
+    uint8 b2_has_top;            /* 退出线有效 (需 gate=1) */
+    uint8 b2_line_u_lo;          /* 控制线支撑 y 下限 */
+    uint8 b2_line_u_hi;          /* 控制线支撑 y 上限 */
+    int16 b2_line_a_x1000;       /* 控制线斜率 a ×1000 */
+    int16 b2_line_b_x100;        /* 控制线截距 b ×100 */
+    int16 b2_top_a_x1000;        /* 退出线斜率 a ×1000 (横线 y=a*x+b) */
+    int16 b2_top_b_x100;         /* 退出线截距 b ×100 */
+    uint16 b2_spacing_x100;      /* 红蓝间距@y=55 ×100 (诊断) */
+    uint16 b2_mid_ratio_x1000;   /* 中线底间距比 ×1000 (诊断) */
+    /* bridge V2 end */
 
     uint32 reserved1;
     uint16 crc;

@@ -592,71 +592,33 @@ static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
 
 void render_bridge_vision_to_image(void)
 {
-    const volatile bridge_vision_output_t *bridge_out = bridge_vision_get_output();
-    bridge_vision_frame_result_t result;
+    const bridge_v2_arb_t *arb = bridge_output_filter_get();
 
-    if ((bridge_out->bridge_stable_detected != 0U) ||
-        (bridge_out->stable_detected != 0U))
+    /* 控制线: x = a*y + b (仲裁输出, 定点 a×1000 b×100), 支撑范围 u_lo..u_hi */
+    if (arb->valid != 0U)
     {
-        result = bridge_out->stable;
-    }
-    else
-    {
-        result = bridge_out->raw;
-    }
-
-    if ((result.left_line_x0 >= 0) && (result.left_line_y0 >= 0) &&
-        (result.left_line_x1 >= 0) && (result.left_line_y1 >= 0))
-    {
-        draw_line_on_image((int)result.left_line_x0,
-                           (int)result.left_line_y0,
-                           (int)result.left_line_x1,
-                           (int)result.left_line_y1,
-                           0U);
+        const int y0 = (int)arb->u_lo;
+        const int y1 = (int)arb->u_hi;
+        if (y1 > y0)
+        {
+            const int x0 = (int)(((float)arb->line_a_x1000 * (float)y0) / 1000.0f +
+                                 ((float)arb->line_b_x100) / 100.0f);
+            const int x1 = (int)(((float)arb->line_a_x1000 * (float)y1) / 1000.0f +
+                                 ((float)arb->line_b_x100) / 100.0f);
+            draw_line_on_image(x0, y0, x1, y1, 0U);
+            draw_cross_on_image(x1, y1, 2, 0U);
+        }
     }
 
-    if ((result.right_line_x0 >= 0) && (result.right_line_y0 >= 0) &&
-        (result.right_line_x1 >= 0) && (result.right_line_y1 >= 0))
+    /* 退出线: y = a*x + b (横线), has_top 时画 */
+    if (arb->has_top != 0U)
     {
-        draw_line_on_image((int)result.right_line_x0,
-                           (int)result.right_line_y0,
-                           (int)result.right_line_x1,
-                           (int)result.right_line_y1,
-                           0U);
-    }
-
-    if ((result.up_line_x0 >= 0) && (result.up_line_y0 >= 0) &&
-        (result.up_line_x1 >= 0) && (result.up_line_y1 >= 0))
-    {
-        draw_line_on_image((int)result.up_line_x0,
-                           (int)result.up_line_y0,
-                           (int)result.up_line_x1,
-                           (int)result.up_line_y1,
-                           0U);
-    }
-
-    if ((result.down_line_x0 >= 0) && (result.down_line_y0 >= 0) &&
-        (result.down_line_x1 >= 0) && (result.down_line_y1 >= 0))
-    {
-        draw_line_on_image((int)result.down_line_x0,
-                           (int)result.down_line_y0,
-                           (int)result.down_line_x1,
-                           (int)result.down_line_y1,
-                           0U);
-    }
-
-    /* 中线是控制真正使用的几何输出，最后单独强调画出来。 */
-    if (result.geometry_valid != 0U)
-    {
-        draw_line_on_image((int)result.center_line_x0,
-                           (int)result.center_line_y0,
-                           (int)result.center_line_x1,
-                           (int)result.center_line_y1,
-                           0U);
-        draw_cross_on_image((int)result.center_line_x1,
-                            (int)result.center_line_y1,
-                            2,
-                            0U);
+        const int x0 = 0;
+        const int x1 = (int)(PVC_IMAGE_W - 1);
+        const int y0 = (int)(((float)arb->top_b_x100) / 100.0f);
+        const int y1 = (int)(((float)arb->top_a_x1000 * (float)x1) / 1000.0f +
+                             ((float)arb->top_b_x100) / 100.0f);
+        draw_line_on_image(x0, y0, x1, y1, 0U);
     }
 }
 
