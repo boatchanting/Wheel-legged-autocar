@@ -46,6 +46,7 @@
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
+#include "tools/wifi_protocol.h"
 
 // 声明外部函数
 
@@ -912,6 +913,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             pwm_left = 0;
             pwm_right = 0;
         }
+
+        #if WIFI_CORE0_CUSTOM_PROTOCOL 
+        // 把数据传给wifi上位机
+        g_wifi_target_speed_set = target_speed_set;
+        g_wifi_speed_l = (float)motor_value.receive_left_speed_data;
+        g_wifi_speed_r = (float)motor_value.receive_right_speed_data;
+        g_wifi_pwm_left = (float)pwm_left;
+        g_wifi_pwm_right = (float)pwm_right;
+        #endif
+
         // 直接输出即可
         
          // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
@@ -983,11 +994,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     // 步骤 9: 系统心跳
     // ==========================================================
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==0
     if(loop_counter % 50 == 11) 
     {
         pit_state = 1; 
     }
-    
+    #endif
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==1 //wifi传日志时候100帧
+    if(loop_counter % 10 == 2) 
+    {
+        pit_state = 1; 
+    }
+    #endif
+
 }
 
 void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数      
