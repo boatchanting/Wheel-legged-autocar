@@ -57,6 +57,12 @@
 |34|`servo_angle_rr`|`float32`|°|右后（RR）舵机当前缓存角度。|
 |35|`servo_angle_lf`|`float32`|°|左前（LF）舵机当前缓存角度。|
 |36|`servo_angle_lr`|`float32`|°|左后（LR）舵机当前缓存角度。|
+|37|`target_speed_set`|`float32`|转/分|小车车机实时计算目标转速|
+|38|`speed_L`|`float32`|转/分|乘以4.79得到左轮速度mm/s，向前为正|
+|39|`speed_R`|`float32`|转/分|乘以4.79得到右轮速度mm/s，向前为负|
+|40|`pwm_left`|`float32`|-|左轮 PWM 占空比|
+|41|`pwm_right`|`float32`|-|右轮 PWM 占空比|
+
 
 ## 点类型取值
 
