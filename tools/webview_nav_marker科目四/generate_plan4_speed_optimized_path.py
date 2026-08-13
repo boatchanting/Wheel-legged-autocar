@@ -11,7 +11,7 @@ tools\webview_nav_marker科目四\nav_mark_points_{time}.csv
 """
 """
 使用的示例方法：
-PS generate_plan4_speed_optimized_path.py --step-sizes-mm 300,150,75,35 --sweeps-per-step 3
+直接运行脚本即可使用文件开头配置的搜索步长和扫描次数。
 """
 """对 Plan4 普通锚点做受约束优化，生成更平顺、更高速度的路径。
 
@@ -29,6 +29,8 @@ PS generate_plan4_speed_optimized_path.py --step-sizes-mm 300,150,75,35 --sweeps
 import argparse
 import csv
 import math
+import time
+from datetime import datetime
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Sequence
@@ -43,13 +45,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 # 普通点到下一个任务入口的距离超过 FULL 时，可以使用完整位移预算；
 # 在 LOCK 与 FULL 之间，位移预算线性增大。
-DEFAULT_MAX_OFFSET_MM = 600.0
-DEFAULT_ENTRY_LOCK_DISTANCE_MM = 800.0
-DEFAULT_ENTRY_FULL_OFFSET_DISTANCE_MM = 3000.0
+DEFAULT_MAX_OFFSET_MM = 600.0 #移动距离
+DEFAULT_ENTRY_LOCK_DISTANCE_MM = 800.0 #距离下一个入口800mm内轨迹点不允许移动
+DEFAULT_ENTRY_FULL_OFFSET_DISTANCE_MM = 3000.0 #距离下一个入口3000mm外轨迹点可以使用完整位移预算
 
 # 从粗到细的坐标下降步长。八方向搜索既避免偏向坐标轴，也能保证结果可复现。
-DEFAULT_STEP_SIZES_MM = (260.0, 130.0, 65.0)
-DEFAULT_SWEEPS_PER_STEP = 2
+# 优化搜索参数：从粗到细使用 240、120、60、30、15 mm 五级步长。
+# 每一级步长最多完整扫描所有可移动普通点 3 轮；一整轮没有改进时会提前结束。
+DEFAULT_STEP_SIZES_MM = (240.0, 120.0, 60.0, 30.0, 15.0)
+DEFAULT_SWEEPS_PER_STEP = 3
 EVALUATION_SAMPLE_STEP_MM = 75.0
 # 候选搜索只需保证评分相对一致，无需使用最终路表的 5 mm 稠密几何。
 # 优化结束后仍会恢复原脚本的稠密步长，重新生成最终路径。
@@ -217,9 +221,12 @@ def optimize_markers(
     if not movable_indices:
         raise ValueError("No type=0 marker has a non-zero optimization budget.")
 
+    # 每次尝试原地不动，以及 16 个等间隔方向（每 22.5 度一个方向）。
     directions = [(0.0, 0.0)]
-    directions.extend((math.cos(math.radians(degree)), math.sin(math.radians(degree)))
-                      for degree in range(0, 360, 45))
+    directions.extend(
+        (math.cos(math.radians(index * 22.5)), math.sin(math.radians(index * 22.5)))
+        for index in range(16)
+    )
     best_metrics, _, _, _, _ = evaluate_route(markers, originals, budgets)
     records: list[IterationRecord] = []
 
@@ -284,6 +291,32 @@ def write_optimized_markers(
                 "" if new.relative_yaw is None else f"{new.relative_yaw:.3f}",
                 "" if new.heading is None else f"{new.heading:.3f}",
                 f"{old.x:.3f}", f"{old.y:.3f}", f"{offset:.3f}", f"{budget:.3f}",
+            ])
+
+
+def write_nav_mark_points(
+    output: Path,
+    markers: Sequence[base.Marker],
+    start_heading: float | None,
+) -> None:
+    """按原始 nav_mark_points 格式保存优化后的锚点，便于再次作为输入使用。"""
+    total_count = len(markers)
+    with output.open("w", encoding="utf-8", newline="") as csv_file:
+        writer = csv.writer(csv_file)
+        writer.writerow([
+            "total_count", "start_heading", "index", "x", "y",
+            "relative_yaw", "heading", "point_type",
+        ])
+        for marker in markers:
+            writer.writerow([
+                total_count,
+                "" if start_heading is None else f"{start_heading:.6f}",
+                marker.order,
+                f"{marker.x:.3f}",
+                f"{marker.y:.3f}",
+                "" if marker.relative_yaw is None else f"{marker.relative_yaw:.3f}",
+                "" if marker.heading is None else f"{marker.heading:.3f}",
+                marker.point_type,
             ])
 
 
@@ -356,10 +389,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--entry-full-offset-distance-mm", type=float,
                         default=DEFAULT_ENTRY_FULL_OFFSET_DISTANCE_MM,
                         help="距下一个任务入口达到此值时使用完整偏移预算，默认 3000")
-    parser.add_argument("--step-sizes-mm", default=",".join(str(value) for value in DEFAULT_STEP_SIZES_MM),
-                        help="从粗到细的搜索步长列表，逗号分隔，默认 260,130,65")
-    parser.add_argument("--sweeps-per-step", type=int, default=DEFAULT_SWEEPS_PER_STEP,
-                        help="每个步长对所有可移动点完整扫描的次数，默认 2")
     parser.add_argument("--output-markers", type=Path, help="优化后锚点 CSV 输出路径")
     parser.add_argument("--output-csv", type=Path, help="优化后路径 CSV 输出路径")
     parser.add_argument("--render", type=Path, help="原始/优化路径对比图输出路径")
@@ -373,20 +402,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def parse_step_sizes(value: str) -> tuple[float, ...]:
-    """解析命令行步长列表，并拒绝零值、负值及空列表。"""
-    try:
-        steps = tuple(float(item.strip()) for item in value.split(",") if item.strip())
-    except ValueError as exc:
-        raise ValueError("step-sizes-mm 必须是逗号分隔的正数") from exc
-    if not steps or any(step <= 0.0 for step in steps):
-        raise ValueError("step-sizes-mm 至少包含一个正数")
-    return steps
-
-
 def main() -> int:
     args = parse_args()
-    if args.max_offset_mm < 0.0 or args.sweeps_per_step < 1:
+    if args.max_offset_mm < 0.0 or DEFAULT_SWEEPS_PER_STEP < 1:
         raise ValueError("最大偏移不能为负数，扫描次数必须为正数")
     source = args.input.resolve() if args.input else find_latest_marker_csv()
     original, start_heading = base.read_markers(source)
@@ -394,13 +412,15 @@ def main() -> int:
         max_offset_mm=args.max_offset_mm,
         entry_lock_distance_mm=args.entry_lock_distance_mm,
         entry_full_offset_distance_mm=args.entry_full_offset_distance_mm,
-        step_sizes_mm=parse_step_sizes(args.step_sizes_mm),
-        sweeps_per_step=args.sweeps_per_step,
+        step_sizes_mm=DEFAULT_STEP_SIZES_MM,
+        sweeps_per_step=DEFAULT_SWEEPS_PER_STEP,
     )
 
     original_metrics, original_samples, _, _, _ = evaluate_route(
         original, original, allowed_offsets(original, config))
+    optimization_started = time.perf_counter()
     optimized, budgets, optimized_metrics, records = optimize_markers(original, config)
+    optimization_elapsed_s = time.perf_counter() - optimization_started
     final_markers = base.apply_special_exit_corrections(optimized, base.find_event_pairs(optimized))
     samples, sample_step = base.generate_path_with_point_cap(final_markers)
     s, yaw, curvature = base.calculate_yaw_and_curvature(samples)
@@ -416,7 +436,9 @@ def main() -> int:
     heatmap_output = args.speed_heatmap or prefix.with_name(f"{prefix.name}_heatmap.png")
     iteration_log_output = args.iteration_log or prefix.with_name(f"{prefix.name}_iteration_log.csv")
     output_header = args.header or prefix.with_name(f"{prefix.name}_route_table.h")
+    nav_mark_points_output = SCRIPT_DIR / f"nav_mark_points_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
     write_optimized_markers(output_markers, original, optimized, budgets)
+    write_nav_mark_points(nav_mark_points_output, optimized, start_heading)
     write_iteration_log(iteration_log_output, records)
     base.write_csv(output_csv, samples, yaw, curvature, target_speed)
     base.write_c_header(output_header, samples, yaw, curvature, target_speed, source, start_heading)
@@ -425,12 +447,14 @@ def main() -> int:
 
     moved = [math.hypot(new.x - old.x, new.y - old.y) for old, new in zip(original, optimized)]
     print(f"输入: {source}")
+    print(f"优化耗时: {optimization_elapsed_s:.3f} s")
     print(f"评分: {original_metrics.score:.6f} -> {optimized_metrics.score:.6f}")
     print(f"几何速度均值: {original_metrics.mean_speed_mm_s:.0f} -> {optimized_metrics.mean_speed_mm_s:.0f} mm/s")
     print(f"几何速度 P05: {original_metrics.p05_speed_mm_s:.0f} -> {optimized_metrics.p05_speed_mm_s:.0f} mm/s")
     print(f"最大 |曲率|: {original_metrics.max_abs_curvature:.6f} -> {optimized_metrics.max_abs_curvature:.6f} 1/mm")
     print(f"最大锚点偏移: {max(moved):.1f} mm；最终采样间距: {sample_step:.1f} mm")
     print(f"优化锚点: {output_markers}")
+    print(f"优化点表: {nav_mark_points_output}")
     print(f"迭代记录: {iteration_log_output}（共 {len(records)} 行）")
     print(f"路径 CSV: {output_csv}")
     print(f"对比图: {render_output}")
