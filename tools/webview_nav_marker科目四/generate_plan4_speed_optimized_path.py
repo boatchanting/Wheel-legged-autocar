@@ -37,6 +37,7 @@ from typing import Sequence
 
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
 import generate_plan4_smooth_path as base
 
@@ -106,6 +107,7 @@ def find_latest_marker_csv() -> Path:
     candidates = [
         path for path in SCRIPT_DIR.glob("nav_mark_points_*.csv")
         if "_planned" not in path.stem and "_optimized" not in path.stem
+        and len(path.stem[len("nav_mark_points_"):]) == 15  # 新增：严格校验时间戳部分长度为15
     ]
     if not candidates:
         raise FileNotFoundError("No source nav_mark_points_*.csv was found.")
@@ -230,6 +232,10 @@ def optimize_markers(
     best_metrics, _, _, _, _ = evaluate_route(markers, originals, budgets)
     records: list[IterationRecord] = []
 
+    # 计算总迭代次数，用于 tqdm 的总体进度条
+    total_iters = len(config.step_sizes_mm) * config.sweeps_per_step * len(movable_indices)
+    pbar = tqdm(total=total_iters, desc="优化路径", unit="点", smoothing=0.1)
+
     for step in config.step_sizes_mm:
         for sweep in range(1, config.sweeps_per_step + 1):
             any_improved = False
@@ -265,9 +271,21 @@ def optimize_markers(
                     accepted=(selected != current),
                     metrics=selected_metrics,
                 ))
+                # 更新进度条的后缀信息，方便实时观察
+                pbar.set_postfix({
+                    "步长": f"{step:.0f}",
+                    "轮次": f"{sweep}/{config.sweeps_per_step}",
+                    "评分": f"{best_metrics.score:.6f}"
+                }, refresh=False)
+                pbar.update(1)
             if not any_improved:
+                # 如果提前跳出当前 step 的循环，需要跳过此 step 剩余轮次在进度条中的份额
+                remaining_skips = (config.sweeps_per_step - sweep) * len(movable_indices)
+                if remaining_skips > 0:
+                    pbar.update(remaining_skips)
                 break
 
+    pbar.close()
     final_metrics, _, _, _, _ = evaluate_route(markers, originals, budgets)
     return markers, budgets, final_metrics, records
 
