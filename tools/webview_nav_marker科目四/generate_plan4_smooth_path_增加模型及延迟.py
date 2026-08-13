@@ -62,12 +62,30 @@ RESPONSE_MODEL_DT_S = 0.010
 RESPONSE_MODEL_MAX_ITERATIONS = 12
 RESPONSE_MODEL_TOLERANCE_MM_S = 8.0
 RESPONSE_MODEL_COMMAND_MIN_MM_S = 80.0
-RESPONSE_MODEL_COMMAND_MAX_MM_S = PATH_SPEED_MAX_MM_S
-RESPONSE_MODEL_SAFETY_MARGIN_MM_S = 80.0
-# 实测 target_speed_set -> 轮速的相关峰延迟约 0.43~0.45 s。为覆盖连续弯道
-# 的累计速度和预测模型误差，离线规划以 1.20 s 前移实际速度上限；前后向包络
-# 仍负责物理减速度。该值应在更多场地日志后重新标定。
-RESPONSE_MODEL_ADVANCE_TIME_S = 1.20
+# ``target_speed`` is a drive request.  Keep this separate from
+# PATH_SPEED_MAX_MM_S, which remains the actual-speed safety limit used for
+# curvature and task planning.
+ROUTE_COMMAND_MAX_MM_S = 8000.0
+RESPONSE_MODEL_COMMAND_MAX_MM_S = ROUTE_COMMAND_MAX_MM_S
+RESPONSE_MODEL_PREDICTED_SPEED_MAX_MM_S = 10000.0
+# target_speed 是驱动请求（更接近油门），不是实际速度设定值：允许在路表点直接
+# 阶跃。实际车速仍由下面的延迟/制动距离约束，而不是由命令斜坡约束。
+COMMAND_STEP_MODE = True
+# 新日志 target_speed_set -> wheel 的相关峰约 0.53 s。加上采样、模型误差后，以
+# 0.65 s 作为抬油门开始生效前的保守空走时间。该量须通过更多满速制动日志复标。
+RESPONSE_MODEL_BRAKE_DELAY_S = 0.65
+# 新日志最大实测减速度约 1437 mm/s^2；规划用较小的 1300 mm/s^2 留出余量。
+RESPONSE_MODEL_EFFECTIVE_BRAKE_DECEL_MM_S2 = 1300.0
+RESPONSE_MODEL_BRAKE_DISTANCE_MARGIN_MM = 250.0
+# 非零任务/曲率限速再下调此速度，抵消红色模型在新日志中约 378 mm/s 的平均低估
+# 的一部分，但不把整段直线速度一起压低。
+RESPONSE_MODEL_SAFETY_MARGIN_MM_S = 120.0
+# Command levels remove 50 mm route-point curvature jitter without smoothing
+# the pedal itself.  Values are rounded down, never above a physical cap.
+RESPONSE_MODEL_COMMAND_STEP_MM_S = 100.0
+RESPONSE_MODEL_SPEED_TRACK_DEADBAND_MM_S = 180.0
+RESPONSE_MODEL_PREDICTION_TOLERANCE_MM_S = 10.0
+RESPONSE_MODEL_CONSTRAINT_PASSES = 24
 
 # 用全部三次日志拟合的红色分段灰盒模型。
 RESPONSE_RISE_A = 1.8907964851
@@ -503,28 +521,77 @@ def apply_longitudinal_speed_envelope(speed_limit: np.ndarray, s: np.ndarray) ->
     return planned_speed
 
 
-def simulate_response_model(command_speed: np.ndarray, s: np.ndarray, curvature: np.ndarray) -> np.ndarray:
-    """Predict actual forward speed from the route-table command with the validated gray-box model."""
-    predicted = np.empty_like(command_speed)
-    predicted[0] = min(command_speed[0], RESPONSE_MODEL_COMMAND_MAX_MM_S)
-    for index in range(1, len(command_speed)):
-        ds = max(float(s[index] - s[index - 1]), 1.0)
-        speed_for_dt = max(predicted[index - 1], RESPONSE_MODEL_COMMAND_MIN_MM_S)
-        dt = min(RESPONSE_MODEL_DT_S, ds / speed_for_dt)
-        previous_command = command_speed[index - 2] if index >= 2 else command_speed[index - 1]
-        if command_speed[index - 1] >= previous_command:
-            a, b, c, d, e = (RESPONSE_RISE_A, RESPONSE_RISE_B, RESPONSE_RISE_C,
-                              RESPONSE_RISE_D, RESPONSE_RISE_E)
+def apply_braking_speed_envelope(speed_limit: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """Propagate only the braking constraint backward from future turns/tasks.
+
+    The forward acceleration constraint is intentionally omitted here: the
+    response-model inverse below chooses up to 8000 drive request to reach the
+    earliest safe speed, which is the desired time-optimal behaviour.
+    """
+    planned_speed = np.array(speed_limit, copy=True)
+    for index in range(len(planned_speed) - 2, -1, -1):
+        ds = s[index + 1] - s[index]
+        planned_speed[index] = min(
+            planned_speed[index],
+            math.sqrt(max(0.0, planned_speed[index + 1] ** 2 +
+                           2.0 * RESPONSE_MODEL_EFFECTIVE_BRAKE_DECEL_MM_S2 * ds)),
+        )
+    return planned_speed
+
+
+def advance_response_model(
+    speed: float,
+    command: float,
+    previous_command: float,
+    distance_mm: float,
+    curvature: float,
+) -> float:
+    """Advance one route interval with an explicit actual-speed state."""
+    traveled = 0.0
+    if command >= previous_command:
+        a, b, c, d, e = (RESPONSE_RISE_A, RESPONSE_RISE_B, RESPONSE_RISE_C,
+                          RESPONSE_RISE_D, RESPONSE_RISE_E)
+    else:
+        a, b, c, d, e = (RESPONSE_FALL_A, RESPONSE_FALL_B, RESPONSE_FALL_C,
+                          RESPONSE_FALL_D, RESPONSE_FALL_E)
+    # Integrate until the vehicle has actually travelled the route interval.
+    # The fitted model is time-domain; ``distance / old_speed`` is wrong while
+    # accelerating from low speed because speed changes substantially inside a
+    # 50 mm route interval.
+    for _ in range(20000):
+        if traveled >= distance_mm:
+            break
+        dt = RESPONSE_MODEL_DT_S
+        acceleration = (a * command - b * speed + c * abs(curvature) * speed * speed +
+                        d * speed * speed + e)
+        next_speed = min(RESPONSE_MODEL_PREDICTED_SPEED_MAX_MM_S, max(0.0, speed + dt * acceleration))
+        step_distance = max(0.001, 0.5 * (speed + next_speed) * dt)
+        if traveled + step_distance > distance_mm:
+            ratio = (distance_mm - traveled) / step_distance
+            next_speed = speed + ratio * (next_speed - speed)
+            traveled = distance_mm
         else:
-            a, b, c, d, e = (RESPONSE_FALL_A, RESPONSE_FALL_B, RESPONSE_FALL_C,
-                              RESPONSE_FALL_D, RESPONSE_FALL_E)
-        v = predicted[index - 1]
-        acceleration = (a * command_speed[index - 1] - b * v +
-                        c * abs(float(curvature[index - 1])) * v * v +
-                        d * v * v + e)
-        predicted[index] = min(
-            RESPONSE_MODEL_COMMAND_MAX_MM_S,
-            max(0.0, v + dt * acceleration),
+            traveled += step_distance
+        speed = next_speed
+    return speed
+
+
+def simulate_response_model(
+    command_speed: np.ndarray,
+    s: np.ndarray,
+    curvature: np.ndarray,
+    initial_speed: Optional[float] = None,
+) -> np.ndarray:
+    """Predict actual forward speed from route commands with the gray-box model."""
+    predicted = np.empty_like(command_speed)
+    predicted[0] = min(
+        command_speed[0] if initial_speed is None else initial_speed,
+        RESPONSE_MODEL_PREDICTED_SPEED_MAX_MM_S,
+    )
+    for index in range(1, len(command_speed)):
+        predicted[index] = advance_response_model(
+            predicted[index - 1], command_speed[index], command_speed[index - 1],
+            max(float(s[index] - s[index - 1]), 1.0), float(curvature[index]),
         )
     return predicted
 
@@ -533,44 +600,83 @@ def calculate_response_aware_command_speed(
     actual_speed_limit: np.ndarray,
     s: np.ndarray,
     curvature: np.ndarray,
+    protected_mask: Optional[np.ndarray] = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Find a route command whose predicted actual speed respects the safety envelope.
+    """Invert the red model so predicted actual speed follows the route cap.
 
-    Start from the conventional reachable command envelope, then repeatedly
-    lower command points where the gray-box predicted speed exceeds the desired
-    actual limit. A backward envelope after each update makes the command begin
-    decreasing before the physical limit, which is the missing delay handling.
+    ``target_speed`` is a pedal-like request.  Its value can jump to 8000, but
+    it is selected from the desired *next actual-speed state*, rather than by
+    multiplying the speed cap.  This keeps tight turns low while permitting a
+    full request on a long straight.
     """
-    conventional = apply_longitudinal_speed_envelope(actual_speed_limit, s)
-    if not ENABLE_RESPONSE_AWARE_SPEED_PLANNING or len(conventional) < 3:
-        return conventional, conventional.copy()
+    del protected_mask  # The dynamic model is now applied to every route point.
+    # A time-optimal reference: turns/tasks propagate their braking requirement
+    # backward, while acceleration is left to the response-model inverse and
+    # its 8000 request ceiling rather than an artificial 1500 mm/s^2 ramp.
+    desired = apply_braking_speed_envelope(actual_speed_limit, s)
+    desired = np.maximum(0.0, desired - RESPONSE_MODEL_SAFETY_MARGIN_MM_S)
+    desired[actual_speed_limit <= 1.0] = 0.0
+    if not ENABLE_RESPONSE_AWARE_SPEED_PLANNING or len(desired) < 3:
+        return desired, desired.copy()
 
-    # Turn the measured command-to-wheel delay into an upstream route-distance
-    # advance. At each point, constrain the command by the speed limit expected
-    # after travelling v*delay. This is stable for sharp corners unlike a local
-    # "reduce only the violating point" iteration.
-    advance_distance = np.clip(
-        conventional * RESPONSE_MODEL_ADVANCE_TIME_S,
-        0.0,
-        s[-1] - s[0],
-    )
-    # Use the lowest speed cap anywhere in the response-distance window, not
-    # merely the cap at the window endpoint. This catches short sharp corners
-    # located between the current point and its look-ahead endpoint.
-    advanced_limit = np.empty_like(actual_speed_limit)
-    for index, distance in enumerate(advance_distance):
-        end_index = int(np.searchsorted(s, s[index] + distance, side="right"))
-        end_index = max(index + 1, min(end_index, len(s)))
-        advanced_limit[index] = np.min(actual_speed_limit[index:end_index])
-    advanced_limit = np.maximum(0.0, advanced_limit - RESPONSE_MODEL_SAFETY_MARGIN_MM_S)
-    command = apply_longitudinal_speed_envelope(advanced_limit, s)
-    # Never increase a conventional safety command because of interpolation.
-    command = np.minimum(command, conventional)
-    # Preserve explicit zero-speed route points such as the minefield spin.
-    command = np.maximum(RESPONSE_MODEL_COMMAND_MIN_MM_S, command)
-    command[actual_speed_limit <= 1.0] = 0.0
+    command = np.empty_like(desired)
+    predicted = np.empty_like(desired)
+    predicted[0] = min(desired[0], PATH_SPEED_MAX_MM_S)
+    command[0] = RESPONSE_MODEL_COMMAND_MIN_MM_S if desired[0] > 1.0 else 0.0
+    for index in range(1, len(command)):
+        ds = max(float(s[index] - s[index - 1]), 1.0)
+        prior_command = command[index - 1]
+        if desired[index] <= 1.0:
+            candidate = 0.0
+        else:
+            held_speed = advance_response_model(
+                predicted[index - 1], prior_command, prior_command, ds, float(curvature[index]),
+            )
+            # Keep the existing pedal level whenever it remains safely below
+            # the desired actual speed and is close enough to it.  This avoids
+            # chattering between rise/fall model branches at every 50 mm point.
+            if (held_speed <= desired[index] + RESPONSE_MODEL_PREDICTION_TOLERANCE_MM_S
+                    and held_speed >= desired[index] - RESPONSE_MODEL_SPEED_TRACK_DEADBAND_MM_S):
+                command[index] = prior_command
+                predicted[index] = held_speed
+                continue
+            # Invert one spatial step of the red model.  The desired state has
+            # already received the backward braking envelope, so this is the
+            # strongest request that reaches but does not overshoot it.
+            low, high = RESPONSE_MODEL_COMMAND_MIN_MM_S, RESPONSE_MODEL_COMMAND_MAX_MM_S
+            for _ in range(14):
+                middle = 0.5 * (low + high)
+                trial_speed = advance_response_model(
+                    predicted[index - 1], middle, prior_command, ds, float(curvature[index]),
+                )
+                if trial_speed <= desired[index]:
+                    low = middle
+                else:
+                    high = middle
+            candidate = low
+            if COMMAND_STEP_MODE:
+                candidate = math.floor(candidate / RESPONSE_MODEL_COMMAND_STEP_MM_S) * RESPONSE_MODEL_COMMAND_STEP_MM_S
+                candidate = max(RESPONSE_MODEL_COMMAND_MIN_MM_S, candidate)
+        command[index] = candidate
+        predicted[index] = advance_response_model(
+            predicted[index - 1], command[index], prior_command, ds, float(curvature[index]),
+        )
+
     predicted = simulate_response_model(command, s, curvature)
     return command, predicted
+
+
+def build_response_protection_mask(samples: list[PathSample], s: np.ndarray) -> np.ndarray:
+    """Restrict response-model braking to vision/state-machine handoff areas."""
+    protected = np.zeros(len(samples), dtype=bool)
+    for index, sample in enumerate(samples):
+        if sample.point_type == 3:  # three-stage stairs
+            protected |= (s >= s[index] - STAIRS_APPROACH_DISTANCE_MM) & (s <= s[index] + STAIRS_APPROACH_DISTANCE_MM)
+        elif sample.point_type == 4:  # single-side bridge
+            protected |= (s >= s[index] - BRIDGE_APPROACH_DISTANCE_MM) & (s <= s[index] + BRIDGE_APPROACH_DISTANCE_MM)
+        elif sample.point_type in (1, 2, 5):  # minefield / slope / bumpy-road handoff
+            protected |= (s >= s[index] - 2500.0) & (s <= s[index] + 1500.0)
+    return protected
 
 
 def calculate_target_speed(
@@ -603,8 +709,11 @@ def calculate_target_speed(
         if sample.point_type == 1:  # NAV_POINT_CIRCLE 可能要求原地旋转。
             speed_limit[index] = 0.0
 
-    command_speed, _ = calculate_response_aware_command_speed(speed_limit, s, curvature)
-    return -command_speed / SPEED_TO_MM_S
+    # This function owns the physical actual-speed envelope only.  Converting
+    # it to a pedal-like route command happens once, after task caps are added
+    # in main().  Running the response model here would feed a drive request
+    # back as if it were an actual-speed limit on the second pass.
+    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
 
 
 def limit_stairs_approach_output_speed(
@@ -880,16 +989,17 @@ def main() -> int:
     # these final actual-speed limits, rather than an assumed instantaneous
     # actual speed.
     final_actual_speed_limit = np.abs(output_target_speed) * SPEED_TO_MM_S
+    response_protection_mask = build_response_protection_mask(samples, s)
     final_command_speed, final_predicted_speed = calculate_response_aware_command_speed(
         final_actual_speed_limit,
         s,
         curvature,
+        response_protection_mask,
     )
     output_target_speed = -final_command_speed / SPEED_TO_MM_S
     speed_heatmap_output = render_output.with_name(f"{render_output.stem}_speed_heatmap{render_output.suffix}")
     response_plan_output = render_output.with_name(f"{render_output.stem}_response_speed_plan{render_output.suffix}")
-    # 如需导出路径 CSV，取消下一行注释。
-    # write_csv(csv_output, samples, yaw, curvature, output_target_speed)
+    write_csv(csv_output, samples, yaw, curvature, output_target_speed)
     render(render_output, markers, samples, s, curvature, output_target_speed)
     render_speed_heatmap(speed_heatmap_output, samples, output_target_speed)
     render_response_speed_plan(response_plan_output, s, final_actual_speed_limit, final_command_speed, final_predicted_speed)
