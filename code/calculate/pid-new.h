@@ -353,7 +353,15 @@ extern volatile uint8 g_brake_active;
 extern volatile uint8 g_reverse_brake_active;
 
 // 全局刹车前馈参数
-#define BRAKE_SPEED_DEADBAND     15.0f     /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
+#define NAV_HARD_BRAKE_GAIN      80.0f    /* 导航强停刹增益，仅由科目二雷区刹车准备圆请求，明显强于普通重刹 */
+#define NAV_HARD_BRAKE_MAX_PWM   8200.0f  /* 导航强停刹最大反向 PWM；只提高高速刹车上限，不继续放大中低速刹车比例 */
+#define NAV_HARD_BRAKE_RAMP_UP   2200.0f  /* 导航强停刹建压步长，保证进入雷区准备圆后能快速建立制动力 */
+#define NAV_HARD_BRAKE_RELEASE_SPEED 35.0f /* 当前速度低于该值时释放导航强停刹，避免中心附近低速反抽和原地抽搐 */
+#define NAV_HARD_BRAKE_LIFE_TICKS 4U      /* 导航强停请求保持 tick，桥接导航周期和 9ms 刹车前馈周期 */
+
+#if CAR_SELECT == 3
+// 3车日常刹车前馈参数
+#define BRAKE_SPEED_DEADBAND     15.0f    /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
 #define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
 #define BRAKE_ZERO_TARGET_MAX    10.0f    /* 目标速度绝对值低于该值时，允许进入零速停车迟滞区 */
 #define BRAKE_ZERO_HOLD_ENTER    18.0f    /* 刹停过程中速度低于该值时进入零速迟滞区并清空刹车前馈 */
@@ -374,18 +382,74 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
-#define NAV_HARD_BRAKE_GAIN      80.0f    /* 导航强停刹增益，仅由科目二雷区刹车准备圆请求，明显强于普通重刹 */
 #define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
 #define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
 #define BRAKE_MAX_HEAVY          3500.0f  /* 重刹前馈 PWM 最大幅值，限制急停时的最大反向力矩 */
-#define NAV_HARD_BRAKE_MAX_PWM   8200.0f  /* 导航强停刹最大反向 PWM；只提高高速刹车上限，不继续放大中低速刹车比例 */
 #define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
 #define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
 #define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
-#define NAV_HARD_BRAKE_RAMP_UP   2200.0f  /* 导航强停刹建压步长，保证进入雷区准备圆后能快速建立制动力 */
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
-#define NAV_HARD_BRAKE_RELEASE_SPEED 35.0f /* 当前速度低于该值时释放导航强停刹，避免中心附近低速反抽和原地抽搐 */
-#define NAV_HARD_BRAKE_LIFE_TICKS 4U      /* 导航强停请求保持 tick，桥接导航周期和 9ms 刹车前馈周期 */
+#elif CAR_SELECT == 4
+// 4车日常刹车前馈参数
+#define BRAKE_SPEED_DEADBAND     15.0f    /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
+#define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
+#define BRAKE_ZERO_TARGET_MAX    10.0f    /* 目标速度绝对值低于该值时，允许进入零速停车迟滞区 */
+#define BRAKE_ZERO_HOLD_ENTER    18.0f    /* 刹停过程中速度低于该值时进入零速迟滞区并清空刹车前馈 */
+#define BRAKE_ZERO_HOLD_EXIT     30.0f    /* 零速迟滞区退出阈值；只有速度重新明显离开零区才允许再次建压 */
+#define BRAKE_ERR_MIN            40.0f    /* 启用比例判定前的最小绝对速度差，避免速度很小时比例被放大误判 */
+#define BRAKE_ERR_MED_MIN        80.0f    /* 中刹最小绝对速度差，避免低速小幅速度差仅因比例大而升级 */
+#define BRAKE_ERR_HEAVY_MIN      150.0f   /* 重刹最小绝对速度差，必须有足够大的真实降速需求 */
+#define BRAKE_MED_SPEED_TH       120.0f   /* 普通减速进入中刹的当前速度下限 */
+#define BRAKE_HEAVY_SPEED_TH     220.0f   /* 普通减速进入重刹的当前速度下限 */
+#define BRAKE_TARGET_DECEL_MIN   40.0f    /* 目标速度下降超过该值才认为是主动减速指令；调大可减少弯前误刹，调小会更早介入收速 */
+#define BRAKE_OVERSPEED_ERR_MIN  60.0f    /* 持续超速判定阈值：实际速度绝对值比目标速度绝对值大这么多才算真超速 */
+#define BRAKE_OVERSPEED_HOLD_TICKS 3U     /* 超速持续 tick 数，当前刹车前馈约 9ms 调用一次；3U 约等于 27ms，调大可抑制瞬时噪声误刹 */
+#define BRAKE_CH5_LIGHT_SPEED    80.0f    /* CH5 急停低于该速度只给轻刹，避免低速急停过猛 */
+#define BRAKE_CH5_MED_SPEED      220.0f   /* CH5 急停低于该速度给中刹，高于该速度才给重刹 */
+#define BRAKE_RATIO_LIGHT        0.18f    /* 轻刹触发比例：速度差达到当前速度的 18% 才进入轻刹；调大可减少轻微速度差触发 */
+#define BRAKE_RATIO_MED          0.28f    /* 中刹触发比例：速度差达到当前速度的 28% 才进入中刹；调大可降低弯前中刹概率 */
+#define BRAKE_RATIO_HEAVY        0.55f    /* 重刹触发比例：速度差达到当前速度的 55% 才进入重刹，CH5 急停不受此限制 */
+#define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
+#define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
+#define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
+#define BRAKE_MAX_HEAVY          3500.0f  /* 重刹前馈 PWM 最大幅值，限制急停时的最大反向力矩 */
+#define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
+#define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
+#define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
+#define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
+#else
+// 其他车型暂时沿用4车日常刹车前馈参数
+#define BRAKE_SPEED_DEADBAND     15.0f
+#define BRAKE_LOW_SPEED_TH       40.0f
+#define BRAKE_ZERO_TARGET_MAX    10.0f
+#define BRAKE_ZERO_HOLD_ENTER    18.0f
+#define BRAKE_ZERO_HOLD_EXIT     30.0f
+#define BRAKE_ERR_MIN            40.0f
+#define BRAKE_ERR_MED_MIN        80.0f
+#define BRAKE_ERR_HEAVY_MIN      150.0f
+#define BRAKE_MED_SPEED_TH       120.0f
+#define BRAKE_HEAVY_SPEED_TH     220.0f
+#define BRAKE_TARGET_DECEL_MIN   40.0f
+#define BRAKE_OVERSPEED_ERR_MIN  60.0f
+#define BRAKE_OVERSPEED_HOLD_TICKS 3U
+#define BRAKE_CH5_LIGHT_SPEED    80.0f
+#define BRAKE_CH5_MED_SPEED      220.0f
+#define BRAKE_RATIO_LIGHT        0.18f
+#define BRAKE_RATIO_MED          0.28f
+#define BRAKE_RATIO_HEAVY        0.55f
+#define BRAKE_GAIN_LIGHT         4.0f
+#define BRAKE_GAIN_MED           10.0f
+#define BRAKE_GAIN_HEAVY         22.0f
+#define BRAKE_MAX_LIGHT          800.0f
+#define BRAKE_MAX_MED            1600.0f
+#define BRAKE_MAX_HEAVY          3500.0f
+#define BRAKE_RAMP_UP_LIGHT      120.0f
+#define BRAKE_RAMP_UP_MED        300.0f
+#define BRAKE_RAMP_UP_HEAVY      700.0f
+#define BRAKE_RAMP_DOWN          800.0f
+#endif
 #define BRAKE_SERVO_PROTECT_PWM_TH 2500.0f /* 刹车前馈超过该值时启用舵机刹车姿态保护，限制速度环把车身继续压成后坐 */
 #define BRAKE_SERVO_BACK_SIT_SIGN -1.0f    /* 后坐方向标定：1 表示 speed_adj 为正会后坐；若实车方向相反，改成 -1.0f */
 #define BRAKE_SERVO_BACK_SIT_LIMIT 0.0f   /* 强刹时允许保留的后坐方向 speed_adj，上调会更贴近原速度环，下调更防后坐蹭地 */
