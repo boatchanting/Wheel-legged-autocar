@@ -29,11 +29,18 @@
 
 #define WIFI_TX_BUFFER_SIZE     256
 
-/* Telemetry payload layout (little-endian, 108 bytes):
+/* Telemetry payload layout (little-endian, 128 bytes):
  * loop, nav/fusion position and body velocity, heading, relative yaw,
  * marker fields, control flags, replay status, state-machine flags,
- * Euler/IMU values, then RF/RR/LF/LR servo angles. */
-#define WIFI_TELEMETRY_PAYLOAD_SIZE  108U
+ * Euler/IMU values, RF/RR/LF/LR servo angles, then speed/PWM telemetry. */
+#define WIFI_TELEMETRY_PAYLOAD_SIZE  128U
+
+/* Updated by the control ISR after the final motor PWM limit is applied. */
+extern volatile float g_wifi_target_speed_set;
+extern volatile float g_wifi_speed_l;
+extern volatile float g_wifi_speed_r;
+extern volatile float g_wifi_pwm_left;
+extern volatile float g_wifi_pwm_right;
 
 // Send telemetry frame to host
 void wifi_protocol_send_data(void);

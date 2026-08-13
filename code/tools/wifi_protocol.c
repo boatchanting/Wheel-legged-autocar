@@ -17,6 +17,12 @@
 static uint8_t tx_buf[WIFI_TX_BUFFER_SIZE];
 static uint16_t tx_idx = 0;
 
+volatile float g_wifi_target_speed_set = 0.0f;
+volatile float g_wifi_speed_l = 0.0f;
+volatile float g_wifi_speed_r = 0.0f;
+volatile float g_wifi_pwm_left = 0.0f;
+volatile float g_wifi_pwm_right = 0.0f;
+
 uint8_t g_manual_log_enabled = 0;
 #define WIFI_RX_READ_CHUNK   128U
 #define WIFI_RX_STREAM_SIZE  512U
@@ -444,6 +450,13 @@ void wifi_protocol_send_data(void)
         write_float_value(servo_angle_lf);
         write_float_value(servo_angle_lr);
     }
+
+    // J. Speed-control telemetry snapshot captured by the control ISR.
+    write_float(&g_wifi_target_speed_set);
+    write_float(&g_wifi_speed_l);
+    write_float(&g_wifi_speed_r);
+    write_float(&g_wifi_pwm_left);
+    write_float(&g_wifi_pwm_right);
 
     if ((uint16_t)(tx_idx - (len_pos + 1U)) != WIFI_TELEMETRY_PAYLOAD_SIZE)
     {
