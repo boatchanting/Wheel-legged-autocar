@@ -27,12 +27,12 @@ HOST_ACK_UNKNOWN_CMD = 0x02
 HOST_ACK_INVALID_PAYLOAD = 0x03
 HOST_ACK_TIMEOUT_SEC = 1.5
 
-PAYLOAD_SIZE_V3 = 108
-STRUCT_FMT_V3 = "<I6f6Bf6B16f"
+PAYLOAD_SIZE_V4 = 128
+STRUCT_FMT_V4 = "<I6f6Bf6B21f"
 
-# Protocol V3 removes the GNSS segment.  All values below are in the exact
-# wire order emitted by code/tools/wifi_protocol.c.
-FIELD_NAMES_V3 = [
+# Protocol V4 removes the GNSS segment and appends speed/PWM telemetry.  All
+# values below are in the exact wire order emitted by code/tools/wifi_protocol.c.
+FIELD_NAMES_V4 = [
     "loop",
     "nav_x",
     "nav_y",
@@ -69,6 +69,11 @@ FIELD_NAMES_V3 = [
     "servo_angle_rr",
     "servo_angle_lf",
     "servo_angle_lr",
+    "target_speed_set",
+    "speed_L",
+    "speed_R",
+    "pwm_left",
+    "pwm_right",
 ]
 
 # CSV 包含每个已解析字段；payload_hex 保留 WiFi 收到的完整原始载荷，
@@ -78,7 +83,7 @@ WIFI_LOG_FIELD_NAMES = [
     "received_at",
     "payload_hex",
     "payload_size",
-] + FIELD_NAMES_V3
+] + FIELD_NAMES_V4
 
 MAX_HISTORY = 20000
 MAX_NEW_BUFFER = 4000
@@ -327,11 +332,11 @@ def _estimate_start_heading():
 def _decode_payload(payload_bytes):
     size = len(payload_bytes)
 
-    if size != PAYLOAD_SIZE_V3:
+    if size != PAYLOAD_SIZE_V4:
         return None
 
-    unpacked = struct.unpack(STRUCT_FMT_V3, payload_bytes)
-    data = dict(zip(FIELD_NAMES_V3, unpacked))
+    unpacked = struct.unpack(STRUCT_FMT_V4, payload_bytes)
+    data = dict(zip(FIELD_NAMES_V4, unpacked))
 
     data["payload_size"] = size
     return data
