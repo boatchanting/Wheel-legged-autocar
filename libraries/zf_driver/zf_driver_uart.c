@@ -406,7 +406,98 @@ config_struct->rx_hsiom = P14_0_SCB2_UART_RX;
 // 使用示例       get_scb_module(UART_0);                   
 // 备注信息       内部函数 用户无需关心
 //-------------------------------------------------------------------------------------------------------------------
-volatile stc_SCB_t* get_scb_module(uart_index_enum uart_n)
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版串口映射与小车3相同，待实车标定
+// *************************** 【小车4】使用的函数开始 ***************************
+static void get_uart_config(uart_config_struct *config_struct, uart_tx_pin_enum tx_pin, uart_rx_pin_enum rx_pin)
+{
+    switch(tx_pin)
+    {
+        case UART0_TX_P00_1:
+            config_struct->tx_port = GPIO_PRT0;
+            config_struct->tx_pin = 1;
+            config_struct->tx_hsiom = P0_1_SCB0_UART_TX;
+            config_struct->uart_pclk = PCLK_SCB0_CLOCK;
+            config_struct->uart_irqn = scb_0_interrupt_IRQn;
+            break;
+        case UART1_TX_P04_1:
+            config_struct->tx_port = GPIO_PRT4;
+            config_struct->tx_pin = 1;
+            config_struct->tx_hsiom = P4_1_SCB5_UART_TX;
+            config_struct->uart_pclk = PCLK_SCB5_CLOCK;
+            config_struct->uart_irqn = scb_5_interrupt_IRQn;
+            break;
+        case UART2_TX_P06_1:
+            config_struct->tx_port = GPIO_PRT6;
+            config_struct->tx_pin = 1;
+            config_struct->tx_hsiom = P6_1_SCB4_UART_TX;
+            config_struct->uart_pclk = PCLK_SCB4_CLOCK;
+            config_struct->uart_irqn = scb_4_interrupt_IRQn;
+            break;
+        case UART3_TX_P17_2:
+            config_struct->tx_port = GPIO_PRT17;
+            config_struct->tx_pin = 2;
+            config_struct->tx_hsiom = P17_2_SCB3_UART_TX;
+            config_struct->uart_pclk = PCLK_SCB3_CLOCK;
+            config_struct->uart_irqn = scb_3_interrupt_IRQn;
+            break;
+        case UART4_TX_P14_1:
+            config_struct->tx_port = GPIO_PRT14;
+            config_struct->tx_pin = 1;
+            config_struct->tx_hsiom = P14_1_SCB2_UART_TX;
+            config_struct->uart_pclk = PCLK_SCB2_CLOCK;
+            config_struct->uart_irqn = scb_2_interrupt_IRQn;
+            break;
+        default:
+            zf_assert(0);
+            break;
+    }
+
+    switch(rx_pin)
+    {
+        case UART0_RX_P00_0:
+            config_struct->rx_port = GPIO_PRT0;
+            config_struct->rx_pin = 0;
+            config_struct->rx_hsiom = P0_0_SCB0_UART_RX;
+            config_struct->uart_pclk = PCLK_SCB0_CLOCK;
+            config_struct->uart_irqn = scb_0_interrupt_IRQn;
+            break;
+        case UART1_RX_P04_0:
+            config_struct->rx_port = GPIO_PRT4;
+            config_struct->rx_pin = 0;
+            config_struct->rx_hsiom = P4_0_SCB5_UART_RX;
+            config_struct->uart_pclk = PCLK_SCB5_CLOCK;
+            config_struct->uart_irqn = scb_5_interrupt_IRQn;
+            break;
+        case UART2_RX_P06_0:
+            config_struct->rx_port = GPIO_PRT6;
+            config_struct->rx_pin = 0;
+            config_struct->rx_hsiom = P6_0_SCB4_UART_RX;
+            config_struct->uart_pclk = PCLK_SCB4_CLOCK;
+            config_struct->uart_irqn = scb_4_interrupt_IRQn;
+            break;
+        case UART3_RX_P17_1:
+            config_struct->rx_port = GPIO_PRT17;
+            config_struct->rx_pin = 1;
+            config_struct->rx_hsiom = P17_1_SCB3_UART_RX;
+            config_struct->uart_pclk = PCLK_SCB3_CLOCK;
+            config_struct->uart_irqn = scb_3_interrupt_IRQn;
+            break;
+        case UART4_RX_P14_0:
+            config_struct->rx_port = GPIO_PRT14;
+            config_struct->rx_pin = 0;
+            config_struct->rx_hsiom = P14_0_SCB2_UART_RX;
+            config_struct->uart_pclk = PCLK_SCB2_CLOCK;
+            config_struct->uart_irqn = scb_2_interrupt_IRQn;
+            break;
+        default:
+            zf_assert(0);
+            break;
+    }
+}
+// *************************** 【小车4】使用的函数结束 ***************************
+#endif
+
+volatile stc_SCB_t* get_scb_module(uart_index_enum uart_n)
 {
     volatile stc_SCB_t* temp_module;
     switch(uart_n)

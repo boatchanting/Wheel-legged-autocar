@@ -35,6 +35,9 @@ volatile uint8 g_vision_three_stage_jump3_bottom_y = VISION_THREE_STAGE_JUMP3_BO
 volatile uint8 g_vision_three_stage_exit_top_y = VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT;
 volatile uint8 g_vision_three_stage_jump1_correction_bottom_y = VISION_THREE_STAGE_JUMP1_CORRECTION_BOTTOM_Y_DEFAULT;
 
+/* 第二跳触发策略：默认固定延时（宏默认值），可在线置 0 回退旧视觉 top_y 阈值策略 */
+volatile uint8 g_vision_three_stage_jump2_delay_enable = VISION_THREE_STAGE_JUMP2_DELAY_ENABLE_DEFAULT;
+
 volatile float g_vision_three_stage_speed_approach = -320.0f; /* 锁定目标靠近时的速度 */
 volatile float g_vision_three_stage_speed_jump1    = -320.0f;/* 第一跳寻找速度 */
 volatile float g_vision_three_stage_speed_jump2    = -320.0f;/* 第二跳寻找速度 */
@@ -416,13 +419,31 @@ void VisionThreeStageControl_Update_2ms(void)
 
         case VISION_THREE_STAGE_CTRL_WAIT_JUMP2_TOP:
             target_speed_set = g_vision_three_stage_speed_jump2; /* 设置第二跳速度 */
-            if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
-                (s_ctrl_shadow.pvc_entry_top_y >= g_vision_three_stage_jump2_top_y))
+            if (g_vision_three_stage_jump2_delay_enable != 0U)
             {
-                if (vision_three_stage_try_trigger_step_jump() != 0U)
+                /* 固定延时策略（默认）：第一跳触发后延时 VISION_THREE_STAGE_JUMP2_DELAY_AFTER_JUMP1_TICKS 触发第二跳，
+                 * 与第三跳的固定延时写法一致。state_ticks 自进入本状态（即第一跳触发）时刻起算。
+                 * 注意：受 jump_flag 门控，若延时未到但第一跳动作已结束，会等到延时到点再触发。 */
+                if (s_ctrl_shadow.state_ticks >= VISION_THREE_STAGE_JUMP2_DELAY_AFTER_JUMP1_TICKS)
                 {
-                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC);
-                    s_ctrl_shadow.black_gap_seen = 0U;
+                    if (vision_three_stage_try_trigger_step_jump() != 0U)
+                    {
+                        vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC);
+                        s_ctrl_shadow.black_gap_seen = 0U;
+                    }
+                }
+            }
+            else
+            {
+                /* 旧视觉策略：PVC 上边界 top_y 达到阈值时触发第二跳 */
+                if ((s_ctrl_shadow.pvc_stable_detected != 0U) &&
+                    (s_ctrl_shadow.pvc_entry_top_y >= g_vision_three_stage_jump2_top_y))
+                {
+                    if (vision_three_stage_try_trigger_step_jump() != 0U)
+                    {
+                        vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC);
+                        s_ctrl_shadow.black_gap_seen = 0U;
+                    }
                 }
             }
             break;

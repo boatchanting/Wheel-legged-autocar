@@ -364,12 +364,32 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
             #endif
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+                euler_angle.yaw,
+                -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),
+                (float)motor_value.receive_left_speed_data,
+                (float)motor_value.receive_right_speed_data,
+                filtered_gyro_z * 0.0174532925f
+            );
+            #endif
             #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
             
             InertialNav_Update(
             euler_angle.yaw,                                 // 当前偏航角
             9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
             9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
+            (float)motor_value.receive_left_speed_data,
+            (float)motor_value.receive_right_speed_data,
+            filtered_gyro_z * 0.0174532925f
+            );
+            #endif
+            #if IMU_CATEGORY == 3 &&CAR_SELECT == 4//imu963ra，小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+            euler_angle.yaw,
+            9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x),
+            9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y),
             (float)motor_value.receive_left_speed_data,
             (float)motor_value.receive_right_speed_data,
             filtered_gyro_z * 0.0174532925f
@@ -473,6 +493,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
+            if (jump_flag != 0U)
+            {
+                /* 【跳跃冻结速度环 2026-08-12】
+                 * 跳跃期间速度环不参与控制：
+                 * 1) 跳过 Servo_Speed_Control 计算——跳跃中轮子空转，速度误差巨大，
+                 *    若继续计算会把 g_target_pwm_speed_adj 顶到限幅并污染 PID 状态；
+                 * 2) 清零速度环运行态（含输入滤波），跳跃结束后从干净状态起步，D 项无突跳；
+                 * 3) g_target_pwm_speed_adj 归零——跳跃结束后 servo_executor_update 的
+                 *    目标=基础身高(平衡态)，与跳跃恢复位置一致，关节舵机不乱动。 */
+                Servo_Speed_Control_Reset();
+                g_target_pwm_speed_adj = 0;
+            }
+            else
+            {
             // 2.2 全局刹车前馈
             uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
             if ((Minefield_Is_Active() != 0U) || (g_special_action_trigger != 0U))
@@ -560,6 +594,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 }
             }
             g_target_pwm_speed_adj = (int16)duty_adjustment;
+            } /* end if (jump_flag == 0) */
         }
     }
     else if(g_is_push_mode==1)
@@ -704,11 +739,17 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = -imu_data.gyro_y * 57.2957795f;
+    #endif
     #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号
     #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = imu_data.gyro_x * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
+    #endif
+    #if IMU_CATEGORY == 3&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = imu_data.gyro_x * 57.2957795f;
     #endif
 
     // 5.2 简单的低通滤波 (平滑噪声)

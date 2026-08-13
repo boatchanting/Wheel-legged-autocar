@@ -168,6 +168,15 @@
 
 
 
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版引脚与小车3相同，待实车标定
+
+// *************************** 【小车4】硬件引脚定义开始 ***************************
+#define WIFI_SPI_INT_PIN            (P02_4)                     // 定义握手引脚
+#define WIFI_SPI_RST_PIN            (P03_4)                     // 定义复位引脚
+// *************************** 【小车4】硬件引脚定义结束***************************
+
+#endif
+
 #define WIFI_SPI_RECVIVE_FIFO_SIZE  (1024)                      // 接收FIFO大小
 
 #define WIFI_SPI_READ_TRANSFER      (1)                         // 在调用wifi_spi_read_buffer 是否尝试发起SPI通讯来检测模块内是否有数据需要读取 1：发起SPI通讯 0：不发起SPI通讯，仅读取FIFO 

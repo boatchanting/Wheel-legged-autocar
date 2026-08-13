@@ -88,12 +88,18 @@ const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};//学习板小车�
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
 // 静态矩阵变量
 #endif
+#if IMU_CATEGORY == 1 && CAR_SELECT == 4 //imu660ra，小车4初版与小车3相同
+const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
+#endif
 #if IMU_CATEGORY == 3 && CAR_SELECT == 0 ///imu963ra
 const matrix_type ekf[4]= {0.707107f, 0.0f, -0.707107f, 0.0f};
 #endif
 #if IMU_CATEGORY == 3&& CAR_SELECT == 3 //imu963ra
 const matrix_type ekf[4]= {-0.5, -0.5, 0.5, 0.5};
 // 静态矩阵变量
+#endif
+#if IMU_CATEGORY == 3&& CAR_SELECT == 4 //imu963ra，小车4初版与小车3相同
+const matrix_type ekf[4]= {-0.5, -0.5, 0.5, 0.5};
 #endif
 static matrix_t Q;  // 过程噪声协方差矩阵
 static matrix_t R;  // 测量噪声协方差矩阵
@@ -148,6 +154,11 @@ static inline void quaternion_to_euler(void)
     // 计算偏航角(yaw)：新的 yaw = 原来的 yaw + 90°
     euler_angle.yaw = (atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) ) * DEG_TO_RAD + 90.0;
     #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //imu660ra，小车4初版与小车3相同
+    euler_angle.roll = -atan2(-2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1) * DEG_TO_RAD;
+    euler_angle.pitch = asin(-2 * q1 * q3 + 2 * q0 * q2) * DEG_TO_RAD;
+    euler_angle.yaw = (atan2(2 * q1 * q2 + 2 * q0 * q3, -2 * q2 * q2 - 2 * q3 * q3 + 1) ) * DEG_TO_RAD + 90.0;
+    #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 0//imu963ra //这里面根据实际测试使用了面向结果编程，imu换轴的时候使用转轴公式，或者根据上位机波形来判断一下
     // 计算翻滚角(roll)
     euler_angle.roll = atan2( -2 * (q2 * q3 + q0 * q1), 2 * q1 * q1 + 2 * q2 * q2 - 1 ) * DEG_TO_RAD;                                // pitch
@@ -161,6 +172,11 @@ static inline void quaternion_to_euler(void)
     #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3//imu963ra //这里面根据实际测试使用了面向结果编程，imu换轴的时候使用转轴公式，或者根据上位机波形来判断一下
     // 直接从旧四元数计算新坐标系下的欧拉角
+    euler_angle.roll  = -atan2(2.0f * (q0 * q2 - q3 * q1),1.0f - 2.0f * (q1 * q1 + q2 * q2)) * DEG_TO_RAD-180.0f;
+    euler_angle.pitch = -asin(2.0f * (q0 * q1 + q2 * q3)) * DEG_TO_RAD;
+    euler_angle.yaw   = -atan2(2.0f * (q0 * q3 - q1 * q2),1.0f - 2.0f * (q2 * q2 + q3 * q3))  * DEG_TO_RAD - 90.0f;
+    #endif
+    #if IMU_CATEGORY == 3&&CAR_SELECT == 4//imu963ra，小车4初版与小车3相同
     euler_angle.roll  = -atan2(2.0f * (q0 * q2 - q3 * q1),1.0f - 2.0f * (q1 * q1 + q2 * q2)) * DEG_TO_RAD-180.0f;
     euler_angle.pitch = -asin(2.0f * (q0 * q1 + q2 * q3)) * DEG_TO_RAD;
     euler_angle.yaw   = -atan2(2.0f * (q0 * q3 - q1 * q2),1.0f - 2.0f * (q2 * q2 + q3 * q3))  * DEG_TO_RAD - 90.0f;
