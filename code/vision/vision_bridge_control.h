@@ -50,6 +50,7 @@ extern "C" {
 
 /* --- 3.5 新管线 (b2_*) 专用参数 (C15) --- */
 #define VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM       (900.0f)  /* 上桥惯导门: 从交接点起 traveled 达此值进 RUN (桥入口→桥面起点+余量, 现场标定) */
+#define VISION_BRIDGE_TASK_RUN_MAX_MM                 (5000.0f) /* 距离强制脱出: 桥上最多跑 3.4 米, 跑到就强制下桥 (恢复 12b6fe4 历史上界, 2026-08-14) */
 #define VISION_BRIDGE_TASK_VALID_LOST_FRAMES          (8U)      /* b2_valid 失能连续帧数: 达到回锁角 (N, C09) */
 #define VISION_BRIDGE_TASK_VALID_RECOVER_FRAMES       (4U)      /* b2_valid 恢复连续帧数: 达到回视觉 (M, C09) */
 #define VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG          (0.5f)    /* 视觉↔锁角换源 ramp: 每 2ms 最多变化 (C10) */

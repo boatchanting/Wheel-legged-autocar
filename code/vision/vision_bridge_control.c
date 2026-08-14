@@ -690,34 +690,39 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* C11: 上桥判定改听惯导 — 从交接点起 traveled ≥ 阈值即进 RUN (废弃视觉确认上桥) */
-            if (traveled_mm >= VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM)
+            /* 视觉确认上桥 (沿用旧逻辑 ON_BRIDGE+stable 语义): 控制线可信且桥面
+               已到底部(锁存) → 抬底盘进 RUN。只有这条路抬底盘。 */
+            if ((packet->b2_valid != 0U) && (packet->b2_gate != 0U))
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
-                s_bridge_task.start_x_mm = inertial_nav.x;
-                s_bridge_task.start_y_mm = inertial_nav.y;
-                s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
                 vision_bridge_apply_high_posture();
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
                 break;
             }
 
-            /* 兜底: 对齐达标或超时也上桥 */
+            /* 惯导门: 从交接点起 traveled ≥ 阈值进 RUN (不抬底盘, 与旧逻辑兜底路径一致) */
+            if (traveled_mm >= VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM)
+            {
+                s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
+                break;
+            }
+
+            /* 兜底: 对齐达标或超时也上桥 (不抬底盘, 与旧逻辑一致) */
             if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ALIGN_OK_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS))
             {
-                s_bridge_task.start_x_mm = inertial_nav.x;
-                s_bridge_task.start_y_mm = inertial_nav.y;
                 s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
-                vision_bridge_apply_high_posture();
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
             }
             break;
 
         /* --- 阶段 3：在桥上跑 --- */
         case VISION_BRIDGE_TASK_RUN:
-            /* b2_gate (底部变白锁存) 表示桥面模式: 刷新防抖倒计时 */
-            if (packet->b2_gate != 0U)
+            /* 桥面证据 (沿用旧逻辑 ON_BRIDGE 语义): b2_gate 锁存表示桥面曾到底部,
+               b2_valid 每帧表示控制线仍在; 两者同时在场才刷新防抖倒计时。
+               (0809 只看 b2_gate 锁存量 → 一旦锁存全程刷新 → 全程高腿, 2026-08-14 修复) */
+            if ((packet->b2_valid != 0U) && (packet->b2_gate != 0U))
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
             }
@@ -783,7 +788,7 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 出口判定 (方案B): 里程门 + 视觉 FIRE 确认; 超时兜底自动继续 (不 rebase)。
+            /* 出口判定: 里程门 + 视觉 FIRE 确认; 距离/超时强制兜底 (不 rebase)。
                0808 分支的 1D EKF 退出融合已放弃。 */
             if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM) && (exit_fire != 0U))
             {
@@ -791,7 +796,8 @@ void VisionBridgeTask_Update_2ms(void)
                 exit_beep_request = 1U; /* 脱出时刻: 视觉确认响 2 声 (侧键/Plan4 驱动都响) */
                 vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
             }
-            else if (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS)
+            else if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MAX_MM) ||        /* 距离过大强制下桥 (恢复 12b6fe4 的历史上界, 2026-08-14) */
+                     (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS))
             {
                 // 视觉异常时自动继续；Plan3/Plan4 会知道这不是已确认的视觉出口，不会重定位。
                 g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_AUTO_TIMEOUT;
