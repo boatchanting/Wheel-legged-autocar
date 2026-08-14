@@ -45,6 +45,8 @@
 #define PLAN4_TRACK_YAW_HARD_DEG                     80.0f  // 航向偏差降速达到最大程度的阈值（度）
 #define PLAN4_SPEED_ACCEL_STEP                       35.0f  // 每周期加速时速度指令的最大变化量
 #define PLAN4_SPEED_DECEL_STEP                      110.0f  // 每周期减速时速度指令的最大变化量
+#define PLAN4_FINISH_SPEED_DECEL_STEP                20.0f  // 通过末点后每周期速度指令的减速量
+#define PLAN4_FINISH_STOP_SPEED_MM_S                150.0f  // 末点减速完成后锁定转向的实测速度阈值（mm/s）
 
 /* 成对视觉任务在生成的 500 mm 入口直线段内提前交接。 */
 #define PLAN4_SPECIAL_HANDOFF_LEAD_MM               500.0f  // 距特殊任务入口小于该距离时开始交接（mm）

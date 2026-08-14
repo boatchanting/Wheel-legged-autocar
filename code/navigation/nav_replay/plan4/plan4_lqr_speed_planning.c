@@ -50,6 +50,7 @@ static uint8 s_handoff_ticks = 0U;
 static uint8 s_minefield_zero_brake_issued = 0U;
 static float s_minefield_exit_speed_cmd = 0.0f;
 static uint16 s_minefield_exit_speed_end_idx = 0xFFFFU;
+static uint8 s_finish_decel_active = 0U;
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
 #define NAV_REPLAY_START_HEADING_VALID 0
@@ -578,6 +579,45 @@ static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
     s_prev_speed_cmd = target_speed_set;
 }
 
+static void Plan4_StartFinishDecel(void)
+{
+    g_target_idx = (uint16)(nav_ram_data.point_count - 1U);
+    g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
+    g_replay_state = REPLAY_FINISHED;
+    s_finish_decel_active = 1U;
+}
+
+static void Plan4_ProcessFinishDecel(void)
+{
+    uint16 last_segment;
+    Plan4LqrReference_t reference;
+    float speed_cmd;
+
+    if ((s_finish_decel_active == 0U) || (nav_ram_data.point_count < 2U))
+    {
+        target_speed_set = 0.0f;
+        err_degree = 0.0f;
+        return;
+    }
+
+    last_segment = (uint16)(nav_ram_data.point_count - 2U);
+    speed_cmd = Plan4_Ramp(s_prev_speed_cmd, 0.0f, PLAN4_FINISH_SPEED_DECEL_STEP);
+    Plan4_BuildReference(last_segment, last_segment, &reference);
+    reference.target_speed = speed_cmd;
+    err_degree = Plan4_CalcSteer(&reference);
+    target_speed_set = speed_cmd;
+    s_prev_err_degree = err_degree;
+    s_prev_speed_cmd = target_speed_set;
+
+    if ((target_speed_set == 0.0f) &&
+        (fabsf(inertial_nav.vx_body) <= PLAN4_FINISH_STOP_SPEED_MM_S))
+    {
+        err_degree = 0.0f;
+        s_prev_err_degree = 0.0f;
+        s_finish_decel_active = 0U;
+    }
+}
+
 uint16 NavReplay_LoadStaticRouteToRam(void)
 {
 #if NAV_REPLAY_USE_STATIC_ROUTE_TABLE
@@ -609,6 +649,7 @@ void NavReplay_Start(void)
     s_minefield_zero_brake_issued = 0U;
     s_minefield_exit_speed_cmd = 0.0f;
     s_minefield_exit_speed_end_idx = 0xFFFFU;
+    s_finish_decel_active = 0U;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
@@ -634,6 +675,7 @@ void NavReplay_Stop(void)
     s_minefield_zero_brake_issued = 0U;
     s_minefield_exit_speed_cmd = 0.0f;
     s_minefield_exit_speed_end_idx = 0xFFFFU;
+    s_finish_decel_active = 0U;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
@@ -651,13 +693,12 @@ void NavReplay_Process(void)
     float steer_cmd;
     float speed_cmd;
 
-    /* Keep the finished state active and continuously clamp the outputs. */
+    /* Keep controlling along the terminal path while decelerating. */
     if (g_replay_state == REPLAY_FINISHED)
     {
         g_target_idx = (nav_ram_data.point_count > 0U) ?
                        (uint16)(nav_ram_data.point_count - 1U) : 0U;
-        target_speed_set = 0.0f;
-        err_degree = 0.0f;
+        Plan4_ProcessFinishDecel();
         return;
     }
     if (g_replay_state != REPLAY_RUNNING) return;
@@ -691,11 +732,8 @@ void NavReplay_Process(void)
 
     if (g_target_idx >= nav_ram_data.point_count - 1U)
     {
-        g_replay_state = REPLAY_FINISHED;
-        g_target_idx = (uint16)(nav_ram_data.point_count - 1U);
-        g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
-        target_speed_set = 0.0f;
-        err_degree = 0.0f;
+        Plan4_StartFinishDecel();
+        Plan4_ProcessFinishDecel();
         return;
     }
 
@@ -711,13 +749,8 @@ void NavReplay_Process(void)
     g_target_idx = base_idx;
     if ((base_idx >= last_segment) && Plan4_FinalPointCrossed(last_segment))
     {
-        g_target_idx = (uint16)(nav_ram_data.point_count - 1U);
-        g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
-        g_replay_state = REPLAY_FINISHED;
-        target_speed_set = 0.0f;
-        err_degree = 0.0f;
-        s_prev_speed_cmd = 0.0f;
-        s_prev_err_degree = 0.0f;
+        Plan4_StartFinishDecel();
+        Plan4_ProcessFinishDecel();
         return;
     }
     if ((s_minefield_exit_speed_end_idx != 0xFFFFU) &&

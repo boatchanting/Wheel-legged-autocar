@@ -1087,8 +1087,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     }
     #endif
 
+    /* REPLAY_FINISHED keeps navigation ownership through terminal deceleration. */
     #if GNSS_NAV == 1
-    if ((g_replay_state != REPLAY_RUNNING) &&
+    if (g_replay_state == REPLAY_IDLE &&
         (g_gps_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
@@ -1098,7 +1099,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
     #if GNSS_NAV == 0
-        if ((g_replay_state != REPLAY_RUNNING) &&
+        if (g_replay_state == REPLAY_IDLE &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
