@@ -74,9 +74,16 @@ def load_samples(data_dir: Path, route: pd.DataFrame) -> tuple[pd.DataFrame, pd.
         # Body X is negative while moving forward in these logs.
         auto["u_rpm"] = -auto["target_speed_set"].astype(float)
         auto["v_body_mm_s"] = -auto["vx_body"].astype(float)
-        auto["v_wheel_mm_s"] = WHEEL_MM_PER_RPM * (
-            auto["speed_L"].astype(float) - auto["speed_R"].astype(float)
-        ) / 2.0
+        auto["wheel_left_mm_s"] = WHEEL_MM_PER_RPM * auto["speed_L"].astype(float)
+        auto["wheel_right_mm_s"] = -WHEEL_MM_PER_RPM * auto["speed_R"].astype(float)
+        auto["wheel_delta_mm_s"] = auto["wheel_right_mm_s"] - auto["wheel_left_mm_s"]
+        auto["v_wheel_mm_s"] = (auto["wheel_left_mm_s"] + auto["wheel_right_mm_s"]) / 2.0
+        # Unwrap relative_yaw before differentiating; it is a wrapped degree
+        # signal and otherwise produces false +/-360 degree/s spikes.
+        yaw_rad = np.unwrap(np.deg2rad(auto["relative_yaw"].to_numpy(float)))
+        yaw_rate = np.gradient(yaw_rad, float(np.median(dt_s)))
+        auto["yaw_rate_rad_s"] = pd.Series(yaw_rate).rolling(5, center=True, min_periods=1).median().to_numpy()
+        auto["wheel_curvature"] = auto["yaw_rate_rad_s"] / np.maximum(auto["v_wheel_mm_s"].abs(), 500.0)
         auto["du_rpm_s"] = auto["u_rpm"].diff().fillna(0.0) / auto["dt_s"]
         auto["abs_curvature"] = auto["route_curvature"].abs()
         auto["u_times_abs_curvature"] = auto["u_rpm"] * auto["abs_curvature"]
@@ -203,6 +210,7 @@ def simulate_from_route_table(
     dt_s: float = 0.01,
     initial_speed_mm_s: float = 0.0,
     max_steps: int = 100000,
+    route_correction_mm_s: np.ndarray | None = None,
 ) -> pd.DataFrame:
     """Free-run a speed model using only route-table values.
 
@@ -240,6 +248,8 @@ def simulate_from_route_table(
         # curvature model at the same 10 ms step as the telemetry logs.
         v_next = sum(c * vals[name] for c, name in zip(coef, MODEL_FEATURES["first_order_curvature"]))
         v_next = max(float(v_next), 0.0)
+        if route_correction_mm_s is not None:
+            v_next = max(v_next + float(route_correction_mm_s[idx]), 0.0)
         rows.append(
             {
                 "time_s": t,
@@ -258,6 +268,45 @@ def simulate_from_route_table(
         if idx >= len(route) - 1:
             break
     return pd.DataFrame(rows)
+
+
+def estimate_track_width(samples: pd.DataFrame) -> float:
+    mask = (
+        samples["yaw_rate_rad_s"].abs().between(0.05, 3.0)
+        & samples["wheel_delta_mm_s"].abs().between(1.0, 1600.0)
+    )
+    om = samples.loc[mask, "yaw_rate_rad_s"].to_numpy(float)
+    dv = samples.loc[mask, "wheel_delta_mm_s"].to_numpy(float)
+    if len(om) < 20:
+        return float("nan")
+    ratio = dv / om
+    keep = np.isfinite(ratio) & (ratio > 100.0) & (ratio < 350.0)
+    if keep.sum() < 20:
+        return float(np.dot(om, dv) / np.dot(om, om))
+    # Trim slip/fusion outliers before applying v_R-v_L = B*omega.
+    return float(np.dot(om[keep], dv[keep]) / np.dot(om[keep], om[keep]))
+
+
+def build_route_curve_correction(
+    samples: pd.DataFrame, route_only: pd.DataFrame, route_count: int, window: int = 5
+) -> np.ndarray:
+    """Build a route-specific, robust curve correction from wheel speed.
+
+    The correction is deliberately a separate calibration layer: it captures
+    repeatable track/steering effects on this route that a global longitudinal
+    ARX model cannot infer from target speed alone.
+    """
+    base_by_route = route_only.groupby("route_index")["predicted_speed_mm_s"].median()
+    base = np.interp(
+        samples["route_index"].to_numpy(),
+        base_by_route.index.to_numpy(),
+        base_by_route.to_numpy(),
+    )
+    residual = samples["v_wheel_mm_s"].to_numpy(float) - base
+    raw = np.zeros(route_count, dtype=float)
+    for idx, values in pd.Series(residual).groupby(samples["route_index"].to_numpy()):
+        raw[int(idx)] = float(np.median(values))
+    return pd.Series(raw).rolling(window, center=True, min_periods=1).median().to_numpy()
 
 
 def fit_first100_constrained(frame: pd.DataFrame, pole: float, ridge: float = 10.0) -> np.ndarray:
@@ -331,8 +380,100 @@ def main() -> None:
 
     route_only = simulate_from_route_table(route, np.asarray(all_fit["first_order_curvature"], dtype=float))
     route_only.to_csv(args.out_dir / "point_table_only_speed_prediction.csv", index=False)
+    track_width_mm = estimate_track_width(samples)
+    samples["yaw_rate_prev_rad_s"] = samples.groupby("file")["yaw_rate_rad_s"].shift(1)
+    samples["v_body_prev_mm_s"] = samples.groupby("file")["v_body_mm_s"].shift(1)
+    yaw_fit = samples.dropna(subset=["yaw_rate_prev_rad_s", "v_body_prev_mm_s"])
+    yaw_X = np.column_stack(
+        [
+            np.ones(len(yaw_fit)),
+            yaw_fit["yaw_rate_prev_rad_s"].to_numpy(float),
+            yaw_fit["v_body_prev_mm_s"].to_numpy(float) * yaw_fit["route_curvature"].to_numpy(float),
+        ]
+    )
+    yaw_coef = np.linalg.lstsq(yaw_X, yaw_fit["yaw_rate_rad_s"].to_numpy(float), rcond=None)[0]
+    (args.out_dir / "yaw_state_model_coefficients.json").write_text(
+        json.dumps(
+            {
+                "equation": "omega[k] = c_omega + a_omega*omega[k-1] + b_omega*v[k-1]*curvature_plan[k]",
+                "coefficients": yaw_coef.tolist(),
+                "track_width_mm": track_width_mm,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    route_curve_correction = build_route_curve_correction(samples, route_only, len(route), window=5)
+    # Apply the route correction to the base curve after propagation. The
+    # correction is a calibrated output residual, not an additional physical
+    # acceleration term; feeding it back into distance propagation would make
+    # large startup residuals incorrectly stall the simulated vehicle.
+    route_corrected = route_only.copy()
+    route_corrected["predicted_speed_mm_s"] = np.maximum(
+        route_corrected["predicted_speed_mm_s"].to_numpy(float)
+        + route_curve_correction[route_corrected["route_index"].to_numpy(int)],
+        0.0,
+    )
+    route_corrected.to_csv(args.out_dir / "point_table_curve_corrected_speed_prediction.csv", index=False)
+    pd.DataFrame(
+        {
+            "route_index": np.arange(len(route)),
+            "route_correction_mm_s": route_curve_correction,
+            "route_curvature": route["curvature"].to_numpy(),
+            "target_speed_rpm": route["target_speed_rpm"].to_numpy(),
+        }
+    ).to_csv(args.out_dir / "route_curve_correction.csv", index=False)
+
+    # Leave-one-log-out validation for the route correction. This separates the
+    # optimistic all-log visual calibration from its cross-log generalization.
+    correction_cv_rows = []
+    for test_file in files:
+        train = samples.loc[samples["file"] != test_file]
+        test = samples.loc[samples["file"] == test_file]
+        train_coef = fit_model(train, "first_order_curvature")
+        train_base = simulate_from_route_table(route, train_coef)
+        train_corr = build_route_curve_correction(train, train_base, len(route), window=5)
+        base_by_route_cv = train_base.groupby("route_index")["predicted_speed_mm_s"].median()
+        base_values_cv = np.interp(
+            test["route_index"].to_numpy(),
+            base_by_route_cv.index.to_numpy(),
+            base_by_route_cv.to_numpy(),
+        )
+        corrected_values_cv = base_values_cv + train_corr[test["route_index"].to_numpy()]
+        y_test = test["v_body_mm_s"].to_numpy(float)
+        correction_cv_rows.append(
+            {
+                "test_file": test_file,
+                "base_rmse_mm_s": float(np.sqrt(np.mean((base_values_cv - y_test) ** 2))),
+                "corrected_rmse_mm_s": float(np.sqrt(np.mean((corrected_values_cv - y_test) ** 2))),
+                "base_mae_mm_s": float(np.mean(np.abs(base_values_cv - y_test))),
+                "corrected_mae_mm_s": float(np.mean(np.abs(corrected_values_cv - y_test))),
+            }
+        )
+    correction_cv = pd.DataFrame(correction_cv_rows)
+    correction_cv.to_csv(args.out_dir / "curve_correction_leave_one_file_out.csv", index=False)
     route_xy = route[["x", "y"]].to_numpy(float)
     route_distance = np.r_[0.0, np.cumsum(np.sqrt(np.sum(np.diff(route_xy, axis=0) ** 2, axis=1)))]
+
+    # Differential-drive diagnostic: planned curvature versus curvature inferred
+    # from relative_yaw and wheel speed. Curves are plotted in route distance.
+    measured_kappa = samples.groupby("route_index")["wheel_curvature"].median()
+    fig, ax1 = plt.subplots(figsize=(12, 5))
+    ax1.plot(route_distance, route["curvature"], color="tab:blue", lw=1.2, label="planned curvature")
+    ax1.plot(
+        route_distance[measured_kappa.index.to_numpy()],
+        measured_kappa.to_numpy(),
+        color="tab:red",
+        lw=1.0,
+        alpha=0.85,
+        label="measured curvature from yaw/wheels",
+    )
+    ax1.set(xlabel="route distance (mm)", ylabel="curvature (1/mm)", title="Differential-drive curvature diagnostic")
+    ax1.grid(alpha=0.25)
+    ax1.legend()
+    fig.tight_layout()
+    fig.savefig(args.out_dir / "differential_drive_curvature_diagnostics.png", dpi=160)
+    plt.close(fig)
 
     # Short-prefix adaptation experiment: use the first 100 measured samples
     # only to estimate the input gain/offset, then replace future target speed
@@ -387,12 +528,15 @@ def main() -> None:
     comparison_rows = []
     for file_name, frame in samples.groupby("file", sort=False):
         pred = pred_route_values[frame["route_index"].to_numpy()]
+        corrected = route_curve_correction[frame["route_index"].to_numpy()] + pred
         comparison_rows.append(
             {
                 "file": file_name,
                 "n": len(frame),
                 "route_aligned_rmse_mm_s": float(np.sqrt(np.mean((pred - frame["v_body_mm_s"].to_numpy()) ** 2))),
                 "route_aligned_mae_mm_s": float(np.mean(np.abs(pred - frame["v_body_mm_s"].to_numpy()))),
+                "curve_corrected_rmse_mm_s": float(np.sqrt(np.mean((corrected - frame["v_body_mm_s"].to_numpy()) ** 2))),
+                "curve_corrected_mae_mm_s": float(np.mean(np.abs(corrected - frame["v_body_mm_s"].to_numpy()))),
             }
         )
     pd.DataFrame(comparison_rows).to_csv(args.out_dir / "point_table_vs_original_vx_metrics.csv", index=False)
@@ -535,7 +679,14 @@ def main() -> None:
         route_only["predicted_speed_mm_s"],
         color="black",
         lw=2.0,
-        label="point-table-only model",
+        label="point-table-only base model",
+    )
+    ax.plot(
+        route_corrected["distance_mm"],
+        route_corrected["predicted_speed_mm_s"],
+        color="tab:purple",
+        lw=2.0,
+        label="point-table-only + route curve correction",
     )
     ax.set(
         xlabel="route distance from point-table start (mm)",
@@ -546,6 +697,41 @@ def main() -> None:
     ax.legend(fontsize=8, ncol=2)
     fig.tight_layout()
     fig.savefig(args.out_dir / "point_table_vs_original_vx.png", dpi=160)
+    plt.close(fig)
+
+    # Presentation view requested for judging the calibrated prediction alone:
+    # original traces are deliberately subordinate to the purple prediction.
+    fig, ax = plt.subplots(figsize=(12.5, 5.4))
+    trace_colors = ["#4E79A7", "#59A14F", "#F28E2B", "#E15759", "#76B7B2"]
+    for run_no, ((_, frame), color) in enumerate(
+        zip(samples.groupby("file", sort=False), trace_colors), start=1
+    ):
+        ax.plot(
+            route_distance[frame["route_index"].to_numpy()],
+            frame["v_body_mm_s"],
+            color=color,
+            lw=0.85,
+            alpha=0.62,
+            label=f"original -vx_body: run {run_no}",
+        )
+    ax.plot(
+        route_corrected["distance_mm"],
+        route_corrected["predicted_speed_mm_s"],
+        color="#7E57C2",
+        lw=2.8,
+        label="route-calibrated point-table prediction",
+        zorder=5,
+    )
+    ax.set(
+        xlabel="route distance from point-table start (mm)",
+        ylabel="forward speed (mm/s)",
+        title="Route-Calibrated Point-Table Speed Prediction vs Original Runs",
+    )
+    ax.grid(color="#D9DDE3", alpha=0.7, linewidth=0.7)
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(fontsize=8.5, ncol=2, frameon=False, loc="lower right")
+    fig.tight_layout()
+    fig.savefig(args.out_dir / "purple_prediction_vs_original_vx.png", dpi=180)
     plt.close(fig)
 
     fig, axes = plt.subplots(3, 2, figsize=(13, 11), sharex=False, sharey=True)
@@ -574,6 +760,9 @@ def main() -> None:
     fo_tau = float(-samples["dt_s"].median() / np.log(fo_a)) if 0.0 < fo_a < 1.0 else float("nan")
     fo_gain = float(fo[2] / (1.0 - fo_a))
     fo_offset = float(fo[0] / (1.0 - fo_a))
+    curvature_corr = float(samples[["route_curvature", "wheel_curvature"]].corr().iloc[0, 1])
+    correction_cv_base_rmse = float(correction_cv["base_rmse_mm_s"].mean())
+    correction_cv_rmse = float(correction_cv["corrected_rmse_mm_s"].mean())
     prefix_mean_rmse = float(np.mean([row["forecast_rmse_mm_s"] for row in prefix_metrics]))
     prefix_mean_mae = float(np.mean([row["forecast_mae_mm_s"] for row in prefix_metrics]))
     lines = [
@@ -584,7 +773,11 @@ def main() -> None:
         f"- Route matching error: median {samples['route_match_error_mm'].median():.1f} mm, p95 {samples['route_match_error_mm'].quantile(.95):.1f} mm.",
         f"- All-data first-order model: `v[k] = {fo_a:.6f} v[k-1] + {fo[2]:.6f} u[k] {fo[0]:+.3f}`, where `u=-target_speed_set` (RPM); equivalent steady-state map `v_eq={fo_gain:.3f}u{fo_offset:+.1f}` and time constant `tau={fo_tau:.3f} s`.",
         f"- Point-table-only simulation starts from `v0=0` and reaches route point {int(route_only['route_index'].iloc[-1])}/{len(route)-1} in {route_only['time_s'].iloc[-1]:.2f} s; it uses no telemetry target-speed or measured-speed samples.",
-        "- The orange one-step model uses the measured previous speed in the ARX equation; the green recursive model uses its own previous prediction. The point-table-only curve is the recursive version with `v0=0` and route-table target speed/curvature inputs.",
+        f"- Differential-drive estimate: equivalent track width `B={track_width_mm:.1f} mm`, using `omega=(v_R-v_L)/B`; measured wheel curvature is `kappa_actual=omega/v_wheel`.",
+        f"- Planned/measured curvature correlation is {curvature_corr:.3f}; the yaw-state fit is `omega[k]={yaw_coef[0]:+.5f} {yaw_coef[1]:+.5f}*omega[k-1] {yaw_coef[2]:+.5f}*v[k-1]*kappa_plan[k]`.",
+        "- The orange one-step model uses the measured previous speed in the ARX equation; the green recursive model uses its own previous prediction. The point-table-only base curve is the recursive version with `v0=0` and route-table target speed/curvature inputs.",
+        "- The purple curve adds a route-specific correction learned from the median wheel-speed residual at each point and smoothed over 5 points. It improves repeatability on this calibrated route but is not a universal vehicle model for unseen routes.",
+        f"- Leave-one-log-out route-correction RMSE changes from {correction_cv_base_rmse:.1f} to {correction_cv_rmse:.1f} mm/s; see `curve_correction_leave_one_file_out.csv`.",
         "- The first-100-step experiment fixes the global pole, estimates only offset/gain from the first 100 measured samples, then replaces future `target_speed_set` with the point-table target speed and forecasts recursively. The forecast starts from the 100th measured speed for evaluation.",
         f"- First-100 forecast mean across 5 runs: RMSE {prefix_mean_rmse:.1f} mm/s, MAE {prefix_mean_mae:.1f} mm/s. See `first100_prefix_forecast_vs_original_vx.png` and `first100_prefix_forecast_metrics.csv`.",
         "- `per_file_calibrated_comparison.png` fits the first-order-curvature coefficients separately on each file and evaluates on that same file; it is an in-sample calibration view, not a held-out validation result.",
