@@ -15,6 +15,13 @@ extern volatile uint8_t minefield_flag;
 #define MINEFIELD_SPIN_ABORT_TIMEOUT              1U
 #define MINEFIELD_SPIN_ABORT_STALLED              2U
 
+// 雷区转圈及交接参数：转向输出最多占用 5500 PWM，按 8000 PWM 电机上限为平衡环保留 2500 PWM。
+#define MINEFIELD_SPIN_HEIGHT_TARGET              3.0f
+#define MINEFIELD_BALANCE_PWM_RESERVE              2500.0f
+#define MINEFIELD_TURN_PWM_MAX_ALLOWED            5500.0f
+#define MINEFIELD_SPIN_HANDOFF_DURATION_MS        500U
+#define MINEFIELD_SPIN_HANDOFF_RATIO_STEP         (1.0f / (float)MINEFIELD_SPIN_HANDOFF_DURATION_MS)
+
 typedef enum
 {
     MINEFIELD_SPIN_PHASE_IDLE = 0,

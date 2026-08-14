@@ -1484,11 +1484,31 @@ float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
     return pid_turn_gyro.output;
 }
 
+void Turn_Angle_Loop_Reset(void)
+{
+    pid_turn_angle.error = 0.0f;
+    pid_turn_angle.last_error = 0.0f;
+    pid_turn_angle.prev_error = 0.0f;
+    pid_turn_angle.error_integral = 0.0f;
+    pid_turn_angle.output = 0.0f;
+}
+
 void Turn_Gyro_Loop_Reset(void)
 {
     pid_turn_gyro.error = 0.0f;
     pid_turn_gyro.last_error = 0.0f;
     pid_turn_gyro.prev_error = 0.0f;
+    pid_turn_gyro.error_integral = 0.0f;
+    pid_turn_gyro.output = 0.0f;
+}
+
+void Turn_Gyro_Loop_Bumpless_Reset(float target_gyro, float actual_gyro)
+{
+    float error = target_gyro - actual_gyro;
+
+    pid_turn_gyro.error = error;
+    pid_turn_gyro.last_error = error;
+    pid_turn_gyro.prev_error = error;
     pid_turn_gyro.error_integral = 0.0f;
     pid_turn_gyro.output = 0.0f;
 }

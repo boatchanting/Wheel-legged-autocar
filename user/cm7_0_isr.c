@@ -88,9 +88,6 @@ static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
 #define FALLEN_STANDUP_GRACE_MS (1500U)
-#define MINEFIELD_TURN_HANDOFF_MS (120U)
-#define MINEFIELD_SERVO_HEIGHT (3.0f)
-#define MINEFIELD_TURN_PWM_LIMIT (6500.0f)
 
 #if IMU_REFRESH_TEST_ENABLE
 #define IMU_REFRESH_TEST_TIME_MS (10000U)
@@ -498,7 +495,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         }
 
         // 雷区由自身接管车身高度；退出后立即归还给原有规划状态机。
-        servo_height = MINEFIELD_SERVO_HEIGHT;
+        servo_height = MINEFIELD_SPIN_HEIGHT_TARGET;
         // 清除入区前的纵向前馈，给俯仰平衡环保留转向 PWM 余量。
         Brake_Feedforward_Reset();
         Accel_Feedforward_Reset();
@@ -522,7 +519,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
-            if ((jump_flag != 0U) || (Minefield_Is_Active() != 0U))
+            if (jump_flag != 0U)
             {
                 /* 【跳跃冻结速度环 2026-08-12】
                  * 跳跃期间速度环不参与控制：
@@ -743,6 +740,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;
+        uint8_t minefield_turn_handoff_active = 0U;
         uint8_t minefield_active = Minefield_Is_Active();
         
         if (minefield_active != 0U)
@@ -753,12 +751,27 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         }
         else
         {
-            final_turn_cmd = turn_angle_loop_out; // 使用正常的PID外环指令
             if (minefield_was_active != 0U)
             {
-                Turn_Gyro_Loop_Reset();
+                Turn_Angle_Loop_Reset();
+                Turn_Gyro_Loop_Bumpless_Reset(0.0f, filtered_gyro_z);
                 minefield_was_active = 0U;
-                minefield_turn_handoff_ticks = MINEFIELD_TURN_HANDOFF_MS;
+                minefield_turn_handoff_ticks = MINEFIELD_SPIN_HANDOFF_DURATION_MS;
+            }
+
+            if (minefield_turn_handoff_ticks != 0U)
+            {
+                float handoff_ratio =
+                    (float)(MINEFIELD_SPIN_HANDOFF_DURATION_MS - minefield_turn_handoff_ticks) *
+                    MINEFIELD_SPIN_HANDOFF_RATIO_STEP;
+
+                final_turn_cmd = turn_angle_loop_out * handoff_ratio;
+                minefield_turn_handoff_active = 1U;
+                minefield_turn_handoff_ticks--;
+            }
+            else
+            {
+                final_turn_cmd = turn_angle_loop_out;
             }
         }
         //==================== [雷区旋转调用结束] =================
@@ -767,7 +780,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         {
             if (minefield_was_coasting == 0U)
             {
-                Turn_Gyro_Loop_Reset();
+                Turn_Gyro_Loop_Bumpless_Reset(0.0f, filtered_gyro_z);
                 minefield_was_coasting = 1U;
             }
             turn_gyro_loop_out = 0.0f;
@@ -776,25 +789,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         {
             if (minefield_was_coasting != 0U)
             {
-                Turn_Gyro_Loop_Reset();
+                Turn_Gyro_Loop_Bumpless_Reset(final_turn_cmd, filtered_gyro_z);
                 minefield_was_coasting = 0U;
             }
             turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
-            if (minefield_active != 0U)
+            if ((minefield_active != 0U) || (minefield_turn_handoff_active != 0U))
             {
-                // 雷区转向最多占用 6500 PWM，预留 1500 PWM 给俯仰平衡及纵向补偿。
-                turn_gyro_loop_out = Float_Constrain(turn_gyro_loop_out,
-                                                      -MINEFIELD_TURN_PWM_LIMIT,
-                                                      MINEFIELD_TURN_PWM_LIMIT);
-            }
-            if (minefield_turn_handoff_ticks != 0U)
-            {
-                float handoff_weight = (float)(MINEFIELD_TURN_HANDOFF_MS - minefield_turn_handoff_ticks) /
-                                       (float)MINEFIELD_TURN_HANDOFF_MS;
+                float minefield_turn_pwm_limit =
+                    Float_Constrain(MINEFIELD_TURN_PWM_MAX_ALLOWED,
+                                    0.0f,
+                                    OUR_PWM_MAX_LIMIT - MINEFIELD_BALANCE_PWM_RESERVE);
 
-                // 雷区余旋尚未消失时，逐步把正常转向环交还给底盘，避免反向 PWM 突跳。
-                turn_gyro_loop_out *= handoff_weight;
-                minefield_turn_handoff_ticks--;
+                turn_gyro_loop_out = Float_Constrain(turn_gyro_loop_out,
+                                                       -minefield_turn_pwm_limit,
+                                                       minefield_turn_pwm_limit);
             }
         }
     }

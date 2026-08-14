@@ -455,8 +455,10 @@ void PID_Data_Clean_All(void);//pid运算相关数据全重置，参数也重置
 float Float_Constrain(float val, float min, float max);//限幅函数
 
 float Turn_Angle_Loop_Control(float angle_error);//转向角度环控制
+void Turn_Angle_Loop_Reset(void);
 float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
 void Turn_Gyro_Loop_Reset(void);
+void Turn_Gyro_Loop_Bumpless_Reset(float target_gyro, float actual_gyro);
 float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)
 void Servo_Speed_Control_Reset(void);//重置速度环运行态（不重置参数），跳跃/推车冻结时调用
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
