@@ -39,6 +39,7 @@ typedef struct {
     float post_jump_height;    // 落地后的新基准身高 (修改 servo_height)
 } JumpProfile_t;
 extern JumpProfile_t g_jump_profile; // 当前正在执行的跳跃参数
+extern uint8_t g_jump_profile_wifi_override; // 标志位：上位机是否覆盖了跳跃参数（1: WiFi调参覆盖生效，起跳时不重载硬编码）
 // ===================== 状态控制 =====================
 extern uint8_t jump_flag;          // 0:空闲, 1:跳跃中
 extern uint32_t jump_start_time;   // 记录起跳时的 loop_counter
@@ -64,6 +65,7 @@ extern volatile uint32_t g_jump_flight_cmd_time_ms;
 
 // ===================== 函数声明 =====================
 void jump_module_init(void);
+void jump_profile_reset_defaults(void); // 重置跳跃参数为当前小车/模式的默认硬编码值
 void jump_trigger(void);           // 触发跳跃
 void jump_trigger_with_type(JumpType_e type);        // 新版触发，可选择跳跃类型
 void servo_jump_executor(void);    // 周期性调用执行函数

@@ -9,6 +9,7 @@ uint32_t jump_start_time = 0;
 volatile JumpPhase g_current_jump_phase = JUMP_PHASE_NONE; // 初始化为 NONE
 JumpType_e g_current_jump_type = JUMP_TYPE_NORMAL;
 JumpProfile_t g_jump_profile; // 当前正在执行的跳跃参数
+uint8_t g_jump_profile_wifi_override = 0U; // 标志位：1表示上位机WiFi修改已覆盖跳跃参数
 bool vision_detected_jump_point = false;//跳跃测试用
 bool vision_detected_three_jump_point = false; // 三连跳测试用
 volatile int32 g_jump_target_pwm_lf = 0;
@@ -284,9 +285,9 @@ static void load_jump_profile(JumpType_e type, float current_height)
             break;
 
         case JUMP_TYPE_BUMPY_SHORT: // 【短颠簸专用】
-            g_jump_profile.t_launch = 900;
+            g_jump_profile.t_launch = 90;
             g_jump_profile.t_flight = 150;
-            g_jump_profile.t_landing = 360;
+            g_jump_profile.t_landing = 300;
             g_jump_profile.t_recovery = 360;
             g_jump_profile.offset_launch = 3000; 
             g_jump_profile.offset_flight = -200;
@@ -326,12 +327,32 @@ static void load_jump_profile(JumpType_e type, float current_height)
     g_air_target_pitch = g_jump_profile.air_target_pitch;
 }
 
+void jump_profile_reset_defaults(void)
+{
+    g_jump_profile_wifi_override = 0U;
+#if (SINGLE_JUMP_PROFILE == 2U)
+    g_current_jump_type = JUMP_TYPE_HURDLE;
+#elif (SINGLE_JUMP_PROFILE == 3U)
+    g_current_jump_type = JUMP_TYPE_STEP_UP;
+#elif (SINGLE_JUMP_PROFILE == 4U)
+    g_current_jump_type = JUMP_TYPE_BUMPY_SHORT;
+#elif (SINGLE_JUMP_PROFILE == 5U)
+    g_current_jump_type = JUMP_TYPE_BUMPY_LONG;
+#else
+    g_current_jump_type = JUMP_TYPE_NORMAL;
+#endif
+    load_jump_profile(g_current_jump_type, servo_height);
+}
+
 static void jump_trigger_with_profile(JumpType_e type)
 {
     if (jump_flag == 0U)
     {
-        load_jump_profile(type, servo_height);
-        g_restore_profile_after_single_jump = 1U;
+        if (g_jump_profile_wifi_override == 0U)
+        {
+            load_jump_profile(type, servo_height);
+            g_restore_profile_after_single_jump = 1U;
+        }
         jump_trigger_with_type(type);
     }
 }
@@ -358,10 +379,14 @@ void jump_trigger_with_type(JumpType_e type)
     {
         g_current_jump_type = type;
         /* 普通跳跃维持既有预加载行为；只有颠簸专用类型在触发时加载独立参数，
-         * 以免影响跨杆、三级跳和普通跳跃的现有调用链。 */
-        if ((type == JUMP_TYPE_BUMPY_SHORT) || (type == JUMP_TYPE_BUMPY_LONG))
+         * 以免影响跨杆、三级跳和普通跳跃的现有调用链。
+         * 若处于 WiFi 调参覆盖状态，则保留上位机下发参数，不重复加载硬编码。 */
+        if (g_jump_profile_wifi_override == 0U)
         {
-            load_jump_profile(type, servo_height);
+            if ((type == JUMP_TYPE_BUMPY_SHORT) || (type == JUMP_TYPE_BUMPY_LONG))
+            {
+                load_jump_profile(type, servo_height);
+            }
         }
         time_elapsed1 = 0;
         time_elapsed2 = 0;
@@ -654,13 +679,16 @@ void servo_jump_executor(void)
             (ABS(target_rr - PWM_CH3_LAST) <= TARGET_TOLERANCE) &&
             (ABS(target_lr - PWM_CH4_LAST) <= TARGET_TOLERANCE))
         {
-            if ((g_current_jump_type == JUMP_TYPE_BUMPY_SHORT) ||
-                (g_current_jump_type == JUMP_TYPE_BUMPY_LONG) ||
-                (g_restore_profile_after_single_jump != 0U))
+            if (g_jump_profile_wifi_override == 0U)
             {
-                g_current_jump_type = JUMP_TYPE_NORMAL;
-                load_jump_profile(JUMP_TYPE_NORMAL, servo_height);
-                g_restore_profile_after_single_jump = 0U;
+                if ((g_current_jump_type == JUMP_TYPE_BUMPY_SHORT) ||
+                    (g_current_jump_type == JUMP_TYPE_BUMPY_LONG) ||
+                    (g_restore_profile_after_single_jump != 0U))
+                {
+                    g_current_jump_type = JUMP_TYPE_NORMAL;
+                    load_jump_profile(JUMP_TYPE_NORMAL, servo_height);
+                    g_restore_profile_after_single_jump = 0U;
+                }
             }
             jump_flag = 0; /* 动作完成，交还控制权 */
             g_current_jump_phase = JUMP_PHASE_NONE;
@@ -737,9 +765,8 @@ void Momentum_Wheel_Control_Init(void)
     g_air_kp = 60.0f;  // 空中姿态P，需要非常激进
     g_air_kd = 8.0f;   // 空中姿态D，抑制空中翻转速度
     g_air_target_pitch = ANG_MECH_ZERO; // 空中目标角度与机械零点一致
-    // 加载当前跳跃类型的时序和参数
-    g_current_jump_type = JUMP_TYPE_NORMAL;//这里面可以选择不同的跳跃类型，测试时先用普通跳
-    load_jump_profile(g_current_jump_type, servo_height);//【优化点】加载初始化跳跃姿态控制参数
+    // 根据 SINGLE_JUMP_PROFILE 加载默认跳跃参数
+    jump_profile_reset_defaults();
 }
 
 /**

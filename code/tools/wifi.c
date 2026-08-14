@@ -270,14 +270,37 @@ void wifi_update_pid_params(void)
                 // default: break;
 
                 //【调节跳跃参数】
-                case 0:g_jump_profile.t_launch  = seekfree_assistant_parameter[i]; break;
-                case 1:g_jump_profile.t_flight = seekfree_assistant_parameter[i]; break;
-                case 2:g_jump_profile.t_landing= seekfree_assistant_parameter[i]; break;
-                case 3: g_jump_profile.t_recovery = seekfree_assistant_parameter[i]; break;
-                case 4: g_jump_profile.offset_launch = seekfree_assistant_parameter[i]; break;
-                case 5: g_jump_profile.offset_flight = seekfree_assistant_parameter[i]; break;
-                case 6: g_jump_profile.offset_land  =  seekfree_assistant_parameter[i]; break;
-                case 7:vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                case 0:
+                    g_jump_profile.t_launch = (uint32_t)seekfree_assistant_parameter[i];
+                    g_jump_profile_wifi_override = 1U;
+                    break;
+                case 1:
+                    g_jump_profile.t_flight = (uint32_t)seekfree_assistant_parameter[i];
+                    g_jump_profile_wifi_override = 1U;
+                    break;
+                case 2:
+                    g_jump_profile.t_landing = (uint32_t)seekfree_assistant_parameter[i];
+                    g_jump_profile_wifi_override = 1U;
+                    break;
+                case 3:
+                    g_jump_profile.t_recovery = (uint32_t)seekfree_assistant_parameter[i];
+                    g_jump_profile_wifi_override = 1U;
+                    break;
+                case 4:
+                    g_jump_profile.offset_launch = (int32_t)seekfree_assistant_parameter[i];
+                    g_jump_profile_wifi_override = 1U;
+                    break;
+                case 5:
+                    g_jump_profile.offset_flight = (int32_t)seekfree_assistant_parameter[i];
+                    g_jump_profile_wifi_override = 1U;
+                    break;
+                case 6:
+                    g_jump_profile.offset_land = (int32_t)seekfree_assistant_parameter[i];
+                    g_jump_profile_wifi_override = 1U;
+                    break;
+                case 7:
+                    vision_detected_jump_point = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0;
+                    break;
                 default: break;
   
                 // //【调节颠簸路段状态机】
