@@ -113,9 +113,9 @@ typedef struct
     float err_degree_cmd;                /* 当前给方向盘下发的指令 */
     float speed_cmd;                     /* 当前给电机下发的速度指令 */
     uint8 b2_valid;                      /* 仲裁后控制线原始可信 */
-    uint8 b2_source;                     /* 0=红蓝中点 1=绿线 2=失能 */
-    uint8 b2_mode;                       /* 原始 mode */
-    uint8 b2_gate;                       /* 底部变白锁存 */
+    uint8 b2_source;                     /* 桥上: 0=红蓝中点 1=绿线 2=失能; ref阶段: 3=准备进入 4=准备脱出 */
+    uint8 b2_mode;                       /* 位掩码: 高4位=检测状态, 低3位=融合阶段 (B2M_*, 见 vision_ipc.h) */
+    uint8 b2_gate;                       /* 底部变白锁存 (融合层 gate_bottom) */
     uint8 b2_has_top;                    /* 退出线有效 */
     float exit_line_y;                   /* 退出线在图像中心列 x=47 处的行坐标(调试用, 无效为 -1) */
     uint8 center_filter_valid;

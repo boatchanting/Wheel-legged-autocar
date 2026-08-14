@@ -1190,6 +1190,18 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\bridge_output_filter.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_fusion.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_fusion.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_ref_detection.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_ref_detection.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code\tcm.h</name>
             </file>
             <file>

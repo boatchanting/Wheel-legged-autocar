@@ -1,6 +1,6 @@
 /**
  * ============================================================================
- * bridge_detect.c  ——  单边桥三线透视结构提取 (C 端, 与 pc_tools/bridge_v4.py 一致)
+ * bridge_detect_v8.c  ——  单边桥三线透视结构提取 (C 端, 对齐 pc_tools/bridge_v11.py 链路)
  * ============================================================================
  * Copyright (C) 2026  Ji Zixiang
  *
@@ -17,11 +17,17 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
  * ============================================================================
+ *
+ * 2026-08-14 v11 对齐改造 (详见 根目录 C_v8与Python_v11等价性审核报告.md):
+ *   分类器移植 v7 四态 (6段均值+双峰参考+gx极性+UNKNOWN); 修 s_gvar_r 单行
+ *   缓存陈旧 bug; bimodal 换真 σ=3 高斯; 删 VP 共点精化; gate/结束线边界对齐。
+ *
  * 流水线:
  *   94x60 → 汇编 4x4 可分离卷积 (Gx/Gy 57x91)
- *   → lock 抑制 + p99 动态阈值 + 每行/列 top-2 候选
- *   → 序贯 RANSAC 提全部竖线 → 间距先验分类 (红/绿/蓝)
- *   → VP 共点精化 → 门控粉色退出线 (五重校验)
+ *   → lock 抑制 + p99 动态阈值 + 行背景判断 + 每行 top-2 候选
+ *   → 序贯 RANSAC 提全部竖线 → v7 四态分类 (红/绿/蓝) + 间距先验
+ *   → bcv/夹角/交点驳回 → 底部变白门控 (锁存)
+ *   → v11 gy 行游程连通域结束线 + valid_detect 线级级联 (C 端保留)
  * ============================================================================
  */
 
@@ -114,9 +120,6 @@ void bridge_prof_report(void)
 void bridge_prof_report(void) { }
 #endif
 
-/* 调试: BRIDGE_EDGE_DBG=1 时打印每候选线的边线度量 (仅 host 分析用, MCU 不受影响) */
-static int s_edge_dbg = 0;
-
 /* ================================ 常量 (与 PC 版一致) ================================ */
 #define W           BRIDGE_W            /* 94  */
 #define H           BRIDGE_H            /* 60  */
@@ -152,21 +155,24 @@ static int s_edge_dbg = 0;
 #define W_CALIB_MAX_N   400.0f  /* 自校准样本上限(超限整体减半滑动)     */
 #define W_CALIB_W_MIN   8.0f    /* 有效间距样本下限(px)                 */
 
-/* ---- 边线差分校验 (2026-08-07): 边线外侧(地面)必须明显暗于内侧(桥面),
-       否则该"边线"实为中线被误配。两个互补的局部判据 (2026-08-07 晚 用户设计:
-       一小段"两边同亮"就足以判中线, 无需全局平均):
-       · 段二次矩差比和 |内²-外²|/(内²+外²) —— 两侧对比度 (曝光不变)
-       · 段"两边同亮"否决 —— 某段 i2>MID_BRIGHT2 且 o2>MID_BRIGHT2 (两侧都是
-         桥面亮区) → 该线在桥面内部 → 直接判中线 (真边线外侧是地面, 永不触发)
-       任一段差比和 > RATIO_EDGE2 → 有边线证据; 任一段两边同亮 → 中线优先;
-       外侧全段出画 → 贴边。 ---- */
-#define EDGE_SEG     4                   /* 沿全行分段数 (每段15行)       */
-#define MIN_FLANK_N 40                  /* 外侧带最少样本数(全行采样, 半段≈45) 否则贴边 */
-#define RATIO_EDGE2 0.45f               /* 段两侧二次矩差比和阈值 (用户: 用二次矩) */
-#define MID_BRIGHT2 0.85f               /* 段两侧二次矩都>此 → 该段两边近白同亮(桥面)
-                                             → 中线 (用户: 局部证据, 不要全局)。
-                                             0.85 = 亮度≈226/255 (近纯白桥面)。
-                                             66GT 亮地面外侧仅 0.51~0.83, 不触发。 */
+/* ---- 边线差分校验 (2026-08-14: 移植 pc_tools/bridge_v7.py 四态分类器) ----
+   判定一条提取线是 边线(1) / 中线(0) / 贴边(-1) / 不可判(2):
+   全行分 V7_SEG 段, 两侧带 (x-11..x-6 / x+6..x+11) 一次矩均值;
+   双峰清晰时: 两侧同亮(>mid_ref) → 中线证据; 两侧同暗且接近 → 中性;
+   边线证据: 差比和 d*100 > 30*(mi+mo) 或 均值差 d > 18;
+   边线认定: >50% 有效段支持 且 沿线 gx 主导极性匹配;
+   外侧全段出画 → 贴边; 极性明确相反 → 不可判。 ---- */
+#define EDGE_SEG     4                   /* valid_detect/line_maxr_val 分段数 (与 PC
+                                            review_bridge_gui.line_maxr 一致, 保持 4 段) */
+#define V7_SEG       6                   /* v7 分类器分段数 (每段10行)     */
+#define V7_RATIO_PER 30.0f               /* 宽松差比和阈值 (%)             */
+#define V7_MEAN_DIFF 18.0f               /* 宽松均值差阈值                 */
+#define V7_SEG_MAJ   50                  /* 边线认定: >50% 有效段支持      */
+#define V7_MIN_FLANK 40                  /* 外侧带最少样本数, 否则贴边     */
+#define V7_POL_THR   200.0f              /* 极性强点阈值下限 (动态: max(此, 0.5*p90|gx|)) */
+#define V7_POL_MIN_N 3                   /* 极性最少有效采样点             */
+#define V7_POL_MAJOR 80                  /* 主导极性占比下限 (%)           */
+#define EDGE_UNKNOWN 2                   /* 四态之"不可判" (1=边线 0=中线 -1=贴边) */
 #define EDGE_MARGIN 10.0f               /* 边框伪线判定: 线@Y_REF 距画面边缘<此 视为贴边框
                                              (2026-08-07 晚 用户: 太靠边用先验/配对一致性滤掉) */
 
@@ -228,6 +234,13 @@ static int s_edge_dbg = 0;
    R/B 交点 y_i>=30 → 交点跑到画面下方 → 检测几何异常。
    66GT 真桥交点 y_i p90=1.8; 与 valid_detect VALID_YC=30 一致。 */
 #define V8_INT_Y     30.0f
+
+/* ---- v11 边线-中线交点驳回 (2026-08-14, 对齐 pc_tools/bridge_v11.py) ----
+   边线与中线物理上共消失点(画面上方), 画面下半绝不相交;
+   交点行落在图像下半 (V11_MID_INT_Y < y_i < H) → 边线/中线之一提取偏差,
+   按结构错误驳回 (mode=RB_Q, 边线置空)。覆盖夹角/间距审核漏掉的
+   边线偶发偏差 (R-B 夹角合规但 G 与某侧边线交叉的情形)。 */
+#define V11_MID_INT_Y  30.0f           /* 边线-中线交点行上限: y_i>此值(且在图内)→驳回 */
 
 /* ---- v8 无桥面滤除: 全图双峰(Otsu 类间方差) (2026-08-12 用户定案) ----
    用户: 区分背景应是基于全图的东西 (PC bimodal_stats.otsu_bcv 全图版)。
@@ -295,7 +308,8 @@ static uint8_t  s_strong[GW];
 static int8_t   s_tail_nd[GW];       /* R6c: 右邻 MID_DIST 内有强像素标志 (拖尾剔除用) */
 static int16_t  s_bpx[GH][2], s_bpm[GH][2];
 static int16_t  s_bnx[GH][2], s_bnm[GH][2];
-/* lock box-diff 行缓存: 每行一次计算, step3/4 复用 (消除重复 gvar/hvar)
+/* lock box-diff 单行缓存: 直方图循环按行写 (仅供本行统计);
+   行背景循环按行重算 gvar (2026-08-14 bugfix, 不再跨循环复用)
    R5b(2026-08-13): 移 DTCM — s_gh/s_bg 每像素访问, DTCM 1 周期 */
 DTCM_BSS static int16_t s_gvar_r[GW];
 DTCM_BSS static int16_t s_hvar_r[GW];
@@ -547,141 +561,165 @@ static int merge_lines(int n)
 }
 
 /* ================================ 线身份分类 ================================ */
-/* 线外侧 4~9px 带亮比例 > 0.5 ?  (side=-1 左 / +1 右) */
-static int outer_bright(const iline_t *L, int side, int tb)
+/* ========================================================================
+ * v7 四态分类器组件 (2026-08-14 移植 pc_tools/bridge_v7.py:
+ * gx_polarity / line_edge_ratio / infer_side_line / classify)
+ * ======================================================================== */
+
+static int rnd_he(float x);     /* 定义见 v11 结束线段 (banker's rounding) */
+
+/* ---- 双峰参考 (bimodal_ref_frame 每帧填充; 实现见亮度阈值段) ---- */
+static float s_bref_lo, s_bref_hi;  /* 暗峰/亮峰位置 */
+static int   s_bref_sep;            /* 双峰可分 (sep_ok) */
+
+/* ---- 极性强点阈值 (每帧一次): thr = max(200, 0.5*p90(|gx|)) ---- */
+static float s_pol_thr;
+
+/* |gx| 全网格 (GH*GW=5187) 的第 rank 次序统计量 (0 基, 精确)。
+   两遍直方图: 粗 16 灰度 bin 定位 + bin 内细查。 */
+static int kth_abs_gx(int rank)
 {
-    int step = L->inl_n / 20, i, br = 0, tot = 0;
-    if (step < 1)
-        step = 1;
-    for (i = 0; i < L->inl_n; i += step) {
-        int y = (int)L->inl_u[i];
-        int x = (int)(L->f.a * L->inl_u[i] + L->f.b);
-        int k;
-        if (y < 0 || y >= H)
-            continue;
-        for (k = 0; k < 6; k++) {
-            int xx = (side < 0) ? (x - 9 + k) : (x + 4 + k);
-            if (xx >= 0 && xx < W) {
-                br += s_img[y][xx] > tb;
-                tot++;
-            }
+    uint16_t coarse[256], fine[16];
+    int r, j, i, b = 0, below = 0;
+    long cum = 0;
+    memset(coarse, 0, sizeof(coarse));
+    for (r = 0; r < GH; r++)
+        for (j = 0; j < GW; j++) {
+            int g = s_gx[r][j];
+            if (g < 0) g = -g;
+            coarse[g >> 4]++;           /* |gx|≤4080 → bin≤255 */
+        }
+    for (i = 0; i < 256; i++) {
+        cum += coarse[i];
+        if (cum > rank) {
+            b = i;
+            below = (int)(cum - coarse[i]);
+            break;
         }
     }
-    return tot > 0 && br * 2 > tot;
+    memset(fine, 0, sizeof(fine));
+    for (r = 0; r < GH; r++)
+        for (j = 0; j < GW; j++) {
+            int g = s_gx[r][j];
+            if (g < 0) g = -g;
+            if ((g >> 4) == b)
+                fine[g & 15]++;
+        }
+    cum = below;
+    for (i = 0; i < 16; i++) {
+        cum += fine[i];
+        if (cum > rank)
+            return (b << 4) + i;
+    }
+    return b << 4;                      /* 不可达 (rank 合法时) */
 }
 
-/* 沿线全行分 EDGE_SEG 段, 两侧二次矩差比和 |内2-外2|/(内2+外2) > RATIO_EDGE2
-   → 边线证据。二次矩 E[(I/255)^2] 强调高亮像素, 比一次矩(均值)对曝光更稳定
-   (用户 2026-08-07: 差比和应使用二次矩输入; 只保留小分段判据)。
-   side<0: 左边界候选(内侧=右带); side>0: 右边界候选(内侧=左带)。
-   返回: 1=边线, 0=中线, -1=贴边 */
-static int line_edge_ratio(const iline_t *L, int side);
-static void edge_dbg_print(const iline_t *L, int side);
+/* 每帧一次: p90 = np.percentile(|gx|, 90) 线性插值。
+   N=5187 → 位置 (N-1)*0.9 = 4667.4 → v[4667] + 0.4*(v[4668]-v[4667]) */
+static void pol_thr_frame(void)
+{
+    int v1 = kth_abs_gx(4667);
+    int v2 = kth_abs_gx(4668);
+    float p90 = (float)v1 + 0.4f * (float)(v2 - v1);
+    s_pol_thr = 0.5f * p90;
+    if (s_pol_thr < V7_POL_THR)
+        s_pol_thr = V7_POL_THR;
+}
 
+/* 沿线采样 gx 主导极性 (对齐 bridge_v7.py gx_polarity):
+   +1=暗→亮 / -1=亮→暗 / 0=无主导或样本不足。
+   坐标映射: gx[gy,gxx] ↔ 原图 (y+1.5, x+1.5) → gy=y, gxx=round(x_orig-1.5)。 */
+static int gx_polarity(float a, float b)
+{
+    int pos = 0, neg = 0, y;
+    for (y = 0; y < GH; y += 2) {
+        float x_orig = a * ((float)y + 1.5f) + b;
+        int gxx = rnd_he(x_orig - 1.5f);
+        int g;
+        if (gxx < 0 || gxx >= GW)
+            continue;
+        g = s_gx[y][gxx];               /* gy = y (= int(y_orig-1.5)) */
+        if ((float)g > s_pol_thr)
+            pos++;
+        else if ((float)g < -s_pol_thr)
+            neg++;
+    }
+    if (pos + neg < V7_POL_MIN_N)
+        return 0;
+    if (pos * 100 >= (pos + neg) * V7_POL_MAJOR)
+        return 1;
+    if (neg * 100 >= (pos + neg) * V7_POL_MAJOR)
+        return -1;
+    return 0;
+}
+
+/* v7 四态边线判定 (对齐 bridge_v7.py line_edge_ratio):
+   全行分 V7_SEG 段, 两侧带一次矩均值; 双峰清晰时同亮→中线证据/同暗接近→中性;
+   边线证据 = 差比和>30% 或 均值差>18; 认定需 >50% 有效段支持且极性匹配。
+   side<0: 左边界候选; side>0: 右边界候选。
+   返回: 1=边线(YES) 0=中线(MID) -1=贴边(TIGHT) 2=不可判(UNKNOWN) */
 static int line_edge_ratio(const iline_t *L, int side)
 {
-    int k, s, has_edge = 0, outer_n = 0;
-    for (s = 0; s < EDGE_SEG; s++) {
-        int y0 = s * H / EDGE_SEG, y1 = (s + 1) * H / EDGE_SEG, y;
-        float ls2 = 0, rs2 = 0;          /* 左/右带 二次矩和 Σ(I/255)^2 */
-        int lc = 0, rc = 0;
+    int k, s, y;
+    int edge_cnt = 0, valid_seg = 0, outer_n = 0, any_bright = 0;
+    float mid_ref = (s_bref_lo + s_bref_hi) * 0.5f;
+    for (s = 0; s < V7_SEG; s++) {
+        int y0 = s * H / V7_SEG, y1 = (s + 1) * H / V7_SEG;
+        int ls = 0, rs = 0, lc = 0, rc = 0;
         for (y = y0; y < y1; y++) {
             int x = (int)(L->f.a * (float)y + L->f.b);
             for (k = 0; k < 6; k++) {
-                int xl = x - 11 + k, xr = x + 6 + k;   /* 间隔2px */
+                int xl = x - 11 + k, xr = x + 6 + k;   /* 两侧带, 间隔2px */
                 if (xl >= 0 && xl < W) {
-                    float v = s_img[y][xl] / 255.0f;
-                    ls2 += v * v; lc++;
+                    ls += s_img[y][xl];
+                    lc++;
                 }
                 if (xr >= 0 && xr < W) {
-                    float v = s_img[y][xr] / 255.0f;
-                    rs2 += v * v; rc++;
+                    rs += s_img[y][xr];
+                    rc++;
                 }
             }
         }
         outer_n += (side < 0) ? lc : rc;
         if (lc >= 6 && rc >= 6) {
-            float i2 = (side < 0) ? rs2 / rc : ls2 / lc;   /* 内侧二次矩 */
-            float o2 = (side < 0) ? ls2 / lc : rs2 / rc;   /* 外侧二次矩 */
-            float ratio = fabsf(i2 - o2) / (i2 + o2 + 1e-3f);
-            /* 局部中线证据 (用户): 该段两侧都亮(桥面) → 线在桥面内部 → 中线。
-               真边线外侧是地面(暗), 此段永不出现。 */
-            if (i2 > MID_BRIGHT2 && o2 > MID_BRIGHT2)
-                { edge_dbg_print(L, side); return 0; }
-            if (ratio > RATIO_EDGE2)
-                has_edge = 1;
-        }
-    }
-    if (has_edge)
-        { edge_dbg_print(L, side); return 1; }
-    if (outer_n < MIN_FLANK_N)
-        { edge_dbg_print(L, side); return -1; }  /* 外侧全段出画 → 贴边 */
-    edge_dbg_print(L, side);
-    return 0;                            /* 无强对比段 → 中线 */
-}
-
-/* 调试: 打印单线边线度量 (host 分析用) */
-static void edge_dbg_print(const iline_t *L, int side)
-{
-    int s, k, outer_n = 0;
-    float outer_s2 = 0.0f, maxr = 0.0f;
-    float i2s[EDGE_SEG], o2s[EDGE_SEG];
-    if (!s_edge_dbg)
-        return;
-    for (s = 0; s < EDGE_SEG; s++) {
-        int y0 = s * H / EDGE_SEG, y1 = (s + 1) * H / EDGE_SEG, y;
-        float ls2 = 0, rs2 = 0;
-        int lc = 0, rc = 0;
-        for (y = y0; y < y1; y++) {
-            int x = (int)(L->f.a * (float)y + L->f.b);
-            for (k = 0; k < 6; k++) {
-                int xl = x - 11 + k, xr = x + 6 + k;
-                if (xl >= 0 && xl < W) {
-                    float v = s_img[y][xl] / 255.0f;
-                    ls2 += v * v; lc++;
+            float mi = (float)ls / lc;      /* 左带均值 */
+            float mo = (float)rs / rc;      /* 右带均值 */
+            float d = fabsf(mi - mo);
+            valid_seg++;
+            if (s_bref_sep) {
+                /* ① 两侧同亮(>双峰分界) → 中线证据, 后置判定 */
+                if (mi > mid_ref && mo > mid_ref) {
+                    any_bright = 1;
+                    continue;
                 }
-                if (xr >= 0 && xr < W) {
-                    float v = s_img[y][xr] / 255.0f;
-                    rs2 += v * v; rc++;
-                }
+                /* ② 两侧同暗且接近 → 中性 (差大是一侧暗一侧亮, 属边线证据) */
+                if (mi < mid_ref && mo < mid_ref && d <= V7_MEAN_DIFF)
+                    continue;
             }
+            /* ③ 边线证据: 差比和 OR 均值差 (相对曝光不变) */
+            if (d * 100.0f > V7_RATIO_PER * (mi + mo) || d > V7_MEAN_DIFF)
+                edge_cnt++;
         }
-        outer_n += (side < 0) ? lc : rc;
-        outer_s2 += (side < 0) ? ls2 : rs2;
-        i2s[s] = (side < 0) ? rs2 / rc : ls2 / lc;
-        o2s[s] = (side < 0) ? ls2 / lc : rs2 / rc;
-    }
-    printf("dbg-edge side=%+d a=%.3f b=%.1f outer_s2=%.3f outer_n=%d ",
-           side, L->f.a, L->f.b, (outer_n > 0) ? outer_s2 / outer_n : 0.0f, outer_n);
-    for (s = 0; s < EDGE_SEG; s++) {
-        float r = fabsf(i2s[s] - o2s[s]) / (i2s[s] + o2s[s] + 1e-3f);
-        if (r > maxr) maxr = r;
-        printf("s%d(i=%.2f,o=%.2f,r=%.3f) ", s, i2s[s], o2s[s], r);
     }
     {
-        int dec, s2, any_bright = 0, any_edge = 0;
-        for (s2 = 0; s2 < EDGE_SEG; s2++) {
-            if (i2s[s2] > MID_BRIGHT2 && o2s[s2] > MID_BRIGHT2)
-                any_bright = 1;          /* 两边同亮 → 中线 (优先) */
-            else if (fabsf(i2s[s2] - o2s[s2]) /
-                     (i2s[s2] + o2s[s2] + 1e-3f) > RATIO_EDGE2)
-                any_edge = 1;
-        }
-        if (any_bright) dec = 0;
-        else if (any_edge) dec = 1;
-        else if (outer_n < MIN_FLANK_N) dec = -1;
-        else dec = 0;
-        printf("maxr=%.3f dec=%d\n", maxr, dec);
+        int want = (side < 0) ? 1 : -1;
+        int pol = gx_polarity(L->f.a, L->f.b);
+        /* ④ 任一段两侧同亮 → 强制中线 */
+        if (any_bright)
+            return 0;
+        /* ⑤ 边线认定: 过半有效段支持 且 极性匹配 */
+        if (valid_seg >= 1 && edge_cnt * 100 > valid_seg * V7_SEG_MAJ &&
+            pol == want)
+            return 1;
+        /* ⑥ 贴边: 外侧全段出画; 极性无法验证(0)时按惯例视为贴边边线,
+              极性明确相反才拒绝 (不可判) */
+        if (outer_n < V7_MIN_FLANK)
+            return (pol == want || pol == 0) ? -1 : EDGE_UNKNOWN;
+        return EDGE_UNKNOWN;
     }
 }
 
-/* 边线差分校验 (差比和): 正常分支用。有边线证据或贴边 → 边线; 否则中线 */
-static int line_is_edge(const iline_t *L, int side)
-{
-    return line_edge_ratio(L, side) != 0;
-}
-
-/* 边线状态: 1=有效边线, 0=非边线(中线), -1=贴边无法校验 (外侧全段出画) */
+/* 边线状态: 1=有效边线, 0=中线, -1=贴边(外侧全段出画), 2=不可判 */
 static int line_edge_status(const iline_t *L, int side)
 {
     return line_edge_ratio(L, side);
@@ -811,30 +849,18 @@ static int valid_detect(const bridge_line_t *red, const bridge_line_t *green,
 }
 
 /* 由 中线+有效边线 推断缺失的另一侧边线 (中线≈红蓝平分线):
-   out = 2*mid - side。仅用于一条边线严重贴边(外侧出画, 无法阈值校验)的情形
-   (用户规则)。梯度佐证: 沿线 |gx| 强点比例≥40% 才放入; 推断线出画则跳过。 */
+   out = 2*mid - side (对齐 bridge_v7.py infer_side_line)。
+   佐证: 推断线须在画内 (4≤x@Y_REF≤89) 且沿线 gx 主导极性匹配目标侧
+   (推断红 want_pol=+1, 推断蓝 want_pol=-1; 样本不足 pol=0 也会被拒)。 */
 static int infer_side_line(const iline_t *mid, const iline_t *side,
-                           float *out_a, float *out_b)
+                           int want_pol, float *out_a, float *out_b)
 {
     float ai = 2.0f * mid->f.a - side->f.a;
     float bi = 2.0f * mid->f.b - side->f.b;
     float xr = ai * Y_REF + bi;
-    int i, hit = 0, tot = 0;
-    if (xr < 4.0f || xr > W - 5.0f)
+    if (xr < 4.0f || xr > 89.0f)
         return 0;                          /* 推断线出画 */
-    for (i = 0; i < GH; i += 2) {
-        float y = (float)i + 1.5f;
-        float xf = ai * y + bi;
-        int gy = (int)(y + 0.5f), gx = (int)(xf + 0.5f);
-        int g;
-        if (gy < 0 || gy >= GH || gx < 0 || gx >= GW)
-            continue;
-        g = s_gx[gy][gx];
-        if (g < 0) g = -g;
-        if (g > 700) hit++;
-        tot++;
-    }
-    if (tot < 8 || hit * 5 < tot * 2)
+    if (gx_polarity(ai, bi) != want_pol)
         return 0;
     *out_a = ai;
     *out_b = bi;
@@ -907,9 +933,6 @@ static void wp_calibrate_frame(bridge_state_t *st,
         float w = (blue->f.a * y + blue->f.b) - (red->f.a * y + red->f.b);
         wp_add_sample(st, y, w);
     }
-    if (s_edge_dbg)
-        printf("dbg-wp n=%.0f A=%.3f B=%.1f w55=%.1f\n",
-               st->wp_n, st->wp_a, st->wp_b, st->wp_a * Y_REF + st->wp_b);
 }
 
 /* 候选红蓝对 距离合规检查: 在参考行 Y_REF 上, 实测间距须 ≥ LO*prior 才是边线;
@@ -929,27 +952,57 @@ static int pair_too_close(const iline_t *l, const iline_t *r, float prior)
     return wm < W_PRIOR_LO * prior;
 }
 
-/* 分类: 填 ir/ig/ib (索引, -1=无), 返回 mode, *sp_out=红蓝间距(无则0) */
-static bridge_mode_t classify(int n, float prior, int tb,
+/* 分类: 填 ir/ig/ib (索引, -1=无), 返回 mode, *sp_out=红蓝间距(无则0)
+   2026-08-14: 移植 pc_tools/bridge_v7.py classify 四态语义:
+   - 单线: 两侧带相对亮度比大小 + gx 极性 (不再用绝对 Otsu 阈值)
+   - too_close: 只有明确中线(0)才作中线; 贴边(-1)组合 → RB_Q; UNKNOWN 不指派
+   - 正常分支: 四态校验, TIGHT 也算边线; UNKNOWN 部分指派 (R/B-only/none)
+   - prior<=0 = 无先验 (对齐 Python prior=None): 取最宽对, 不判过近,
+     间距<MIN_SPACING → NONE */
+static bridge_mode_t classify(int n, float prior,
                               int *ir, int *ig, int *ib, float *sp_out)
 {
     float xs[MAX_LINES];
     int i, j;
     *ir = *ig = *ib = -1;
     *sp_out = 0;
-    if (prior < MIN_SPACING)
-        prior = MIN_SPACING;
     for (i = 0; i < n; i++)
         xs[i] = s_lines[i].f.a * Y_REF + s_lines[i].f.b;
 
     if (n == 0)
         return BRIDGE_MODE_NONE;
     if (n == 1) {
-        int lb = outer_bright(&s_lines[0], -1, tb);
-        int rb = outer_bright(&s_lines[0], +1, tb);
-        if (!lb && rb) { *ir = 0; return BRIDGE_MODE_R; }
-        if (lb && !rb) { *ib = 0; return BRIDGE_MODE_B; }
-        *ig = 0;
+        /* v7 单线: 两侧带 (x-11..x-6 / x+6..x+11) 相对亮度 + 极性。
+           理念: 亮区必然比暗区亮, 不依赖绝对阈值 (暗帧 Otsu 低时绝对阈值失效) */
+        const iline_t *L = &s_lines[0];
+        int lm = 0, rm = 0, ln = 0, rn = 0, y, k, pol;
+        float ml, mr;
+        for (y = 1; y < H - 1; y += 2) {
+            int x = (int)(L->f.a * (float)y + L->f.b);
+            for (k = 0; k < 6; k++) {
+                int xl = x - 11 + k, xr = x + 6 + k;
+                if (xl >= 0 && xl < W) {
+                    lm += s_img[y][xl];
+                    ln++;
+                }
+                if (xr >= 0 && xr < W) {
+                    rm += s_img[y][xr];
+                    rn++;
+                }
+            }
+        }
+        ml = (float)lm / (float)(ln > 0 ? ln : 1);
+        mr = (float)rm / (float)(rn > 0 ? rn : 1);
+        pol = gx_polarity(L->f.a, L->f.b);
+        if (pol == 1 && mr > ml + 8.0f) {       /* 左暗右亮 + 极性+1 → 红 */
+            *ir = 0;
+            return BRIDGE_MODE_R;
+        }
+        if (pol == -1 && ml > mr + 8.0f) {      /* 左亮右暗 + 极性-1 → 蓝 */
+            *ib = 0;
+            return BRIDGE_MODE_B;
+        }
+        *ig = 0;                                /* 极性不符/两侧相近 → 中线 */
         return BRIDGE_MODE_M;
     }
     /* 选红蓝候选对: 有先验取间距最接近先验的; 无先验取最宽对 */
@@ -972,34 +1025,38 @@ static bridge_mode_t classify(int n, float prior, int tb,
         }
         if (bi < 0)
             return BRIDGE_MODE_NONE;
-        if (s_edge_dbg)
-            printf("dbg-cls n=%d prior=%.1f pair=(%d,%d) bs=%.1f wm=%.1f ",
-                   n, prior, bi, bj, bs,
-                   (s_lines[bj].f.a - s_lines[bi].f.a) * Y_REF +
-                   (s_lines[bj].f.b - s_lines[bi].f.b));
         if (pair_too_close(&s_lines[bi], &s_lines[bj], prior)) {
-            if (s_edge_dbg)
-                printf("->too_close\n");
-            /* 间距过近 → 侧线+中线。贴边线(外侧出画, 无法阈值校验)视为中线;
-               有 中线+有效边线 时推断缺失的第3条边线 (梯度佐证, 用户规则) */
+            /* 间距过近 → 侧线+中线 (v7 四态) */
             int le = line_edge_status(&s_lines[bi], -1);
             int re = line_edge_status(&s_lines[bj], +1);
-            /* 贴边一致性 (用户 2026-08-07 晚: 太靠边用配对/先验滤掉):
-               R 有效边线但贴左边框(外侧出画/在地面) + B 在画面内 → R 是边框伪线
-               (真宽桥 B 会出画; 伪 R 落在桥外地面/边框)。只出 B。
-               注意: 不做镜像的"B 贴右边框→只出 R", 用户数据里 B 全部正确。 */
-            if (le == 1 && s_lines[bi].f.a * Y_REF + s_lines[bi].f.b < EDGE_MARGIN &&
-                s_lines[bj].f.a * Y_REF + s_lines[bj].f.b < W - EDGE_MARGIN) {
-                *ib = bj;              /* R 是边框伪线 → 只出 B */
+            /* 贴边一致性: R 有效边线(YES/TIGHT)但贴左边框 + B 在画面内
+               → R 是边框伪线, 只出 B (不做镜像, 用户数据里 B 全部正确) */
+            if ((le == 1 || le == -1) && xs[bi] < EDGE_MARGIN &&
+                xs[bj] < W - EDGE_MARGIN) {
+                *ib = bj;
                 return BRIDGE_MODE_B;
             }
-            if (le != 1) {              /* bi 非有效左边界 → 中线 */
+            /* 不可判: 线不指派身份 */
+            if (le == EDGE_UNKNOWN || re == EDGE_UNKNOWN) {
+                if ((le == 1 || le == -1) && re == EDGE_UNKNOWN) {
+                    *ir = bi;
+                    return BRIDGE_MODE_R;
+                }
+                if (le == EDGE_UNKNOWN && (re == 1 || re == -1)) {
+                    *ib = bj;
+                    return BRIDGE_MODE_B;
+                }
+                return BRIDGE_MODE_NONE;
+            }
+            /* 只有明确中线 (0) 才作中线; 贴边(-1)组合落到 RB_Q */
+            if (le == 0) {                      /* bi 明确中线 → MB */
                 *ig = bi;
                 *ib = bj;
-                if (le == -1 && re == 1) {   /* bi 贴边 + bj 有效右界 → 推断红 */
+                if (re == 1 || re == -1) {      /* bj 有效边线 → 推断红 */
                     float a, b;
                     if (n < MAX_LINES &&
-                        infer_side_line(&s_lines[bi], &s_lines[bj], &a, &b)) {
+                        infer_side_line(&s_lines[bi], &s_lines[bj], 1,
+                                        &a, &b)) {
                         memset(&s_lines[n], 0, sizeof(s_lines[n]));
                         s_lines[n].f.a = a;
                         s_lines[n].f.b = b;
@@ -1009,13 +1066,14 @@ static bridge_mode_t classify(int n, float prior, int tb,
                 }
                 return BRIDGE_MODE_MB;
             }
-            if (re != 1) {              /* bj 非有效右边界 → 中线 */
+            if (re == 0) {                      /* bj 明确中线 → RM */
                 *ir = bi;
                 *ig = bj;
-                if (re == -1 && le == 1) {   /* bj 贴边 + bi 有效左界 → 推断蓝 */
+                if (le == 1 || le == -1) {      /* bi 有效边线 → 推断蓝 */
                     float a, b;
                     if (n < MAX_LINES &&
-                        infer_side_line(&s_lines[bj], &s_lines[bi], &a, &b)) {
+                        infer_side_line(&s_lines[bj], &s_lines[bi], -1,
+                                        &a, &b)) {
                         memset(&s_lines[n], 0, sizeof(s_lines[n]));
                         s_lines[n].f.a = a;
                         s_lines[n].f.b = b;
@@ -1027,37 +1085,49 @@ static bridge_mode_t classify(int n, float prior, int tb,
             }
             *ir = bi;
             *ib = bj;
-            return BRIDGE_MODE_RB_Q;    /* 判不出, 保守当红蓝 */
+            return BRIDGE_MODE_RB_Q;            /* 判不出, 保守当红蓝 */
         }
         if (prior <= 0 && bs < MIN_SPACING)
             return BRIDGE_MODE_NONE;
-        /* 边线差分校验: 把误配成边线的中线剔除 (外侧亮/不暗者即中线) */
+        /* 正常分支: 边线差分校验 (v7 四态) */
         {
-            int le = line_edge_status(&s_lines[bi], -1);   /* -1=贴边 0=中线 1=边线 */
+            int le = line_edge_status(&s_lines[bi], -1);
             int re = line_edge_status(&s_lines[bj], +1);
-            /* 贴边一致性 (用户 2026-08-07 晚: 太靠边用配对/先验滤掉):
-               一边贴边(外侧出画无法校验)但另一边在画面内 → 该贴边线是边框伪线
-               (真宽桥两边都应贴/出画; 伪线多落在桥外地面/边框)。只输出有效边。 */
-            if (le == -1 && s_lines[bi].f.a * Y_REF + s_lines[bi].f.b < EDGE_MARGIN &&
-                s_lines[bj].f.a * Y_REF + s_lines[bj].f.b < W - EDGE_MARGIN) {
-                *ib = bj;              /* R 是边框伪线 → 只出 B */
+            int le_e, re_e;
+            /* 贴边一致性: R 贴边(TIGHT)且贴左边框 + B 在画面内 → 只出 B */
+            if (le == -1 && xs[bi] < EDGE_MARGIN &&
+                xs[bj] < W - EDGE_MARGIN) {
+                *ib = bj;
                 return BRIDGE_MODE_B;
             }
-            if (!le && re) {            /* bi 不是左边界 → 是中线 */
+            /* 不可判: 线既非边线也非中线 → 不指派身份 */
+            if (le == EDGE_UNKNOWN || re == EDGE_UNKNOWN) {
+                if ((le == 1 || le == -1) && re == EDGE_UNKNOWN) {
+                    *ir = bi;
+                    return BRIDGE_MODE_R;
+                }
+                if (le == EDGE_UNKNOWN && (re == 1 || re == -1)) {
+                    *ib = bj;
+                    return BRIDGE_MODE_B;
+                }
+                return BRIDGE_MODE_NONE;
+            }
+            le_e = (le == 1 || le == -1);       /* YES/TIGHT 都算边线 */
+            re_e = (re == 1 || re == -1);
+            if (!le_e && re_e) {                /* bi 中线 */
                 *ig = bi;
                 *ib = bj;
                 return BRIDGE_MODE_MB;
             }
-            if (le && !re) {            /* bj 不是右边界 → 是中线 */
+            if (le_e && !re_e) {                /* bj 中线 */
                 *ir = bi;
                 *ig = bj;
                 return BRIDGE_MODE_RM;
             }
-            if (!le && !re)             /* 都不是边线: 不输出错配的"边线" */
+            if (!le_e && !re_e)                 /* 都不是边线 */
                 return BRIDGE_MODE_NONE;
         }
-        if (s_edge_dbg)
-            printf("->normal RB\n");
+        /* 都是边线 → RB; 线对之间找满足几何约束的中线 → RMB */
         *ir = bi;
         *ib = bj;
         *sp_out = bs;
@@ -1124,7 +1194,7 @@ static float otsu_bcv_hist(const uint16_t *hist)
     return best < 0 ? 0.0f : best;
 }
 
-/* 全图直方图缓存: Otsu / bimodal_midref / bcv_global 共用一次扫描
+/* 全图直方图缓存: Otsu / bimodal_ref_frame / bcv_global 共用一次扫描
    (2026-08-13, 8ms 达标: 省 2 次 H*W 像素扫描) */
 static uint16_t s_hist[256];
 static int      s_hist_ready;
@@ -1168,6 +1238,22 @@ static int line_angle_ok(const bridge_line_t *lf, const bridge_line_t *rf)
     if (atan2f(a1 - a2, 1.0f + a1 * a2) > 0.0f)
         return 0;
     return 1;
+}
+
+/* v11 边线-中线交点驳回: 交点行 y_i = (bM-bE)/(aE-aM) 落在图像下半
+   (V11_MID_INT_Y < y_i < H) → 返回 1 (驳回)。
+   近平行 (|aE-aM|<=1e-6) 视为无交点不驳回: 此时 y_i 由截距噪声放大,
+   会把"两条近平行竖线"误判成远方相交。y_i>=H(画面外下方)不驳回:
+   交点不可见, 留给夹角/间距等其他审核处置。 */
+static int edge_mid_cross_bad(const bridge_line_t *ef, const bridge_line_t *mf)
+{
+    float da = ef->a - mf->a;
+    if (da < -1e-6f || da > 1e-6f) {
+        float yi = (mf->b - ef->b) / da;
+        if (yi > V11_MID_INT_Y && yi < (float)H)
+            return 1;
+    }
+    return 0;
 }
 
 /* banker's rounding (round half to even), 对齐 Python round */
@@ -1375,7 +1461,8 @@ static int v11_top_gy(const bridge_line_t *lf, const bridge_line_t *rf,
                         int y1 = (int)(yt - TOP_FAR_LO);
                         int yy;
                         if (y0 < 0) y0 = 0;
-                        if (y1 <= y0 || y1 > H) continue;
+                        if (y1 > H) y1 = H;   /* T4(2026-08-14 对齐 v11.py): 钳位后仍统计 */
+                        if (y1 <= y0) continue;
                         for (yy = y0; yy < y1; yy++)
                             if (s_img[yy][xx] > TOP_FAR_THR) near++;
                         tot += y1 - y0;
@@ -1430,61 +1517,105 @@ static int inner_threshold(const iline_t *lf, const iline_t *rf, int tb)
    全图直方图平滑后取 top2 峰, 分离>=40 且次峰>=5%主峰 → (lo+hi)/2;
    无双峰 → 全图中位数 (PC: np.percentile(gray,50))。
    2026-08-12: MLP 重训特征 tb 用 mid_ref, 与训练/PC v7 一致。 */
-#define BIMODAL_SEP_C  40
-static int bimodal_midref(void)
+#define BIMODAL_SEP_C  40          /* 双峰分离下限 (亮度差), 同 v7 BIMODAL_SEP */
+
+/* σ=3 高斯核 (25 tap, radius=int(4σ+0.5)=12), 对齐 scipy gaussian_filter1d(hist, 3.0)。
+   2026-08-14: 替换旧 [1,2,1]/4 两遍近似 (等效 σ≈1.0, 与 Python σ=3 不符,
+   旧注释"sigma~3"不成立)。 */
+static float s_gk[25];
+static int   s_gk_ready = 0;
+
+static void gauss3_kernel_init(void)
 {
-    float h[256];
-    int i, x;
-    float mx;
+    int k;
+    float sum = 0.0f;
+    if (s_gk_ready)
+        return;
+    for (k = -12; k <= 12; k++) {
+        float t = (float)k / 3.0f;
+        s_gk[k + 12] = expf(-0.5f * t * t);
+        sum += s_gk[k + 12];
+    }
+    for (k = 0; k < 25; k++)
+        s_gk[k] /= sum;
+    s_gk_ready = 1;
+}
+
+/* v7 bimodal_ref 每帧计算: σ=3 高斯平滑 (reflect 边界) → 峰检测 top-2 →
+   hi-lo>=BIMODAL_SEP_C 且次峰>=5%主峰 → 可分。
+   填充 s_bref_lo/hi/sep (v7 分类器同亮/同暗判据用); 返回 mid_ref:
+   可分 (lo+hi)/2; 不可分回退全图中位 —— B2(2026-08-14) 对齐
+   np.percentile(gray,50): 中央两次序统计量均值 (可带 .5)。 */
+static float bimodal_ref_frame(void)
+{
+    float h[256], g[256];
+    float mx, v0 = 0, v1 = 0;
+    int i, x, k, p0 = -1, p1 = -1;
     build_hist();
+    gauss3_kernel_init();
     for (i = 0; i < 256; i++)
         h[i] = (float)s_hist[i];
-    /* 高斯近似平滑 (sigma~3: [1,2,1]/4 两次) */
-    for (i = 0; i < 2; i++) {
-        float g[256];
-        for (x = 0; x < 256; x++)
-            g[x] = h[x];
-        for (x = 0; x < 256; x++) {
-            float s = g[x] * 2.0f;
-            if (x > 0) s += g[x - 1];
-            if (x < 255) s += g[x + 1];
-            h[x] = s * 0.25f;
+    /* σ=3 高斯, reflect 边界 (h[-k]=h[k-1], h[256+j]=h[255-j]) */
+    for (x = 0; x < 256; x++) {
+        float acc = 0.0f;
+        for (k = -12; k <= 12; k++) {
+            int idx = x + k;
+            if (idx < 0)
+                idx = -idx - 1;
+            else if (idx > 255)
+                idx = 511 - idx;
+            acc += h[idx] * s_gk[k + 12];
         }
+        g[x] = acc;
     }
-    mx = h[0];
+    mx = g[0];
     for (i = 1; i < 256; i++)
-        if (h[i] > mx) mx = h[i];
-    {
-        int p0 = -1, p1 = -1;           /* 峰亮度 (top2) */
-        float v0 = 0, v1 = 0;
-        for (i = 2; i < 254; i++) {
-            if (h[i] >= h[i - 1] && h[i] > h[i + 1] && h[i] > 0.02f * mx) {
-                if (h[i] > v0) {
-                    v1 = v0; p1 = p0; v0 = h[i]; p0 = i;
-                } else if (h[i] > v1) {
-                    v1 = h[i]; p1 = i;
-                }
+        if (g[i] > mx)
+            mx = g[i];
+    /* 峰检测: 局部极大 + >2%主峰, top-2 按值降序 (并列取先遇, 同 np 稳定排序) */
+    for (i = 2; i < 254; i++) {
+        if (g[i] >= g[i - 1] && g[i] > g[i + 1] && g[i] > 0.02f * mx) {
+            if (g[i] > v0) {
+                v1 = v0; p1 = p0; v0 = g[i]; p0 = i;
+            } else if (g[i] > v1) {
+                v1 = g[i]; p1 = i;
             }
         }
-        if (p0 >= 0 && p1 >= 0) {
-            int lo = p0 < p1 ? p0 : p1;
-            int hi = p0 < p1 ? p1 : p0;
-            if (hi - lo >= BIMODAL_SEP_C && v1 >= 0.05f * mx)
-                return (lo + hi) / 2;
+    }
+    s_bref_sep = 0;
+    if (p0 >= 0 && p1 >= 0) {
+        int lo = p0 < p1 ? p0 : p1;
+        int hi = p0 < p1 ? p1 : p0;
+        if (hi - lo >= BIMODAL_SEP_C && v1 >= 0.05f * mx) {
+            s_bref_lo = (float)lo;
+            s_bref_hi = (float)hi;
+            s_bref_sep = 1;
+            return ((float)lo + (float)hi) * 0.5f;
         }
     }
-    /* 中位数 (近似 percentile 50) */
+    s_bref_lo = s_bref_hi = 0.0f;
+    /* B2: 不可分回退。N=5640 恒为偶数 → 第 N/2 与 N/2+1 个 (1 基) 均值 */
     {
-        uint32_t total = 0, half, acc = 0;
+        uint32_t total = 0, acc = 0, r1, r2;
+        int va = -1, vb = -1;
         for (i = 0; i < 256; i++)
             total += s_hist[i];
-        half = (total + 1) / 2;
+        r1 = total / 2;
+        r2 = total / 2 + 1;
         for (i = 0; i < 256; i++) {
             acc += s_hist[i];
-            if (acc >= half)
-                return i;
+            if (va < 0 && acc >= r1)
+                va = i;
+            if (acc >= r2) {
+                vb = i;
+                break;
+            }
         }
-        return 128;
+        if (va < 0)
+            va = 128;
+        if (vb < 0)
+            vb = va;
+        return 0.5f * ((float)va + (float)vb);
     }
 }
 
@@ -2627,8 +2758,6 @@ void bridge_detect_init(bridge_state_t *st)
     memset(st, 0, sizeof(*st));
     st->wp_a = W_PRIOR_INIT_A;
     st->wp_b = W_PRIOR_INIT_B;
-    if (getenv("BRIDGE_EDGE_DBG"))
-        s_edge_dbg = atoi(getenv("BRIDGE_EDGE_DBG")) != 0;
 }
 
 /* ================= R5(2026-08-13): step3+step4 ITCM 热点 =================
@@ -2647,7 +2776,7 @@ ITCM_FUNC static int step3_4_dyn_threshold(int *pnpos, int *pnneg)
     memset(hist_t, 0, sizeof(hist_t));
     PROF_S34_BEGIN();                           /* step3_4 内部计时起点 */
     for (r = 0; r < GH; r++) {
-        /* 缓存本行 gvar/hvar (一次计算, hist + step4 复用) */
+        /* 缓存本行 gvar/hvar (仅本行直方图用; 行背景循环另按行重算 gvar) */
         for (j = 0; j < GW; j++) {
             s_gvar_r[j] = (int16_t)gvar_at(r, j);
             s_hvar_r[j] = (int16_t)hvar_at(r, j);
@@ -2694,6 +2823,11 @@ ITCM_FUNC static int step3_4_dyn_threshold(int *pnpos, int *pnneg)
         int bp_x[2], bp_m[2] = { 0, 0 };
         int bn_x[2], bn_m[2] = { 0, 0 };
         int n_clu = 0, mid_out = 0, last_s = -100;
+        /* 2026-08-14 bugfix: s_gvar_r 是单行缓存, 上面的直方图循环结束后
+           只剩最后一行 (r=GH-1) 的 gvar; 行背景/候选判定必须按行重算,
+           否则全帧 57 行都误用末行方差做 lock 判定 (与 Python 系统性偏差) */
+        for (j = 0; j < GW; j++)
+            s_gvar_r[j] = (int16_t)gvar_at(r, j);
         for (j = 0; j < GW; j++) {
             int gx = s_gx[r][j], ax = gx < 0 ? -gx : gx;
             int gv = s_gvar_r[j], strong = 0;
@@ -2801,8 +2935,9 @@ void bridge_detect_frame(const uint8_t *img94,
                          bridge_state_t *st,
                          bridge_result_t *out)
 {
-    int r, j, i, ring = 0;
-    int tb, tb_in = 0;
+    int r, j, ring = 0;
+    int tb;                             /* 全图 Otsu, 仅 TOP_GRAD=1 旧路径用 */
+    float tb_in = 0.0f;                 /* 双峰 mid_ref (bimodal_ref_frame) */
     int npos = 0, nneg = 0, ntop = 0;
     int nlines, ir, ig, ib;
     float prior = 0, spacing = 0;
@@ -2814,7 +2949,7 @@ void bridge_detect_frame(const uint8_t *img94,
 
     /* ---- 1) 输入快照 (防处理期间 DMA 改写源缓冲造成撕裂) ---- */
     memcpy(s_img, img94, H * W);
-    /* 全图直方图一次扫描, Otsu/bimodal_midref/bcv_global 复用 */
+    /* 全图直方图一次扫描, Otsu/bimodal_ref_frame/bcv_global 复用 */
     s_hist_ready = 0;
     build_hist();
 
@@ -2880,8 +3015,9 @@ void bridge_detect_frame(const uint8_t *img94,
     }
     PROF_MARK();                                /* step3_4 终点 (slot2) */
 
-    /* ---- 5) 全图 Otsu ---- */
+    /* ---- 5) 全图 Otsu (仅 TOP_GRAD=1 旧梯度法路径使用) ---- */
     tb = otsu_img();
+    (void)tb;
 
     /* ---- 6) 竖线提取 (正/负分开序贯 RANSAC) ---- */
     nlines = extract_sign_lines(0, s_pos, npos, VLINE_MAX);
@@ -2890,21 +3026,26 @@ void bridge_detect_frame(const uint8_t *img94,
     out->n_lines = (uint8_t)nlines;
     PROF_MARK();                                /* ransac 终点 (slot3) */
 
-    /* ---- 7) 分类 (随 y 变化先验间距 w(y)=A*y+B, 自校准) ----
-       先验 = wp_a*Y_REF + wp_b。wp_a(斜率) 由 RB/RMB 帧最小二乘自校准;
-       wp_b(截距) 用滑动窗中位 w@Y_REF 锚定 (稳健, 防幸存者偏差使间距虚大)。
-       未校准(sp_n=0)时用初始可调参数 W_PRIOR_INIT_A/B。
-       距离合规(间距≥LO*先验)才是边线; 过近 → 提取的是中线 (用户)。 */
+    /* ---- 7) 分类 (2026-08-14: v7 四态分类器; 先验 = 近10帧 RB 间距中位) ----
+       冷启动对齐 Python prior=None: 无样本时 prior=0, classify 走无先验分支
+       (取最宽线对/不判过近/间距<MIN_SPACING→NONE), 不再用 W_PRIOR_INIT_A/B
+       常量先验。偶数样本取两中值均值 (np.median 语义)。
+       wp_a/wp_b 最小二乘自校准被中位锚定恒抵消 (prior = wp_a*55+wp_b ≡ 中位),
+       保留记账但不影响行为。 */
+    tb_in = bimodal_ref_frame();    /* 每帧: 双峰参考 s_bref_lo/hi/sep + mid_ref */
+    pol_thr_frame();                /* 每帧: s_pol_thr = max(200, 0.5*p90|gx|) */
     if (st->sp_n > 0) {
-        float tmp[10];
+        float tmp[10], med;
         memcpy(tmp, st->sp_buf, st->sp_n * sizeof(float));
         qsort(tmp, st->sp_n, sizeof(float), cmp_f32);
-        st->wp_b = tmp[st->sp_n / 2] - st->wp_a * Y_REF;   /* 中位锚定 */
+        med = (st->sp_n & 1) ? tmp[st->sp_n / 2]
+                             : 0.5f * (tmp[st->sp_n / 2 - 1] + tmp[st->sp_n / 2]);
+        st->wp_b = med - st->wp_a * Y_REF;   /* 中位锚定 (记录用) */
+        prior = med;
+    } else {
+        prior = 0.0f;                        /* 无先验 (Python prior=None) */
     }
-    prior = st->wp_a * Y_REF + st->wp_b;
-    if (prior < MIN_SPACING)
-        prior = MIN_SPACING;
-    mode = classify(nlines, prior, tb, &ir, &ig, &ib, &spacing);
+    mode = classify(nlines, prior, &ir, &ig, &ib, &spacing);
     /* v11 非赛道驳回: 全图 bcv 不够 → 无边线 (mode=none), 边线不渲染
        (用户: 明显没桥面的画面不应渲染出识别到的边线) */
     if (bcv_global() < V8_BCV_GLOBAL_MIN) {
@@ -2914,12 +3055,23 @@ void bridge_detect_frame(const uint8_t *img94,
     }
     /* v11 错误线条驳回 → mode=RB_Q(结构错误), 边线不渲染(后续不处理)。
        ① 红蓝夹角/交点几何不合理  ② 边线先验距离: 左右边线 Y_REF 间距过近
-          (覆盖 classify.pair_too_close 出画漏判, 如 05_00000 间距13.3) */
-    if (mode == BRIDGE_MODE_RB || mode == BRIDGE_MODE_RMB) {
+          (覆盖 classify.pair_too_close 出画漏判, 如 05_00000 间距13.3)
+       2026-08-14: 触发集合对齐 v11.py (if lf and rf) —— 红蓝都在即检查,
+       覆盖 RM/MB 经 infer_side_line 推断出的边线 (原仅 RB/RMB)。 */
+    if (ir >= 0 && ib >= 0) {
         float xl = s_lines[ir].f.a * Y_REF + s_lines[ir].f.b;
         float xr = s_lines[ib].f.a * Y_REF + s_lines[ib].f.b;
         if (!line_angle_ok(&s_lines[ir].f, &s_lines[ib].f) ||
             xr - xl < MIN_SPACING)
+            mode = BRIDGE_MODE_RB_Q;
+    }
+    /* v11 边线-中线交点驳回 → mode=RB_Q(结构错误):
+       边线与中线在画面下半相交 = 提取几何错误 (边线偶发偏差兜底审核)。
+       覆盖 RMB/RM/MB 中所有 (边线,中线) 对。 */
+    if (ig >= 0 && (mode == BRIDGE_MODE_RMB || mode == BRIDGE_MODE_RM ||
+                    mode == BRIDGE_MODE_MB)) {
+        if ((ir >= 0 && edge_mid_cross_bad(&s_lines[ir].f, &s_lines[ig].f)) ||
+            (ib >= 0 && edge_mid_cross_bad(&s_lines[ib].f, &s_lines[ig].f)))
             mode = BRIDGE_MODE_RB_Q;
     }
     /* mode=8(结构错误, 含 classify.pair_too_close 产出) 统一边线置空:
@@ -2945,9 +3097,10 @@ void bridge_detect_frame(const uint8_t *img94,
         }
     }
 
-    /* ---- 8) 双峰分界 mid_ref (MLP 特征 tb, 与训练/PC v7 一致) + 门控 (锁存) ----
-       2026-08-12: MLP 重训特征 tb 用 mid_ref, 替换 inner_threshold */
-    tb_in = bimodal_midref();
+    /* ---- 8) 底部变白门控 (锁存): 行带 52..59 最外侧两线包络内
+       白像素 (I > tb_in=mid_ref) 占比 > 50% 单帧锁存。
+       tb_in 在步骤 7 由 bimodal_ref_frame 算出 (v7 双峰, 本帧已计算)。
+       2026-08-14 对齐 v11.py: G1 窄行 (x1-x0<2) 排除; G2 行采样不含右端点。 */
     if (!st->gate) {
         int first = -1, last = -1;
         if (ir >= 0) { first = last = ir; }
@@ -2965,7 +3118,9 @@ void bridge_detect_frame(const uint8_t *img94,
                     x0 = 0;
                 if (x1 > W - 1)
                     x1 = W - 1;
-                for (x = x0; x <= x1; x++) {
+                if (x1 - x0 < 2)                /* G1: 窄行排除 */
+                    continue;
+                for (x = x0; x < x1; x++) {     /* G2: 不含右端点 x1 */
                     br += s_img[y][x] > tb_in;
                     tot++;
                 }
@@ -2976,58 +3131,16 @@ void bridge_detect_frame(const uint8_t *img94,
     }
     out->gate = st->gate;
 
-    /* ---- 9) 三线透视共点精化 (失败回退) ---- */
+    /* ---- 9) mid_ratio (中线帧底间距比) ----
+       2026-08-14 用户定案: 取消三线透视共点 (VP) 精化 —— Python v11 检测链路
+       本无此步骤, C 保留它会让 RMB 帧边线 (a,b) 与 PC 基线系统性不同。 */
     if (mode == BRIDGE_MODE_RMB) {
-        iline_t *lf = &s_lines[ir], *mf = &s_lines[ig], *rf = &s_lines[ib];
-        float dl = lf->f.a - rf->f.a, vy, vx;
+        const iline_t *lf = &s_lines[ir], *mf = &s_lines[ig];
+        const iline_t *rf = &s_lines[ib];
         float xlv = lf->f.a * Y_REF + lf->f.b;
         float xrv = rf->f.a * Y_REF + rf->f.b;
         out->mid_ratio = (mf->f.a * Y_REF + mf->f.b - xlv)
                        / (xrv - xlv > 1e-6f ? xrv - xlv : 1e-6f);
-        if (dl > 1e-6f || dl < -1e-6f) {
-            iline_t *trio[3] = { lf, mf, rf };
-            float na[3], nb[3];
-            int ok = 1, t;
-            vy = (rf->f.b - lf->f.b) / dl;
-            vx = lf->f.a * vy + lf->f.b;
-            if (vy < 80.0f && vx > -400.0f && vx < 400.0f) {
-                for (t = 0; t < 3; t++) {
-                    float s1 = 0, s2 = 0;
-                    for (i = 0; i < trio[t]->inl_n; i++) {
-                        float u = trio[t]->inl_u[i];
-                        float v = trio[t]->f.a * u + trio[t]->f.b;
-                        float dy = u - vy;
-                        s1 += dy * dy;
-                        s2 += dy * (v - vx);
-                    }
-                    if (s1 < 1e-6f) {
-                        na[t] = trio[t]->f.a;
-                        nb[t] = trio[t]->f.b;
-                    } else {
-                        na[t] = s2 / s1;
-                        nb[t] = vx - na[t] * vy;
-                    }
-                }
-                /* 精化后保序: y=15/58 中线须在间距内缩 15% 带内 */
-                for (t = 0; t < 2 && ok; t++) {
-                    float y = t ? 58.0f : 15.0f;
-                    float xl = na[0] * y + nb[0];
-                    float xr = na[2] * y + nb[2];
-                    float xm = na[1] * y + nb[1];
-                    float w = xr - xl;
-                    if (w < 3)
-                        continue;
-                    if (xm < xl + 0.15f * w || xm > xr - 0.15f * w)
-                        ok = 0;
-                }
-                if (ok) {
-                    for (t = 0; t < 3; t++) {
-                        trio[t]->f.a = na[t];
-                        trio[t]->f.b = nb[t];
-                    }
-                }
-            }
-        }
     }
 
     /* ---- 10) 粉色退出线 (门控 + 红蓝都在) ---- */
@@ -3117,9 +3230,8 @@ void bridge_detect_frame(const uint8_t *img94,
         }
     }
 #else
-    /* 粉线: 行级 int8 MLP 推理 (bridge_mlp_end.py)
-       2026-08-12: 无条件调用 (v13 原设计; gate 门控实验致 66GT 命中 90.2%→64.7%,
-       C 端 classify 单线场景多, lf&&rf 条件误杀 → 回退)。 */
+    /* 粉线: v11 gy 行游程连通域贯通 (2026-08-13 用户定案, 取消 MLP)
+       gate 锁存 + 至少一条线 + 非赛道驳回(全图 bcv) + 非结构错误(mode!=RB_Q) */
     PROF_MARK();                                /* rest 终点 = base 末 (slot4) */
     {
         const iline_t *lf = ir >= 0 ? &s_lines[ir] : NULL;

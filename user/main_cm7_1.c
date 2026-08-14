@@ -39,8 +39,9 @@
 #include "../code1/wifi.h"
 #include "../code1/wifi_diff_stream.h"
 #include "../code1/wifi_protocol.h"
-#include "../code1/vision/bridge_detect.h"                                          // 新单边桥管线 (bridge_detect v11, 2026-08-14 接入)
-#include "../code1/vision/bridge_v2_arbiter.h"                                       // 新管线仲裁层 (C21)
+#include "../code1/vision/bridge_detect.h"                                          // 新单边桥管线 (bridge_detect v11 对齐版, 2026-08-14 融合迁移)
+#include "../code1/vision/bridge_fusion.h"                                          // 远近融合管线 (ref远处/脱出 + v8桥上, v13门控定版, 2026-08-14 接入)
+#include "../code1/vision/bridge_v2_arbiter.h"                                       // 新管线仲裁层 (C21; 融合迁移后仅桥上 v8 阶段使用)
 #include "../code1/vision/bridge_output_filter.h"                                    // 仲裁输出中值滤波层 (2026-08-14)
 #include "../code1/vision/pvc_vision.h"
 #include "../code1/vision/bumpy_vision.h"
@@ -57,11 +58,62 @@
 // **************************** 代码区域 ****************************
 #define VISION_IPC_PIT_NUM     (PIT_CH2)
 
-/* ---- 新单边桥管线 (bridge_detect v11) 接线状态 ---- */
+/* ---- 单边桥远近融合管线 (bridge_fusion, v13门控定版) 接线状态 ---- */
 #define BRIDGE_VISION_V2_PROFILE_TIMER   (TC_TIME2_CH1)  // 计时通道: 与 pvc_vision 共用
-static bridge_state_t  s_bridge_v2_st;                   // 跨帧状态 (间距先验自校准/底部变白门控锁存)
-static bridge_result_t s_bridge_v2_res;                  // 单帧结果
+static bf_state_t  s_fusion_st;                      // 融合状态机 (~23KiB, 含 ref 工作区; ★严禁放任务栈)
+static bf_result_t s_fusion_res;                     // 融合单帧结果 (统一中线 + 两引擎原始输出)
 volatile runtime_profiler_t g_bridge_v2_cost_profiler = {0};  // 算法耗时统计
+
+/* b2_mode 位掩码打包 (宏定义见 code/vision/vision_ipc.h):
+   高4位=检测状态(按当前引擎取), 低3位=融合阶段(0=准备进入 1=桥上 2=准备脱出) */
+static uint8 bridge_fusion_pack_mode(const bf_result_t *r)
+{
+    uint8 stage, det = 0;
+    if (r->gate_top)            stage = B2M_STAGE_PREPARE_EXIT;
+    else if (r->gate_bottom)    stage = B2M_STAGE_ON_BRIDGE;
+    else                        stage = B2M_STAGE_PREPARE_ENTER;
+    if (r->source == BF_SRC_V8)
+    {
+        det = (uint8)((r->v8.has_red   ? B2M_DET_RED   : 0)
+                    | (r->v8.has_green ? B2M_DET_GREEN : 0)
+                    | (r->v8.has_blue  ? B2M_DET_BLUE  : 0)
+                    | (r->v8.has_top   ? B2M_DET_TOP   : 0));
+    }
+    else
+    {
+        det = (uint8)((r->ref.left_line.valid  ? B2M_DET_RED   : 0)
+                    | (r->ref.bridge_found     ? B2M_DET_GREEN : 0)
+                    | (r->ref.right_line.valid ? B2M_DET_BLUE  : 0));
+    }
+    return (uint8)(det | stage);
+}
+
+/* ref 阶段 (准备进入/准备脱出) 中线适配: ref 自己的稳定中线 (融合层 bf_center_from_ref
+   已由 center_segment 转出, 即 PC 渲染那条青色统一中线) 直接填入仲裁结构喂滤波层;
+   arbiter 只认 v8 结果类型, ref 阶段不参与。source 填 3/4 与桥上阶段 (0/1/2) 错开,
+   使滤波层"source 切换清窗"自然防止跨阶段混求中值。 */
+static void bridge_fusion_fill_ref_arb(const bf_result_t *r, bridge_v2_arb_t *out)
+{
+    float a, b;
+    memset(out, 0, sizeof(*out));
+    out->valid  = r->valid;
+    out->source = (uint8)(r->gate_top ? 4 : 3);     /* 3=准备进入 4=准备脱出 */
+    out->mode   = bridge_fusion_pack_mode(r);
+    out->gate   = r->gate_bottom;
+    /* has_top/top_a/top_b 置 0: 结束线只由桥上 v8 阶段提供 (与现状同源) */
+    if (r->valid)
+    {
+        a = r->center.a * 1000.0f;
+        b = r->center.b * 100.0f;
+        out->line_a_x1000 = (int16)(a > 32767.0f ? 32767.0f : (a < -32768.0f ? -32768.0f : a));
+        out->line_b_x100  = (int16)(b > 32767.0f ? 32767.0f : (b < -32768.0f ? -32768.0f : b));
+        if (r->ref.center_segment.valid)
+        {
+            out->u_lo = (uint8)((r->ref.center_segment.y0 < r->ref.center_segment.y1) ? r->ref.center_segment.y0 : r->ref.center_segment.y1);
+            out->u_hi = (uint8)((r->ref.center_segment.y0 > r->ref.center_segment.y1) ? r->ref.center_segment.y0 : r->ref.center_segment.y1);
+        }
+    }
+}
 
 int main(void)
 {
@@ -99,7 +151,7 @@ int main(void)
     timer_init(BRIDGE_VISION_V2_PROFILE_TIMER, TIMER_US);                       // 新单边桥管线: 计时初始化
     timer_start(BRIDGE_VISION_V2_PROFILE_TIMER);
     RUNTIME_PROFILE_RESET(&g_bridge_v2_cost_profiler);
-    bridge_detect_init(&s_bridge_v2_st);                                        // 初始化新单边桥视觉管线 (bridge_detect)
+    bridge_fusion_init(&s_fusion_st);                                           // 初始化单边桥远近融合管线 (清门控/ref缓存/v8状态)
     bumpy_vision_init();                                                        // 初始化颠簸路段视觉检测
     VisionIpc_Core1_Init();                                                     // 初始化1核视觉共享内存结果发布
     pit_ms_init(VISION_IPC_PIT_NUM, 2);                                          // 2ms 中断中处理0/1核视觉通信
@@ -149,7 +201,7 @@ int main(void)
             }
             if(VisionIpc_Core1_TakeBridgeResetRequest())
             {
-                bridge_detect_init(&s_bridge_v2_st);                            // 重置=重初始化 (清间距先验/门控)
+                bridge_fusion_init(&s_fusion_st);                               // 重置=融合状态机全量复位 (清门控/ref帧缓存/v8先验)
                 bridge_output_filter_reset();                                   // 同步清空中值滤波层 (门控/滑窗)
             }
             if(VisionIpc_Core1_TakeBumpyResetRequest())
@@ -165,29 +217,40 @@ int main(void)
                 // 4. 将 PVC 检测框直接画在 compressed_image_copy[0] 上，供 WIFI 发送显示
                 render_pvc_vision_to_image();//算法执行完毕后，将 PVC 检测框画在 image_copy 上,必须放在这！如果放在算法前面，画的黑线会破坏算法寻找白色的逻辑
             }
-            // if(VisionIpc_Core1_ShouldRunBridge()) // 正式比赛逻辑: 0核 enable 门控
-            if(1) // 2026-08-14 单边桥调试状态: 1核常跑视觉(无视门控), 网页上位机常看渲染/示波器。⚠️ 比赛部署前改回上一行!
+            if(VisionIpc_Core1_ShouldRunBridge()) // 正式比赛逻辑: 0核 enable 门控 (2026-08-14 融合迁移时恢复; 调试可临时改 if(1))
             {
-                /* 新单边桥管线 (bridge_detect v11): 检测 + 仲裁 + 中值滤波 → b2_* 供 IPC 发布 */
+                /* 单边桥远近融合管线 (v13门控定版): 融合检测 (每帧只跑 ref/v8 一个引擎)
+                   → 桥上阶段走 arbiter (与现状一致) / ref 阶段 ref 中线直供
+                   → 中值滤波 → b2_* 供 IPC 发布 */
+                static bridge_v2_arb_t s_fusion_arb;                            // 适配输出 (两阶段共用, 喂滤波层)
                 RUNTIME_PROFILE_BEGIN(g_bridge_v2_cost_profiler, BRIDGE_VISION_V2_PROFILE_TIMER);
-                bridge_detect_frame(compressed_image_copy[0], &s_bridge_v2_st, &s_bridge_v2_res);
+                bridge_fusion_frame(compressed_image_copy[0], &s_fusion_st, &s_fusion_res);
                 RUNTIME_PROFILE_END(&g_bridge_v2_cost_profiler, BRIDGE_VISION_V2_PROFILE_TIMER);
-                bridge_v2_arbiter_process(&s_bridge_v2_res);                    // 仲裁
-                bridge_output_filter_update(bridge_v2_arbiter_get());           // 中值滤波+多帧门控 → b2_* 唯一发布口径
+                if(s_fusion_res.source == BF_SRC_V8)
+                {
+                    bridge_v2_arbiter_process(&s_fusion_res.v8);                // 桥上: 仲裁 (红蓝中点/绿线/失能)
+                    s_fusion_arb = *bridge_v2_arbiter_get();
+                    s_fusion_arb.mode = bridge_fusion_pack_mode(&s_fusion_res); // mode 改发位掩码 (高4检测+低3阶段)
+                    s_fusion_arb.gate = s_fusion_res.gate_bottom;               // gate 以融合层锁存为准 (与 v8 内部 gate 同步)
+                }
+                else
+                {
+                    bridge_fusion_fill_ref_arb(&s_fusion_res, &s_fusion_arb);   // ref 阶段: ref 中线直供, arbiter 不参与
+                }
+                bridge_output_filter_update(&s_fusion_arb);                     // 中值滤波+多帧门控 → b2_* 唯一发布口径
                 render_bridge_vision_to_image();                                // 渲染 b2 控制线/退出线 (画在图像上, 不影响算法输入)
                 #if DEBUG_LOG_ENABLE
                 {
                     static uint32 v2_log_div = 0U;
                     if ((v2_log_div++ % 50U) == 0U)     // 100fps 下约 0.5s 一条
                     {
-                        printf("[BridgeV2] mode=%d R=%d G=%d B=%d top=%d gate=%d nl=%d cost=%lu us avg=%lu max=%lu cnt=%lu\r\n",
-                               (int)s_bridge_v2_res.mode,
-                               (int)s_bridge_v2_res.has_red,
-                               (int)s_bridge_v2_res.has_green,
-                               (int)s_bridge_v2_res.has_blue,
-                               (int)s_bridge_v2_res.has_top,
-                               (int)s_bridge_v2_res.gate,
-                               (int)s_bridge_v2_res.n_lines,
+                        printf("[BridgeFusion] stage=%d det=0x%02X gb=%d gt=%d valid=%d src=%d cost=%lu us avg=%lu max=%lu cnt=%lu\r\n",
+                               (int)(s_fusion_arb.mode & B2M_STAGE_MASK),
+                               (int)((s_fusion_arb.mode >> 4) & 0x0F),
+                               (int)s_fusion_res.gate_bottom,
+                               (int)s_fusion_res.gate_top,
+                               (int)s_fusion_res.valid,
+                               (int)s_fusion_res.source,
                                (unsigned long)g_bridge_v2_cost_profiler.last_us,
                                (unsigned long)g_bridge_v2_cost_profiler.avg_us,
                                (unsigned long)g_bridge_v2_cost_profiler.max_us,
