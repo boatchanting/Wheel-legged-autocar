@@ -84,6 +84,21 @@ static float Plan4_CalcBearingDeg(float x1, float y1, float x2, float y2)
     return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
 }
 
+static uint8 Plan4_FinalPointCrossed(uint16 last_segment)
+{
+    const NavRamPoint_t *start = &nav_ram_data.points[last_segment];
+    const NavRamPoint_t *end = &nav_ram_data.points[last_segment + 1U];
+    float dx = end->x - start->x;
+    float dy = end->y - start->y;
+    float len_sq = dx * dx + dy * dy;
+    float progress;
+
+    if (len_sq <= 1.0e-6f) return 0U;
+    progress = ((nav_vision_fusion_x - start->x) * dx +
+                (nav_vision_fusion_y - start->y) * dy) / len_sq;
+    return (uint8)(progress >= 1.0f);
+}
+
 static float Plan4_LerpBySpeed(float low_value, float high_value, float speed_mm_s)
 {
     float ratio = (speed_mm_s - PLAN4_LQR_LOW_SPEED_MM_S) /
@@ -636,6 +651,15 @@ void NavReplay_Process(void)
     float steer_cmd;
     float speed_cmd;
 
+    /* Keep the finished state active and continuously clamp the outputs. */
+    if (g_replay_state == REPLAY_FINISHED)
+    {
+        g_target_idx = (nav_ram_data.point_count > 0U) ?
+                       (uint16)(nav_ram_data.point_count - 1U) : 0U;
+        target_speed_set = 0.0f;
+        err_degree = 0.0f;
+        return;
+    }
     if (g_replay_state != REPLAY_RUNNING) return;
 
 #if IMU_CATEGORY == 3
@@ -668,6 +692,8 @@ void NavReplay_Process(void)
     if (g_target_idx >= nav_ram_data.point_count - 1U)
     {
         g_replay_state = REPLAY_FINISHED;
+        g_target_idx = (uint16)(nav_ram_data.point_count - 1U);
+        g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
         target_speed_set = 0.0f;
         err_degree = 0.0f;
         return;
@@ -683,6 +709,17 @@ void NavReplay_Process(void)
     }
     base_idx = Plan4_FindClosestSegment(g_target_idx, search_end, (s_handoff_ticks != 0U));
     g_target_idx = base_idx;
+    if ((base_idx >= last_segment) && Plan4_FinalPointCrossed(last_segment))
+    {
+        g_target_idx = (uint16)(nav_ram_data.point_count - 1U);
+        g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
+        g_replay_state = REPLAY_FINISHED;
+        target_speed_set = 0.0f;
+        err_degree = 0.0f;
+        s_prev_speed_cmd = 0.0f;
+        s_prev_err_degree = 0.0f;
+        return;
+    }
     if ((s_minefield_exit_speed_end_idx != 0xFFFFU) &&
         (g_target_idx >= s_minefield_exit_speed_end_idx))
     {
