@@ -1074,7 +1074,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         g_motor_enable = 1; // 正常工作
     }
 
-    if ((robot_ctrl.brake_active != 0U) && (g_replay_state == REPLAY_RUNNING))
+    if ((robot_ctrl.brake_active == 1U) && (g_replay_state != REPLAY_IDLE))
     {
         NavReplay_Stop();//【nav】复现停止
         Accel_Feedforward_Reset();//【accel_ff】遥控刹车停止复刻时清空加速前馈
