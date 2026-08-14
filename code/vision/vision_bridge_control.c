@@ -66,6 +66,7 @@ typedef struct
     uint16 exit_high_ticks;           /* 简单版: exit_y>阈值 衰减累计 (确认计数) */
     int32 saved_acc_limit;            /* 备份原来的加速度限制，下桥后恢复 */
     int32 saved_dec_limit;            /* 备份原来的减速度限制，下桥后恢复 */
+    float saved_servo_height;         /* 备份进入任务时的腿高 (servo_height)，退出后恢复到它而非写死值 (同雷区做法, 2026-08-14) */
     uint8 saved_limits_valid;         /* 标记备份数据是否有效 */
 } vision_bridge_task_ctx_t;
 
@@ -306,6 +307,17 @@ static float vision_bridge_calc_yaw_hold_err(void)
 }
 
 /**
+ * @brief 判断视觉侧状态机是否已切到"准备脱出"(寻找脱出线)阶段
+ * @note  b2_mode 低 3 位 = 融合阶段 (B2M_*, 见 vision_ipc.h);
+ *        阶段 2 = 1 核已锁存 gate_top 并切回 ref 检测器找脱出线。
+ */
+static uint8 vision_bridge_packet_in_exit_stage(const volatile vision_ipc_packet_t *packet)
+{
+    return (uint8)((packet != NULL) &&
+                   ((packet->b2_mode & B2M_STAGE_MASK) == B2M_STAGE_PREPARE_EXIT));
+}
+
+/**
  * @brief 换源 ramp (C10): err_degree 变化率限 ≤ RAMP_STEP/2ms
  * @note  视觉 err 与锁角 err 切换时的跳变被限速; 源切换靠 source 记录 (诊断)。
  */
@@ -413,8 +425,17 @@ static void vision_bridge_apply_high_posture(void)
 }
 
 /**
+ * @brief 退出后要恢复到的腿高: 进入任务时的备份值, 无备份兜底 height_normal
+ */
+static float vision_bridge_restore_height_target(void)
+{
+    return (s_bridge_task.saved_limits_valid) ? s_bridge_task.saved_servo_height
+                                              : bridge_params.height_normal;
+}
+
+/**
  * @brief 切换回“正常姿态”
- * @note  恢复加速度限制、关掉滚转平衡、把底盘降下来。
+ * @note  恢复加速度限制、关掉滚转平衡、把底盘降回进入任务时的高度。
  */
 static void vision_bridge_apply_normal_posture(void)
 {
@@ -424,8 +445,8 @@ static void vision_bridge_apply_normal_posture(void)
         acc_limit = s_bridge_task.saved_acc_limit;
         dec_limit = s_bridge_task.saved_dec_limit;
     }
-    /* 降下底盘 */
-    Bridge_Apply_Height_Control(bridge_params.height_normal,
+    /* 降下底盘 (恢复到进入时的腿高, 不写死 3.0f) */
+    Bridge_Apply_Height_Control(vision_bridge_restore_height_target(),
                                 bridge_params.height_step_drop * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
 }
 
@@ -597,6 +618,7 @@ static void vision_bridge_enter_task(void)
     s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
     s_bridge_task.saved_acc_limit = acc_limit;
     s_bridge_task.saved_dec_limit = dec_limit;
+    s_bridge_task.saved_servo_height = servo_height; /* 备份进入时腿高, 退出恢复用 */
     s_bridge_task.saved_limits_valid = 1U;
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
@@ -757,7 +779,18 @@ void VisionBridgeTask_Update_2ms(void)
                 }
             }
 
-            if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
+            if (vision_bridge_packet_in_exit_stage(packet))
+            {
+                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向 (2026-08-14) */
+                if (s_bridge_task.run_yaw_locked == 0U)
+                {
+                    s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                    s_bridge_task.run_yaw_locked = 1U;
+                }
+                err_cmd = vision_bridge_calc_yaw_hold_err();
+                s_bridge_task.err_source = 1U;
+            }
+            else if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
             {
                 /* 前 1.2m：有可靠中心线用 IPM 差角, 否则锁角 */
                 if (s_bridge_task.center_filter_valid)
@@ -815,7 +848,7 @@ void VisionBridgeTask_Update_2ms(void)
             target_speed_set = speed_cmd;
 
             /* 底盘恢复后即可交还导航；异常时到达时间上限也继续前进。 */
-            if ((vision_bridge_abs_f(servo_height - bridge_params.height_normal) < 0.2f) ||
+            if ((vision_bridge_abs_f(servo_height - vision_bridge_restore_height_target()) < 0.2f) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS))
             {
 #if VISION_BRIDGE_TASK_NAV_CORRECT_ENABLE
