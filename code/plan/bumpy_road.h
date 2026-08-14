@@ -14,14 +14,16 @@ typedef enum
 {
     BUMPY_ROAD_STATE_IDLE = 0,    // 空闲态
     BUMPY_ROAD_STATE_RUNNING,     // 运行态
-    BUMPY_ROAD_STATE_FINISH       // 收尾态
+    BUMPY_ROAD_STATE_FINISH,      // 收尾态
+    BUMPY_ROAD_STATE_JUMPING      // 视觉确认后，等待颠簸专用跳跃结束
 } BumpyRoadState_e;
 
 typedef enum
 {
     BUMPY_ROAD_EXIT_NONE = 0,
     BUMPY_ROAD_EXIT_POST_CORRECTION_COMPLETE,
-    BUMPY_ROAD_EXIT_AUTO_DISTANCE
+    BUMPY_ROAD_EXIT_AUTO_DISTANCE,
+    BUMPY_ROAD_EXIT_JUMP_COMPLETE
 } BumpyRoadExitReason_e;
 
 typedef enum

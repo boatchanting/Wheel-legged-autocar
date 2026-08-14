@@ -19,6 +19,7 @@ volatile uint32_t g_jump_launch_cmd_time_ms = 0;
 volatile uint32_t g_jump_flight_cmd_time_ms = 0;
 static uint8_t g_jump_launch_cmd_time_recorded = 0U;
 static uint8_t g_jump_flight_cmd_time_recorded = 0U;
+static uint8_t g_restore_profile_after_single_jump = 0U;
 // 引用外部变量 (来自servo.c)
 extern volatile int32 PWM_CH1_LAST, PWM_CH2_LAST, PWM_CH3_LAST, PWM_CH4_LAST;
 extern float servo_height; 
@@ -139,6 +140,30 @@ static void load_jump_profile(JumpType_e type, float current_height)
             g_jump_profile.air_target_pitch = ANG_MECH_ZERO;
             g_jump_profile.post_jump_height = current_height;  // 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
             break;
+
+        case JUMP_TYPE_BUMPY_SHORT: // 【短颠簸专用】独立于跨杆/普通跳跃
+            g_jump_profile.t_launch = 80;
+            g_jump_profile.t_flight = 150;
+            g_jump_profile.t_landing = 170;
+            g_jump_profile.t_recovery = 230;
+            g_jump_profile.offset_launch = 1500;
+            g_jump_profile.offset_flight = -800;
+            g_jump_profile.offset_land = 1000;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO;
+            g_jump_profile.post_jump_height = current_height;
+            break;
+
+        case JUMP_TYPE_BUMPY_LONG: // 【长颠簸专用】独立于上台阶/普通跳跃
+            g_jump_profile.t_launch = 90;
+            g_jump_profile.t_flight = 100;
+            g_jump_profile.t_landing = 130;
+            g_jump_profile.t_recovery = 1500;
+            g_jump_profile.offset_launch = 3000;
+            g_jump_profile.offset_flight = -1000;
+            g_jump_profile.offset_land = 1700;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO;
+            g_jump_profile.post_jump_height = current_height;
+            break;
             
         case JUMP_TYPE_NORMAL: // 【普通平地跳】
         default:
@@ -179,11 +204,35 @@ static void load_jump_profile(JumpType_e type, float current_height)
             g_jump_profile.t_flight = 100;
             g_jump_profile.t_landing = 130;
             g_jump_profile.t_recovery = 1500;
-            g_jump_profile.offset_launch = 3000; 
+            g_jump_profile.offset_launch = 3000;
             g_jump_profile.offset_flight = -1000;
             g_jump_profile.offset_land = 1700;
             g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
             g_jump_profile.post_jump_height = current_height;// 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
+            break;
+
+        case JUMP_TYPE_BUMPY_SHORT: // 【短颠簸专用】
+            g_jump_profile.t_launch = 80;
+            g_jump_profile.t_flight = 150;
+            g_jump_profile.t_landing = 170;
+            g_jump_profile.t_recovery = 230;
+            g_jump_profile.offset_launch = 1500;
+            g_jump_profile.offset_flight = -800;
+            g_jump_profile.offset_land = 1000;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO;
+            g_jump_profile.post_jump_height = current_height;
+            break;
+
+        case JUMP_TYPE_BUMPY_LONG: // 【长颠簸专用】
+            g_jump_profile.t_launch = 90;
+            g_jump_profile.t_flight = 100;
+            g_jump_profile.t_landing = 130;
+            g_jump_profile.t_recovery = 1500;
+            g_jump_profile.offset_launch = 3000;
+            g_jump_profile.offset_flight = -1000;
+            g_jump_profile.offset_land = 1700;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO;
+            g_jump_profile.post_jump_height = current_height;
             break;
             
         case JUMP_TYPE_NORMAL: // 【普通平地跳】
@@ -233,7 +282,29 @@ static void load_jump_profile(JumpType_e type, float current_height)
             g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
             g_jump_profile.post_jump_height = current_height;// 【重心控制】跳上台阶后，调低基准身高防止摔倒 (需调参)
             break;
-            
+
+        case JUMP_TYPE_BUMPY_SHORT: // 【短颠簸专用】
+            g_jump_profile.t_launch = 900;
+            g_jump_profile.t_flight = 150;
+            g_jump_profile.t_landing = 360;
+            g_jump_profile.t_recovery = 360;
+            g_jump_profile.offset_launch = 3000; 
+            g_jump_profile.offset_flight = -200;
+            g_jump_profile.offset_land = 1000;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
+            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            break;
+        case JUMP_TYPE_BUMPY_LONG: // 【长颠簸专用】
+            g_jump_profile.t_launch = 100;
+            g_jump_profile.t_flight = 160;
+            g_jump_profile.t_landing = 260;
+            g_jump_profile.t_recovery = 260;
+            g_jump_profile.offset_launch = 3000; 
+            g_jump_profile.offset_flight = -200;
+            g_jump_profile.offset_land = 700;
+            g_jump_profile.air_target_pitch = ANG_MECH_ZERO; // 与机械零点一致
+            g_jump_profile.post_jump_height = current_height; // 落地高度不变
+            break;
         case JUMP_TYPE_NORMAL: // 【普通平地跳】
         default:
             g_jump_profile.t_launch = 100;
@@ -255,10 +326,30 @@ static void load_jump_profile(JumpType_e type, float current_height)
     g_air_target_pitch = g_jump_profile.air_target_pitch;
 }
 
+static void jump_trigger_with_profile(JumpType_e type)
+{
+    if (jump_flag == 0U)
+    {
+        load_jump_profile(type, servo_height);
+        g_restore_profile_after_single_jump = 1U;
+        jump_trigger_with_type(type);
+    }
+}
+
 // 触发逻辑：记录当前时间
 void jump_trigger(void)
 {
-    jump_trigger_with_type(JUMP_TYPE_NORMAL);
+#if (SINGLE_JUMP_PROFILE == 2U)
+    jump_trigger_with_profile(JUMP_TYPE_HURDLE);
+#elif (SINGLE_JUMP_PROFILE == 3U)
+    jump_trigger_with_profile(JUMP_TYPE_STEP_UP);
+#elif (SINGLE_JUMP_PROFILE == 4U)
+    jump_trigger_with_profile(JUMP_TYPE_BUMPY_SHORT);
+#elif (SINGLE_JUMP_PROFILE == 5U)
+    jump_trigger_with_profile(JUMP_TYPE_BUMPY_LONG);
+#else
+    jump_trigger_with_profile(JUMP_TYPE_NORMAL);
+#endif
 }
 
 void jump_trigger_with_type(JumpType_e type)
@@ -266,7 +357,12 @@ void jump_trigger_with_type(JumpType_e type)
     if(jump_flag == 0)
     {
         g_current_jump_type = type;
-        //load_jump_profile(g_current_jump_type, servo_height);
+        /* 普通跳跃维持既有预加载行为；只有颠簸专用类型在触发时加载独立参数，
+         * 以免影响跨杆、三级跳和普通跳跃的现有调用链。 */
+        if ((type == JUMP_TYPE_BUMPY_SHORT) || (type == JUMP_TYPE_BUMPY_LONG))
+        {
+            load_jump_profile(type, servo_height);
+        }
         time_elapsed1 = 0;
         time_elapsed2 = 0;
         time_elapsed3 = 0;
@@ -558,6 +654,14 @@ void servo_jump_executor(void)
             (ABS(target_rr - PWM_CH3_LAST) <= TARGET_TOLERANCE) &&
             (ABS(target_lr - PWM_CH4_LAST) <= TARGET_TOLERANCE))
         {
+            if ((g_current_jump_type == JUMP_TYPE_BUMPY_SHORT) ||
+                (g_current_jump_type == JUMP_TYPE_BUMPY_LONG) ||
+                (g_restore_profile_after_single_jump != 0U))
+            {
+                g_current_jump_type = JUMP_TYPE_NORMAL;
+                load_jump_profile(JUMP_TYPE_NORMAL, servo_height);
+                g_restore_profile_after_single_jump = 0U;
+            }
             jump_flag = 0; /* 动作完成，交还控制权 */
             g_current_jump_phase = JUMP_PHASE_NONE;
             return;

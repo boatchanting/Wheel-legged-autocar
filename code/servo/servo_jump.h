@@ -17,7 +17,9 @@
 typedef enum {
     JUMP_TYPE_NORMAL = 0, // 原地跳/平地普通跳 (默认)
     JUMP_TYPE_HURDLE,     // 跨越横杆 (极限收腿，保持水平)
-    JUMP_TYPE_STEP_UP     // 跳上台阶 (提前触地，抬头，落地点变高)
+    JUMP_TYPE_STEP_UP,    // 跳上台阶 (提前触地，抬头，落地点变高)
+    JUMP_TYPE_BUMPY_SHORT,// 短颠簸专用跳跃（不与普通跳跃共用）
+    JUMP_TYPE_BUMPY_LONG  // 长颠簸专用跳跃（不与普通跳跃共用）
 } JumpType_e;
 // 跳跃动作参数配置表
 typedef struct {

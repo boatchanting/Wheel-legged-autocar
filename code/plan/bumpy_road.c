@@ -4,9 +4,19 @@
 #include "navigation/inertial_nav.h"
 #include "calculate/ekf.h"
 #include "tools/sbus.h"
+#include "servo/servo_jump.h"
+#include "../config/sys_options.h"
 #include <math.h>
 
 extern volatile uint8 exit_beep_request;
+
+/* 颠簸跳跃方案仅服务于科目四；其他科目始终编译为原有通过逻辑。 */
+#if (CURRENT_NAV_PLAN == 4) && \
+    (BUMPY_ROAD_PASS_METHOD == BUMPY_ROAD_PASS_METHOD_VISUAL_JUMP)
+#define BUMPY_ROAD_VISUAL_JUMP_ENABLED (1U)
+#else
+#define BUMPY_ROAD_VISUAL_JUMP_ENABLED (0U)
+#endif
 
 /* ========================= 参数区 ========================= */
 #define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (1500.0f)
@@ -242,7 +252,11 @@ void BumpyRoad_Update_1ms(void)
     {
         if (robot_ctrl.brake_active == 1U)//遥控器可以停控制器
         {
+#if (BUMPY_ROAD_VISUAL_JUMP_ENABLED == 1U)
+            BumpyRoad_Cleanup(1U);
+#else
             BumpyRoad_Init();
+#endif
             return;
         }
         return;
@@ -257,6 +271,7 @@ void BumpyRoad_Update_1ms(void)
 
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
+#if (BUMPY_ROAD_VISUAL_JUMP_ENABLED == 0U)
         if (s_bumpy_ctx.correction_applied != 0U)
         {
             err_degree = 0.0f;
@@ -371,7 +386,61 @@ void BumpyRoad_Update_1ms(void)
                 s_bumpy_ctx.state = BUMPY_ROAD_STATE_FINISH;
             }
         }
+#else
+        /* 方法 2：仍由相同导航入口开启颠簸视觉，视觉连续确认入段后跳过整段。 */
+        BumpyRoad_ApplyYawHold();
+        target_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+
+        s_bumpy_ctx.sample_div_cnt++;
+        if (s_bumpy_ctx.sample_div_cnt >= BUMPY_ROAD_SAMPLE_DIV_1MS)
+        {
+            s_bumpy_ctx.sample_div_cnt = 0U;
+            s_bumpy_ctx.traveled_mm = BumpyRoad_CalcDistanceMm();
+        }
+
+        if (VisionBumpyControl_IsEntryConfirmed())
+        {
+            s_bumpy_ctx.entry_confirmed = 1U;
+            if (jump_flag == 0U)
+            {
+#if (BUMPY_ROAD_JUMP_KIND == BUMPY_ROAD_JUMP_LONG)
+                jump_trigger_with_type(JUMP_TYPE_BUMPY_LONG);
+#else
+                jump_trigger_with_type(JUMP_TYPE_BUMPY_SHORT);
+#endif
+                s_bumpy_ctx.state = BUMPY_ROAD_STATE_JUMPING;
+                err_degree = 0.0f;
+            }
+        }
+
+        /* 视觉异常时保留旧方案的里程保护，避免任务永久占用控制权。 */
+        if ((s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING) &&
+            (s_bumpy_ctx.traveled_mm >= BUMPY_ROAD_TARGET_DISTANCE_MM))
+        {
+            s_bumpy_ctx.exit_reason = BUMPY_ROAD_EXIT_AUTO_DISTANCE;
+            s_bumpy_ctx.state = BUMPY_ROAD_STATE_FINISH;
+        }
+#endif
     }
+
+#if (BUMPY_ROAD_VISUAL_JUMP_ENABLED == 1U)
+    if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_JUMPING)
+    {
+        /* jump_flag 只会在舵机完全回到基础身高后清零，因此此处再交还导航控制权。 */
+        if (jump_flag == 0U)
+        {
+            /* 跳过颠簸段后复用导航配置的出口锚点，避免从入口坐标继续追出口后的路点。 */
+            if (s_bumpy_ctx.exit_anchor_valid != 0U)
+            {
+                nav_vision_fusion_x = s_bumpy_ctx.exit_anchor_x_mm;
+                nav_vision_fusion_y = s_bumpy_ctx.exit_anchor_y_mm;
+            }
+            exit_beep_request = 1U;
+            s_bumpy_ctx.exit_reason = BUMPY_ROAD_EXIT_JUMP_COMPLETE;
+            s_bumpy_ctx.state = BUMPY_ROAD_STATE_FINISH;
+        }
+    }
+#endif
     
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_FINISH)
     {

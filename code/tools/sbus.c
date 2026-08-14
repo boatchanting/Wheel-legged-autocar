@@ -4,6 +4,7 @@
 #include "../vision/vision_bridge_control.h"
 #include "../vision/vision_slope_control.h"
 #include "../plan/minefield.h"
+#include "../servo/servo_jump.h"
 
 // ==========================================
 // 1. 宏定义 (参数配置区)
@@ -428,6 +429,7 @@ void Remote_Control_Process(void)
         minefield_flag = 1; // CH3跳变触发雷区旋转动作
         #elif SBUS_ACTIVE_POINT == 2
         vision_detected_jump_point = 1;//跳跃点调用,测试用
+        jump_trigger();
         #elif SBUS_ACTIVE_POINT == 3
         vision_detected_three_jump_point =1;//视觉控制的三级跳状态机，测试用
         #elif SBUS_ACTIVE_POINT == 4
