@@ -80,6 +80,11 @@ extern "C" {
    切回参考检测器。 */
 #define BF_TOP_T_FRAMES        3           /* 连续满足双重门控的帧数达到即锁存 */
 
+/* ---- 0-1-2 防瞬间跳边 (2026-08-15) ----------------
+   进入桥上(v8)阶段后, 最少待 BF_ON_BRIDGE_MIN_FRAMES 帧才允许评估
+   脱出门控 (切"准备脱出")。可调节宏: 实车按帧率/桥长现场标定。 */
+#define BF_ON_BRIDGE_MIN_FRAMES  10
+
 /* ---- 白像素判定灰度阈 (与参考检测器绝对阈值同源) ---- */
 #define BF_WHITE_TH             BF_REF_FIXED_THRESHOLD
 
@@ -97,7 +102,7 @@ typedef struct {
     uint8_t  gate_bottom;                   /* 底部变白锁存 (0→1 切 v8)    */
     uint8_t  gate_top;                      /* 结束线锁存 (0→1 切回 ref)   */
     uint8_t  top_t_streak;                  /* 连续结束线帧计数            */
-    uint8_t  _pad;
+    uint8_t  on_bridge_frames;              /* v8 阶段累计帧数 (防瞬间 0-1-2) */
 } bf_state_t;
 
 /* ---- 单帧结果 ---- */

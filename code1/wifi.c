@@ -607,6 +607,16 @@ static void render_v8_vertical(const bridge_line_t *L, uint8 color)
     draw_line_on_image(x0, y0, x1, y1, color);
 }
 
+/* v8 横线(结束线): y = a*x + b, x 取全宽 */
+static void render_v8_horizontal(const bridge_line_t *T, uint8 color)
+{
+    int x0 = 0;
+    int x1 = (int)(PVC_IMAGE_W - 1);
+    int y0 = (int)(T->b + 0.5f);
+    int y1 = (int)(T->a * (float)x1 + T->b + 0.5f);
+    draw_line_on_image(x0, y0, x1, y1, color);
+}
+
 void render_bridge_vision_to_image(const bf_result_t *r)
 {
     if (r == NULL)
@@ -631,6 +641,11 @@ void render_bridge_vision_to_image(const bf_result_t *r)
             (v8->mode == BRIDGE_MODE_RM || v8->mode == BRIDGE_MODE_MB))
         {
             render_v8_vertical(&v8->green, 0U);
+        }
+        /* 结束线 (v8 top) */
+        if (v8->has_top)
+        {
+            render_v8_horizontal(&v8->top, 0U);
         }
     }
     else

@@ -58,8 +58,9 @@ typedef struct
     float start_y_mm;                 /* 上桥那一刻的 Y 坐标（惯导） */
     float exit_start_x_mm;            /* 开始下桥那一刻的 X 坐标 */
     float exit_start_y_mm;            /* 开始下桥那一刻的 Y 坐标 */
-    float locked_yaw_deg;             /* 上桥前锁定的车头朝向（如果桥上看不见线，就照着这个方向开） */
-    uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定当前航向 */
+    float locked_yaw_deg;             /* 锁角盲跑的目标航向（视觉失效时改回 entry_yaw_deg） */
+    float entry_yaw_deg;              /* 进入任务那一刻的 yaw (视觉失效/锁角盲跑时改回此角, 2026-08-15) */
+    uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定航向 */
     uint8 err_source;                 /* 当前 err 来源: 0=视觉 1=锁角 (C10 换源 ramp) */
     float last_err_ramp;              /* ramp 输出的上一帧 err (C10) */
     float exit_line_y;                /* 退出线在 x=47 处的图像行 (调试, 无效为 -1) */
@@ -616,6 +617,7 @@ static void vision_bridge_enter_task(void)
     s_bridge_task.start_x_mm = inertial_nav.x;
     s_bridge_task.start_y_mm = inertial_nav.y;
     s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+    s_bridge_task.entry_yaw_deg  = inertial_nav.relative_yaw; /* 进入时刻锁存的 yaw, 视觉失效时改回此角 */
     s_bridge_task.saved_acc_limit = acc_limit;
     s_bridge_task.saved_dec_limit = dec_limit;
     s_bridge_task.saved_servo_height = servo_height; /* 备份进入时腿高, 退出恢复用 */
@@ -725,7 +727,7 @@ void VisionBridgeTask_Update_2ms(void)
             /* 惯导门: 从交接点起 traveled ≥ 阈值进 RUN (不抬底盘, 与旧逻辑兜底路径一致) */
             if (traveled_mm >= VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM)
             {
-                s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
                 break;
             }
@@ -734,7 +736,7 @@ void VisionBridgeTask_Update_2ms(void)
             if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ALIGN_OK_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS))
             {
-                s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
             }
             break;
@@ -781,10 +783,10 @@ void VisionBridgeTask_Update_2ms(void)
 
             if (vision_bridge_packet_in_exit_stage(packet))
             {
-                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向 (2026-08-14) */
+                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向; 目标改回进入时刻 yaw (2026-08-15) */
                 if (s_bridge_task.run_yaw_locked == 0U)
                 {
-                    s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                     s_bridge_task.run_yaw_locked = 1U;
                 }
                 err_cmd = vision_bridge_calc_yaw_hold_err();
@@ -806,10 +808,10 @@ void VisionBridgeTask_Update_2ms(void)
             }
             else
             {
-                /* 超过 1.2m：锁住进入该阶段时的实际航向，视觉不再干预转向。 */
+                /* 超过 1.2m：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 (2026-08-15)。 */
                 if (s_bridge_task.run_yaw_locked == 0U)
                 {
-                    s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                     s_bridge_task.run_yaw_locked = 1U;
                 }
                 err_cmd = vision_bridge_calc_yaw_hold_err();

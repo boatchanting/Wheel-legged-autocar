@@ -191,6 +191,8 @@ void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out)
     if (st->gate_bottom && !st->gate_top) {
         /* == v8 三线透视 (桥上) == */
         out->source = BF_SRC_V8;
+        if (st->on_bridge_frames < 255U)
+            st->on_bridge_frames++;
         bridge_detect_frame(img94, &st->v8_st, &out->v8);
         bf_center_from_v8(st, &out->v8, &out->center);
         out->valid = (uint8_t)(out->v8.valid &&
@@ -198,7 +200,9 @@ void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out)
         /* 门控更新: 底部 gate 与 v8 内部锁存同源同步; 评估脱出双重门控 */
         if (out->v8.gate)
             st->gate_bottom = 1;
-        bf_update_gate_top_v8(st, img94, &out->v8, &out->top_white_ratio);
+        /* 0-1-2 防瞬间跳边: 进入桥上后最少待 BF_ON_BRIDGE_MIN_FRAMES 帧才评估脱出门控 */
+        if (st->on_bridge_frames >= BF_ON_BRIDGE_MIN_FRAMES)
+            bf_update_gate_top_v8(st, img94, &out->v8, &out->top_white_ratio);
     } else {
         /* == 参考检测器 (远处接近 / 脱出) == */
         out->source = BF_SRC_REF;
