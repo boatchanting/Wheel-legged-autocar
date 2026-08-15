@@ -563,7 +563,7 @@ static int merge_lines(int n)
 /* ================================ 线身份分类 ================================ */
 /* ========================================================================
  * v7 四态分类器组件 (2026-08-14 移植 pc_tools/bridge_v7.py:
- * gx_polarity / line_edge_ratio / infer_side_line / classify)
+ * gx_polarity / line_edge_ratio / classify)
  * ======================================================================== */
 
 static int rnd_he(float x);     /* 定义见 v11 结束线段 (banker's rounding) */
@@ -848,25 +848,6 @@ static int valid_detect(const bridge_line_t *red, const bridge_line_t *green,
     return 1;
 }
 
-/* 由 中线+有效边线 推断缺失的另一侧边线 (中线≈红蓝平分线):
-   out = 2*mid - side (对齐 bridge_v7.py infer_side_line)。
-   佐证: 推断线须在画内 (4≤x@Y_REF≤89) 且沿线 gx 主导极性匹配目标侧
-   (推断红 want_pol=+1, 推断蓝 want_pol=-1; 样本不足 pol=0 也会被拒)。 */
-static int infer_side_line(const iline_t *mid, const iline_t *side,
-                           int want_pol, float *out_a, float *out_b)
-{
-    float ai = 2.0f * mid->f.a - side->f.a;
-    float bi = 2.0f * mid->f.b - side->f.b;
-    float xr = ai * Y_REF + bi;
-    if (xr < 4.0f || xr > 89.0f)
-        return 0;                          /* 推断线出画 */
-    if (gx_polarity(ai, bi) != want_pol)
-        return 0;
-    *out_a = ai;
-    *out_b = bi;
-    return 1;
-}
-
 /* 中线几何硬条件: 三线平行(共消失点) + 支撑范围内参考行间距比 ∈ [0.35,0.65]
    平行约束 (用户 2026-08-07): G 斜率必须 ≈ R/B 斜率中位 (透视收敛下 R,B 反向
    倾斜 ~1.5, 但 G 恒为二者中位, p90 偏差仅 0.065)。不平行 → 否决绿线。 */
@@ -1052,35 +1033,11 @@ static bridge_mode_t classify(int n, float prior,
             if (le == 0) {                      /* bi 明确中线 → MB */
                 *ig = bi;
                 *ib = bj;
-                if (re == 1 || re == -1) {      /* bj 有效边线 → 推断红 */
-                    float a, b;
-                    if (n < MAX_LINES &&
-                        infer_side_line(&s_lines[bi], &s_lines[bj], 1,
-                                        &a, &b)) {
-                        memset(&s_lines[n], 0, sizeof(s_lines[n]));
-                        s_lines[n].f.a = a;
-                        s_lines[n].f.b = b;
-                        s_lines[n].f.n = 1;
-                        *ir = n;
-                    }
-                }
                 return BRIDGE_MODE_MB;
             }
             if (re == 0) {                      /* bj 明确中线 → RM */
                 *ir = bi;
                 *ig = bj;
-                if (le == 1 || le == -1) {      /* bi 有效边线 → 推断蓝 */
-                    float a, b;
-                    if (n < MAX_LINES &&
-                        infer_side_line(&s_lines[bj], &s_lines[bi], -1,
-                                        &a, &b)) {
-                        memset(&s_lines[n], 0, sizeof(s_lines[n]));
-                        s_lines[n].f.a = a;
-                        s_lines[n].f.b = b;
-                        s_lines[n].f.n = 1;
-                        *ib = n;
-                    }
-                }
                 return BRIDGE_MODE_RM;
             }
             *ir = bi;
@@ -3056,8 +3013,7 @@ void bridge_detect_frame(const uint8_t *img94,
     /* v11 错误线条驳回 → mode=RB_Q(结构错误), 边线不渲染(后续不处理)。
        ① 红蓝夹角/交点几何不合理  ② 边线先验距离: 左右边线 Y_REF 间距过近
           (覆盖 classify.pair_too_close 出画漏判, 如 05_00000 间距13.3)
-       2026-08-14: 触发集合对齐 v11.py (if lf and rf) —— 红蓝都在即检查,
-       覆盖 RM/MB 经 infer_side_line 推断出的边线 (原仅 RB/RMB)。 */
+       2026-08-14: 触发集合对齐 v11.py (if lf and rf) —— 红蓝都在即检查 (RB/RMB)。 */
     if (ir >= 0 && ib >= 0) {
         float xl = s_lines[ir].f.a * Y_REF + s_lines[ir].f.b;
         float xr = s_lines[ib].f.a * Y_REF + s_lines[ib].f.b;

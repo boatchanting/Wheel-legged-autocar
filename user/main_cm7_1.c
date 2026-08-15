@@ -238,7 +238,7 @@ int main(void)
                     bridge_fusion_fill_ref_arb(&s_fusion_res, &s_fusion_arb);   // ref 阶段: ref 中线直供, arbiter 不参与
                 }
                 bridge_output_filter_update(&s_fusion_arb);                     // 中值滤波+多帧门控 → b2_* 唯一发布口径
-                render_bridge_vision_to_image();                                // 渲染 b2 控制线/退出线 (画在图像上, 不影响算法输入)
+                render_bridge_vision_to_image(&s_fusion_res);                   // 渲染实际测得内容 (ref: 左右边线+结束/进入; v8: 红蓝边线+RM/MB中线)
                 #if DEBUG_LOG_ENABLE
                 {
                     static uint32 v2_log_div = 0U;
