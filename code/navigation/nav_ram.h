@@ -17,7 +17,7 @@
 // ========================= 点类型定义 =========================
 typedef enum
 {
-    NAV_POINT_PATH = 0,     // 普通路径点
+    NAV_POINT_PATH = 0,     // 普通路点
     NAV_POINT_CIRCLE = 1,   // 转圈点
     NAV_POINT_SLOPE = 2,    // 上坡点
     NAV_POINT_JUMP = 3,     // 跳跃点

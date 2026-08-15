@@ -33,9 +33,12 @@ volatile float g_nav_point_special_debug_speed_ref_mm_s = 0.0f;
 volatile uint8 g_nav_point_special_debug_zero_brake_issued = 0;
 volatile uint8 g_nav_point_special_debug_zero_brake_active = 0;
 
-static float s_special_brake_dist_ratio = 1.0f; // 刹车修正系数
+static float s_special_brake_dist_ratio = 0.6f; // 刹车修正系数
 static uint8 s_special_zero_brake_issued = 0U;
 static float s_prev_speed_cmd = 0.0f;
+static uint8 s_dash_latched = 0U;
+static float s_dash_target_x = 0.0f;
+static float s_dash_yaw_deg = 0.0f;
 
 static float NormalizeAngle(float angle)
 {
@@ -56,7 +59,7 @@ static float CalcBearingDeg(float x1, float y1, float x2, float y2)
 
 static uint8 IsSpecialPointType(uint8 point_type)
 {
-    return (uint8)(point_type != NAV_POINT_PATH);
+    return (uint8)((point_type != NAV_POINT_PATH) && (point_type != NAV_POINT_FLYBY));
 }
 
 static float PositiveAngle360(float angle)
@@ -115,7 +118,7 @@ static void ConfigureSpinPlanForPoint_Lite(uint16 point_idx)
 static float NavReplay_SpeedSlew_Update_Lite(float raw_speed)
 {
     float diff = raw_speed - s_prev_speed_cmd;
-    float step_limit = NAV_SPEED_SLEW_DOWN_FAST;
+    float step_limit = NAV_POINT_SPEED_DECEL_STEP;
 
     if (diff > step_limit)
     {
@@ -175,7 +178,7 @@ static float CalcSpecialBrakeRadius(float v_actual)
     // 确保刹车距离不会算成负数
     if (stop_dist < 0.0f) stop_dist = 0.0f;
 
-    return NAV_POINT_SPECIAL_EXECUTE_RADIUS + NAV_POINT_SPECIAL_BRAKE_MARGIN_MM + stop_dist;
+    return NAV_POINT_SPECIAL_BRAKE_MARGIN_MM + stop_dist;//NAV_POINT_SPECIAL_EXECUTE_RADIUS 
 }
 
 // 处理特殊点的刹车和触发（精简版兜底策略）
@@ -285,6 +288,7 @@ void NavReplay_Start(void)
     err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
     s_special_zero_brake_issued = 0U;
+    s_dash_latched = 0U;
     
     Minefield_Init();
     Brake_NavHardStop_Reset();
@@ -300,6 +304,7 @@ void NavReplay_Stop(void)
     g_special_action_trigger = 0U;
     s_prev_speed_cmd = 0.0f;
     s_special_zero_brake_issued = 0U;
+    s_dash_latched = 0U;
     
     Minefield_Init();
     Brake_NavHardStop_Reset();
@@ -315,9 +320,51 @@ void NavReplay_Process(void)
 
     if (g_target_idx >= nav_ram_data.point_count)
     {
-        g_replay_state = REPLAY_FINISHED;
-        target_speed_set = 0.0f;
-        err_degree = 0.0f;
+        // 终点冲刺阶段，不退出循迹以防止回正翻车
+        if (s_dash_latched == 0U)
+        {
+            s_dash_target_x = -NAV_POINT_DASH_OVERRUN_MM;
+            
+            // 如果发车时是反向走的（惯导x为负），则冲刺目标应该是正向
+            if (inertial_nav.x < 0.0f && s_dash_target_x < 0.0f)
+            {
+                s_dash_target_x = NAV_POINT_DASH_OVERRUN_MM;
+            }
+            else if (inertial_nav.x > 0.0f && s_dash_target_x > 0.0f) // 预防初始错位
+            {
+                s_dash_target_x = -NAV_POINT_DASH_OVERRUN_MM;
+            }
+
+            // 目标点在Y轴上的投影
+            float target_y = inertial_nav.y;
+            
+            // 计算冲线航向角并锁死
+            s_dash_yaw_deg = CalcBearingDeg(inertial_nav.x, inertial_nav.y, s_dash_target_x, target_y);
+            s_dash_latched = 1U;
+        }
+
+        float selected_err_deg, speed_sign;
+        SelectDriveHeading(s_dash_yaw_deg, &selected_err_deg, &speed_sign);
+        err_degree = selected_err_deg;
+
+        // 判断是否已经冲过界限
+        uint8 is_finished = 0;
+        if (s_dash_target_x < 0.0f && inertial_nav.x <= s_dash_target_x) is_finished = 1;
+        if (s_dash_target_x > 0.0f && inertial_nav.x >= s_dash_target_x) is_finished = 1;
+
+        if (is_finished)
+        {
+            // 越界后硬刹车并保持闭环不退出，使用锁死的航向防止翻转乱窜
+            target_speed_set = 0.0f;
+            s_prev_speed_cmd = 0.0f; 
+            Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
+            return;
+        }
+
+        // 还在冲刺中，定速输出（不按距离减速，过线才刹车）
+        float speed_mag = fabsf(NAV_POINT_SPEED_DASH);
+        target_speed_set = NavReplay_SpeedSlew_Update_Lite(speed_sign * speed_mag);
+        Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
         return;
     }
 
@@ -327,6 +374,13 @@ void NavReplay_Process(void)
     float dist_to_point = CalcDistance(inertial_nav.x, inertial_nav.y, point->x, point->y);
 
     if (point_type == NAV_POINT_PATH && dist_to_point <= NAV_POINT_PATH_ARRIVE_RADIUS)
+    {
+        g_target_idx++;
+        s_special_zero_brake_issued = 0U;
+        return;
+    }
+
+    if (point_type == NAV_POINT_FLYBY && dist_to_point <= NAV_POINT_FLYBY_ARRIVE_RADIUS)
     {
         g_target_idx++;
         s_special_zero_brake_issued = 0U;
@@ -361,9 +415,20 @@ void NavReplay_Process(void)
         }
     }
 
-    // 普通路径规划
+    // 普通路径或飞越路径规划
     float stop_radius = IsSpecialPointType(point_type) ? NAV_POINT_SPECIAL_EXECUTE_RADIUS : NAV_POINT_PATH_ARRIVE_RADIUS;
-    float speed_mag = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
+    float speed_mag;
+    
+    if (point_type == NAV_POINT_FLYBY)
+    {
+        // 绕桩点：不按距离强行衰减速度，而是保持绕桩速度
+        // 由于 point->target_speed 在之前配置里可能没有被很好地维护，这里可以直接硬塞宏定义，也可以用配置值
+        speed_mag = fabsf(NAV_POINT_SPEED_FLYBY); 
+    }
+    else
+    {
+        speed_mag = PlanSpeedAbsByDistance(dist_to_point, stop_radius, selected_err_deg);
+    }
     
     target_speed_set = NavReplay_SpeedSlew_Update_Lite(speed_sign * speed_mag);
     Control_Profile_RequestMode(CONTROL_MODE_NORMAL);

@@ -2,7 +2,7 @@
 #define _NAV_REPLAY_H_
 
 #include "zf_common_headfile.h"
-#include "nav_ram.h"
+#include "../nav_ram.h"
 #include "nav_options.h"
 
 // 全局通用的状态机枚举，外部依然可以直接使用
@@ -62,7 +62,7 @@ typedef enum
     #elif NAV_PLAN2_METHOD == PLAN2_METHOD_PRECISE
         #include "plan2/plan2_precise.h"
     #elif NAV_PLAN2_METHOD == PLAN2_POINT_SPEED_PLANNING
-        #include "plan2/plan2_point_speed_planning.h"
+        #include "plan2/plan2_point_speed_planning_lite.h"
     #else
         // 【科目二越界检查】
         #error "[Nav Config Error] Plan 2 currently supports PLAN2_PURE_PURSUIT_SPEED_PLANNING, PLAN2_PURE_PURSUIT, PLAN2_METHOD_PRECISE and PLAN2_POINT_SPEED_PLANNING only."
@@ -72,9 +72,21 @@ typedef enum
     // ---------------- [ 科目三路由 ] ----------------
     #if NAV_PLAN3_METHOD == PLAN3_METHOD_PRECISE
         #include "plan3/plan3_precise.h"
+    #elif NAV_PLAN3_METHOD == PLAN3_METHOD_LQR_SPEED_PLANNING
+        #include "plan3/plan3_lqr_speed_planning.h"
     #else
         // 【越界检查】
         #error "[Nav Config Error] Plan 3 (CURRENT_NAV_PLAN == 3) has no valid NAV_PLAN3_METHOD selected!"
+    #endif
+
+#elif CURRENT_NAV_PLAN == 4
+    // ---------------- [ 科目四路由 ] ---------------  ----
+    #if NAV_PLAN4_METHOD == PLAN4_METHOD_LQR_SPEED_PLANNING
+        #include "plan4/plan4_lqr_speed_planning.h"
+        
+    #else
+        // 【越界检查】
+        #error "[Nav Config Error] Plan 4 (CURRENT_NAV_PLAN == 4) has no valid NAV_PLAN3_METHOD selected!"
     #endif
 
 #elif CURRENT_NAV_PLAN == 99

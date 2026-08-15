@@ -33,7 +33,7 @@ typedef struct {
 extern robot_ctrl_t robot_ctrl;
 extern volatile uint8 g_brake_active;
 extern volatile uint8 g_reverse_brake_active;
-
+extern volatile uint8_t vision_detected_slope_point;
 // ==========================================
 // 函数声明
 // ==========================================

@@ -74,7 +74,11 @@ float pid_out_speed = 0.0f; // 速度环输出 (角度调整量)
 float pid_out_angle = 0.0f; // 角度环输出 (期望角速度)
 float pid_out_pwm   = 0.0f; // 角速度环输出 (电机占空比)
 int g_motor_enable =G_MOTOR_ENABLE_INIT; // 电机使能安全开关，1为使能，0为关机
+#if REMOTE_CONTROL
 volatile bool g_fallen = false; // 主动起立/倒下控制，false为尝试起立，true为保持倒下
+#else
+volatile bool g_fallen = true;  // 无遥控器时默认保持倒下，等待菜单触发起立发车
+#endif
 // =================================================================================
 
 // =================================================================================
@@ -86,6 +90,7 @@ volatile uint8_t g_load_flash_request = 0;      // 1: 请求从 Flash 加载数�
 volatile uint8_t g_replay_start_request = 0;
 volatile uint8_t g_replay_stop_request = 0;
 volatile uint8_t vision_detected_bumpy_point = 0; // 模拟视觉检测到“颠簸入口”
+volatile uint8_t vision_detected_slope_point = 0; // 模拟视觉检测到“斜坡入口”
 // =================================================================================
 
 int main(void)
@@ -101,7 +106,7 @@ int main(void)
 
     while(true)
     {
-#if CURRENT_NAV_PLAN == 3
+#if CURRENT_NAV_PLAN == 3 || CURRENT_NAV_PLAN == 4
         // 导航/视觉状态机只置请求标志；蜂鸣器在主循环执行，绝不阻塞中断控制周期。
         if (entry_beep_request != 0U)
         {
@@ -186,7 +191,7 @@ int main(void)
                 seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
                 seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
                 seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw;
+                seekfree_assistant_oscilloscope_data.data[7] = (float)pid_gyro.kp;
 
 
                 // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
@@ -245,23 +250,23 @@ int main(void)
                 // // data[7] 远端白边行号
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)g_vision_ipc_latest.pvc_entry_top_y;
 
-                // 5.【调试跳跃】
-                // data[0] LF 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[0] = get_servo_angle(0U);
-                // data[1] RF 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[1] = get_servo_angle(1U);
-                // data[2] RR 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[2] = get_servo_angle(2U);
-                // data[3] LR 当前舵机角度
-                seekfree_assistant_oscilloscope_data.data[3] = get_servo_angle(3U);
-                // data[4] LF 跳跃目标 PWM
-                seekfree_assistant_oscilloscope_data.data[4] = (float)g_jump_target_pwm_lf;
-                // data[5] RF 跳跃目标 PWM
-                seekfree_assistant_oscilloscope_data.data[5] = (float)g_jump_target_pwm_rf;
-                // data[6] 舵机收到伸腿命令的时间，单位 ms，相对本次起跳
-                seekfree_assistant_oscilloscope_data.data[6] = (float)g_jump_launch_cmd_time_ms;
-                // data[7] 舵机收到收腿命令的时间，单位 ms，相对本次起跳
-                seekfree_assistant_oscilloscope_data.data[7] = (float)g_jump_flight_cmd_time_ms;
+                // // 5.【调试跳跃】
+                // // data[0] LF 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[0] = get_servo_angle(0U);
+                // // data[1] RF 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[1] = get_servo_angle(1U);
+                // // data[2] RR 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[2] = get_servo_angle(2U);
+                // // data[3] LR 当前舵机角度
+                // seekfree_assistant_oscilloscope_data.data[3] = get_servo_angle(3U);
+                // // data[4] LF 跳跃目标 PWM
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)g_jump_target_pwm_lf;
+                // // data[5] RF 跳跃目标 PWM
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)g_jump_target_pwm_rf;
+                // // data[6] 舵机收到伸腿命令的时间，单位 ms，相对本次起跳
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)g_jump_launch_cmd_time_ms;
+                // // data[7] 舵机收到收腿命令的时间，单位 ms，相对本次起跳
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)g_jump_flight_cmd_time_ms;
 
                     // 4. 设置本次发送的通道数量 (一共8个数据)
                 seekfree_assistant_oscilloscope_data.channel_num = 8;
@@ -279,8 +284,10 @@ int main(void)
             {
                 display_count = 0;    
                 #if DEBUG_DISPLAY_CORE0
+                    #if WIFI_CORE0_CUSTOM_PROTOCOL==0 //传日志的时候限制了一下屏幕
                     Menu_ShowStatic();    // 静态显示
                     Menu_ShowDynamic();   // 动态显示
+                    #endif
                 #endif    
             }
         }
@@ -350,6 +357,17 @@ int main(void)
                 VisionBridgeTask_Start(); // 启动正式单边桥视觉任务：先 PVC 进门，再巡线找桥
             }
             vision_detected_bridge_point = 0; // 清除标志位，避免重复触发
+        }
+
+        // 模拟视觉触发斜坡正式任务
+        if (vision_detected_slope_point == 1)
+        {
+            // 判断当前是否处于空闲状态，防止任务中途重复触发打断动作
+            if (!VisionSlopeTask_IsActive())
+            {
+                VisionSlopeTask_Start(); // 启动斜坡视觉任务：PVC 校准方向后锁角上下坡
+            }
+            vision_detected_slope_point = 0; // 清除标志位，避免重复触发
         }
 
         // 纯惯导触发单边桥正式任务

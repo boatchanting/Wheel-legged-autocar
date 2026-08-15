@@ -1,0 +1,1418 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>点表编辑器 - 多选与批量平移</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+        }
+        body {
+            margin: 0;
+            height: 100vh;
+            background: #f5f7fb;
+            color: #1f2a37;
+            display: flex;
+            flex-direction: column;
+        }
+        .header {
+            background: #fff;
+            border-bottom: 1px solid #d9e0ea;
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .header h1 {
+            font-size: 20px;
+            margin: 0;
+            font-weight: 700;
+        }
+        .drop-zone {
+            border: 2px dashed #b7cadf;
+            border-radius: 8px;
+            padding: 6px 16px;
+            background: #f0f4fa;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-size: 14px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .drop-zone.dragover {
+            background: #e0edff;
+            border-color: #2f6fed;
+        }
+        .drop-zone input[type="file"] {
+            display: none;
+        }
+        .status {
+            font-size: 14px;
+            color: #5f6c7d;
+        }
+        .main {
+            flex: 1;
+            display: flex;
+            gap: 10px;
+            padding: 10px;
+            min-height: 0;
+        }
+        .canvas-wrapper {
+            flex: 1;
+            background: #fff;
+            border: 1px solid #d9e0ea;
+            border-radius: 10px;
+            overflow: hidden;
+            position: relative;
+        }
+        #cv {
+            width: 100%;
+            height: 100%;
+            display: block;
+            cursor: grab;
+            background: #f9fbff;
+        }
+        #cv:active {
+            cursor: grabbing;
+        }
+        .side-panel {
+            width: 380px;
+            min-width: 320px;
+            background: #fff;
+            border: 1px solid #d9e0ea;
+            border-radius: 10px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow: hidden;
+        }
+        .panel-section {
+            border-bottom: 1px solid #edf1f6;
+            padding-bottom: 10px;
+        }
+        .panel-section:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+            flex: 1;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .panel-section h3 {
+            margin: 0 0 8px 0;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: 80px 1fr;
+            gap: 4px 8px;
+            font-size: 13px;
+        }
+        .info-grid .label {
+            color: #5f6c7d;
+        }
+        .edit-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 12px;
+            font-size: 13px;
+        }
+        .edit-grid .label {
+            color: #5f6c7d;
+            align-self: center;
+        }
+        .edit-grid input,
+        .edit-grid select {
+            width: 100%;
+            padding: 4px 6px;
+            border: 1px solid #d9e0ea;
+            border-radius: 6px;
+            font-size: 13px;
+            background: #fff;
+        }
+        .edit-grid input:focus,
+        .edit-grid select:focus {
+            outline: none;
+            border-color: #2f6fed;
+        }
+        .edit-grid input:disabled {
+            background: #f0f4fa;
+            color: #8a9aa8;
+        }
+        .btn-group {
+            display: flex;
+            gap: 6px;
+            flex-wrap: wrap;
+            margin-top: 6px;
+        }
+        .btn {
+            padding: 5px 12px;
+            border: 1px solid #d9e0ea;
+            border-radius: 6px;
+            background: #fff;
+            font-size: 13px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .btn-primary {
+            background: #0e9f6e;
+            color: #fff;
+            border-color: #0e9f6e;
+        }
+        .btn-primary:hover {
+            background: #0b865c;
+        }
+        .btn-danger {
+            background: #c43d3d;
+            color: #fff;
+            border-color: #c43d3d;
+        }
+        .btn-danger:hover {
+            background: #a83232;
+        }
+        .btn-outline {
+            background: transparent;
+        }
+        .btn-outline:hover {
+            background: #f0f4fa;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-mode {
+            background: #e5ebf2;
+            border-color: #b7cadf;
+        }
+        .btn-mode.active {
+            background: #2f6fed;
+            color: #fff;
+            border-color: #2f6fed;
+        }
+        .batch-inputs {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6px 10px;
+            font-size: 13px;
+            margin-top: 4px;
+        }
+        .batch-inputs .label {
+            color: #5f6c7d;
+            align-self: center;
+        }
+        .batch-inputs input {
+            width: 100%;
+            padding: 4px 6px;
+            border: 1px solid #d9e0ea;
+            border-radius: 6px;
+            font-size: 13px;
+            background: #fff;
+        }
+        .batch-inputs input:focus {
+            outline: none;
+            border-color: #2f6fed;
+        }
+        .batch-preview-info {
+            font-size: 12px;
+            color: #5f6c7d;
+            margin-top: 4px;
+        }
+        .table-wrap {
+            flex: 1;
+            overflow: auto;
+            border: 1px solid #edf1f6;
+            border-radius: 6px;
+            margin-top: 4px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+        th,
+        td {
+            padding: 4px 6px;
+            text-align: center;
+            border-bottom: 1px solid #edf1f6;
+            white-space: nowrap;
+        }
+        th {
+            position: sticky;
+            top: 0;
+            background: #f5f8fd;
+            z-index: 2;
+        }
+        tr.sel {
+            background: #eaf2ff;
+        }
+        tr:hover {
+            background: #f5f8fd;
+            cursor: pointer;
+        }
+        .type-badge {
+            display: inline-block;
+            padding: 0 6px;
+            border-radius: 4px;
+            background: #e5ebf2;
+            font-size: 11px;
+        }
+        .toast {
+            position: fixed;
+            right: 20px;
+            bottom: 20px;
+            background: #fff;
+            border: 1px solid #d9e0ea;
+            padding: 8px 14px;
+            border-radius: 8px;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.08);
+            font-size: 13px;
+            opacity: 0;
+            transform: translateY(10px);
+            transition: 0.2s;
+            pointer-events: none;
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: auto;
+        }
+        .mode-toggle {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 6px;
+        }
+        @media (max-width: 960px) {
+            .main {
+                flex-direction: column;
+            }
+            .side-panel {
+                width: 100%;
+                min-width: unset;
+                max-height: 50vh;
+            }
+        }
+    </style>
+</head>
+<body>
+
+<div class="header">
+    <h1>🗺 点表编辑器 (多选/批量平移)</h1>
+    <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+        <div class="drop-zone" id="dropZone">
+            📁 拖入CSV或点击选择
+            <input type="file" id="fileInput" accept=".csv">
+        </div>
+        <span class="status" id="statusInfo">未加载数据</span>
+        <button class="btn btn-primary" id="exportBtn">📤 导出CSV</button>
+    </div>
+</div>
+
+<div class="main">
+    <div class="canvas-wrapper">
+        <canvas id="cv"></canvas>
+    </div>
+    <div class="side-panel">
+        <div class="panel-section">
+            <h3>📊 统计</h3>
+            <div class="info-grid">
+                <span class="label">总点数</span><span id="totalCount">0</span>
+                <span class="label">起始航向</span><span id="startHeading">--</span>
+                <span class="label">已选数量</span><span id="selectedCount">0</span>
+            </div>
+        </div>
+
+        <!-- 单点编辑（仅单选时可用） -->
+        <div class="panel-section" id="singleEditSection">
+            <h3>✏️ 单点编辑</h3>
+            <div id="singleEditContent">
+                <div class="edit-grid">
+                    <span class="label">序号</span><span id="editIndex" style="align-self:center;">-</span>
+                    <span class="label">X (mm)</span><input type="number" step="0.001" id="editX" disabled>
+                    <span class="label">Y (mm)</span><input type="number" step="0.001" id="editY" disabled>
+                    <span class="label">相对偏航 (°)</span><input type="number" step="0.01" id="editRelativeYaw" disabled>
+                    <span class="label">绝对航向 (°)</span><input type="number" step="0.01" id="editHeading" disabled>
+                    <span class="label">点类型</span>
+                    <select id="editType" disabled></select>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" id="applyEdit" disabled>✅ 应用</button>
+                    <button class="btn btn-danger" id="deletePoint" disabled>🗑 删除</button>
+                    <button class="btn btn-outline" id="addPoint">➕ 添加</button>
+                </div>
+            </div>
+            <div id="multiSelectHint" style="display:none; color:#c43d3d; font-size:13px; margin-top:4px;">
+                ⚠️ 已选多个点，单点编辑已禁用，请使用下方的批量平移。
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <h3>➕ 两点之间插点</h3>
+            <div class="edit-grid">
+                <span class="label">插入数量</span><input type="number" id="insertCount" min="1" max="1000" step="1" value="1">
+            </div>
+            <div style="display:flex; gap:8px; margin-top:6px; align-items:center;">
+                <button class="btn btn-primary" id="insertBetween" disabled>在两点间插入</button>
+            </div>
+            <div style="font-size:12px; color:#5f6c7d; margin-top:4px;">
+                Ctrl 点击或在点表中多选恰好两个点；将按路径顺序在它们之间等距插入 PATH 点，坐标和航向平滑插值。
+            </div>
+        </div>
+
+        <!-- 批量平移（直角/极坐标） -->
+        <div class="panel-section">
+            <h3>📐 批量平移 (直角/极坐标)</h3>
+            <div class="mode-toggle">
+                <button class="btn btn-mode active" id="modeRect" data-mode="rect">直角坐标</button>
+                <button class="btn btn-mode" id="modePolar" data-mode="polar">极坐标</button>
+            </div>
+            <!-- 直角坐标输入 -->
+            <div id="rectInputs" class="batch-inputs">
+                <span class="label">ΔX (mm)</span><input type="number" step="0.001" id="batchDx" value="0">
+                <span class="label">ΔY (mm)</span><input type="number" step="0.001" id="batchDy" value="0">
+            </div>
+            <!-- 极坐标输入 -->
+            <div id="polarInputs" class="batch-inputs" style="display:none;">
+                <span class="label">距离 (mm)</span><input type="number" step="0.001" id="batchDist" value="0">
+                <span class="label">角度 (°)</span><input type="number" step="0.01" id="batchAngle" value="0">
+            </div>
+            <div style="display:flex; gap:8px; margin-top:6px; align-items:center;">
+                <button class="btn btn-primary" id="applyBatch">🔄 应用平移</button>
+                <button class="btn btn-outline" id="clearBatch">✖ 清空预览</button>
+                <span class="batch-preview-info" id="previewStatus">预览：关</span>
+            </div>
+            <div style="font-size:12px; color:#5f6c7d; margin-top:4px;">
+                输入偏移量，实时预览虚点（仅平移，不改变航向角）。角度以 X 轴正方向为0°，逆时针为正。
+            </div>
+        </div>
+
+        <div class="panel-section">
+            <h3>📋 点列表</h3>
+            <div class="table-wrap" id="tableWrap">
+                <table>
+                    <thead><tr>
+                        <th>#</th><th>X</th><th>Y</th><th>Yaw</th><th>Heading</th><th>Type</th>
+                    </tr></thead>
+                    <tbody id="pointTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+    // ========== 工具函数 ==========
+    function tip(msg) {
+        const el = document.getElementById('toast');
+        el.textContent = msg;
+        el.classList.add('show');
+        clearTimeout(el._timer);
+        el._timer = setTimeout(() => el.classList.remove('show'), 3000);
+    }
+
+    function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
+
+    function normalizeHeading(v) {
+        v = Number(v);
+        if (!Number.isFinite(v)) return 0;
+        v = v % 360;
+        if (v < 0) v += 360;
+        return v;
+    }
+
+    function normalizeYaw(v) {
+        v = Number(v);
+        if (!Number.isFinite(v)) return 0;
+        while (v > 180) v -= 360;
+        while (v <= -180) v += 360;
+        return v;
+    }
+
+    function clampType(v) {
+        v = Math.round(Number(v));
+        if (v >= 0 && v <= 5) return v;
+        if (v >= 10 && v <= 50 && v % 10 === 0) return v;
+        return 0;
+    }
+
+    // ========== 类型映射 ==========
+    const TYPES = [
+        { value: 0, label: '0 PATH' },
+        { value: 1, label: '1 CIRCLE 入口' },
+        { value: 10, label: '10 CIRCLE 出口' },
+        { value: 2, label: '2 SLOPE 入口' },
+        { value: 20, label: '20 SLOPE 出口' },
+        { value: 3, label: '3 JUMP 入口' },
+        { value: 30, label: '30 JUMP 出口' },
+        { value: 4, label: '4 BRIDGE 入口' },
+        { value: 40, label: '40 BRIDGE 出口' },
+        { value: 5, label: '5 BUMP 入口' },
+        { value: 50, label: '50 BUMP 出口' }
+    ];
+    const TYPE_COLORS = {
+        0: '#2f6fed',
+        1: '#d97706', 10: '#d97706',
+        2: '#0e9f6e', 20: '#0e9f6e',
+        3: '#d14343', 30: '#d14343',
+        4: '#7c3aed', 40: '#7c3aed',
+        5: '#eab308', 50: '#eab308'
+    };
+
+    function getTypeLabel(val) {
+        const t = TYPES.find(t => t.value === val);
+        return t ? t.label : String(val);
+    }
+
+    function getTypeColor(val) {
+        return TYPE_COLORS[val] || '#374151';
+    }
+
+    // ========== 数据管理 ==========
+    let points = [];
+    let startHeading = 0;
+    let totalCount = 0;
+    let selectedIds = [];
+
+    // ========== Canvas 状态 ==========
+    const cv = document.getElementById('cv');
+    const ctx = cv.getContext('2d');
+    let scale = 0.035;
+    let offsetX = 0;
+    let offsetY = 0;
+    let isPanning = false;
+    let panStartX = 0, panStartY = 0;
+    let offsetStartX = 0, offsetStartY = 0;
+
+    // 框选状态
+    let isBoxSelecting = false;
+    let boxStartX = 0, boxStartY = 0;
+    let boxEndX = 0, boxEndY = 0;
+
+    // 批量变换预览参数
+    let batchMode = 'rect'; // 'rect' 或 'polar'
+    let previewDx = 0;
+    let previewDy = 0;
+    let isPreviewActive = false;
+
+    // ========== DOM 引用 ==========
+    const $ = id => document.getElementById(id);
+    const totalCountEl = $('totalCount');
+    const startHeadingEl = $('startHeading');
+    const selectedCountEl = $('selectedCount');
+    const editIndex = $('editIndex');
+    const editX = $('editX');
+    const editY = $('editY');
+    const editRelativeYaw = $('editRelativeYaw');
+    const editHeading = $('editHeading');
+    const editType = $('editType');
+    const applyEditBtn = $('applyEdit');
+    const deleteBtn = $('deletePoint');
+    const addBtn = $('addPoint');
+    const insertCountInput = $('insertCount');
+    const insertBetweenBtn = $('insertBetween');
+    const exportBtn = $('exportBtn');
+    const tableBody = $('pointTableBody');
+    const fileInput = $('fileInput');
+    const dropZone = $('dropZone');
+    const singleEditContent = $('singleEditContent');
+    const multiSelectHint = $('multiSelectHint');
+
+    // 批量平移
+    const modeRect = $('modeRect');
+    const modePolar = $('modePolar');
+    const rectInputs = $('rectInputs');
+    const polarInputs = $('polarInputs');
+    const batchDx = $('batchDx');
+    const batchDy = $('batchDy');
+    const batchDist = $('batchDist');
+    const batchAngle = $('batchAngle');
+    const applyBatchBtn = $('applyBatch');
+    const clearBatchBtn = $('clearBatch');
+    const previewStatus = $('previewStatus');
+
+    // ========== 画布尺寸自适应 ==========
+    function resizeCanvas() {
+        const rect = cv.parentElement.getBoundingClientRect();
+        const dpr = window.devicePixelRatio || 1;
+        cv.width = Math.floor(rect.width * dpr);
+        cv.height = Math.floor(rect.height * dpr);
+        cv.style.width = rect.width + 'px';
+        cv.style.height = rect.height + 'px';
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        draw();
+    }
+
+    // ========== 坐标变换 ==========
+    function center() {
+        const w = cv.width / (window.devicePixelRatio || 1);
+        const h = cv.height / (window.devicePixelRatio || 1);
+        return { x: w / 2 + offsetX, y: h / 2 + offsetY };
+    }
+
+    function w2s(wx, wy) {
+        const c = center();
+        return { x: c.x + wx * scale, y: c.y - wy * scale };
+    }
+
+    function s2w(sx, sy) {
+        const c = center();
+        return { x: (sx - c.x) / scale, y: -(sy - c.y) / scale };
+    }
+
+    // ========== 自适应视角 ==========
+    function fitAll() {
+        if (!points.length) return;
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        for (const p of points) {
+            if (p.x < minX) minX = p.x;
+            if (p.x > maxX) maxX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.y > maxY) maxY = p.y;
+        }
+        const margin = 80;
+        const w = cv.width / (window.devicePixelRatio || 1) - margin * 2;
+        const h = cv.height / (window.devicePixelRatio || 1) - margin * 2;
+        if (w <= 0 || h <= 0) return;
+        const rangeX = maxX - minX || 1000;
+        const rangeY = maxY - minY || 1000;
+        const scaleX = w / rangeX;
+        const scaleY = h / rangeY;
+        scale = Math.min(scaleX, scaleY, 2.0);
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        offsetX = -cx * scale;
+        offsetY = cy * scale;
+        draw();
+    }
+
+    // ========== 计算偏移量 ==========
+    function getBatchOffset() {
+        let dx = 0, dy = 0;
+        if (batchMode === 'rect') {
+            dx = parseFloat(batchDx.value) || 0;
+            dy = parseFloat(batchDy.value) || 0;
+        } else { // polar
+            const dist = parseFloat(batchDist.value) || 0;
+            const angle = parseFloat(batchAngle.value) || 0;
+            const rad = angle * Math.PI / 180;
+            dx = dist * Math.cos(rad);
+            dy = dist * Math.sin(rad);
+        }
+        return { dx, dy };
+    }
+
+    // ========== 绘制 ==========
+    function draw() {
+        const w = cv.width / (window.devicePixelRatio || 1);
+        const h = cv.height / (window.devicePixelRatio || 1);
+        ctx.clearRect(0, 0, w, h);
+
+        // 网格
+        const stepMm = 1000;
+        const sp = stepMm * scale;
+        const c = center();
+        ctx.strokeStyle = '#e5ebf2';
+        ctx.lineWidth = 1;
+        let xIdx = Math.ceil(-c.x / sp);
+        for (let x = c.x + xIdx * sp; x < w; x += sp, xIdx++) {
+            ctx.beginPath();
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, h);
+            ctx.stroke();
+            if (xIdx % 5 === 0) {
+                ctx.fillStyle = '#6183a8';
+                ctx.font = '11px sans-serif';
+                const val = (xIdx * stepMm) / 1000;
+                ctx.fillText(val.toFixed(1) + 'm', x + 3, Math.min(h - 5, Math.max(14, c.y + 14)));
+            }
+        }
+        let yIdx = Math.floor(c.y / sp);
+        for (let y = c.y - yIdx * sp; y < h; y += sp, yIdx--) {
+            ctx.beginPath();
+            ctx.moveTo(0, y);
+            ctx.lineTo(w, y);
+            ctx.stroke();
+            if (yIdx % 5 === 0) {
+                ctx.fillStyle = '#6183a8';
+                ctx.font = '11px sans-serif';
+                const val = (yIdx * stepMm) / 1000;
+                ctx.fillText(val.toFixed(1) + 'm', Math.min(w - 5, Math.max(5, c.x + 5)), y - 4);
+            }
+        }
+        ctx.strokeStyle = '#b7cadf';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(0, c.y);
+        ctx.lineTo(w, c.y);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(c.x, 0);
+        ctx.lineTo(c.x, h);
+        ctx.stroke();
+        ctx.fillStyle = '#6183a8';
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, 3.5, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (points.length === 0) {
+            drawPoints();
+            return;
+        }
+
+        // ---- 连线 ----
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#2f6fed';
+        ctx.beginPath();
+        for (let i = 0; i < points.length; i++) {
+            const p = w2s(points[i].x, points[i].y);
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+
+        // ---- 特殊元素连接线 ----
+        for (let i = 0; i < points.length - 1; i++) {
+            const cur = points[i];
+            const next = points[i + 1];
+            const curType = cur.point_type;
+            if (curType >= 1 && curType <= 5 && next.point_type === curType * 10) {
+                const p1 = w2s(cur.x, cur.y);
+                const p2 = w2s(next.x, next.y);
+                ctx.strokeStyle = getTypeColor(curType);
+                ctx.lineWidth = 3;
+                ctx.setLineDash([]);
+                ctx.beginPath();
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+        }
+
+        // ---- 预览虚点（批量平移预览） ----
+        if (isPreviewActive && selectedIds.length > 0) {
+            const offset = getBatchOffset();
+            const dx = offset.dx;
+            const dy = offset.dy;
+            for (const idx of selectedIds) {
+                const p = points[idx];
+                const newX = p.x + dx;
+                const newY = p.y + dy;
+                const pos = w2s(newX, newY);
+                // 虚圆
+                ctx.save();
+                ctx.strokeStyle = '#2f6fed';
+                ctx.fillStyle = 'rgba(47, 111, 237, 0.2)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 7, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
+                // 虚线箭头（方向不变，沿用原 heading）
+                if (p.point_type >= 2 && p.point_type <= 5) {
+                ctx.save();
+                ctx.strokeStyle = 'rgba(47, 111, 237, 0.5)';
+                ctx.fillStyle = 'rgba(47, 111, 237, 0.5)';
+                ctx.lineWidth = 1.5;
+                ctx.setLineDash([4, 4]);
+                const yawRad = Math.PI - normalizeYaw(p.relative_yaw) * Math.PI / 180;
+                ctx.translate(pos.x, pos.y);
+                ctx.rotate(yawRad);
+                const start = 9;
+                const len = 11;
+                ctx.beginPath();
+                ctx.moveTo(start, 0);
+                ctx.lineTo(start + len, 0);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.moveTo(start + len + 4, 0);
+                ctx.lineTo(start + len - 1, -4);
+                ctx.lineTo(start + len - 1, 4);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+                }
+            }
+        }
+
+        // ---- 绘制所有点 ----
+        drawPoints();
+
+        // ---- 框选矩形 ----
+        if (isBoxSelecting) {
+            ctx.save();
+            ctx.strokeStyle = '#2f6fed';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([5, 5]);
+            ctx.fillStyle = 'rgba(47, 111, 237, 0.08)';
+            const x = Math.min(boxStartX, boxEndX);
+            const y = Math.min(boxStartY, boxEndY);
+            const w_rect = Math.abs(boxEndX - boxStartX);
+            const h_rect = Math.abs(boxEndY - boxStartY);
+            ctx.fillRect(x, y, w_rect, h_rect);
+            ctx.strokeRect(x, y, w_rect, h_rect);
+            ctx.restore();
+        }
+    }
+
+    function drawPoints() {
+        const w = cv.width / (window.devicePixelRatio || 1);
+        const h = cv.height / (window.devicePixelRatio || 1);
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            const pos = w2s(p.x, p.y);
+            const isSelected = selectedIds.includes(i);
+            const color = getTypeColor(p.point_type);
+            const isExit = p.point_type >= 10;
+
+            const radius = isSelected ? 8 : 6.5;
+            ctx.fillStyle = isExit ? '#fff' : color;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+
+            if (isSelected) {
+                ctx.strokeStyle = '#111827';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 11, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+
+            ctx.fillStyle = '#111827';
+            ctx.font = '12px sans-serif';
+            ctx.fillText('#' + i, pos.x + 9, pos.y - 9);
+            ctx.fillStyle = '#5f6c7d';
+            ctx.font = '11px sans-serif';
+            ctx.fillText(p.point_type, pos.x + 9, pos.y + 7);
+
+            if (p.point_type >= 2 && p.point_type <= 5) {
+                drawRelativeYawArrow(pos, p.relative_yaw, color, isSelected);
+            }
+        }
+    }
+
+    function drawRelativeYawArrow(pos, yawDeg, color, selected) {
+        const radius = selected ? 8 : 6.5;
+        const start = radius + 2;
+        const len = selected ? 14 : 12;
+        const rad = Math.PI - normalizeYaw(yawDeg) * Math.PI / 180;
+        ctx.save();
+        ctx.translate(pos.x, pos.y);
+        ctx.rotate(rad);
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(start, 0);
+        ctx.lineTo(start + len, 0);
+        ctx.stroke();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.moveTo(start, 0);
+        ctx.lineTo(start + len, 0);
+        ctx.stroke();
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.moveTo(start + len + 5, 0);
+        ctx.lineTo(start + len - 2, -5);
+        ctx.lineTo(start + len - 2, 5);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+    }
+
+    // ========== 交互：点击检测 ==========
+    function hitTest(sx, sy) {
+        const threshold = 12;
+        for (let i = points.length - 1; i >= 0; i--) {
+            const pos = w2s(points[i].x, points[i].y);
+            const d = Math.hypot(sx - pos.x, sy - pos.y);
+            if (d < threshold) return i;
+        }
+        return null;
+    }
+
+    // ========== 鼠标/触摸事件 ==========
+    function initCanvasEvents() {
+        let isDragging = false;
+        let dragId = null;
+        let startX, startY;
+
+        cv.addEventListener('mousedown', (e) => {
+            const rect = cv.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+            const hit = hitTest(sx, sy);
+
+            if (e.ctrlKey || e.metaKey) {
+                if (hit !== null) {
+                    const idx = hit;
+                    const pos = selectedIds.indexOf(idx);
+                    if (pos >= 0) {
+                        selectedIds.splice(pos, 1);
+                    } else {
+                        selectedIds.push(idx);
+                    }
+                    updateUI();
+                    draw();
+                    return;
+                } else {
+                    selectedIds = [];
+                    updateUI();
+                    draw();
+                    return;
+                }
+            }
+
+            if (hit !== null) {
+                selectedIds = [hit];
+                dragId = hit;
+                isDragging = true;
+                const pos = w2s(points[hit].x, points[hit].y);
+                startX = sx - pos.x;
+                startY = sy - pos.y;
+                cv.style.cursor = 'move';
+                updateUI();
+                draw();
+                return;
+            }
+
+            if (e.shiftKey) {
+                isBoxSelecting = true;
+                boxStartX = sx;
+                boxStartY = sy;
+                boxEndX = sx;
+                boxEndY = sy;
+                cv.style.cursor = 'crosshair';
+                return;
+            }
+
+            isPanning = true;
+            panStartX = sx;
+            panStartY = sy;
+            offsetStartX = offsetX;
+            offsetStartY = offsetY;
+            cv.style.cursor = 'grabbing';
+            selectedIds = [];
+            updateUI();
+            draw();
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            const rect = cv.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+
+            if (isDragging && dragId !== null) {
+                const newPos = s2w(sx - startX, sy - startY);
+                points[dragId].x = newPos.x;
+                points[dragId].y = newPos.y;
+                updateUI();
+                draw();
+                return;
+            }
+
+            if (isBoxSelecting) {
+                boxEndX = sx;
+                boxEndY = sy;
+                draw();
+                return;
+            }
+
+            if (isPanning) {
+                const dx = sx - panStartX;
+                const dy = sy - panStartY;
+                offsetX = offsetStartX + dx;
+                offsetY = offsetStartY + dy;
+                draw();
+                return;
+            }
+
+            const hit = hitTest(sx, sy);
+            cv.style.cursor = hit !== null ? 'pointer' : 'grab';
+        });
+
+        window.addEventListener('mouseup', (e) => {
+            if (isBoxSelecting) {
+                const x1 = Math.min(boxStartX, boxEndX);
+                const y1 = Math.min(boxStartY, boxEndY);
+                const x2 = Math.max(boxStartX, boxEndX);
+                const y2 = Math.max(boxStartY, boxEndY);
+                const newSel = [];
+                for (let i = 0; i < points.length; i++) {
+                    const pos = w2s(points[i].x, points[i].y);
+                    if (pos.x >= x1 && pos.x <= x2 && pos.y >= y1 && pos.y <= y2) {
+                        newSel.push(i);
+                    }
+                }
+                if (newSel.length > 0) {
+                    selectedIds = newSel;
+                } else {
+                    selectedIds = [];
+                }
+                isBoxSelecting = false;
+                cv.style.cursor = 'grab';
+                updateUI();
+                draw();
+                return;
+            }
+
+            if (isDragging && dragId !== null) {
+                isDragging = false;
+                dragId = null;
+                cv.style.cursor = 'grab';
+                draw();
+            }
+            if (isPanning) {
+                isPanning = false;
+                cv.style.cursor = 'grab';
+            }
+        });
+
+        cv.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const rect = cv.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+            const p = s2w(sx, sy);
+            const factor = e.deltaY > 0 ? 0.9 : 1.1;
+            scale = clamp(scale * factor, 0.0015, 2.5);
+            const c = center();
+            offsetX = sx - c.x - p.x * scale;
+            offsetY = sy - c.y + p.y * scale;
+            draw();
+        }, { passive: false });
+
+        cv.addEventListener('dblclick', (e) => {
+            const rect = cv.getBoundingClientRect();
+            const sx = e.clientX - rect.left;
+            const sy = e.clientY - rect.top;
+            const world = s2w(sx, sy);
+            let hdg = 0;
+            if (points.length > 0) {
+                hdg = points[points.length - 1].heading;
+            }
+            addPoint(world.x, world.y, 0, hdg, 0);
+            tip('添加新点');
+        });
+    }
+
+    // ========== 数据操作 ==========
+    function addPoint(x, y, relativeYaw, heading, pointType) {
+        const newIndex = points.length;
+        points.push({
+            x: Number(x),
+            y: Number(y),
+            relative_yaw: normalizeYaw(relativeYaw),
+            heading: normalizeHeading(heading),
+            point_type: clampType(pointType)
+        });
+        selectedIds = [newIndex];
+        updateUI();
+        draw();
+        fitAll();
+    }
+
+    function interpolateAngle(from, to, ratio, normalize) {
+        let delta = ((to - from + 540) % 360) - 180;
+        return normalize(from + delta * ratio);
+    }
+
+    function insertPointsBetweenSelected() {
+        if (selectedIds.length !== 2) {
+            tip('请先选择恰好两个点');
+            return;
+        }
+        const count = parseInt(insertCountInput.value, 10);
+        if (!Number.isInteger(count) || count < 1 || count > 1000) {
+            tip('插入数量应为 1 到 1000 的整数');
+            return;
+        }
+        const [firstIndex, secondIndex] = [...selectedIds].sort((a, b) => a - b);
+        const first = points[firstIndex];
+        const second = points[secondIndex];
+        const inserted = [];
+        for (let i = 1; i <= count; i++) {
+            const ratio = i / (count + 1);
+            inserted.push({
+                x: first.x + (second.x - first.x) * ratio,
+                y: first.y + (second.y - first.y) * ratio,
+                relative_yaw: interpolateAngle(first.relative_yaw, second.relative_yaw, ratio, normalizeYaw),
+                heading: interpolateAngle(first.heading, second.heading, ratio, normalizeHeading),
+                point_type: 0
+            });
+        }
+        points.splice(secondIndex, 0, ...inserted);
+        selectedIds = inserted.map((_, i) => secondIndex + i);
+        updateUI();
+        draw();
+        tip(`已在点 ${firstIndex} 和 ${secondIndex} 之间插入 ${count} 个点`);
+    }
+
+    function deleteSelected() {
+        if (selectedIds.length === 0) return;
+        const sorted = [...selectedIds].sort((a, b) => b - a);
+        for (const idx of sorted) {
+            points.splice(idx, 1);
+        }
+        selectedIds = [];
+        if (points.length > 0) {
+            selectedIds = [points.length - 1];
+        }
+        updateUI();
+        draw();
+        tip('已删除选中的点');
+    }
+
+    function applySingleEdit() {
+        if (selectedIds.length !== 1) return;
+        const idx = selectedIds[0];
+        const p = points[idx];
+        const x = parseFloat(editX.value);
+        const y = parseFloat(editY.value);
+        const ry = parseFloat(editRelativeYaw.value);
+        const hdg = parseFloat(editHeading.value);
+        const tp = clampType(parseInt(editType.value));
+        if (isNaN(x) || isNaN(y) || isNaN(ry) || isNaN(hdg)) {
+            tip('请输入有效数字');
+            return;
+        }
+        p.x = x;
+        p.y = y;
+        p.relative_yaw = normalizeYaw(ry);
+        p.heading = normalizeHeading(hdg);
+        p.point_type = tp;
+        updateUI();
+        draw();
+        tip('已更新点');
+    }
+
+    // 批量平移应用
+    function applyBatchTransform() {
+        if (selectedIds.length === 0) {
+            tip('请先选择要平移的点');
+            return;
+        }
+        const offset = getBatchOffset();
+        const dx = offset.dx;
+        const dy = offset.dy;
+        if (dx === 0 && dy === 0) {
+            tip('偏移量为0，无需操作');
+            return;
+        }
+        for (const idx of selectedIds) {
+            points[idx].x += dx;
+            points[idx].y += dy;
+        }
+        // 清空预览
+        isPreviewActive = false;
+        previewDx = 0;
+        previewDy = 0;
+        batchDx.value = '0';
+        batchDy.value = '0';
+        batchDist.value = '0';
+        batchAngle.value = '0';
+        previewStatus.textContent = '预览：关';
+        updateUI();
+        draw();
+        tip(`已对 ${selectedIds.length} 个点平移 (ΔX=${dx.toFixed(1)}, ΔY=${dy.toFixed(1)})`);
+    }
+
+    // 清空预览
+    function clearPreview() {
+        isPreviewActive = false;
+        previewDx = 0;
+        previewDy = 0;
+        batchDx.value = '0';
+        batchDy.value = '0';
+        batchDist.value = '0';
+        batchAngle.value = '0';
+        previewStatus.textContent = '预览：关';
+        draw();
+    }
+
+    // 更新预览（输入变化时调用）
+    function updatePreview() {
+        const offset = getBatchOffset();
+        const dx = offset.dx;
+        const dy = offset.dy;
+        if (dx === 0 && dy === 0) {
+            isPreviewActive = false;
+            previewStatus.textContent = '预览：关';
+        } else {
+            isPreviewActive = true;
+            previewDx = dx;
+            previewDy = dy;
+            previewStatus.textContent = `预览：开 (ΔX=${dx.toFixed(1)}, ΔY=${dy.toFixed(1)})`;
+        }
+        draw();
+    }
+
+    // 模式切换
+    function setMode(mode) {
+        batchMode = mode;
+        if (mode === 'rect') {
+            modeRect.classList.add('active');
+            modePolar.classList.remove('active');
+            rectInputs.style.display = 'grid';
+            polarInputs.style.display = 'none';
+        } else {
+            modePolar.classList.add('active');
+            modeRect.classList.remove('active');
+            rectInputs.style.display = 'none';
+            polarInputs.style.display = 'grid';
+        }
+        updatePreview();
+    }
+
+    // ========== UI 更新 ==========
+    function updateUI() {
+        totalCountEl.textContent = points.length;
+        startHeadingEl.textContent = startHeading.toFixed(3);
+        selectedCountEl.textContent = selectedIds.length;
+
+        const singleSelected = selectedIds.length === 1;
+        if (singleSelected) {
+            singleEditContent.style.display = 'block';
+            multiSelectHint.style.display = 'none';
+            editX.disabled = false;
+            editY.disabled = false;
+            editRelativeYaw.disabled = false;
+            editHeading.disabled = false;
+            editType.disabled = false;
+            applyEditBtn.disabled = false;
+            deleteBtn.disabled = false;
+            const idx = selectedIds[0];
+            const p = points[idx];
+            editIndex.textContent = idx;
+            editX.value = p.x.toFixed(3);
+            editY.value = p.y.toFixed(3);
+            editRelativeYaw.value = p.relative_yaw.toFixed(3);
+            editHeading.value = p.heading.toFixed(3);
+            editType.value = p.point_type;
+        } else {
+            singleEditContent.style.display = 'none';
+            multiSelectHint.style.display = selectedIds.length > 1 ? 'block' : 'none';
+            editX.disabled = true;
+            editY.disabled = true;
+            editRelativeYaw.disabled = true;
+            editHeading.disabled = true;
+            editType.disabled = true;
+            applyEditBtn.disabled = true;
+            deleteBtn.disabled = true;
+            editIndex.textContent = '-';
+            editX.value = '';
+            editY.value = '';
+            editRelativeYaw.value = '';
+            editHeading.value = '';
+            editType.value = '0';
+        }
+
+        applyBatchBtn.disabled = (selectedIds.length === 0);
+        insertBetweenBtn.disabled = (selectedIds.length !== 2);
+        renderTable();
+    }
+
+    function renderTable() {
+        tableBody.innerHTML = '';
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            const tr = document.createElement('tr');
+            if (selectedIds.includes(i)) tr.className = 'sel';
+            tr.innerHTML = `
+                <td>${i}</td>
+                <td>${p.x.toFixed(1)}</td>
+                <td>${p.y.toFixed(1)}</td>
+                <td>${p.relative_yaw.toFixed(1)}</td>
+                <td>${p.heading.toFixed(1)}</td>
+                <td><span class="type-badge" style="background:${getTypeColor(p.point_type)}20;color:${getTypeColor(p.point_type)}">${p.point_type}</span></td>
+            `;
+            tr.addEventListener('click', (e) => {
+                if (e.ctrlKey || e.metaKey) {
+                    const pos = selectedIds.indexOf(i);
+                    if (pos >= 0) {
+                        selectedIds.splice(pos, 1);
+                    } else {
+                        selectedIds.push(i);
+                    }
+                } else {
+                    selectedIds = [i];
+                }
+                updateUI();
+                draw();
+            });
+            tableBody.appendChild(tr);
+        }
+    }
+
+    // ========== CSV 解析与加载 ==========
+    function loadCSV(text) {
+        const lines = text.split(/\r?\n/).filter(line => line.trim() !== '');
+        if (lines.length < 2) {
+            tip('CSV 格式错误：至少需要标题行和数据行');
+            return;
+        }
+        const header = lines[0].split(',').map(s => s.trim());
+        const idxMap = {};
+        header.forEach((col, i) => {
+            idxMap[col] = i;
+        });
+        const required = ['total_count', 'start_heading', 'x', 'y', 'relative_yaw', 'heading', 'point_type'];
+        for (const key of required) {
+            if (!(key in idxMap)) {
+                tip(`CSV 缺少列: ${key}`);
+                return;
+            }
+        }
+
+        const firstRow = lines[1].split(',').map(s => s.trim());
+        totalCount = parseInt(firstRow[idxMap['total_count']]) || 0;
+        startHeading = parseFloat(firstRow[idxMap['start_heading']]) || 0;
+
+        points = [];
+        for (let i = 1; i < lines.length; i++) {
+            const cols = lines[i].split(',').map(s => s.trim());
+            if (cols.length < header.length) continue;
+            const x = parseFloat(cols[idxMap['x']]);
+            const y = parseFloat(cols[idxMap['y']]);
+            const ry = parseFloat(cols[idxMap['relative_yaw']]);
+            const hdg = parseFloat(cols[idxMap['heading']]);
+            const pt = parseInt(cols[idxMap['point_type']]);
+            if (isNaN(x) || isNaN(y) || isNaN(ry) || isNaN(hdg) || isNaN(pt)) continue;
+            points.push({
+                x, y,
+                relative_yaw: normalizeYaw(ry),
+                heading: normalizeHeading(hdg),
+                point_type: clampType(pt)
+            });
+        }
+
+        if (points.length === 0) {
+            tip('没有有效的点数据');
+            return;
+        }
+
+        selectedIds = [];
+        updateUI();
+        fitAll();
+        tip(`成功加载 ${points.length} 个点，起始航向 ${startHeading.toFixed(3)}°`);
+        document.getElementById('statusInfo').textContent = `已加载 ${points.length} 个点`;
+        clearPreview();
+    }
+
+    // ========== 导出 CSV ==========
+    function exportCSV() {
+        if (points.length === 0) {
+            tip('没有点可导出');
+            return;
+        }
+        const header = 'total_count,start_heading,index,x,y,relative_yaw,heading,point_type';
+        let rows = [];
+        rows.push(header);
+        for (let i = 0; i < points.length; i++) {
+            const p = points[i];
+            rows.push([
+                points.length,
+                startHeading.toFixed(6),
+                i,
+                p.x.toFixed(3),
+                p.y.toFixed(3),
+                p.relative_yaw.toFixed(3),
+                p.heading.toFixed(3),
+                p.point_type
+            ].join(','));
+        }
+        const csv = rows.join('\n');
+        const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        const now = new Date();
+        const ts = now.getFullYear() + '' + String(now.getMonth() + 1).padStart(2,'0') + String(now.getDate()).padStart(2,'0') + '_' + String(now.getHours()).padStart(2,'0') + String(now.getMinutes()).padStart(2,'0') + String(now.getSeconds()).padStart(2,'0');
+        link.download = `nav_mark_points_${ts}.csv`;
+        link.click();
+        tip('导出成功');
+    }
+
+    // ========== 文件拖放与选择 ==========
+    function handleFile(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            loadCSV(e.target.result);
+        };
+        reader.readAsText(file);
+    }
+
+    dropZone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropZone.classList.add('dragover');
+    });
+    dropZone.addEventListener('dragleave', () => {
+        dropZone.classList.remove('dragover');
+    });
+    dropZone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropZone.classList.remove('dragover');
+        if (e.dataTransfer.files.length) {
+            handleFile(e.dataTransfer.files[0]);
+        }
+    });
+    dropZone.addEventListener('click', () => {
+        fileInput.click();
+    });
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length) {
+            handleFile(fileInput.files[0]);
+            fileInput.value = '';
+        }
+    });
+
+    // ========== 按钮事件绑定 ==========
+    applyEditBtn.addEventListener('click', applySingleEdit);
+    deleteBtn.addEventListener('click', deleteSelected);
+    addBtn.addEventListener('click', () => {
+        addPoint(0, 0, 0, 0, 0);
+    });
+    insertBetweenBtn.addEventListener('click', insertPointsBetweenSelected);
+    exportBtn.addEventListener('click', exportCSV);
+    applyBatchBtn.addEventListener('click', applyBatchTransform);
+    clearBatchBtn.addEventListener('click', clearPreview);
+
+    // 模式切换
+    modeRect.addEventListener('click', () => setMode('rect'));
+    modePolar.addEventListener('click', () => setMode('polar'));
+
+    // 监听输入变化实时预览
+    batchDx.addEventListener('input', updatePreview);
+    batchDy.addEventListener('input', updatePreview);
+    batchDist.addEventListener('input', updatePreview);
+    batchAngle.addEventListener('input', updatePreview);
+
+    // 初始化下拉框
+    function initTypeSelect() {
+        editType.innerHTML = TYPES.map(t => `<option value="${t.value}">${t.label}</option>`).join('');
+    }
+    initTypeSelect();
+
+    // ========== 启动 ==========
+    window.addEventListener('resize', resizeCanvas);
+    initCanvasEvents();
+    resizeCanvas();
+
+    tip('拖入 CSV 或点击选择文件。按住 Ctrl 多选，Shift 框选，批量平移实时预览虚点。');
+</script>
+</body>
+</html>

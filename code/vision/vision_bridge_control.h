@@ -26,8 +26,8 @@ extern "C" {
 /* (注意：这些 TICKS 都是基于 2ms 中断的，所以 1000 TICKS = 2 秒) */
 #define VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS       (1500U)     /* 对齐超时：3秒还没对齐好，强行上桥 */
 #define VISION_BRIDGE_TASK_ALIGN_OK_TICKS            (60U)       /* 连续对齐好的帧数：大约 0.12秒 都稳定，认为对齐成功 */
-#define VISION_BRIDGE_TASK_RUN_MIN_MM                (2500.0f)   /* 上桥后至少行驶 1m，才允许根据视觉出口线脱出 */
-#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1200.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
+#define VISION_BRIDGE_TASK_RUN_MIN_MM                (2300.0f)   /* 上桥后至少行驶 1m，才允许根据视觉出口线脱出 */
+#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1100.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
 #define VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE        (2.0f)      /* 超过视觉控制距离后，速度提高倍率 */
 #define VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS         (220U)      /* 看到桥梁黑块后，保持“桥梁模式”0.44秒，防抖 */
 #define VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS       (5000U)     /* 视觉长期异常时，10 秒后自动进入退出阶段，不停车等待 */
@@ -58,10 +58,10 @@ extern "C" {
 
 /* --- 5. 各阶段速度与姿态设置 --- */
 #define VISION_BRIDGE_TASK_ALIGN_SPEED_SET           (0.0f)      /* 对齐时：速度为 0（边停边对） */
-#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-150.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
-#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-110.0f)   /* 看见黑块时：速度 110 */
-#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-90.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
-#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-90.0f)    /* 下桥缓冲时：速度 90 */
+#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-300.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
+#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-300.0f)   /* 看见黑块时：速度 110 */
+#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-300.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
+#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-300.0f)    /* 下桥缓冲时：速度 90 */
 #define VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE         (0.10f)     /* 舵机升降的高度步进步长比例 */
 
 /* --- 6. 数据结构定义 --- */

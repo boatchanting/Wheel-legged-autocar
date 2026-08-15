@@ -55,6 +55,19 @@
 #define TURN_ANG_KP_HIGH     -9.0f   // [原-6.0] 减小绝对值
 #define TURN_GYR_KP_HIGH     25.0f   // [原20.0]  减小绝对值
 #endif
+
+#if CAR_SELECT == 4 // 4代表 【小车4】
+// 高姿态参数与 pid-new.h 的常规参数保持一致，抬腿不改变 PID。
+// 多预设 PID 开启时，这些值还会被预设参数周期性覆盖。
+#define ANG_KP_HIGH          -12.0f
+#define ANG_KD_HIGH          -6.0f
+#define ANG_MECH_ZERO_HIGH   1.0f
+#define GYR_KP_HIGH          -15.0f
+#define SERVO_SPEED_KP_HIGH  -3.5f
+#define SERVO_SPEED_KI_HIGH  0.0f
+#define TURN_ANG_KP_HIGH     -8.0f
+#define TURN_GYR_KP_HIGH     20.0f
+#endif
 // ============================================================================
 // 单边桥状态机枚举
 // ============================================================================
