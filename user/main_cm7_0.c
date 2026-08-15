@@ -80,6 +80,13 @@ volatile bool g_fallen = false; // 主动起立/倒下控制，false为尝试起
 volatile bool g_fallen = true;  // 无遥控器时默认保持倒下，等待菜单触发起立发车
 #endif
 // =================================================================================
+// 【直立发车 / 航向校准】全局变量定义
+// =================================================================================
+volatile bool g_turn_loop_disabled = false;              // 1: 禁用转向环(手动对准航向), 0: 正常转向环
+volatile uint8_t g_upright_long_short_long_request = 0; // 1: 请求主循环播放长-短-长提示音
+volatile uint8_t g_upright_single_beep_request = 0;     // 1: 请求主循环播放单声短鸣
+volatile uint8_t g_upright_beep_done = 0;               // 1: 主循环长-短-长提示音播放完毕
+// =================================================================================
 
 // =================================================================================
 // 导航记录控制标志位
@@ -106,6 +113,34 @@ int main(void)
 
     while(true)
     {
+        // 【直立发车】提示音：长-短-长 (长300ms, 停100ms, 短100ms, 停100ms, 长300ms, 停100ms)
+        if (g_upright_long_short_long_request != 0U)
+        {
+            g_upright_long_short_long_request = 0U;
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(300);
+            gpio_set_level(BUZZER_PIN, 0);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 0);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(300);
+            gpio_set_level(BUZZER_PIN, 0);
+            system_delay_ms(100);
+            g_upright_beep_done = 1; // 播放完毕，通知状态机关闭转向环开始对准
+        }
+
+        // 【直立发车】航向锁定提示音：单声短鸣 (100ms)
+        if (g_upright_single_beep_request != 0U)
+        {
+            g_upright_single_beep_request = 0U;
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 0);
+        }
+
 #if CURRENT_NAV_PLAN == 3 || CURRENT_NAV_PLAN == 4
         // 导航/视觉状态机只置请求标志；蜂鸣器在主循环执行，绝不阻塞中断控制周期。
         if (entry_beep_request != 0U)
