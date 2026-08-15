@@ -32,8 +32,6 @@ extern "C" {
 /* ---------------- 标定参数 (板端验证阶段定标) ---------------- */
 #define BRIDGE_FILTER_WINDOW        5U   /* 中值窗口 (奇数)                 */
 #define BRIDGE_FILTER_MIN_VALID     3U   /* 窗内最少有效帧才输出中值         */
-#define BRIDGE_TOP_CONFIRM_FRAMES   3U   /* 结束线连续确认帧数门控           */
-#define BRIDGE_TOP_LOST_TOLERANCE   2U   /* 确认后允许连续丢失帧数           */
 
 /* 清空全部滤波状态 (TakeBridgeResetRequest 时调用) */
 void bridge_output_filter_reset(void);
@@ -45,9 +43,6 @@ void bridge_output_filter_update(const bridge_v2_arb_t *raw);
 const bridge_v2_arb_t *bridge_output_filter_get(void);
 uint32 bridge_output_filter_get_frame_id(void);
 uint8  bridge_output_filter_is_busy(void);
-
-/* 调试: 结束线门控内部状态 (当前连续检出帧数 / 是否已确认) */
-void bridge_output_filter_get_debug(uint8 *top_streak, uint8 *top_confirmed);
 
 #ifdef __cplusplus
 }

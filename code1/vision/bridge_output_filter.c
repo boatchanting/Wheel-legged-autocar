@@ -25,9 +25,6 @@ typedef struct
     bridge_med_win_t line;          /* 控制线窗 */
     bridge_med_win_t top;           /* 结束线窗 (仅 has_top=1 帧) */
     uint8  last_source;             /* 上帧 source, 切换时清 line 窗 */
-    uint8  top_streak;              /* 当前连续 has_top 帧数 */
-    uint8  top_confirmed;           /* 门控已确认 */
-    uint8  top_lost;                /* 确认后连续丢失计数 */
     bridge_v2_arb_t filtered;       /* 滤波后输出 */
     uint32 frame_id;
     volatile uint8 write_busy;
@@ -114,30 +111,17 @@ void bridge_output_filter_update(const bridge_v2_arb_t *raw)
         s_f.filtered.line_b_x100  = win_median(&s_f.line, 1);
     }
 
-    /* 2. 结束线: 连续 CONFIRM_FRAMES 帧检出才置位; 确认后容忍 LOST_TOLERANCE 帧丢失 */
+    /* 2. 结束线: 直通 (确认/锁存已上移到融合层, 2026-08-15); 仅保留几何中值平滑 */
     if (raw->has_top)
     {
-        s_f.top_lost = 0U;
-        if (s_f.top_streak < 255U) s_f.top_streak++;
-        if (s_f.top_streak >= BRIDGE_TOP_CONFIRM_FRAMES)
-            s_f.top_confirmed = 1U;
         win_push(&s_f.top, raw->top_a_x1000, raw->top_b_x100, 1U);
     }
     else
     {
-        s_f.top_streak = 0U;
-        if (s_f.top_confirmed)
-        {
-            if (s_f.top_lost < 255U) s_f.top_lost++;
-            if (s_f.top_lost > BRIDGE_TOP_LOST_TOLERANCE)
-            {
-                s_f.top_confirmed = 0U;
-                win_clear(&s_f.top);
-            }
-        }
+        win_clear(&s_f.top);
     }
-    s_f.filtered.has_top = s_f.top_confirmed;
-    if (s_f.top_confirmed && win_valid_count(&s_f.top) >= BRIDGE_FILTER_MIN_VALID)
+    s_f.filtered.has_top = raw->has_top;
+    if (raw->has_top && win_valid_count(&s_f.top) >= BRIDGE_FILTER_MIN_VALID)
     {
         s_f.filtered.top_a_x1000 = win_median(&s_f.top, 0);
         s_f.filtered.top_b_x100  = win_median(&s_f.top, 1);
@@ -160,10 +144,4 @@ uint32 bridge_output_filter_get_frame_id(void)
 uint8 bridge_output_filter_is_busy(void)
 {
     return s_f.write_busy;
-}
-
-void bridge_output_filter_get_debug(uint8 *top_streak, uint8 *top_confirmed)
-{
-    if (top_streak)   *top_streak   = s_f.top_streak;
-    if (top_confirmed) *top_confirmed = s_f.top_confirmed;
 }

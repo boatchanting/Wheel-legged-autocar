@@ -54,14 +54,12 @@ extern "C" {
 #define VISION_BRIDGE_TASK_VALID_LOST_FRAMES          (8U)      /* b2_valid 失能连续帧数: 达到回锁角 (N, C09) */
 #define VISION_BRIDGE_TASK_VALID_RECOVER_FRAMES       (4U)      /* b2_valid 恢复连续帧数: 达到回视觉 (M, C09) */
 #define VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG          (0.5f)    /* 视觉↔锁角换源 ramp: 每 2ms 最多变化 (C10) */
-/* --- 3.6 退出线视觉确认: exit_y>阈值 + 衰减累计 (简单版, 2026-08-09) ---
-   旧单帧 y<10 无选择性 (远场 exit_y≈4 恒满足, 接近时反而爬升>10);
-   复杂滤波(远场EMA/相对爬升/锁存/消失)过度设计——录像是手持的, 不具唯一性。
-   简单版: exit_y>15 = 退出线进入近场带 (IPM 透视, 物理≈桥尾≤0.85m);
-   衰减累计(+1/-1)≥3 tick 过滤单帧杂散, 容忍 has_top 抖动 (轻微递增感)。
-   回放 230901: 8 次 FIRE 全命中真实接近(y=16~40), 远场 y≈4~11 零误触发。 */
-#define VISION_BRIDGE_TASK_EXIT_Y_TH_PX               (15.0f)   /* 退出线下移带 (图像行) */
-#define VISION_BRIDGE_TASK_EXIT_HOLD_TICKS            (3U)      /* 确认: 衰减累计 ≥N tick (2ms) */
+/* --- 3.6 退出线视觉确认: 连续 N 帧(真帧) exit_y>阈值 即触发 (2026-08-15 定版) ---
+   按"真帧"(视觉包 seq)计数, 与 2ms tick 无关: 同一视觉包只计一次, 不受 tick 重复调用影响。
+   exit_y 远场 ≈4~11, 接近桥尾下移; 未达阈值/无数据即中断连击、清零重来 (严格连续)。
+   EXIT_CONSEC_FRAMES 与 EXIT_Y_TH_PX 均为现场可调标定参数。 */
+#define VISION_BRIDGE_TASK_EXIT_Y_TH_PX               (30.0f)   /* 退出线下移带 (图像行), 可调 */
+#define VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES         (2U)      /* 连续 N 帧(视觉包) y>阈值 即触发, 可调 */
 
 /* --- 4. 转向指令参数 --- */
 /* IPM 坐标为 X 向右、Y 向前；底层航向环的正方向与其相反，因此默认取 -1。

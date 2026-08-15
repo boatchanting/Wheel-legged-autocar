@@ -65,25 +65,28 @@ extern "C" {
 #define BF_H                    BRIDGE_H    /* 60 */
 
 /* ---- 参考检测器配置 ---- */
-#define BF_REF_FIXED_THRESHOLD  150         /* 绝对阈值 (同 code1 BRIDGE_VISION_FIXED_THRESHOLD) */
+#define BF_REF_FIXED_THRESHOLD  200         /* 绝对阈值 (同 code1 BRIDGE_VISION_FIXED_THRESHOLD) */
 
 /* ---- 底部白 gate (ref 阶段评估, 镜像 v8 gate: 行带 52..59, 白占比 > 75%) ---- */
 #define BF_GATE_BOT_ROW_LO      52          /* 底部行带起始 (同 v8 GATE_ROWS) */
 #define BF_GATE_BOT_WHITE_MIN   0.75f       /* 白占比锁存阈值 (2026-08-14: 50%→75%) */
 
-/* ---- 脱出双重门控 (v8 阶段评估, 2026-08-14 用户定案) ----
-   原"顶部行带 [4,20] 白占比 <25% 连续 2 帧"判据在宽桥场景下 (桥面占满画面,
-   结束线亦是亮线) 顶部行带白占比永不 <25%, gt 永不触发。
-   改为双重门控: v8 连续 BF_TOP_T_FRAMES 帧检出脱出线 (v8.has_top /
-   v11_top_gy) 且每帧满足"进入"的底部全亮门控 (底部行带红/蓝左右边界包络
-   白占比 >50%, 无左/右边线时分别回退画面边缘 x=2 / x=W-2) 即锁存, 次帧
-   切回参考检测器。 */
-#define BF_TOP_T_FRAMES        3           /* 连续满足双重门控的帧数达到即锁存 */
+/* ---- v8→ref 切换 (v8 阶段评估, 2026-08-15 门控放开) ----
+   v8 结束线检出 (v8.has_top && 底部全亮) 只用于切换到准确脱出管线 (ref);
+   视觉侧门控彻底放开: 阈值=1 即单帧检出即锁存 gate_top, 多帧防抖由控制侧 (0核) 处理。
+   正确帧 = v8.has_top 且底部全亮门控 (底部行带红/蓝左右边界包络白占比 >50%,
+   无左/右边线时分别回退画面边缘 x=2 / x=W-2)。 */
+#define BF_TOP_T_FRAMES        1           /* 视觉侧门控已放开 (单帧即切, 防抖靠控制侧) */
 
 /* ---- 0-1-2 防瞬间跳边 (2026-08-15) ----------------
    进入桥上(v8)阶段后, 最少待 BF_ON_BRIDGE_MIN_FRAMES 帧才允许评估
    脱出门控 (切"准备脱出")。可调节宏: 实车按帧率/桥长现场标定。 */
 #define BF_ON_BRIDGE_MIN_FRAMES  10
+
+/* ---- 脱出线确认 (ref 阶段, 2026-08-15 门控放开) ----------------
+   视觉侧门控彻底放开: 阈值=1 即单帧检出顶边线即锁存 exit_confirmed (不撤销);
+   多帧防抖/阈值由控制侧 (0核) 处理 (0核仅在 mode2 且 exit_y 连续达阈值才脱出)。 */
+#define BF_EXIT_STREAK_THRESHOLD  1U
 
 /* ---- 白像素判定灰度阈 (与参考检测器绝对阈值同源) ---- */
 #define BF_WHITE_TH             BF_REF_FIXED_THRESHOLD
@@ -103,6 +106,10 @@ typedef struct {
     uint8_t  gate_top;                      /* 结束线锁存 (0→1 切回 ref)   */
     uint8_t  top_t_streak;                  /* 连续结束线帧计数            */
     uint8_t  on_bridge_frames;              /* v8 阶段累计帧数 (防瞬间 0-1-2) */
+    uint8_t  exit_streak;                   /* 脱出线三态累计计数 (+1正确/+0无检测/-1坏帧) */
+    uint8_t  exit_confirmed;                /* 脱出线确认锁存 (0→1 不撤销) */
+    float    exit_top_a;                    /* 最近正确帧脱出线几何缓存 y=a*x+b */
+    float    exit_top_b;
 } bf_state_t;
 
 /* ---- 单帧结果 ---- */
@@ -113,6 +120,9 @@ typedef struct {
     uint8_t   gate_top;             /* 帧末顶部白 gate                 */
     bridge_line_t center;           /* 统一中线 x = a*y+b (valid 时)   */
     float     top_white_ratio;      /* 本帧顶部包络白占比; 未评估为 -1 */
+    uint8_t   exit_confirmed;       /* 帧末脱出线确认锁存              */
+    float     exit_top_a;           /* 脱出线几何 (确认后有效) y=a*x+b */
+    float     exit_top_b;
     bridge_result_t v8;             /* v8 原始输出 (source==V8 时有效) */
     BridgeDetectionResult ref;      /* ref 原始输出 (source==REF 时有效) */
 } bf_result_t;

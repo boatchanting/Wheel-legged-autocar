@@ -162,7 +162,7 @@ typedef struct
 /* ---- b2_mode 位掩码 (2026-08-14 远近融合迁移起; 仅语义定义, 不改包布局) ----
  * 高 4 位 = 检测状态 (按当前阶段取对应引擎的检出标志):
  *   v8 桥上阶段: DET_RED/GREEN/BLUE/TOP = v8 红(左界)/绿(中缝)/蓝(右界)/结束线检出
- *   ref 阶段:    DET_RED=左边线有效  DET_GREEN=bridge_found  DET_BLUE=右边线有效  DET_TOP=恒0
+ *   ref 阶段:    DET_RED=左边线有效  DET_GREEN=bridge_found  DET_BLUE=右边线有效  DET_TOP=顶边线(脱出线)检出
  * 低 3 位 = 正在干活的状态机 (融合阶段, 由 gate_bottom/gate_top 导出):
  *   0=准备进入(ref 远处中线)  1=桥上(v8)  2=准备脱出(ref 脱出线)
  * 0核解码: stage = b2_mode & B2M_STAGE_MASK; det = b2_mode & 0xF0            */

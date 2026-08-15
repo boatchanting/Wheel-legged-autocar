@@ -64,7 +64,8 @@ typedef struct
     uint8 err_source;                 /* 当前 err 来源: 0=视觉 1=锁角 (C10 换源 ramp) */
     float last_err_ramp;              /* ramp 输出的上一帧 err (C10) */
     float exit_line_y;                /* 退出线在 x=47 处的图像行 (调试, 无效为 -1) */
-    uint16 exit_high_ticks;           /* 简单版: exit_y>阈值 衰减累计 (确认计数) */
+    uint32 exit_last_seq;             /* 脱出确认已处理的最新视觉包 seq (按真帧去重) */
+    uint8  exit_consec_frames;        /* 连续 N 帧(视觉包) y>阈值 计数 (非 2ms tick) */
     int32 saved_acc_limit;            /* 备份原来的加速度限制，下桥后恢复 */
     int32 saved_dec_limit;            /* 备份原来的减速度限制，下桥后恢复 */
     float saved_servo_height;         /* 备份进入任务时的腿高 (servo_height)，退出后恢复到它而非写死值 (同雷区做法, 2026-08-14) */
@@ -370,30 +371,43 @@ static float vision_bridge_exit_line_measure_y(const volatile vision_ipc_packet_
 }
 
 /**
- * @brief 简单版脱出门控: exit_y>阈值 + 衰减累计确认 (每 2ms 调一次)
- * @note  2026-08-09 用户定调: 复杂滤波过度设计(录像不具唯一性)。
- *        主判据 exit_y>15 = 退出线进入近场带 (IPM 透视, 物理≈桥尾≤0.85m);
- *        衰减累计(+1/-1)过滤单帧杂散, 容忍 has_top 抖动 (轻微递增感);
- *        远场 exit_y≈4~11 永不满足 → 零误触发 (旧 y<10 在远场恒满足)。
+ * @brief 脱出门控: 连续 N 帧(真帧) exit_y>阈值 即触发 (2026-08-15)
+ * @note  按视觉包 seq 去重(真帧), 与 2ms tick 无关: 同一包只计一次。
+ *        exit_y>阈值 → 连击+1; 未达阈值/无数据 → 清零重来 (严格连续)。
+ *        measure_y 每 tick 仍刷新 exit_line_y 供调试观测。
  * @return 1=确认脱出 (FIRE) → VISUAL_CONFIRMED
  */
 static uint8 vision_bridge_exit_update_gate(const volatile vision_ipc_packet_t *packet)
 {
     const float y = vision_bridge_exit_line_measure_y(packet);
-    const uint8 valid = (uint8)((y >= 0.0f) && (y <= (float)(IPM_IMG_HEIGHT - 1U)));
+    uint8 new_packet;
 
-    if ((valid) && (y > VISION_BRIDGE_TASK_EXIT_Y_TH_PX))
+    if (packet == NULL)
     {
-        if (s_bridge_task.exit_high_ticks < 0xFFFFU)
+        return 0U;
+    }
+
+    /* 真帧判定: seq 变化才算新视觉包; 同一包被多个 2ms tick 重复调用时直接返回现状态 */
+    new_packet = (uint8)((packet->seq != 0U) && (packet->seq != s_bridge_task.exit_last_seq));
+    if (new_packet == 0U)
+    {
+        return (uint8)(s_bridge_task.exit_consec_frames >= VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES);
+    }
+    s_bridge_task.exit_last_seq = packet->seq;
+
+    if ((y >= 0.0f) && (y <= (float)(IPM_IMG_HEIGHT - 1U)) &&
+        (y > VISION_BRIDGE_TASK_EXIT_Y_TH_PX))
+    {
+        if (s_bridge_task.exit_consec_frames < 0xFFU)
         {
-            s_bridge_task.exit_high_ticks++;
+            s_bridge_task.exit_consec_frames++;
         }
     }
-    else if (s_bridge_task.exit_high_ticks > 0U)
+    else
     {
-        s_bridge_task.exit_high_ticks--; /* 衰减, 容忍掉帧 */
+        s_bridge_task.exit_consec_frames = 0U; /* 连续中断, 清零重来 */
     }
-    return (uint8)(s_bridge_task.exit_high_ticks >= VISION_BRIDGE_TASK_EXIT_HOLD_TICKS);
+    return (uint8)(s_bridge_task.exit_consec_frames >= VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES);
 }
 
 /**
@@ -823,9 +837,10 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 出口判定: 里程门 + 视觉 FIRE 确认; 距离/超时强制兜底 (不 rebase)。
-               0808 分支的 1D EKF 退出融合已放弃。 */
-            if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM) && (exit_fire != 0U))
+            /* 出口判定: 仅视觉状态机2(mode2=准备脱出) + 里程门 + 视觉 FIRE 确认;
+               距离/超时强制兜底 (不 rebase)。0808 分支的 1D EKF 退出融合已放弃。 */
+            if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM) && (exit_fire != 0U) &&
+                vision_bridge_packet_in_exit_stage(packet))
             {
                 g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_VISUAL_CONFIRMED;
                 exit_beep_request = 1U; /* 脱出时刻: 视觉确认响 2 声 (侧键/Plan4 驱动都响) */
@@ -881,7 +896,7 @@ void VisionBridgeTask_Update_2ms(void)
         static uint32 ctrl_dbg_div = 0U;
         if ((ctrl_dbg_div++ % 250U) == 0U)
         {
-            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f high=%u\r\n",
+            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f consec=%u\r\n",
                    (int)s_bridge_task.state,
                    (unsigned long)s_bridge_task.state_ticks,
                    (double)traveled_mm,
@@ -896,7 +911,7 @@ void VisionBridgeTask_Update_2ms(void)
                    (unsigned int)(packet ? packet->b2_gate : 0U),
                    (unsigned int)(packet ? packet->b2_has_top : 0U),
                    (double)s_bridge_task.exit_line_y,
-                   (unsigned int)s_bridge_task.exit_high_ticks);
+                   (unsigned int)s_bridge_task.exit_consec_frames);
         }
     }
 #endif

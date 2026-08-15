@@ -104,25 +104,33 @@ static int bf_v8_bottom_bright(const uint8_t *img, const bridge_result_t *v8)
     return r > BF_GATE_BOT_WHITE_MIN;
 }
 
-/* ---- 脱出双重门控更新 (v8 阶段): 连续检出脱出线 且 底部全亮 ----
-   2026-08-14 用户定案: 双重门控 = ① 连续 BF_TOP_T_FRAMES 帧检出脱出线
-   (v8.has_top / v11_top_gy); ② 且每帧满足"进入"的底部全亮门控
-   (bf_v8_bottom_bright)。两条件同时满足才计帧, 连续帧数达到即锁存,
-   次帧切回参考检测器提取脱出线。 */
+/* ---- 脱出双重门控更新 (v8 阶段): 三态衰减累计 (2026-08-15) ----
+   与 ref 脱出线确认同一套累计算法:
+   正确帧 (+1): 检出脱出线 (v8.has_top) 且底部全亮 (bf_v8_bottom_bright);
+   无检测帧 (保持): v8 本帧无有效线 (valid=0, 缺帧/无输出);
+   坏帧 (-1): 有有效线但未满足脱出双重门控;
+   累计达 BF_TOP_T_FRAMES 即锁存 gate_top (不撤销), 次帧切回参考检测器。 */
 static void bf_update_gate_top_v8(bf_state_t *st, const uint8_t *img,
                                   const bridge_result_t *v8, float *ratio_out)
 {
     *ratio_out = -1.0f;                 /* 原顶部白占比不再评估 */
     if (st->gate_top)
         return;
+
     if (v8->has_top && bf_v8_bottom_bright(img, v8)) {
-        if (st->top_t_streak < 255)
+        /* 正确帧: +1 */
+        if (st->top_t_streak < 255U)
             st->top_t_streak++;
-        if (st->top_t_streak >= BF_TOP_T_FRAMES)
-            st->gate_top = 1;
+    } else if (!v8->valid) {
+        /* 无检测帧: 保持 (缺帧/无输出不打断连击) */
     } else {
-        st->top_t_streak = 0;
+        /* 坏帧: 有有效线但未满足脱出双重门控 → 衰减 */
+        if (st->top_t_streak > 0U)
+            st->top_t_streak--;
     }
+
+    if (st->top_t_streak >= BF_TOP_T_FRAMES)
+        st->gate_top = 1;
 }
 
 /* ---- v8 结果 → 统一中线 x = a*y+b ----
@@ -170,6 +178,56 @@ static void bf_center_from_ref(const BridgeDetectionResult *ref, bridge_line_t *
     c->u_hi = (float)ref->center_segment.y1;
 }
 
+/* ---- 参考检测器顶边横线 segment → y = a*x+b ---- */
+static int bf_top_segment_to_ab(const BridgeDetectionSegment *s, float *a, float *b)
+{
+    int dx = s->x1 - s->x0;
+    if (!s->valid || dx == 0)
+        return 0;
+    *a = (float)(s->y1 - s->y0) / (float)dx;
+    *b = (float)s->y0 - *a * (float)s->x0;
+    return 1;
+}
+
+/* ---- 脱出线确认 (ref 阶段, gate_top 锁存后) ----
+   三态衰减累计: 正确帧 +1, 无检测帧保持, 坏帧 -1; 达阈值锁存 exit_confirmed。
+   正确帧始终刷新几何缓存 (确认后也持续更新, 供 0核 exit_y 随车下移)。 */
+static void bf_update_exit_line(bf_state_t *st, const BridgeDetectionResult *ref,
+                                uint8_t *confirmed, float *top_a, float *top_b)
+{
+    float a = 0.0f, b = 0.0f;
+
+    if (ref->bridge_found && ref->top_line_visible &&
+        ref->top_segment.valid &&
+        bf_top_segment_to_ab(&ref->top_segment, &a, &b))
+    {
+        /* 正确帧: 始终刷新几何缓存 */
+        st->exit_top_a = a;
+        st->exit_top_b = b;
+        if (st->exit_confirmed == 0U)
+        {
+            if (st->exit_streak < 255U)
+                st->exit_streak++;
+            if (st->exit_streak >= BF_EXIT_STREAK_THRESHOLD)
+                st->exit_confirmed = 1U;
+        }
+    }
+    else if (!ref->bridge_found)
+    {
+        /* 无检测帧: 保持 (缺帧/无输出不打断连击) */
+    }
+    else
+    {
+        /* 坏帧: 找到桥面但无顶边线 → 衰减 (确认后不再衰减) */
+        if (st->exit_confirmed == 0U && st->exit_streak > 0U)
+            st->exit_streak--;
+    }
+
+    *confirmed = st->exit_confirmed;
+    *top_a = st->exit_top_a;
+    *top_b = st->exit_top_b;
+}
+
 void bridge_fusion_init(bf_state_t *st)
 {
     memset(st, 0, sizeof(*st));
@@ -212,10 +270,18 @@ void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out)
         bf_center_from_ref(&out->ref, &out->center);
         out->valid = (uint8_t)(out->ref.bridge_found &&
                                out->ref.center_segment.valid);
-        /* 门控更新: 仅接近阶段 (gate_top 未锁存) 评估底部白 gate;
-           脱出阶段两门控均已锁存, 为终态 */
-        if (!st->gate_top)
+        if (st->gate_top)
+        {
+            /* 脱出阶段 (gate_top 已锁存): 三态确认脱出线 (ref 顶边横线) */
+            bf_update_exit_line(st, &out->ref,
+                                &out->exit_confirmed,
+                                &out->exit_top_a, &out->exit_top_b);
+        }
+        else
+        {
+            /* 仅接近阶段 (gate_top 未锁存) 评估底部白 gate */
             bf_update_gate_bottom_ref(st, img94, &out->ref);
+        }
     }
 
     out->gate_bottom = st->gate_bottom;

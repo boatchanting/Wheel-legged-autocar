@@ -81,9 +81,10 @@ static uint8 bridge_fusion_pack_mode(const bf_result_t *r)
     }
     else
     {
-        det = (uint8)((r->ref.left_line.valid  ? B2M_DET_RED   : 0)
-                    | (r->ref.bridge_found     ? B2M_DET_GREEN : 0)
-                    | (r->ref.right_line.valid ? B2M_DET_BLUE  : 0));
+        det = (uint8)((r->ref.left_line.valid   ? B2M_DET_RED   : 0)
+                    | (r->ref.bridge_found      ? B2M_DET_GREEN : 0)
+                    | (r->ref.right_line.valid  ? B2M_DET_BLUE  : 0)
+                    | (r->ref.top_line_visible  ? B2M_DET_TOP   : 0));
     }
     return (uint8)(det | stage);
 }
@@ -100,7 +101,15 @@ static void bridge_fusion_fill_ref_arb(const bf_result_t *r, bridge_v2_arb_t *ou
     out->source = (uint8)(r->gate_top ? 4 : 3);     /* 3=准备进入 4=准备脱出 */
     out->mode   = bridge_fusion_pack_mode(r);
     out->gate   = r->gate_bottom;
-    /* has_top/top_a/top_b 置 0: 结束线只由桥上 v8 阶段提供 (与现状同源) */
+    /* 脱出线 (ref 顶边横线) 补发: 融合层三态确认锁存后, 把缓存几何发 b2_top (2026-08-15) */
+    if (r->exit_confirmed)
+    {
+        float ta = r->exit_top_a * 1000.0f;
+        float tb = r->exit_top_b * 100.0f;
+        out->has_top     = 1U;
+        out->top_a_x1000 = (int16)(ta > 32767.0f ? 32767.0f : (ta < -32768.0f ? -32768.0f : ta));
+        out->top_b_x100  = (int16)(tb > 32767.0f ? 32767.0f : (tb < -32768.0f ? -32768.0f : tb));
+    }
     if (r->valid)
     {
         a = r->center.a * 1000.0f;
@@ -232,6 +241,11 @@ int main(void)
                     s_fusion_arb = *bridge_v2_arbiter_get();
                     s_fusion_arb.mode = bridge_fusion_pack_mode(&s_fusion_res); // mode 改发位掩码 (高4检测+低3阶段)
                     s_fusion_arb.gate = s_fusion_res.gate_bottom;               // gate 以融合层锁存为准 (与 v8 内部 gate 同步)
+                    /* v8 结束线只服务 gate_top 切换 (切到准确脱出管线), 不发布 b2_top;
+                       脱出线只由 ref 阶段 (mode2) 发 b2_top 供 0核脱出触发 (2026-08-15) */
+                    s_fusion_arb.has_top     = 0U;
+                    s_fusion_arb.top_a_x1000 = 0;
+                    s_fusion_arb.top_b_x100  = 0;
                 }
                 else
                 {
