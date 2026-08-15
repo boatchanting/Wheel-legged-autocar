@@ -515,10 +515,12 @@ void VisionThreeStageControl_Update_2ms(void)
                 {
                     if (s_exit_anchor_valid != 0U)
                     {
+                        /* 视觉确认出口时只重定位导航融合坐标。 */
                         nav_vision_fusion_x = s_exit_anchor_x_mm;
                         nav_vision_fusion_y = s_exit_anchor_y_mm;
                     }
                     exit_beep_request = 1U;
+                    /* 脱出距离从此刻的原始惯导坐标起算，不受上方融合重定位影响。 */
                     s_post_exit_start_x_mm = inertial_nav.x;
                     s_post_exit_start_y_mm = inertial_nav.y;
                     VisionIpc_Core0_SetTask(VISION_TARGET_NONE, 0U);
@@ -537,6 +539,7 @@ void VisionThreeStageControl_Update_2ms(void)
             float dy;
 
             target_speed_set = VISION_THREE_STAGE_POST_EXIT_SPEED_SET;
+            /* 视觉出口重定位完成后，保持使用原始惯导坐标跑满脱出距离。 */
             dx = inertial_nav.x - s_post_exit_start_x_mm;
             dy = inertial_nav.y - s_post_exit_start_y_mm;
             if ((dx * dx + dy * dy) >=

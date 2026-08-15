@@ -145,7 +145,7 @@ extern float current_actual_speed;
 #define ANG_KP      -12.0f   //[直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。-12
 #define ANG_KI      0.0f    // [一般不用] 平衡车本身是不稳定系统，加积分容易导致无法直立，除非是完全静态的高精度控制。
 // 周期换算：5ms -> 3ms，ratio=0.6，Kd /= 0.6
-#define ANG_KD      -6.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。-13.3333
+#define ANG_KD      -10.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。-13.3333
 
 #define ANG_MAX_I   0.0f    // 积分限幅
 #define ANG_MAX_O   8000.0f // [最大角速度] 限制期望的旋转速度，防止电机指令过大。
@@ -390,7 +390,7 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
 #elif CAR_SELECT == 4
-// 4车日常刹车前馈参数
+// 4车日常刹车前馈参数 【2026-08-14 俯仰抖动调校：重刹三参数改柔，建压慢/增益低/释放慢，姿态跟得上】
 #define BRAKE_SPEED_DEADBAND     15.0f    /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
 #define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
 #define BRAKE_ZERO_TARGET_MAX    10.0f    /* 目标速度绝对值低于该值时，允许进入零速停车迟滞区 */
@@ -411,14 +411,14 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_RATIO_HEAVY        0.55f    /* 重刹触发比例：速度差达到当前速度的 55% 才进入重刹，CH5 急停不受此限制 */
 #define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
-#define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
+#define BRAKE_GAIN_HEAVY         18.0f    /* 重刹前馈增益(原22.0f)，4车调软防俯仰抖动 */
 #define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
 #define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
-#define BRAKE_MAX_HEAVY          3500.0f  /* 重刹前馈 PWM 最大幅值，限制急停时的最大反向力矩 */
+#define BRAKE_MAX_HEAVY          3000.0f  /* 重刹前馈 PWM 最大幅值(原3500.0f)，限制急停时的最大反向力矩 */
 #define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
 #define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
-#define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
-#define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
+#define BRAKE_RAMP_UP_HEAVY      500.0f   /* 重刹输出每次更新的最大上升步长(原700.0f)，建压慢姿态跟得上 */
+#define BRAKE_RAMP_DOWN          600.0f   /* 刹车前馈退出时每次更新的最大回落步长(原800.0f)，释放慢避免回弹起振 */
 #else
 // 其他车型暂时沿用4车日常刹车前馈参数
 #define BRAKE_SPEED_DEADBAND     15.0f

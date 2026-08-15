@@ -41,15 +41,20 @@ START_POINT_X_MM = 0.0
 START_POINT_Y_MM = 0.0
 
 # 与 tools/webview_nav_marker速度规划/caculate_path.py 保持一致的离线路径速度约束。
-PATH_SPEED_MAX_MM_S = 4000.0
-SPRINT_SPEED_MM_S = 4000.0
+PATH_SPEED_MAX_MM_S = 5000.0
+SPRINT_SPEED_MM_S = 5000.0
 ENABLE_FINISH_SPRINT = True
-MAX_ACCEL_MM_S2 = 1500.0
-MAX_DECEL_MM_S2 = 1500.0
+MAX_ACCEL_MM_S2 = 4500.0  #3500室内
+MAX_DECEL_MM_S2 = 3500.0
 MAX_LATERAL_ACCEL_MM_S2 = 2500.0
-MAX_PATH_YAW_RATE_RAD_S = 2.2
+MAX_PATH_YAW_RATE_RAD_S = 2.2 # 2.2室内
 SPEED_TO_MM_S = 4.79
 CURVATURE_EPS = 1e-6
+
+# Advance deceleration commands by the measured chassis response delay.
+# Keep acceleration unshifted so a future higher speed never violates the
+# current curve or special-task speed ceiling.
+SPEED_RESPONSE_DELAY_S = 0.8
 
 # 局部圆角控制柄同时受相邻边长限制，避免稀疏或急转标记使 Bezier 曲线偏离局部走廊。
 LOCAL_CORNER_HANDLE_RATIO = 0.18
@@ -474,6 +479,32 @@ def apply_longitudinal_speed_envelope(speed_limit: np.ndarray, s: np.ndarray) ->
     return planned_speed
 
 
+def apply_response_delay_compensation(
+    target_speed: np.ndarray,
+    s: np.ndarray,
+    response_delay_s: float,
+) -> np.ndarray:
+    """Advance only deceleration commands by the chassis response delay.
+
+    The input is the physically safe desired-speed profile.  A future lower
+    speed is issued now when the vehicle will travel to it during the measured
+    response delay.  Future acceleration is intentionally not advanced.
+    """
+    if len(target_speed) == 0 or response_delay_s <= 0.0:
+        return np.array(target_speed, copy=True)
+
+    desired_speed = np.abs(target_speed) * SPEED_TO_MM_S
+    command_speed = np.array(desired_speed, copy=True)
+    path_end_s = float(s[-1])
+
+    for index, current_speed in enumerate(desired_speed):
+        delayed_s = min(path_end_s, float(s[index]) + current_speed * response_delay_s)
+        future_speed = float(np.interp(delayed_s, s, desired_speed))
+        command_speed[index] = min(current_speed, future_speed)
+
+    return -command_speed / SPEED_TO_MM_S
+
+
 def calculate_target_speed(
     samples: list[PathSample],
     s: np.ndarray,
@@ -720,6 +751,12 @@ def parse_args() -> argparse.Namespace:
         default=STAIRS_APPROACH_DISTANCE_MM,
         help="three-step approach speed-cap distance in mm (default: 4000)",
     )
+    parser.add_argument(
+        "--speed-response-delay-s",
+        type=float,
+        default=SPEED_RESPONSE_DELAY_S,
+        help="chassis response delay used to advance deceleration commands (default: 0.8)",
+    )
     return parser.parse_args()
 
 
@@ -727,6 +764,8 @@ def main() -> int:
     args = parse_args()
     if args.stairs_approach_distance_mm < 0.0:
         raise ValueError("Three-step approach distance must not be negative.")
+    if args.speed_response_delay_s < 0.0:
+        raise ValueError("Speed response delay must not be negative.")
     source = args.input.resolve() if args.input else find_latest_marker_csv(SCRIPT_DIR)
     if not source.is_file():
         raise FileNotFoundError(f"找不到默认输入 CSV: {source}。请导出该文件或使用 --input 指定 CSV。")
@@ -751,6 +790,11 @@ def main() -> int:
         output_target_speed,
         BRIDGE_APPROACH_DISTANCE_MM,
         BRIDGE_APPROACH_TARGET_SPEED_MAX,
+    )
+    output_target_speed = apply_response_delay_compensation(
+        output_target_speed,
+        s,
+        args.speed_response_delay_s,
     )
     speed_heatmap_output = render_output.with_name(f"{render_output.stem}_speed_heatmap{render_output.suffix}")
     # 如需导出路径 CSV，取消下一行注释。

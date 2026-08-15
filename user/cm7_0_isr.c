@@ -46,6 +46,7 @@
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
+#include "tools/wifi_protocol.h"
 
 // 声明外部函数
 
@@ -953,6 +954,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             pwm_left = 0;
             pwm_right = 0;
         }
+
+        #if WIFI_CORE0_CUSTOM_PROTOCOL 
+        // 把数据传给wifi上位机
+        g_wifi_target_speed_set = target_speed_set;
+        g_wifi_speed_l = (float)motor_value.receive_left_speed_data;
+        g_wifi_speed_r = (float)motor_value.receive_right_speed_data;
+        g_wifi_pwm_left = (float)pwm_left;
+        g_wifi_pwm_right = (float)pwm_right;
+        #endif
+
         // 直接输出即可
         
          // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
@@ -1024,11 +1035,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     // 步骤 9: 系统心跳
     // ==========================================================
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==0
     if(loop_counter % 50 == 11) 
     {
         pit_state = 1; 
     }
-    
+    #endif
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==1 //wifi传日志时候100帧
+    if(loop_counter % 10 == 2) 
+    {
+        pit_state = 1; 
+    }
+    #endif
+
 }
 
 void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数      
@@ -1055,7 +1074,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         g_motor_enable = 1; // 正常工作
     }
 
-    if ((robot_ctrl.brake_active != 0U) && (g_replay_state == REPLAY_RUNNING))
+    if ((robot_ctrl.brake_active == 1U) && (g_replay_state != REPLAY_IDLE))
     {
         NavReplay_Stop();//【nav】复现停止
         Accel_Feedforward_Reset();//【accel_ff】遥控刹车停止复刻时清空加速前馈
@@ -1068,8 +1087,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     }
     #endif
 
+    /* REPLAY_FINISHED keeps navigation ownership through terminal deceleration. */
     #if GNSS_NAV == 1
-    if ((g_replay_state != REPLAY_RUNNING) &&
+    if (g_replay_state == REPLAY_IDLE &&
         (g_gps_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
@@ -1079,7 +1099,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
     #if GNSS_NAV == 0
-        if ((g_replay_state != REPLAY_RUNNING) &&
+        if (g_replay_state == REPLAY_IDLE &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)

@@ -302,8 +302,10 @@ int main(void)
             {
                 display_count = 0;    
                 #if DEBUG_DISPLAY_CORE0
+                    #if WIFI_CORE0_CUSTOM_PROTOCOL==0 //传日志的时候限制了一下屏幕
                     Menu_ShowStatic();    // 静态显示
                     Menu_ShowDynamic();   // 动态显示
+                    #endif
                 #endif    
             }
         }
