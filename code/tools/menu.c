@@ -78,6 +78,7 @@ void Menu_TriggerStartAction(void)
     }
 }
 
+#if (LAUNCH_STRATEGY_SELECT == 1)
 // =================================================================================
 // 【直立发车 / 航向校准】状态机实现
 // =================================================================================
@@ -197,6 +198,7 @@ static void UprightLaunch_Update_10ms(void)
             break;
     }
 }
+#endif
 
 // ==================== 辅助函数 ====================
 static void Menu_RequestLocalStartAction(void)
@@ -257,6 +259,7 @@ static void State_Dynamic_Screen(void)
     ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
     ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
     ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
+#if (LAUNCH_STRATEGY_SELECT == 1)
     if (g_upright_state == UPRIGHT_LAUNCH_WAIT_STANDUP)
     {
         ips200_show_string(60, 15*7, "Stand 1s  ");
@@ -293,6 +296,9 @@ static void State_Dynamic_Screen(void)
     {
         ips200_show_float(60,15*7, gnss.state, 3, 2);ips200_show_uint(80,15*7,gnss.satellite_used,5);
     }
+#else
+    ips200_show_float(60,15*7, gnss.state, 3, 2);ips200_show_uint(80,15*7,gnss.satellite_used,5);
+#endif
     ips200_show_float(25, 15*8, current_angles[0], 3, 1);
     ips200_show_float(25, 15*9, current_angles[1], 3, 1);
     ips200_show_float(25, 15*10, current_angles[2], 3, 1);
@@ -566,6 +572,7 @@ void Menu_ShowDynamic(void)
 // ==================== 按键处理（状态机重写版） ====================
 void Menu_HandleKey(void)
 {
+#if (LAUNCH_STRATEGY_SELECT == 1)
     // 0. 更新直立发车状态机
     UprightLaunch_Update_10ms();
 
@@ -575,16 +582,15 @@ void Menu_HandleKey(void)
     // -------------------------------------------------------------
     if (key_get_state(KEY_1) == KEY_SHORT_PRESS)
     {
+        key_clear_state(KEY_1);
         if (g_upright_state == UPRIGHT_LAUNCH_IDLE)
         {
-            key_clear_state(KEY_1);
             g_upright_state = UPRIGHT_LAUNCH_WAIT_STANDUP;
             s_upright_timer_ticks = 100U; // 1000ms (100 * 10ms) 延时准备起立
             return;
         }
         else if (g_upright_state == UPRIGHT_LAUNCH_MANUAL_AIMING)
         {
-            key_clear_state(KEY_1);
             // 第二次按 10_0：先进入 0.5s 撤手延时 (50 * 10ms = 500ms)
             g_upright_state = UPRIGHT_LAUNCH_WAIT_SAMPLE_DELAY;
             s_upright_timer_ticks = 50U;
@@ -620,6 +626,16 @@ void Menu_HandleKey(void)
     {
         return;
     }
+#else
+    #if MENU_HAS_ONE_CLICK_START
+    if (key_get_state(MENU_KEY_ONE_CLICK_START) == KEY_SHORT_PRESS)
+    {
+        Menu_RequestLocalStartAction();
+        key_clear_state(MENU_KEY_ONE_CLICK_START);
+        return;
+    }
+    #endif
+#endif
 
     Menu_UpdateLocalStartAction();
     if (menu_local_start_pending)

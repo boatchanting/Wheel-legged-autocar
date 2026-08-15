@@ -15,6 +15,7 @@ typedef enum {
     MENU_STATE_COUNT
 } MenuState_t;
 
+#if (LAUNCH_STRATEGY_SELECT == 1)
 // 【直立发车 / 航向校准】状态机状态定义
 typedef enum {
     UPRIGHT_LAUNCH_IDLE = 0,             // 待机状态 (倒地或普通运行)
@@ -27,6 +28,7 @@ typedef enum {
     UPRIGHT_LAUNCH_HEADING_LOCKED,       // 2s 采样结束，矢量均值锁定航向，开启转向环，响单声
     UPRIGHT_LAUNCH_WAIT_START_2S         // 按下 P10_4，延时 2s 发车
 } UprightLaunchState_e;
+#endif
 
 // ==================== 全局变量声明 ====================
 extern MenuState_t current_state;
@@ -35,7 +37,9 @@ extern uint8_t menu_values[MENU_STATE_COUNT];
 extern const uint8_t menu_max_values[MENU_STATE_COUNT];
 extern uint8_t g_is_push_mode; // 推车模式全局标志位（供底层PID控制环使用）
 extern uint8_t need_redraw;
+#if (LAUNCH_STRATEGY_SELECT == 1)
 extern volatile UprightLaunchState_e g_upright_state; // 直立发车状态机当前状态
+#endif
 
 
 

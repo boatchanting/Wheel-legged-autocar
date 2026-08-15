@@ -617,10 +617,15 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
             // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
             // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
+#if (LAUNCH_STRATEGY_SELECT == 1)
             // 如果正在雷区(Minefield)中旋转，或处于直立发车手动对准状态，屏蔽正常的PID转向角度环(外环)
             if ((g_yaw_initialized != 0U) &&
                 (Minefield_Is_Active() == 0U) &&
                 (!g_turn_loop_disabled))
+#else
+            if ((g_yaw_initialized != 0U) &&
+                (Minefield_Is_Active() == 0U))
+#endif
             {
                 // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
                 
@@ -725,6 +730,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         }
         //==================== [雷区旋转调用结束] =================
         // 将雷区旋转指令或者正常转向角速度指令送入内环PID
+#if (LAUNCH_STRATEGY_SELECT == 1)
         if (g_turn_loop_disabled)
         {
             turn_gyro_loop_out = 0.0f;
@@ -739,6 +745,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         {
             turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
         }
+#else
+        turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+#endif
     }
 
     // ==========================================================
@@ -1123,6 +1132,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     {
         // [映射 2: 转向角度]
         // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
+#if (LAUNCH_STRATEGY_SELECT == 1)
         if (g_turn_loop_disabled)
         {
             err_degree = 0.0f;
@@ -1131,6 +1141,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         {
             err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;//目标想要增加/减少的角度+初始角度-当前角度
         }
+#else
+        err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;//目标想要增加/减少的角度+初始角度-当前角度
+#endif
 
     // [映射 3: 速度控制]
     // 主函数定义: 负数代表向前 (-60 = 20m/s)

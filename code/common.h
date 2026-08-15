@@ -27,11 +27,15 @@ extern volatile uint8_t g_load_flash_request;  // 1: 请求将 Flash 数据存�
 extern volatile uint8_t g_replay_start_request;
 extern volatile uint8_t g_replay_stop_request;
 
+#include "config/sys_options.h"
+
+#if (LAUNCH_STRATEGY_SELECT == 1)
 // 【直立发车 / 航向校准】标志位与主循环蜂鸣器请求
 extern volatile bool g_turn_loop_disabled;              // 1: 禁用转向环(手动对准航向), 0: 正常转向环
 extern volatile uint8_t g_upright_long_short_long_request; // 1: 请求主循环播放长-短-长提示音
 extern volatile uint8_t g_upright_single_beep_request;     // 1: 请求主循环播放单声短鸣
 extern volatile uint8_t g_upright_beep_done;               // 1: 主循环长-短-长提示音播放完毕
+#endif
 
 // ... 声明其他你项目中需要全局访问的变量 ...
 
