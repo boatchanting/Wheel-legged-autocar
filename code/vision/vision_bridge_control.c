@@ -70,10 +70,35 @@ typedef struct
     int32 saved_dec_limit;            /* 备份原来的减速度限制，下桥后恢复 */
     float saved_servo_height;         /* 备份进入任务时的腿高 (servo_height)，退出后恢复到它而非写死值 (同雷区做法, 2026-08-14) */
     uint8 saved_limits_valid;         /* 标记备份数据是否有效 */
+    float filtered_lateral_m;         /* 前视横向误差 e (m, 低通, 控制 P 项用) */
+    float edot_mps;                   /* 横向误差导数 ė (m/s, 低通+限幅, D 项用) */
+    float last_lateral_m;             /* 上一视觉包的原始 e, 用于 ė 帧差 */
+    uint8 edot_has_history;           /* 首次/重捕获后不计算 ė (防微分冲击) */
 } vision_bridge_task_ctx_t;
 
 /* 这个就是真正的“记事本”本尊，只有这个文件能用 */
 static vision_bridge_task_ctx_t s_bridge_task;
+
+/* 方向控制可调参数面板默认值 (参照 trials/track.html 与 trials/index.html) */
+const vision_bridge_tune_t g_vision_bridge_tune_defaults =
+{
+    .lat_kp               = 6.0f,
+    .lat_ki               = 0.0f,
+    .lat_kd               = 6.0f,
+    .lat_int_max          = 3.0f,
+    .lat_adaptive_enable  = 1U,
+    .edot_alpha           = 0.25f,
+    .edot_clamp_mps       = 3.0f,
+    .edot_fps             = 30.0f,
+    .lookahead_m          = 1.0f,
+    .yaw_hold_kp          = 1.8f,
+    .yaw_hold_src_sel     = VISION_BRIDGE_YAWHOLD_SRC_ENTRY,
+    .out_max_deg          = 22.9f,
+    .ramp_step_deg_per_2ms = 0.5f,
+    .lat_sign             = 1.0f,
+    .edot_sign            = 1.0f,
+    .yaw_hold_sign        = 1.0f,
+};
 
 /* --- 基础数学工具函数 --- */
 
@@ -134,7 +159,8 @@ static float vision_bridge_distance_from(float x_mm, float y_mm)
 
 static uint8 vision_bridge_get_control_measurement(const volatile vision_ipc_packet_t *packet,
                                                    float *lookahead_x,
-                                                   float *heading_deg)
+                                                   float *heading_deg,
+                                                   float *lateral_m)
 {
     float x_at_lookahead;
     uint8_t lookahead_img_x;
@@ -173,6 +199,9 @@ static uint8 vision_bridge_get_control_measurement(const volatile vision_ipc_pac
         return 0U;
     }
 
+    /* 前视横向误差 e (m): IPM 物理 x 差 (target - 中心列同行参考点), 向右为正 */
+    *lateral_m = (float)(target_point.x_mm - reference_point.x_mm) / 1000.0f;
+
     /* The LUT gives physical X (right) / Y (forward).  Subtract the calibrated
      * straight-ahead ray so a line at IMAGE_CENTER_X produces exactly 0 deg. */
     *heading_deg = vision_bridge_normalize_angle(
@@ -192,8 +221,10 @@ static uint8 vision_bridge_center_jump_is_confirmed(float lookahead_x,
 
 static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_t *packet)
 {
+    const vision_bridge_tune_t *t = &g_vision_bridge_tune_defaults;
     float lookahead_x;
     float heading_deg;
+    float lateral_m;
     uint8 is_jump;
 
     /* The control loop is 2 ms while vision packets arrive much slower.  A
@@ -206,7 +237,7 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
 
     /* C08: 原始可信来自 b2_valid (1核仲裁层输出); C09: 失能连续 N 帧才回锁角 */
     if ((packet->b2_valid == 0U) ||
-        (vision_bridge_get_control_measurement(packet, &lookahead_x, &heading_deg) == 0U))
+        (vision_bridge_get_control_measurement(packet, &lookahead_x, &heading_deg, &lateral_m) == 0U))
     {
         s_bridge_task.center_filter_pending_jump = 0U;
         s_bridge_task.center_filter_recover_frames = 0U;
@@ -236,6 +267,10 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
         s_bridge_task.center_filter_recover_frames = 0U;
         s_bridge_task.filtered_lookahead_x = lookahead_x;
         s_bridge_task.filtered_heading_deg = heading_deg;
+        s_bridge_task.filtered_lateral_m = lateral_m;
+        s_bridge_task.last_lateral_m = lateral_m;
+        s_bridge_task.edot_mps = 0.0f;
+        s_bridge_task.edot_has_history = 0U; /* 重捕获防微分冲击 */
         s_bridge_task.center_filter_valid = 1U;
         s_bridge_task.center_filter_pending_jump = 0U;
         return;
@@ -262,50 +297,114 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
                                            (lookahead_x - s_bridge_task.filtered_lookahead_x);
     s_bridge_task.filtered_heading_deg += VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA *
                                            (heading_deg - s_bridge_task.filtered_heading_deg);
+    s_bridge_task.filtered_lateral_m += VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA *
+                                         (lateral_m - s_bridge_task.filtered_lateral_m);
+
+    /* ė: 原始 e 帧差 + 强低通 + 限幅 (复刻 track.html, 仅在新视觉包时更新) */
+    if (s_bridge_task.edot_has_history != 0U)
+    {
+        const float d_raw = vision_bridge_constrain_f(
+            (lateral_m - s_bridge_task.last_lateral_m) * t->edot_fps,
+            -t->edot_clamp_mps,
+            t->edot_clamp_mps);
+        s_bridge_task.edot_mps += t->edot_alpha * (d_raw - s_bridge_task.edot_mps);
+    }
+    else
+    {
+        s_bridge_task.edot_mps = 0.0f;
+    }
+    s_bridge_task.last_lateral_m = lateral_m;
+    s_bridge_task.edot_has_history = 1U;
 }
 
 /* --- 控制核心辅助函数 --- */
 
 /**
- * @brief 根据 IPM 查表得到的前视点，直接计算给底层航向环的差角
+ * @brief stage1 (v8 循迹) 横向乘性 PID, 输出 err_degree(deg)
  *
- * @param packet 1 核传来的数据包
- * @return float 算出的方向盘打角（有最大值限制）
- *
- * @note IPM 前视点已将横向偏差和线方向合并为几何夹角，不能再叠加视觉侧 PID。
+ * 落地公式 (保持 err_degree → 底层转向角环):
+ *   e = filtered_lateral_m (m),  ė = edot_mps (m/s),  v = |vx_body|/1000 (m/s)
+ *   ω_radps = LAT_SIGN·Kp·e·v + EDOT_SIGN·Kd·ė   (乘性自适应; Ki 默认 0 未启用)
+ *   err_degree = ω_radps·(180/π) / TURN_ANG_KP
+ * @return float 给底层转向角环的 err_degree
  */
-static float vision_bridge_calc_geometry_err_degree(const volatile vision_ipc_packet_t *packet)
+static float vision_bridge_calc_visual_err_degree(void)
 {
-    (void)packet;
+    const vision_bridge_tune_t *t = &g_vision_bridge_tune_defaults;
+    const float v_mps = vision_bridge_abs_f(inertial_nav.vx_body) / 1000.0f;
+    float omega_radps;
+    float err_deg;
+
     if (s_bridge_task.center_filter_valid == 0U)
     {
         return 0.0f;
     }
 
-    const float err = VISION_BRIDGE_TASK_LINE_SIGN * s_bridge_task.filtered_heading_deg;
+    if (t->lat_adaptive_enable != 0U)
+    {
+        /* 乘性速度自适应: 横向 P 通道随车速缩放 */
+        omega_radps = t->lat_sign * t->lat_kp * s_bridge_task.filtered_lateral_m * v_mps;
+    }
+    else
+    {
+        /* 固定增益: 力度与车速无关 (对应仿真非自适应模式) */
+        omega_radps = t->lat_sign * t->lat_kp * s_bridge_task.filtered_lateral_m;
+    }
+    /* D 通道 (Ki 默认 0, 未启用积分) */
+    omega_radps += t->edot_sign * t->lat_kd * s_bridge_task.edot_mps;
 
-    /* 限制在最大允许的范围内，防止车子突然猛打方向 */
-    return vision_bridge_constrain_f(err,
-                                     -VISION_BRIDGE_TASK_MAX_ERR_DEG,
-                                     VISION_BRIDGE_TASK_MAX_ERR_DEG);
+    err_deg = omega_radps * 57.2957795f / VISION_BRIDGE_TURN_ANG_KP_REF;
+    return vision_bridge_constrain_f(err_deg, -t->out_max_deg, t->out_max_deg);
 }
 
 /**
- * @brief 在桥上盲跑时，根据惯导保持车头方向
- * 
- * @return float 算出的方向盘打角
- * 
- * @note 如果在桥上看不见线，就照着上桥前记下的方向开，偏了就用惯导纠正。
+ * @brief 锁角目标航向 (stage0/stage2/丢线共用)
+ *
+ * @note  yaw_hold_src_sel: 0=进入任务时刻 entry_yaw; 1=路表当前点 target_yaw。
+ *        路表 target_yaw 的具体访问接口移植时需确认 (见实现文档风险项),
+ *        当前未接入时回退到 entry_yaw。
+ */
+static float vision_bridge_yaw_hold_target_deg(void)
+{
+    if (g_vision_bridge_tune_defaults.yaw_hold_src_sel == VISION_BRIDGE_YAWHOLD_SRC_ROUTE)
+    {
+        /* TODO(落地确认): 接入路表当前点 nav_ram_data.points[?].target_yaw_deg。
+         * 桥任务期间 nav_replay 暂停, 无统一 current index 接口, 暂回退 locked_yaw_deg。 */
+        return s_bridge_task.locked_yaw_deg;
+    }
+    /* ENTRY 模式: 状态机维护的锁角目标 (= 进入任务时刻 yaw) */
+    return s_bridge_task.locked_yaw_deg;
+}
+
+/**
+ * @brief 在桥上盲跑/进场/脱出时，根据惯导保持车头方向 (返回 ψ_err, deg)
+ *
+ * @note 目标航向按 yaw_hold_src_sel 选择; 偏了就靠惯导纠正。
  */
 static float vision_bridge_calc_yaw_hold_err(void)
 {
+    const float target = vision_bridge_yaw_hold_target_deg();
     /* 误差 = 目标方向 - 当前惯导测出的方向 */
-    const float err = vision_bridge_normalize_angle(s_bridge_task.locked_yaw_deg -
-                                                   inertial_nav.relative_yaw);
+    const float err = vision_bridge_normalize_angle(target - inertial_nav.relative_yaw);
     /* 限制在盲跑允许的最大范围内 */
     return vision_bridge_constrain_f(err,
                                      -VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG,
                                      VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG);
+}
+
+/**
+ * @brief 锁角纯 P, 输出 err_degree(deg)
+ *
+ * 落地公式: err_degree = YAWHOLD_SIGN · Kψ_lock · ψ_err,
+ *           Kψ_lock = yaw_hold_kp / |TURN_ANG_KP| = 1.8/8 = 0.225
+ */
+static float vision_bridge_calc_yaw_hold_err_degree(void)
+{
+    const vision_bridge_tune_t *t = &g_vision_bridge_tune_defaults;
+    const float psi_err = vision_bridge_calc_yaw_hold_err();
+    const float k_lock = t->yaw_hold_kp / vision_bridge_abs_f(VISION_BRIDGE_TURN_ANG_KP_REF);
+    const float err = t->yaw_hold_sign * k_lock * psi_err;
+    return vision_bridge_constrain_f(err, -t->out_max_deg, t->out_max_deg);
 }
 
 /**
@@ -329,13 +428,13 @@ static float vision_bridge_apply_err_ramp(float target, uint8 source)
 
     (void)source; /* 统一限速, 源切换跳变天然被钳住 */
     diff = target - s_bridge_task.last_err_ramp;
-    if (diff > VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG)
+    if (diff > g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms)
     {
-        s_bridge_task.last_err_ramp += VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG;
+        s_bridge_task.last_err_ramp += g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms;
     }
-    else if (diff < -VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG)
+    else if (diff < -g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms)
     {
-        s_bridge_task.last_err_ramp -= VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG;
+        s_bridge_task.last_err_ramp -= g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms;
     }
     else
     {
@@ -521,6 +620,8 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.center_filter_pending_jump = s_bridge_task.center_filter_pending_jump;
     status.filtered_lookahead_x = s_bridge_task.filtered_lookahead_x;
     status.filtered_heading_deg = s_bridge_task.filtered_heading_deg;
+    status.filtered_lateral_m = s_bridge_task.filtered_lateral_m;
+    status.edot_mps = s_bridge_task.edot_mps;
     g_bridge_vision_task_status = status;
 }
 
@@ -704,23 +805,15 @@ void VisionBridgeTask_Update_2ms(void)
     {
         case VISION_BRIDGE_TASK_ALIGN:
             speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
-            if (s_bridge_task.center_filter_valid)
+            /* stage0 = PVC + IMU: 方向只来自 IMU 锁角 (PVC 只做入口检测, 不提供转向) */
+            err_cmd = vision_bridge_calc_yaw_hold_err_degree();
+            s_bridge_task.err_source = 1U;
+            if (vision_bridge_abs_f(vision_bridge_calc_yaw_hold_err()) <= VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG)
             {
-                err_cmd = vision_bridge_calc_geometry_err_degree(packet);
-                s_bridge_task.err_source = 0U;
-                if (vision_bridge_abs_f(err_cmd) <= VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG)
-                {
-                    s_bridge_task.align_ok_ticks++;
-                }
-                else
-                {
-                    s_bridge_task.align_ok_ticks = 0U;
-                }
+                s_bridge_task.align_ok_ticks++;
             }
             else
             {
-                err_cmd = vision_bridge_calc_yaw_hold_err();
-                s_bridge_task.err_source = 1U;
                 s_bridge_task.align_ok_ticks = 0U;
             }
 
@@ -803,20 +896,20 @@ void VisionBridgeTask_Update_2ms(void)
                     s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                     s_bridge_task.run_yaw_locked = 1U;
                 }
-                err_cmd = vision_bridge_calc_yaw_hold_err();
+                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
                 s_bridge_task.err_source = 1U;
             }
             else if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
             {
-                /* 前 1.2m：有可靠中心线用 IPM 差角, 否则锁角 */
+                /* 前 1.2m：有可靠中心线用横向乘性 PID, 否则锁角 */
                 if (s_bridge_task.center_filter_valid)
                 {
-                    err_cmd = vision_bridge_calc_geometry_err_degree(packet);
+                    err_cmd = vision_bridge_calc_visual_err_degree();
                     s_bridge_task.err_source = 0U;
                 }
                 else
                 {
-                    err_cmd = vision_bridge_calc_yaw_hold_err();
+                    err_cmd = vision_bridge_calc_yaw_hold_err_degree();
                     s_bridge_task.err_source = 1U;
                 }
             }
@@ -828,7 +921,7 @@ void VisionBridgeTask_Update_2ms(void)
                     s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                     s_bridge_task.run_yaw_locked = 1U;
                 }
-                err_cmd = vision_bridge_calc_yaw_hold_err();
+                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
                 s_bridge_task.err_source = 1U;
                 speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;
             }
@@ -859,7 +952,7 @@ void VisionBridgeTask_Update_2ms(void)
         /* --- 阶段 4：下桥缓冲 --- */
         case VISION_BRIDGE_TASK_EXIT:
             vision_bridge_apply_normal_posture(); /* 确保底盘降下来 */
-            err_cmd = vision_bridge_apply_err_ramp(vision_bridge_calc_yaw_hold_err(), 1U); /* 锁死方向冲出桥区 */
+            err_cmd = vision_bridge_apply_err_ramp(vision_bridge_calc_yaw_hold_err_degree(), 1U); /* 锁死方向冲出桥区 */
             speed_cmd = VISION_BRIDGE_TASK_EXIT_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
@@ -896,12 +989,14 @@ void VisionBridgeTask_Update_2ms(void)
         static uint32 ctrl_dbg_div = 0U;
         if ((ctrl_dbg_div++ % 250U) == 0U)
         {
-            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f consec=%u\r\n",
+            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f e=%.3f ed=%.3f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f consec=%u\r\n",
                    (int)s_bridge_task.state,
                    (unsigned long)s_bridge_task.state_ticks,
                    (double)traveled_mm,
                    (double)err_cmd,
                    (double)speed_cmd,
+                   (double)s_bridge_task.filtered_lateral_m,
+                   (double)s_bridge_task.edot_mps,
                    (unsigned int)s_bridge_task.center_filter_valid,
                    (unsigned int)s_bridge_task.center_filter_lost_frames,
                    (unsigned int)s_bridge_task.center_filter_recover_frames,
