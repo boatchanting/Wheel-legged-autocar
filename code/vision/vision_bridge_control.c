@@ -909,15 +909,10 @@ void VisionBridgeTask_Update_2ms(void)
                 }
             }
 
-            if (vision_bridge_packet_in_exit_stage(packet))
+            if (vision_bridge_packet_in_exit_stage(packet) ||
+                (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM))
             {
-                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向; 目标改回进入时刻 yaw (2026-08-15) */
-                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-                s_bridge_task.err_source = 1U;
-            }
-            else if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
-            {
-                /* 前 1.2m：有可靠中心线用横向乘性 PID, 否则锁角 */
+                /* 前 1.2m 或视觉侧已切到"准备脱出"(寻找脱出线): 有可靠中线走横向乘性 PID, 否则锁角 (2026-08-16) */
                 if (s_bridge_task.center_filter_valid)
                 {
                     err_cmd = vision_bridge_calc_visual_err_degree();
@@ -931,7 +926,7 @@ void VisionBridgeTask_Update_2ms(void)
             }
             else
             {
-                /* 超过 1.2m：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 (2026-08-15)。 */
+                /* 超过 1.2m 且未进入脱出阶段：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 */
                 err_cmd = vision_bridge_calc_yaw_hold_err_degree();
                 s_bridge_task.err_source = 1U;
                 speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;
