@@ -648,6 +648,18 @@ void render_bridge_vision_to_image(const bf_result_t *r)
             render_v8_horizontal(&v8->top, 0U);
         }
     }
+    else if (r->source == BF_SRC_PVC)
+    {
+        /* 专用 PVC: 渲染入口目标竖直线 x = target_x (统一中线 center) */
+        if (r->valid)
+        {
+            int x0 = (int)(r->center.b + 0.5f);
+            if (x0 >= 0 && x0 < BF_W)
+            {
+                draw_line_on_image(x0, 0, x0, BF_H - 1, 0U);
+            }
+        }
+    }
     else
     {
         const BridgeDetectionResult *ref = &r->ref;

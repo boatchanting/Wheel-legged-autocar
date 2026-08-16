@@ -1196,6 +1196,12 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\bridge_fusion.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_pvc_vision.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_pvc_vision.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\bridge_ref_detection.c</name>
             </file>
             <file>

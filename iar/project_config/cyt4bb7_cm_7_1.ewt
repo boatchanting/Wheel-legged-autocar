@@ -1476,6 +1476,12 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\bridge_output_filter.h</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_pvc_vision.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bridge_pvc_vision.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\pvc_vision.c</name>
             </file>
             <file>

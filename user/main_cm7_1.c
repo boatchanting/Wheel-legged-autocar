@@ -79,6 +79,10 @@ static uint8 bridge_fusion_pack_mode(const bf_result_t *r)
                     | (r->v8.has_blue  ? B2M_DET_BLUE  : 0)
                     | (r->v8.has_top   ? B2M_DET_TOP   : 0));
     }
+    else if (r->source == BF_SRC_PVC)
+    {
+        det = (uint8)((r->valid ? B2M_DET_GREEN : 0));  /* 专用 PVC 入口稳定=检出 */
+    }
     else
     {
         det = (uint8)((r->ref.left_line.valid   ? B2M_DET_RED   : 0)
@@ -121,6 +125,27 @@ static void bridge_fusion_fill_ref_arb(const bf_result_t *r, bridge_v2_arb_t *ou
             out->u_lo = (uint8)((r->ref.center_segment.y0 < r->ref.center_segment.y1) ? r->ref.center_segment.y0 : r->ref.center_segment.y1);
             out->u_hi = (uint8)((r->ref.center_segment.y0 > r->ref.center_segment.y1) ? r->ref.center_segment.y0 : r->ref.center_segment.y1);
         }
+    }
+}
+
+/* 准备进入阶段 (专用 PVC) 中线适配: 把融合层 bf_center_from_pvc 构造的竖直线
+   (x=target_x, 全行带支撑) 填入仲裁结构喂滤波层; arbiter 不参与。source=3 与
+   准备脱出 (4) / 桥上 (0/1/2) 错开, 使滤波层"source 切换清窗"自然防跨阶段混值。 */
+static void bridge_fusion_fill_pvc_arb(const bf_result_t *r, bridge_v2_arb_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    out->valid  = r->valid;
+    out->source = 3;                    /* 3=准备进入 */
+    out->mode   = bridge_fusion_pack_mode(r);
+    out->gate   = r->gate_bottom;
+    if (r->valid)
+    {
+        float a = r->center.a * 1000.0f;
+        float b = r->center.b * 100.0f;
+        out->line_a_x1000 = (int16)(a > 32767.0f ? 32767.0f : (a < -32768.0f ? -32768.0f : a));
+        out->line_b_x100  = (int16)(b > 32767.0f ? 32767.0f : (b < -32768.0f ? -32768.0f : b));
+        out->u_lo = (uint8)r->center.u_lo;
+        out->u_hi = (uint8)r->center.u_hi;
     }
 }
 
@@ -247,9 +272,13 @@ int main(void)
                     s_fusion_arb.top_a_x1000 = 0;
                     s_fusion_arb.top_b_x100  = 0;
                 }
+                else if(s_fusion_res.source == BF_SRC_PVC)
+                {
+                    bridge_fusion_fill_pvc_arb(&s_fusion_res, &s_fusion_arb);  // 准备进入: 专用 PVC 中线直供, arbiter 不参与
+                }
                 else
                 {
-                    bridge_fusion_fill_ref_arb(&s_fusion_res, &s_fusion_arb);   // ref 阶段: ref 中线直供, arbiter 不参与
+                    bridge_fusion_fill_ref_arb(&s_fusion_res, &s_fusion_arb);   // 准备脱出: ref 中线/脱出线直供, arbiter 不参与
                 }
                 bridge_output_filter_update(&s_fusion_arb);                     // 中值滤波+多帧门控 → b2_* 唯一发布口径
                 render_bridge_vision_to_image(&s_fusion_res);                   // 渲染实际测得内容 (ref: 左右边线+结束/进入; v8: 红蓝边线+RM/MB中线)

@@ -16,12 +16,13 @@
  * 管线 (每帧开头按上一帧门控二选一, 跑完后用本帧结果更新门控):
  *
  *     gate_bottom=0 --------------> gate_bottom=1 ----------> gate_top=1
- *     [参考检测器]  底部变白锁存    [v8 三线透视]  双重门控     [参考检测器]
- *     远处中线                     桥上中线        锁存         脱出线
+ *     [专用 PVC]    入口到达锁存    [v8 三线透视]  双重门控     [参考检测器]
+ *     入口竖直线                   桥上中线        锁存         脱出线
  *
- *   - gate_bottom (底部白 gate): 远处阶段由融合层用参考检测器左右线段
- *     评估 (镜像 v8 gate 逻辑: 底部行带两边线包络内白占比 > 75% 单帧锁存);
- *     v8 阶段直接用 v8 内部 st->gate (两者同源, 必然已锁存)。
+ *   - gate_bottom (2026-08-15 起): 准备进入阶段由专用 PVC (bridge_pvc_vision)
+ *     检测白色入口, 其"最后结束线"(白色连通域底线 entry_bottom_y) 严格大于
+ *     BF_PVC_GATE_BOT_Y 即单帧锁存; v8 阶段直接用 v8 内部 st->gate
+ *     (两者同源, 必然已锁存)。原 ref 底部白 gate 逻辑已注释保留 (见 bridge_fusion.c)。
  *   - gate_top (脱出双重门控): v8 阶段每帧评估两个条件 ——
  *       ① 检出脱出线 (v8.has_top / v11_top_gy);
  *       ② 满足"进入"的底部全亮门控 (底部行带 [52,59] 最外侧两线包络内
@@ -55,6 +56,7 @@
 
 #include "bridge_detect.h"          /* 现有 v8 管线 (近处/桥上)          */
 #include "bridge_ref_detection.h"   /* 参考检测器 (远处接近/脱出)        */
+#include "bridge_pvc_vision.h"      /* 单边桥专用 PVC (准备进入)         */
 
 #ifdef __cplusplus
 extern "C" {
@@ -70,6 +72,10 @@ extern "C" {
 /* ---- 底部白 gate (ref 阶段评估, 镜像 v8 gate: 行带 52..59, 白占比 > 75%) ---- */
 #define BF_GATE_BOT_ROW_LO      52          /* 底部行带起始 (同 v8 GATE_ROWS) */
 #define BF_GATE_BOT_WHITE_MIN   0.75f       /* 白占比锁存阈值 (2026-08-14: 50%→75%) */
+
+/* ---- 准备进入阶段专用 PVC gate (2026-08-15): 白色连通域底线 entry_bottom_y
+   严格大于该行号即锁存 gate_bottom, 拖动状态机切 v8。可调参, 现场标定。 ---- */
+#define BF_PVC_GATE_BOT_Y        45
 
 /* ---- v8→ref 切换 (v8 阶段评估, 2026-08-15 门控放开) ----
    v8 结束线检出 (v8.has_top && 底部全亮) 只用于切换到准确脱出管线 (ref);
@@ -94,7 +100,8 @@ extern "C" {
 /* ---- 本帧输出来源 ---- */
 typedef enum {
     BF_SRC_REF = 0,     /* 参考检测器 (远处接近 / 脱出)  */
-    BF_SRC_V8  = 1      /* 现有 v8 三线透视 (桥上)       */
+    BF_SRC_V8  = 1,     /* 现有 v8 三线透视 (桥上)       */
+    BF_SRC_PVC = 2      /* 单边桥专用 PVC (准备进入)     */
 } bf_source_t;
 
 /* ---- 跨帧状态 (含 ~22 KiB 参考检测器工作区, 必须静态分配) ---- */
@@ -131,6 +138,10 @@ void bridge_fusion_init(bf_state_t *st);
 
 /* img94: 94x60 uint8 灰度, 行优先, 行宽 94 */
 void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out);
+
+/* ---- 准备进入阶段专用 PVC 辅助 (实现见 bridge_fusion.c) ---- */
+void bf_center_from_pvc(const bridge_pvc_vision_output_t *pvc, bridge_line_t *c, uint8_t *valid);
+void bf_update_gate_bottom_pvc(bf_state_t *st, const bridge_pvc_vision_output_t *pvc);
 
 #ifdef __cplusplus
 }

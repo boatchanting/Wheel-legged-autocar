@@ -56,7 +56,9 @@ static int bf_segment_to_ab(const BridgeDetectionSegment *s, float *a, float *b)
 
 /* ---- 底部白 gate 更新 (ref 阶段): 镜像 v8 gate 逻辑 ----
    v8 原版: 行带 [GATE_ROWS,H) 内最外两条线包络白占比 > 75% 单帧锁存。
-   ref 阶段以参考检测器左右线段为包络, 要求 bridge_found 成立。 */
+   ref 阶段以参考检测器左右线段为包络, 要求 bridge_found 成立。
+   [2026-08-15 用户决策 6] 准备进入阶段改用专用 PVC 判定 gate, 本函数注释保留。 */
+#if 0
 static void bf_update_gate_bottom_ref(bf_state_t *st, const uint8_t *img,
                                       const BridgeDetectionResult *ref)
 {
@@ -70,6 +72,7 @@ static void bf_update_gate_bottom_ref(bf_state_t *st, const uint8_t *img,
                             BF_GATE_BOT_ROW_LO, BF_H - 1) > BF_GATE_BOT_WHITE_MIN)
         st->gate_bottom = 1;
 }
+#endif
 
 /* ---- "进入"的底部全亮门控 (v8 阶段逐帧评估, 镜像 v8 内部 gate) ----
    底部行带 [BF_GATE_BOT_ROW_LO, BF_H-1] 左右边界包络内白占比 >
@@ -178,6 +181,38 @@ static void bf_center_from_ref(const BridgeDetectionResult *ref, bridge_line_t *
     c->u_hi = (float)ref->center_segment.y1;
 }
 
+/* ---- 专用 PVC 结果 → 统一中线 x = a*y+b (竖直线 x=target_x, 全行带支撑) ----
+   valid 与 target_x 严格绑定: 均取 stable (用户决策 3)。
+   u_lo/u_hi 必须给全行带 [0,BF_H-1], 保证 0核 y=25 前视点在支撑内。 */
+void bf_center_from_pvc(const bridge_pvc_vision_output_t *pvc,
+                        bridge_line_t *c, uint8_t *valid)
+{
+    memset(c, 0, sizeof(*c));
+    *valid = pvc->stable_detected;
+    if (*valid == 0U)
+        return;                         /* 未稳定看到: 无效, 0核锁角兜底 */
+
+    c->a = 0.0f;                        /* 竖直线 x = target_x */
+    c->b = (float)pvc->stable.target_x_px_x100 * 0.01f;
+    c->rms = 0.0f;
+    c->n = 0;
+    c->u_lo = 0.0f;
+    c->u_hi = (float)(BF_H - 1);
+}
+
+/* ---- 准备进入阶段 gate (专用 PVC): 白色连通域底线 entry_bottom_y 严格大于
+   阈值即锁存 gate_bottom, 拖动状态机切 v8。与 ref 原 gate 同构 (单帧锁存)。 ---- */
+void bf_update_gate_bottom_pvc(bf_state_t *st,
+                               const bridge_pvc_vision_output_t *pvc)
+{
+    if (st->gate_bottom)
+        return;
+    if (!pvc->stable_detected)
+        return;
+    if (pvc->stable.entry_bottom_y > BF_PVC_GATE_BOT_Y)
+        st->gate_bottom = 1;
+}
+
 /* ---- 参考检测器顶边横线 segment → y = a*x+b ---- */
 static int bf_top_segment_to_ab(const BridgeDetectionSegment *s, float *a, float *b)
 {
@@ -234,6 +269,7 @@ void bridge_fusion_init(bf_state_t *st)
     bridge_detect_init(&st->v8_st);
     bridge_detection_default_config(&st->ref_cfg);
     st->ref_cfg.fixed_threshold = BF_REF_FIXED_THRESHOLD;
+    bridge_pvc_vision_init();   /* 单边桥专用 PVC: 状态机刚开默认跑, 一并初始化/复位 */
 }
 
 void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out)
@@ -244,8 +280,8 @@ void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out)
         return;
 
     /* ---- 管线选择: 上一帧门控决定本帧引擎 (帧首唯一的 if) ----
-       初始 gate_bottom=0 → 参考检测器 (远处); gate_bottom 锁存 → v8;
-       gate_top 再锁存 → 回到参考检测器 (脱出线)。 */
+       初始 gate_bottom=0 → 专用 PVC (准备进入); gate_bottom 锁存 → v8 (桥上);
+       gate_top 再锁存 → 参考检测器 (准备脱出, 脱出线)。 */
     if (st->gate_bottom && !st->gate_top) {
         /* == v8 三线透视 (桥上) == */
         out->source = BF_SRC_V8;
@@ -261,8 +297,8 @@ void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out)
         /* 0-1-2 防瞬间跳边: 进入桥上后最少待 BF_ON_BRIDGE_MIN_FRAMES 帧才评估脱出门控 */
         if (st->on_bridge_frames >= BF_ON_BRIDGE_MIN_FRAMES)
             bf_update_gate_top_v8(st, img94, &out->v8, &out->top_white_ratio);
-    } else {
-        /* == 参考检测器 (远处接近 / 脱出) == */
+    } else if (st->gate_top) {
+        /* == 准备脱出: 参考检测器 (脱出线) == */
         out->source = BF_SRC_REF;
         (void)bridge_detection_detect_gray(img94, BF_W, BF_H, BF_W,
                                            &st->ref_cfg, &st->ref_scratch,
@@ -270,18 +306,19 @@ void bridge_fusion_frame(const uint8_t *img94, bf_state_t *st, bf_result_t *out)
         bf_center_from_ref(&out->ref, &out->center);
         out->valid = (uint8_t)(out->ref.bridge_found &&
                                out->ref.center_segment.valid);
-        if (st->gate_top)
-        {
-            /* 脱出阶段 (gate_top 已锁存): 三态确认脱出线 (ref 顶边横线) */
-            bf_update_exit_line(st, &out->ref,
-                                &out->exit_confirmed,
-                                &out->exit_top_a, &out->exit_top_b);
-        }
-        else
-        {
-            /* 仅接近阶段 (gate_top 未锁存) 评估底部白 gate */
-            bf_update_gate_bottom_ref(st, img94, &out->ref);
-        }
+        /* 脱出阶段 (gate_top 已锁存): 三态确认脱出线 (ref 顶边横线) */
+        bf_update_exit_line(st, &out->ref,
+                            &out->exit_confirmed,
+                            &out->exit_top_a, &out->exit_top_b);
+    } else {
+        /* == 准备进入: 单边桥专用 PVC (替代 ref, 检测执行在状态机内) == */
+        bridge_pvc_vision_output_t pvc_local;
+        out->source = BF_SRC_PVC;
+        bridge_pvc_vision_process_camera_frame(img94);
+        pvc_local = *bridge_pvc_vision_get_output();  /* 去掉 volatile 拷贝 */
+        bf_center_from_pvc(&pvc_local, &out->center, &out->valid);
+        /* gate_bottom 判定: PVC「最后结束线」entry_bottom_y > 阈值 → 锁存 → 切 v8 */
+        bf_update_gate_bottom_pvc(st, &pvc_local);
     }
 
     out->gate_bottom = st->gate_bottom;
