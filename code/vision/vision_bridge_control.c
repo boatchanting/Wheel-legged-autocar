@@ -79,25 +79,48 @@ typedef struct
 /* 这个就是真正的“记事本”本尊，只有这个文件能用 */
 static vision_bridge_task_ctx_t s_bridge_task;
 
-/* 方向控制可调参数面板默认值 (参照 trials/track.html 与 trials/index.html) */
+/* ============================================================================
+ * 方向控制可调参数面板（默认值）—— 现场调参主要改这里
+ * ----------------------------------------------------------------------------
+ * 字段类型定义与单位说明见 vision_bridge_control.h 的 4.5 节; 此处为就地调参注释。
+ * 落地换算: err_degree = ω_radps × (180/π) / TURN_ANG_KP,  TURN_ANG_KP = -8 (pid-new.h)
+ *
+ * 快速调参口诀:
+ *   - 车往线外甩 / 画龙        → 减 lat_kp 或 lat_kd
+ *   - 修正不够、压线偏慢        → 加 lat_kp
+ *   - 过桥后左右来回摆         → 加 edot_alpha(更平滑) 或减 lat_kd
+ *   - 打角太猛 / 太肉          → 改 out_max_deg / ramp_step_deg_per_2ms
+ * ========================================================================== */
 const vision_bridge_tune_t g_vision_bridge_tune_defaults =
 {
-    .lat_kp               = 6.0f,
-    .lat_ki               = 0.0f,
-    .lat_kd               = 6.0f,
-    .lat_int_max          = 3.0f,
-    .lat_adaptive_enable  = 1U,
-    .edot_alpha           = 0.25f,
-    .edot_clamp_mps       = 3.0f,
-    .edot_fps             = 30.0f,
-    .lookahead_m          = 1.0f,
-    .yaw_hold_kp          = 1.8f,
-    .yaw_hold_src_sel     = VISION_BRIDGE_YAWHOLD_SRC_ENTRY,
-    .out_max_deg          = 22.9f,
-    .ramp_step_deg_per_2ms = 0.5f,
-    .lat_sign             = 1.0f,
-    .edot_sign            = 1.0f,
-    .yaw_hold_sign        = 1.0f,
+    /* ---- stage1 (v8 循迹) 横向乘性 PID: e[m] → ω[rad/s] ---- */
+    .lat_kp               = 6.0f,   /* 横向比例增益 [1/m²]: 调大→纠偏更猛, 调小→更柔和; 乘性下随车速缩放 */
+    .lat_ki               = 0.0f,   /* 横向积分增益 [1/(m²·s)]: 默认 0 关闭; 需消除稳态横向偏差才打开 */
+    .lat_kd               = 6.0f,   /* 横向微分增益 [1/m]: 抑制超调/摆动; 调大→阻尼强但可能迟滞 */
+    .lat_int_max          = 3.0f,   /* 积分项限幅 [m·s]: 防积分饱和; 仅 lat_ki≠0 时生效 */
+
+    .lat_adaptive_enable  = 1U,     /* 自适应开关: 1=乘性 ω=Kp·e·v(随车速), 0=固定增益(与车速无关) */
+
+    /* ---- ė 微分滤波 (复刻 track.html) ---- */
+    .edot_alpha           = 0.25f,  /* ė 低通系数(0~1): 越大跟踪越快但噪声大, 越小越平滑但滞后 */
+    .edot_clamp_mps       = 3.0f,   /* ė 限幅 [m/s]: 防微分冲击; 按最大横向速度约一半取值 */
+    .edot_fps             = 30.0f,  /* 视觉帧率 [Hz]: 微分帧差节拍, 应与 1 核实际输出帧率对齐 */
+
+    /* ---- 前视 ---- */
+    .lookahead_m          = 1.0f,   /* 前视距离 [m]: 文档/参考用; 实际 e 由 IPM x 差直接求得 */
+
+    /* ---- 锁角 (IMU 航向保持, stage0/丢线/脱出共用) ---- */
+    .yaw_hold_kp          = 1.8f,   /* 锁角增益 [rad/s per rad]: 盲跑/丢线时修正航向的力度 */
+    .yaw_hold_src_sel     = VISION_BRIDGE_YAWHOLD_SRC_ENTRY, /* 锁角目标源: ENTRY=进入任务时刻 yaw; ROUTE=路表当前点(暂未接入, 回退 entry) */
+
+    /* ---- 输出与限幅 (err_degree 落地域) ---- */
+    .out_max_deg          = 22.9f,  /* 输出限幅 [deg]: 最大打角指令; 调大→允许更大转向, 调小→限制转向 */
+    .ramp_step_deg_per_2ms = 0.5f,  /* 输出变化率 [deg/2ms]: 换源/打角限速; 调大→响应快但可能抖 */
+
+    /* ---- 符号通道 (实车方向反了只改这里, 勿动控制逻辑) ---- */
+    .lat_sign             = 1.0f,   /* 横向通道符号: +1 正向; 实测反向则改 -1 */
+    .edot_sign            = 1.0f,   /* 微分通道符号 */
+    .yaw_hold_sign        = 1.0f,   /* 锁角通道符号 */
 };
 
 /* --- 基础数学工具函数 --- */
