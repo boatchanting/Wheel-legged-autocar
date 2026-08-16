@@ -63,6 +63,9 @@ typedef struct
     uint8 pvc_stable_detected;           /* PVC 控制模块是否稳定检测到入口 */
     uint16 pvc_ratio_u16;                /* PVC 白色区域在画面内的占比，千分比 */
     int16 pvc_steer_error_px_x100;       /* PVC 给出的横向像素误差，放大 100 倍 */
+    float lqr_e_m;                       /* LQR 横向偏差重建 e (m, 诊断) */
+    float lqr_psi_err_deg;               /* LQR 航向偏差 ψ_err (deg, 诊断) */
+    float lqr_dist_m;                    /* LQR 桥唇距离 D (m, 诊断) */
 } vision_slope_task_status_t;
 
 /* --- 4. 对外变量与函数接口 --- */

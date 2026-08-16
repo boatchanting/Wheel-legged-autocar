@@ -1,6 +1,7 @@
 #include "vision_ipc_core1.h"
 #include "bridge_v2_arbiter.h"
 #include "bridge_output_filter.h"
+#include "bridge_pvc_vision.h"
 #include <string.h>
 
 #if defined(__ICCARM__)
@@ -164,6 +165,18 @@ static void vision_ipc_core1_fill_bridge_v2(vision_ipc_packet_t *packet)
     packet->b2_top_b_x100   = arb->top_b_x100;
     packet->b2_spacing_x100 = arb->spacing_x100;
     packet->b2_mid_ratio_x1000 = arb->mid_ratio_x1000;
+
+    /* 旁路透传: 单边桥专用 PVC 的 IPM 物理坐标 (LQR 方向控制用)。
+       bridge_pvc_vision 自带连续3帧确认+平滑, 直接读 stable 即可。 */
+    {
+        bridge_pvc_vision_output_t pvc_local;
+        pvc_local = *bridge_pvc_vision_get_output();
+        if (pvc_local.stable_detected)
+        {
+            packet->pvc_phy_x_mm = pvc_local.stable.phy_x_mm;
+            packet->pvc_phy_y_mm = pvc_local.stable.phy_y_mm;
+        }
+    }
 }
 
 static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,

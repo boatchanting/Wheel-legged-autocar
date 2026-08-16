@@ -9,6 +9,7 @@
  */
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_ipc_core0.h"
+#include "vision/vision_entry_lqr.h"
 #include "../../code1/vision/ipm_transform.h"
 #include "plan/bridge.h"
 #include "tools/sbus.h"
@@ -643,6 +644,12 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.filtered_heading_deg = s_bridge_task.filtered_heading_deg;
     status.filtered_lateral_m = s_bridge_task.filtered_lateral_m;
     status.edot_mps = s_bridge_task.edot_mps;
+    {
+        const vision_entry_lqr_state_t *lqr = VisionEntryLqr_GetState();
+        status.lqr_e_m = lqr->e_m;
+        status.lqr_psi_err_deg = lqr->psi_err_rad * 57.29578f;
+        status.lqr_dist_m = lqr->dist_m;
+    }
     g_bridge_vision_task_status = status;
 }
 
@@ -761,6 +768,7 @@ static void vision_bridge_enter_task(void)
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
     
+    VisionEntryLqr_Reset(s_bridge_task.entry_yaw_deg);
     VisionIpc_Core0_SetBridgeEnable(1U);
 }
 
@@ -826,9 +834,19 @@ void VisionBridgeTask_Update_2ms(void)
     {
         case VISION_BRIDGE_TASK_ALIGN:
             speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
-            /* stage0 = PVC + IMU: 方向只来自 IMU 锁角 (PVC 只做入口检测, 不提供转向) */
-            err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-            s_bridge_task.err_source = 1U;
+            /* stage0 进入段: 视觉段 LQR（D≤1.5m），盲区段 IMU 锁角保向 */
+            if (VisionEntryLqr_UpdateVision(packet->pvc_phy_x_mm, packet->pvc_phy_y_mm,
+                                            inertial_nav.relative_yaw,
+                                            vision_bridge_abs_f(inertial_nav.vx_body) / 1000.0f))
+            {
+                err_cmd = VisionEntryLqr_GetErrDegree();
+                s_bridge_task.err_source = 0U;   /* 视觉 LQR */
+            }
+            else
+            {
+                err_cmd = vision_bridge_calc_yaw_hold_err_degree();  /* 盲区锁角（现状） */
+                s_bridge_task.err_source = 1U;
+            }
             if (vision_bridge_abs_f(vision_bridge_calc_yaw_hold_err()) <= VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG)
             {
                 s_bridge_task.align_ok_ticks++;

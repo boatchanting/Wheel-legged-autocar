@@ -10,6 +10,7 @@
 #include "vision/vision_slope_control.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
+#include "vision/vision_entry_lqr.h"
 #include "navigation/inertial_nav.h"
 #include "tools/sbus.h"
 
@@ -36,6 +37,7 @@ typedef struct
     float start_x_mm;                     /* 锁角进入斜坡瞬间的惯导 X 坐标 */
     float start_y_mm;                     /* 锁角进入斜坡瞬间的惯导 Y 坐标 */
     float locked_yaw_deg;                 /* PVC 校准完成后锁定的惯导航向 */
+    float entry_yaw_deg;                  /* 进入状态机时刻锁存的惯导航向 (LQR ψ_存储) */
     uint16 pvc_align_ok_ticks;            /* PVC 入口确认条件连续满足的 2ms tick 数 */
 } vision_slope_task_ctx_t;
 
@@ -133,6 +135,12 @@ static void vision_slope_publish_status(const volatile vision_ipc_packet_t *pack
     g_slope_vision_task_status.pvc_stable_detected = g_vision_pvc_control_status.stable_detected;
     g_slope_vision_task_status.pvc_ratio_u16 = g_vision_pvc_control_status.bbox_area_ratio_u16;
     g_slope_vision_task_status.pvc_steer_error_px_x100 = g_vision_pvc_control_status.steer_error_px_x100;
+    {
+        const vision_entry_lqr_state_t *lqr = VisionEntryLqr_GetState();
+        g_slope_vision_task_status.lqr_e_m = lqr->e_m;
+        g_slope_vision_task_status.lqr_psi_err_deg = lqr->psi_err_rad * 57.29578f;
+        g_slope_vision_task_status.lqr_dist_m = lqr->dist_m;
+    }
 }
 
 /**
@@ -165,10 +173,12 @@ static void vision_slope_enter_task(void)
     memset(&s_slope_task, 0, sizeof(s_slope_task));
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
     s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
+    s_slope_task.entry_yaw_deg = inertial_nav.relative_yaw; /* LQR ψ_存储: 进入状态机时刻航向 */
     g_special_action_trigger = 1U;
     entry_beep_request = 1U;
 
     /* PVC 控制模块会提供方向误差；本状态机在本周期末统一强制入口速度。 */
+    VisionEntryLqr_Reset(s_slope_task.entry_yaw_deg);
     VisionIpc_Core0_SetPvcEnable(1U);
     VisionPvcControl_SetEnable(1U);
 }
@@ -252,8 +262,17 @@ void VisionSlopeTask_Update_2ms(void)
     switch (s_slope_task.state)
     {
         case VISION_SLOPE_TASK_PVC_ALIGN:
-            /* 复用 PVC 控制模块给出的方向修正；搜索/校准期间以低速行驶，给转向收敛留出距离。 */
-            err_cmd = g_vision_pvc_control_status.err_degree_cmd;
+            /* 视觉段 LQR 方向；搜索/校准期间速度由路径管理（保持现状）。 */
+            if (VisionEntryLqr_UpdateVision(packet->pvc_phy_x_mm, packet->pvc_phy_y_mm,
+                                            inertial_nav.relative_yaw,
+                                            fabsf(inertial_nav.vx_body) / 1000.0f))
+            {
+                err_cmd = VisionEntryLqr_GetErrDegree();
+            }
+            else
+            {
+                err_cmd = 0.0f;   /* 回退直行搜索（现状，已确认正确） */
+            }
             speed_cmd = VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
