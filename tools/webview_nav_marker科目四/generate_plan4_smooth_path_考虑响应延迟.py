@@ -66,6 +66,8 @@ STAIRS_APPROACH_DISTANCE_MM = 4000.0
 STAIRS_APPROACH_TARGET_SPEED_MAX = 220.0
 BRIDGE_APPROACH_DISTANCE_MM = 2500.0
 BRIDGE_APPROACH_TARGET_SPEED_MAX = 300.0
+BUMP_APPROACH_DISTANCE_MM = 2500.0
+BUMP_APPROACH_TARGET_SPEED_MAX = 400.0
 
 # 与 csv_to_nav_table.py 保持一致：每个值都从记录的出口点朝对应入口点测量，
 # 使视觉状态机出口锚定在车辆实际离开任务的位置。
@@ -544,7 +546,12 @@ def limit_stairs_approach_output_speed(
     target_speed: np.ndarray,
     approach_distance_mm: float,
 ) -> np.ndarray:
-    """Cap the table output for points within the three-step approach and the entire stairs segment."""
+    """Cap the table output before and through the three-step task.
+
+    The state machine owns the physical runout after its exit marker.  Keeping
+    the approach cap after that marker used to hold normal path tracking at
+    task speed for another full approach distance.
+    """
     # 先转换为物理速度单位，使任务限速插入后仍可应用与基础规划相同的加减速约束。
     speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
     stairs_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 3]
@@ -552,8 +559,8 @@ def limit_stairs_approach_output_speed(
     
     # 将入口和出口配对，确保完整覆盖整个stairs段
     for entry_s, exit_s in zip(stairs_entry_s, stairs_exit_s):
-        # 限制范围：从 (入口 - approach_distance_mm) 到 (出口 + approach_distance_mm)
-        full_stairs_range = (s >= entry_s - approach_distance_mm) & (s <= exit_s + approach_distance_mm)
+        # 限制范围：从入口前 approach_distance_mm 到状态机出口锚点。
+        full_stairs_range = (s >= entry_s - approach_distance_mm) & (s <= exit_s)
         speed_limit[full_stairs_range] = np.minimum(
             speed_limit[full_stairs_range],
             STAIRS_APPROACH_TARGET_SPEED_MAX * SPEED_TO_MM_S,
@@ -572,6 +579,22 @@ def limit_bridge_approach_output_speed(
     speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
     bridge_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 4]
     for current_entry_s in bridge_entry_s:
+        approach_range = (s >= current_entry_s - approach_distance_mm) & (s <= current_entry_s)
+        speed_limit[approach_range] = np.minimum(speed_limit[approach_range], target_speed_max * SPEED_TO_MM_S)
+    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+
+
+def limit_bumpy_approach_output_speed(
+    samples: list[PathSample],
+    s: np.ndarray,
+    target_speed: np.ndarray,
+    approach_distance_mm: float,
+    target_speed_max: float,
+) -> np.ndarray:
+    """Limit the bumpy-road approach to its state machine's initial speed."""
+    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
+    bump_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 5]
+    for current_entry_s in bump_entry_s:
         approach_range = (s >= current_entry_s - approach_distance_mm) & (s <= current_entry_s)
         speed_limit[approach_range] = np.minimum(speed_limit[approach_range], target_speed_max * SPEED_TO_MM_S)
     return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
@@ -790,6 +813,13 @@ def main() -> int:
         output_target_speed,
         BRIDGE_APPROACH_DISTANCE_MM,
         BRIDGE_APPROACH_TARGET_SPEED_MAX,
+    )
+    output_target_speed = limit_bumpy_approach_output_speed(
+        samples,
+        s,
+        output_target_speed,
+        BUMP_APPROACH_DISTANCE_MM,
+        BUMP_APPROACH_TARGET_SPEED_MAX,
     )
     output_target_speed = apply_response_delay_compensation(
         output_target_speed,
