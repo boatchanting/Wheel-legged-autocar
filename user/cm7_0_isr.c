@@ -42,9 +42,11 @@
 #include "vision/vision_pvc_control.h"
 #include "vision/vision_bumpy_control.h"
 #include "vision/vision_bridge_control.h"
+#include "vision/vision_slope_control.h"
 #include "vision/vision_three_stage_control.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
+#include "tools/wifi_protocol.h"
 
 // 声明外部函数
 
@@ -302,6 +304,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         VisionPvcControl_Update_2ms();
         VisionBumpyControl_Update_2ms();
         VisionBridgeTask_Update_2ms();
+        VisionSlopeTask_Update_2ms();
         VisionThreeStageControl_Update_2ms();
     }
 
@@ -361,12 +364,32 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 filtered_gyro_z * 0.0174532925f                  // gyro_z_rad_s
             );
             #endif
+            #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+                euler_angle.yaw,
+                -9806.65*((float)imu_data.acc_y/4096-(float)imu_data.grav_y),
+                9806.65*((float)imu_data.acc_x/4096-(float)imu_data.grav_x),
+                (float)motor_value.receive_left_speed_data,
+                (float)motor_value.receive_right_speed_data,
+                filtered_gyro_z * 0.0174532925f
+            );
+            #endif
             #if IMU_CATEGORY == 3 &&CAR_SELECT == 3//imu963ra 如果小车不同再对小车加&&加以区分
             
             InertialNav_Update(
             euler_angle.yaw,                                 // 当前偏航角
             9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x), // 横向加速度 (左+)
             9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y), // 纵向加速度 (前+)
+            (float)motor_value.receive_left_speed_data,
+            (float)motor_value.receive_right_speed_data,
+            filtered_gyro_z * 0.0174532925f
+            );
+            #endif
+            #if IMU_CATEGORY == 3 &&CAR_SELECT == 4//imu963ra，小车4初版惯导输入与小车3相同
+            InertialNav_Update(
+            euler_angle.yaw,
+            9806.65*((float)imu_data.acc_x/4098 - (float)imu_data.grav_x),
+            9806.65*((float)imu_data.acc_y/4098 - (float)imu_data.grav_y),
             (float)motor_value.receive_left_speed_data,
             (float)motor_value.receive_right_speed_data,
             filtered_gyro_z * 0.0174532925f
@@ -404,7 +427,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ------------------------------------------------------
     if (loop_counter % 10 == 3) {  // 10ms 一次
         // 颠簸状态机激活时，暂停导航复现，避免覆盖锁速目标
-        if (g_motor_enable && (!g_fallen) && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U)) 
+        if (g_motor_enable && (!g_fallen) && (BumpyRoad_Is_Active() == 0U) && (VisionBridgeTask_IsActive() == 0U) && (VisionSlopeTask_IsActive() == 0U))
         { 
             NavReplay_Process();
             #if GNSS_NAV == 1
@@ -414,13 +437,13 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
-        if(g_motor_enable && (!g_fallen) && (VisionBridgeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
+        if(g_motor_enable && (!g_fallen) && (VisionBridgeTask_IsActive() == 0U) && (VisionSlopeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
         } //复现控制
     };//【测试】抬高双腿
 
     Control_Profile_Update1ms();//pid参数调度更新
 
-    // 自转结束蜂鸣器提示
+    // 自转结束蜂鸣器提示【优化点】不要放中断
     if (g_minefield_beep_request != 0U)
     {
         g_minefield_beep_request = 0U;
@@ -470,6 +493,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float right_speed = (float)motor_value.receive_right_speed_data;
             current_actual_speed = 0.5f * (right_speed - left_speed);
 
+            if (jump_flag != 0U)
+            {
+                /* 【跳跃冻结速度环 2026-08-12】
+                 * 跳跃期间速度环不参与控制：
+                 * 1) 跳过 Servo_Speed_Control 计算——跳跃中轮子空转，速度误差巨大，
+                 *    若继续计算会把 g_target_pwm_speed_adj 顶到限幅并污染 PID 状态；
+                 * 2) 清零速度环运行态（含输入滤波），跳跃结束后从干净状态起步，D 项无突跳；
+                 * 3) g_target_pwm_speed_adj 归零——跳跃结束后 servo_executor_update 的
+                 *    目标=基础身高(平衡态)，与跳跃恢复位置一致，关节舵机不乱动。 */
+                Servo_Speed_Control_Reset();
+                g_target_pwm_speed_adj = 0;
+            }
+            else
+            {
             // 2.2 全局刹车前馈
             uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
             if ((Minefield_Is_Active() != 0U) || (g_special_action_trigger != 0U))
@@ -512,6 +549,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                     (BumpyRoad_Is_Active() != 0U) ||
                     (VisionThreeStageControl_IsActive() != 0U) ||
                     (VisionBridgeTask_IsActive() != 0U) ||
+                    (VisionSlopeTask_IsActive() != 0U) ||
                     (Bridge_Test_Triple_SingleSide_Is_Active()) ||
                     (g_pvc_control_enable != 0U)
                     #if GNSS_NAV == 1
@@ -556,6 +594,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                 }
             }
             g_target_pwm_speed_adj = (int16)duty_adjustment;
+            } /* end if (jump_flag == 0) */
         }
     }
     else if(g_is_push_mode==1)
@@ -700,11 +739,17 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     #if IMU_CATEGORY == 1&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
     #endif
+    #if IMU_CATEGORY == 1&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = -imu_data.gyro_y * 57.2957795f;
+    #endif
     #if IMU_CATEGORY == 3 && CAR_SELECT == 0 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = -imu_data.gyro_y * 57.2957795f; // 根据实际安装方向调整符号
     #endif
     #if IMU_CATEGORY == 3&&CAR_SELECT == 3 //如果小车不同再对小车加&&加以区分
     float now_gyro_deg = imu_data.gyro_x * 57.2957795f; // 根据实际安装方向调整符号[学习板小车3使用]
+    #endif
+    #if IMU_CATEGORY == 3&&CAR_SELECT == 4 //小车4初版与小车3使用相同陀螺仪轴向
+    float now_gyro_deg = imu_data.gyro_x * 57.2957795f;
     #endif
 
     // 5.2 简单的低通滤波 (平滑噪声)
@@ -872,6 +917,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             (BumpyRoad_Is_Active() != 0U) ||
             (VisionThreeStageControl_IsActive() != 0U) ||
             (VisionBridgeTask_IsActive() != 0U) ||
+            (VisionSlopeTask_IsActive() != 0U) ||
             (Bridge_Test_Triple_SingleSide_Is_Active()) ||
             (g_pvc_control_enable != 0U)
             #if GNSS_NAV == 1
@@ -908,6 +954,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             pwm_left = 0;
             pwm_right = 0;
         }
+
+        #if WIFI_CORE0_CUSTOM_PROTOCOL 
+        // 把数据传给wifi上位机
+        g_wifi_target_speed_set = target_speed_set;
+        g_wifi_speed_l = (float)motor_value.receive_left_speed_data;
+        g_wifi_speed_r = (float)motor_value.receive_right_speed_data;
+        g_wifi_pwm_left = (float)pwm_left;
+        g_wifi_pwm_right = (float)pwm_right;
+        #endif
+
         // 直接输出即可
         
          // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
@@ -979,11 +1035,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     // 步骤 9: 系统心跳
     // ==========================================================
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==0
     if(loop_counter % 50 == 11) 
     {
         pit_state = 1; 
     }
-    
+    #endif
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==1 //wifi传日志时候100帧
+    if(loop_counter % 10 == 2) 
+    {
+        pit_state = 1; 
+    }
+    #endif
+
 }
 
 void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数      
@@ -1010,7 +1074,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         g_motor_enable = 1; // 正常工作
     }
 
-    if ((robot_ctrl.brake_active != 0U) && (g_replay_state == REPLAY_RUNNING))
+    if ((robot_ctrl.brake_active == 1U) && (g_replay_state != REPLAY_IDLE))
     {
         NavReplay_Stop();//【nav】复现停止
         Accel_Feedforward_Reset();//【accel_ff】遥控刹车停止复刻时清空加速前馈
@@ -1023,20 +1087,23 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     }
     #endif
 
+    /* REPLAY_FINISHED keeps navigation ownership through terminal deceleration. */
     #if GNSS_NAV == 1
-    if ((g_replay_state != REPLAY_RUNNING) &&
+    if (g_replay_state == REPLAY_IDLE &&
         (g_gps_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
+        && (VisionSlopeTask_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
     #if GNSS_NAV == 0
-        if ((g_replay_state != REPLAY_RUNNING) &&
+        if (g_replay_state == REPLAY_IDLE &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
+        && (VisionSlopeTask_IsActive() == 0U)
         && g_pvc_control_enable ==0
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif

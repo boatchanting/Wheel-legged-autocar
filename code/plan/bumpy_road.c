@@ -1,58 +1,88 @@
 #include "bumpy_road.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_bumpy_control.h"
+#include "navigation/inertial_nav.h"
+#include "calculate/ekf.h"
 #include "tools/sbus.h"
+#include <math.h>
 
-/* ========================= 参数区（可按实车调参） ========================= */
-#define BUMPY_ROAD_LOCK_SPEED_SET        (-200.0f)      // 正常行驶时的锁定速度(转速)，负值表示前进
-#define BUMPY_ROAD_TARGET_DISTANCE_MM    (3000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务
-#define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms(10个1ms周期)更新一次距离
+extern volatile uint8 exit_beep_request;
 
-#define BUMPY_ROAD_STALL_SPEED_ABS_TH    (50.0f)        // 卡顿检测速度阈值(mm/s)，低于此值认为可能卡住
-#define BUMPY_ROAD_STALL_PITCH_TH        (2.6f)         // 卡顿检测俯仰角阈值(°)，大于此值且速度低时认为卡住
-#define BUMPY_ROAD_STALL_MS              (100U)         // 卡顿持续时间阈值(ms)，持续满足卡顿条件此时间才判定为卡住
+/* ========================= 参数区 ========================= */
+#define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (1500.0f)
 
-#define BUMPY_ROAD_JUMP_MIN_GAP_MS       (1000U)        // 两次跳跃动作最小间隔(ms)，防止频繁跳跃
-#define BUMPY_ROAD_NO_JUMP_TICK          (0xFFFFFFFFU)  // 表示从未执行过跳跃的特殊时间戳
+#define BUMPY_ROAD_INIT_SPEED_SET        (-400.0f)      // 接近时的初始速度  //7段颠簸给-400.0f // 4段给-800.0f
+#define BUMPY_ROAD_LOCK_SPEED_SET        (-800.0f)      // 颠簸段目标速度
+#define BUMPY_ROAD_SPEED_INC_STEP        (1.0f)         // 每1ms速度增量 (斜率加速)
 
-#define BUMPY_ROAD_BACK_SPEED_SET        (100.0f)       // 后退脱困速度(mm/s)，正值表示后退
-#define BUMPY_ROAD_BACK_DURATION_MS      (800U)         // 后退持续时间(ms)
+#define BUMPY_ROAD_VISUAL_EXIT_MIN_DISTANCE_MM (1000.0f) // 累计满 1m 后才允许由视觉确认出口
+#define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务 // 
+#define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms更新一次距离
 
-#define BUMPY_ROAD_APPROACH_SPEED_SET    (-200.0f)      // 接近障碍物时的速度(mm/s)，负值表示前进
-#define BUMPY_ROAD_APPROACH_DURATION_MS  (200U)         // 接近持续时间(ms)，之后触发跳跃
+#define BUMPY_ROAD_STEER_FILTER_ALPHA    (0.05f)        // 方向偏差轻度低通滤波系数 (0~1，越小越平滑)
 
+#define BUMPY_ROAD_GYRO_WIN_SIZE         (200U)         // (改小窗口) 1000Hz下200ms的帧数，减小延迟
+#define BUMPY_ROAD_ENTRY_STD_TH          (0.3f)         // (降低阈值) 进入特征标准差阈值 (rad/s)
+#define BUMPY_ROAD_ENTRY_CONFIRM_FRAMES  (50U)          // (减少确认时间) 连续满足进入条件的帧数(50ms)
 
 typedef struct
 {
     BumpyRoadState_e state;
     float start_x_mm;
     float start_y_mm;
+        float locked_yaw_deg;
     float traveled_mm;
+    
     uint16_t sample_div_cnt;
-    uint32_t last_jump_tick_ms;
-    uint32_t stall_counter_ms;
-    uint32_t backing_start_tick_ms;
-    uint32_t approach_start_tick_ms;
+
+    BumpyRoadExitReason_e exit_reason;
+    float exit_anchor_x_mm;
+    float exit_anchor_y_mm;
+    float correction_start_x_mm;
+    float correction_start_y_mm;
+    uint8_t exit_anchor_valid;
+    uint8_t entry_confirmed;
+    uint8_t visual_exit_armed;
+    uint8_t correction_applied;
+
+    BumpyRoadEvent_e last_event;
+    uint32_t event_sequence;
+
+    /* Gyro O(1) stddev 变量 */
+    float gyro_z_buffer[BUMPY_ROAD_GYRO_WIN_SIZE];
+    uint16_t gyro_z_idx;
+    uint8_t gyro_buffer_full;
+    float gyro_sum;
+    float gyro_sum_sq;
+
+    uint16_t bump_entry_cnt;
+    uint8_t on_bump;
+    float current_speed_set;
+    float filtered_err_degree;
+
 } BumpyRoadContext_t;
 
-static BumpyRoadContext_t s_bumpy_ctx =
-{
-    BUMPY_ROAD_STATE_IDLE,
-    0.0f,
-    0.0f,
-    0.0f,
-    0U,
-    BUMPY_ROAD_NO_JUMP_TICK,
-    0U,
-    0U,
-    0U
-};
+static BumpyRoadContext_t s_bumpy_ctx = {BUMPY_ROAD_STATE_IDLE};
 
-/**
- * @brief 基于惯导坐标计算当前位置到起点的平面距离
- *
- * @return 距离（mm）
- */
+static float BumpyRoad_NormalizeAngle(float angle_deg)
+{
+    while (angle_deg > 180.0f)
+    {
+        angle_deg -= 360.0f;
+    }
+    while (angle_deg < -180.0f)
+    {
+        angle_deg += 360.0f;
+    }
+    return angle_deg;
+}
+
+static void BumpyRoad_PublishEvent(BumpyRoadEvent_e event)
+{
+    s_bumpy_ctx.last_event = event;
+    s_bumpy_ctx.event_sequence++;
+}
+
 static float BumpyRoad_CalcDistanceMm(void)
 {
     const float dx = inertial_nav.x - s_bumpy_ctx.start_x_mm;
@@ -60,46 +90,106 @@ static float BumpyRoad_CalcDistanceMm(void)
     return sqrtf(dx * dx + dy * dy);
 }
 
-static void BumpyRoad_ApplyVisionSteer(void)
+static float BumpyRoad_CalcCorrectionDistanceMm(void)
 {
-    /* 方向由视觉模块统一给出；若视觉暂时无效则输出0，避免随机摆动。 */
-    if (VisionBumpyControl_IsEnabled())
-    {
-        err_degree = VisionBumpyControl_GetErrDegreeCmd();
-    }
-    else
-    {
-        err_degree = 0.0f;
-    }
+    const float dx = inertial_nav.x - s_bumpy_ctx.correction_start_x_mm;
+    const float dy = inertial_nav.y - s_bumpy_ctx.correction_start_y_mm;
+    return sqrtf(dx * dx + dy * dy);
+}
+
+static void BumpyRoad_ApplyYawHold(void)
+{
+    const float target_err = BumpyRoad_NormalizeAngle(
+        s_bumpy_ctx.locked_yaw_deg - inertial_nav.relative_yaw);
+    // if (VisionBumpyControl_IsEnabled())
+    // {
+    //     // err_degree = VisionBumpyControl_GetErrDegreeCmd();//视觉控制方向
+    //     err_degree = 0.0f;
+    // }
+    // else
+    // {
+    //     err_degree = 0.0f;
+    // }
+    
+    // 一阶低通滤波 (EMA)，减少视觉识别跳变带来的左右扭动
+    s_bumpy_ctx.filtered_err_degree = (target_err * BUMPY_ROAD_STEER_FILTER_ALPHA) + 
+                                      (s_bumpy_ctx.filtered_err_degree * (1.0f - BUMPY_ROAD_STEER_FILTER_ALPHA));
+    err_degree = s_bumpy_ctx.filtered_err_degree;
 }
 
 static void BumpyRoad_Cleanup(uint8_t stop_car)
 {
+    const uint8_t was_active = (s_bumpy_ctx.state != BUMPY_ROAD_STATE_IDLE) ? 1U : 0U;
+
     VisionBumpyControl_SetEnable(0U);
     VisionIpc_Core0_SetBumpyEnable(0U);
 
     if (stop_car)
     {
         target_speed_set = 0.0f;
+        err_degree = 0.0f;
     }
-    err_degree = 0.0f;
 
     g_special_action_trigger = 0U;
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
+    s_bumpy_ctx.exit_anchor_valid = 0U;
+    if (was_active != 0U)
+    {
+        BumpyRoad_PublishEvent(BUMPY_ROAD_EVENT_ENDED);
+    }
 }
 
 void BumpyRoad_Init(void)
 {
+    const uint8_t was_active = (s_bumpy_ctx.state != BUMPY_ROAD_STATE_IDLE) ? 1U : 0U;
+
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
     s_bumpy_ctx.start_x_mm = 0.0f;
     s_bumpy_ctx.start_y_mm = 0.0f;
+    s_bumpy_ctx.locked_yaw_deg = 0.0f;
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
-    s_bumpy_ctx.last_jump_tick_ms = BUMPY_ROAD_NO_JUMP_TICK;
-    s_bumpy_ctx.stall_counter_ms = 0U;
-    s_bumpy_ctx.backing_start_tick_ms = 0U;
-    s_bumpy_ctx.approach_start_tick_ms = 0U;
+    
+    s_bumpy_ctx.exit_reason = BUMPY_ROAD_EXIT_NONE;
+    s_bumpy_ctx.exit_anchor_x_mm = 0.0f;
+    s_bumpy_ctx.exit_anchor_y_mm = 0.0f;
+    s_bumpy_ctx.correction_start_x_mm = 0.0f;
+    s_bumpy_ctx.correction_start_y_mm = 0.0f;
 
+    s_bumpy_ctx.exit_anchor_valid = 0U;
+    s_bumpy_ctx.entry_confirmed = 0U;
+    s_bumpy_ctx.visual_exit_armed = 0U;
+    s_bumpy_ctx.correction_applied = 0U;
+
+    s_bumpy_ctx.last_event = BUMPY_ROAD_EVENT_NONE;
+    
+    s_bumpy_ctx.gyro_z_idx = 0;
+    s_bumpy_ctx.gyro_buffer_full = 0;
+    s_bumpy_ctx.gyro_sum = 0.0f;
+    s_bumpy_ctx.gyro_sum_sq = 0.0f;
+    for (int i = 0; i < BUMPY_ROAD_GYRO_WIN_SIZE; i++) {
+        s_bumpy_ctx.gyro_z_buffer[i] = 0.0f;
+    }
+
+    s_bumpy_ctx.bump_entry_cnt = 0;
+    s_bumpy_ctx.on_bump = 0;
+    s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+    s_bumpy_ctx.filtered_err_degree = 0.0f;
+
+    if (was_active != 0U)
+    {
+        BumpyRoad_PublishEvent(BUMPY_ROAD_EVENT_ENDED);
+    }
+}
+
+void BumpyRoad_SetExitAnchor(float x_mm, float y_mm)
+{
+    if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_IDLE)
+    {
+        s_bumpy_ctx.exit_anchor_x_mm = x_mm;
+        s_bumpy_ctx.exit_anchor_y_mm = y_mm;
+        s_bumpy_ctx.exit_anchor_valid = 1U;
+    }
 }
 
 void BumpyRoad_Trigger(void)
@@ -111,19 +201,38 @@ void BumpyRoad_Trigger(void)
 
     s_bumpy_ctx.start_x_mm = inertial_nav.x;
     s_bumpy_ctx.start_y_mm = inertial_nav.y;
+    s_bumpy_ctx.locked_yaw_deg = inertial_nav.relative_yaw;
     s_bumpy_ctx.traveled_mm = 0.0f;
     s_bumpy_ctx.sample_div_cnt = 0U;
-    s_bumpy_ctx.last_jump_tick_ms = BUMPY_ROAD_NO_JUMP_TICK;
-    s_bumpy_ctx.stall_counter_ms = 0U;
-    s_bumpy_ctx.backing_start_tick_ms = 0U;
-    s_bumpy_ctx.approach_start_tick_ms = 0U;
+    
+    s_bumpy_ctx.exit_reason = BUMPY_ROAD_EXIT_NONE;
+    s_bumpy_ctx.correction_start_x_mm = 0.0f;
+    s_bumpy_ctx.correction_start_y_mm = 0.0f;
+    s_bumpy_ctx.entry_confirmed = 0U;
+    s_bumpy_ctx.visual_exit_armed = 0U;
+    s_bumpy_ctx.correction_applied = 0U;
+    
+    s_bumpy_ctx.gyro_z_idx = 0;
+    s_bumpy_ctx.gyro_buffer_full = 0;
+    s_bumpy_ctx.gyro_sum = 0.0f;
+    s_bumpy_ctx.gyro_sum_sq = 0.0f;
+    for (int i = 0; i < BUMPY_ROAD_GYRO_WIN_SIZE; i++) {
+        s_bumpy_ctx.gyro_z_buffer[i] = 0.0f;
+    }
+
+    s_bumpy_ctx.bump_entry_cnt = 0;
+    s_bumpy_ctx.on_bump = 0;
+    s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+    s_bumpy_ctx.filtered_err_degree = 0.0f;
 
     /* 进入任务时独占控制权：开启1核颠簸视觉，并启用0核方向控制器。 */
     g_special_action_trigger = 1U;
     VisionIpc_Core0_SetBumpyEnable(1U);
     VisionBumpyControl_SetEnable(1U);
+    VisionBumpyControl_ResetExitDetection();
 
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;
+    BumpyRoad_PublishEvent(BUMPY_ROAD_EVENT_STARTED);
 }
 
 void BumpyRoad_Update_1ms(void)
@@ -148,98 +257,125 @@ void BumpyRoad_Update_1ms(void)
 
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
-        target_speed_set = BUMPY_ROAD_LOCK_SPEED_SET;
-        BumpyRoad_ApplyVisionSteer();
-
-        if (jump_flag == 0U)
+        if (s_bumpy_ctx.correction_applied != 0U)
         {
-            const float left_speed_abs = fabsf((float)motor_value.receive_left_speed_data);
-            const float right_speed_abs = fabsf((float)motor_value.receive_right_speed_data);
-            const float pitch_deg = euler_angle.pitch;
-            uint8_t jump_gap_ok = 0U;
-            uint8_t stall_condition_met = 0U;
-
-            if (s_bumpy_ctx.last_jump_tick_ms == BUMPY_ROAD_NO_JUMP_TICK)
-            {
-                jump_gap_ok = 1U;
-            }
-            else if ((uint32_t)(loop_counter - s_bumpy_ctx.last_jump_tick_ms) >= BUMPY_ROAD_JUMP_MIN_GAP_MS)
-            {
-                jump_gap_ok = 1U;
-            }
-
-            if ((left_speed_abs < BUMPY_ROAD_STALL_SPEED_ABS_TH) &&
-                (right_speed_abs < BUMPY_ROAD_STALL_SPEED_ABS_TH) &&
-                (pitch_deg > BUMPY_ROAD_STALL_PITCH_TH) &&
-                (pitch_deg < 60.0f))
-            {
-                stall_condition_met = 1U;
-            }
-
-            if (stall_condition_met)
-            {
-                s_bumpy_ctx.stall_counter_ms++;
-            }
-            else
-            {
-                s_bumpy_ctx.stall_counter_ms = 0U;
-            }
-
-            if ((stall_condition_met == 1U) &&
-                (s_bumpy_ctx.stall_counter_ms >= BUMPY_ROAD_STALL_MS) &&
-                (jump_gap_ok == 1U))
-            {
-                s_bumpy_ctx.state = BUMPY_ROAD_STATE_BACKING;
-                s_bumpy_ctx.backing_start_tick_ms = loop_counter;
-                s_bumpy_ctx.stall_counter_ms = 0U;
+            err_degree = 0.0f;
+        }
+        else
+        {
+            BumpyRoad_ApplyYawHold();
+        }
+        
+        // 1. Gyro Z 滑动窗口标准差计算
+        float new_val = imu_data.gyro_z;
+        float old_val = s_bumpy_ctx.gyro_z_buffer[s_bumpy_ctx.gyro_z_idx];
+        
+        s_bumpy_ctx.gyro_sum += (new_val - old_val);
+        s_bumpy_ctx.gyro_sum_sq += (new_val * new_val - old_val * old_val);
+        s_bumpy_ctx.gyro_z_buffer[s_bumpy_ctx.gyro_z_idx] = new_val;
+        
+        s_bumpy_ctx.gyro_z_idx++;
+        if (s_bumpy_ctx.gyro_z_idx >= BUMPY_ROAD_GYRO_WIN_SIZE) {
+            s_bumpy_ctx.gyro_z_idx = 0;
+            s_bumpy_ctx.gyro_buffer_full = 1;
+        }
+        
+        float stddev = 0.0f;
+        if (s_bumpy_ctx.gyro_buffer_full) {
+            float mean = s_bumpy_ctx.gyro_sum / BUMPY_ROAD_GYRO_WIN_SIZE;
+            float variance = (s_bumpy_ctx.gyro_sum_sq - s_bumpy_ctx.gyro_sum * mean) / BUMPY_ROAD_GYRO_WIN_SIZE;
+            if (variance > 0.0f) {
+                stddev = sqrtf(variance);
             }
         }
+        
+        // 2. 状态判断与速度控制
+        if (s_bumpy_ctx.on_bump == 0)
+        {
+            s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+            
+            if (s_bumpy_ctx.gyro_buffer_full && stddev > BUMPY_ROAD_ENTRY_STD_TH) {
+                s_bumpy_ctx.bump_entry_cnt++;
+            } else {
+                s_bumpy_ctx.bump_entry_cnt = 0;
+            }
+            
+            if (s_bumpy_ctx.bump_entry_cnt >= BUMPY_ROAD_ENTRY_CONFIRM_FRAMES) {
+                s_bumpy_ctx.on_bump = 1;
+                exit_beep_request = 1U; // 触发进入路肩斜率加速蜂鸣器提示
+            }
+        }
+        else
+        {
+            // 斜率加速 (速度是负值，所以是做减法)
+            s_bumpy_ctx.current_speed_set -= BUMPY_ROAD_SPEED_INC_STEP;
+            if (s_bumpy_ctx.current_speed_set < BUMPY_ROAD_LOCK_SPEED_SET) {
+                s_bumpy_ctx.current_speed_set = BUMPY_ROAD_LOCK_SPEED_SET;
+            }
+        }
+        
+        target_speed_set = s_bumpy_ctx.current_speed_set;
 
+        // 3. 视觉里程计脱出逻辑 (恢复原本逻辑)
         s_bumpy_ctx.sample_div_cnt++;
         if (s_bumpy_ctx.sample_div_cnt >= BUMPY_ROAD_SAMPLE_DIV_1MS)
         {
             s_bumpy_ctx.sample_div_cnt = 0U;
             s_bumpy_ctx.traveled_mm = BumpyRoad_CalcDistanceMm();
 
-            if (s_bumpy_ctx.traveled_mm >= BUMPY_ROAD_TARGET_DISTANCE_MM)
+            if ((s_bumpy_ctx.entry_confirmed == 0U) &&
+                VisionBumpyControl_IsEntryConfirmed())
             {
+                s_bumpy_ctx.entry_confirmed = 1U;
+            }
+
+            if ((s_bumpy_ctx.visual_exit_armed == 0U) &&
+                (s_bumpy_ctx.entry_confirmed != 0U) &&
+                (s_bumpy_ctx.traveled_mm >= BUMPY_ROAD_VISUAL_EXIT_MIN_DISTANCE_MM))
+            {
+                s_bumpy_ctx.visual_exit_armed = 1U;
+                VisionBumpyControl_RearmExitDetection();
+            }
+
+            if ((s_bumpy_ctx.visual_exit_armed != 0U) &&
+                (s_bumpy_ctx.correction_applied == 0U) &&
+                VisionBumpyControl_IsExitConfirmed())
+            {
+                /* 视觉确认出口即提示；遥控触发时也可能没有导航出口锚点。 */
+                exit_beep_request = 1U;
+                if (s_bumpy_ctx.exit_anchor_valid != 0U)
+                {
+                    nav_vision_fusion_x = s_bumpy_ctx.exit_anchor_x_mm;
+                    nav_vision_fusion_y = s_bumpy_ctx.exit_anchor_y_mm;
+                    //exit_beep_request = 1U;
+                }
+                s_bumpy_ctx.correction_start_x_mm = inertial_nav.x;
+                s_bumpy_ctx.correction_start_y_mm = inertial_nav.y;
+                s_bumpy_ctx.correction_applied = 1U;
+                s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;
+                err_degree = 0.0f;
+            }
+
+            if ((s_bumpy_ctx.correction_applied != 0U) &&
+                (BumpyRoad_CalcCorrectionDistanceMm() >= BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM))
+            {
+                exit_beep_request = 1U;
+                s_bumpy_ctx.exit_reason = BUMPY_ROAD_EXIT_POST_CORRECTION_COMPLETE;
+                s_bumpy_ctx.state = BUMPY_ROAD_STATE_FINISH;
+            }
+            else if ((s_bumpy_ctx.correction_applied == 0U) &&
+                     (s_bumpy_ctx.traveled_mm >= BUMPY_ROAD_TARGET_DISTANCE_MM))
+            {
+                // 视觉始终未确认出口时自动继续，Plan3 不会把融合坐标重定位到 50。
+                s_bumpy_ctx.exit_reason = BUMPY_ROAD_EXIT_AUTO_DISTANCE;
                 s_bumpy_ctx.state = BUMPY_ROAD_STATE_FINISH;
             }
         }
     }
-
-    if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_BACKING)
-    {
-        target_speed_set = BUMPY_ROAD_BACK_SPEED_SET;
-        BumpyRoad_ApplyVisionSteer();
-
-        if ((loop_counter - s_bumpy_ctx.backing_start_tick_ms) >= BUMPY_ROAD_BACK_DURATION_MS)
-        {
-            s_bumpy_ctx.state = BUMPY_ROAD_STATE_APPROACHING;
-            s_bumpy_ctx.approach_start_tick_ms = loop_counter;
-        }
-    }
-
-    // 接近状态处理（新增）
-    if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_APPROACHING)
-    {
-        // 设置接近速度（前进加速）
-        target_speed_set = BUMPY_ROAD_APPROACH_SPEED_SET;
-        BumpyRoad_ApplyVisionSteer();
-
-        // 检查接近时间是否达到200ms
-        if ((loop_counter - s_bumpy_ctx.approach_start_tick_ms) >= BUMPY_ROAD_APPROACH_DURATION_MS)
-        {
-            // 接近完成，触发跳跃
-            vision_detected_jump_point = true;
-            s_bumpy_ctx.last_jump_tick_ms = loop_counter;
-            s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;  // 返回运行状态
-        }
-    }
-
+    
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_FINISH)
     {
-        BumpyRoad_Cleanup(1U);
+        BumpyRoad_Cleanup(0U);
     }
 }
 
@@ -255,5 +391,20 @@ BumpyRoadState_e BumpyRoad_GetState(void)
 
 float BumpyRoad_GetDistanceMm(void)
 {
-    return s_bumpy_ctx.traveled_mm;
+    return s_bumpy_ctx.traveled_mm; 
+}
+
+BumpyRoadExitReason_e BumpyRoad_GetExitReason(void)
+{
+    return s_bumpy_ctx.exit_reason;
+}
+
+BumpyRoadEvent_e BumpyRoad_GetLastEvent(void)
+{
+    return s_bumpy_ctx.last_event;
+}
+
+uint32_t BumpyRoad_GetEventSequence(void)
+{
+    return s_bumpy_ctx.event_sequence;
 }

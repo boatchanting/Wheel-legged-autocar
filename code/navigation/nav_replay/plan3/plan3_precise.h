@@ -8,8 +8,11 @@
 #define NAV_DIST_FAR            500.0f  // 远距离界限，全速
 #define NAV_DIST_NEAR           150.0f  // 近距离界限，开始最低速 
 
-#define NAV_DIST_ARRIVE         20.0f   // 到达判定阈值
+#define NAV_DIST_ARRIVE         120.0f  // 到达捕获半径：不在点前减速，进入该范围直接切换
+#define NAV_DIST_PASS_CAPTURE   250.0f  // 曾进入此范围后距离开始增大，判定为已穿过目标点
+#define NAV_DIST_PASS_HYSTERESIS 30.0f  // 穿点判定的距离回升滞回，避免定位抖动误触发
 #define NAV_YAW_TOLERANCE        1.0f    //转向阈值，先转再走
+#define NAV_SPECIAL_ENTRY_YAW_TOLERANCE 1.0f // special state-machine entry yaw tolerance (deg)
 #define NAV_START_HEADING_TOLERANCE 0.3f // 复刻起步前，绝对航向对齐阈值(度)
 
 // 速度设定 (负数为前进，数值对应 motor rpm 或 pwm 级)
@@ -49,6 +52,9 @@ extern volatile float roll_degree;
 extern NavReplayState_e g_replay_state;         // 当前复现状态
 extern uint8 g_current_point_type;              // 当前正在前往/到达的点的类型
 extern uint8 g_special_action_trigger;          // 特殊动作触发标志 (1: 到达特殊点，请执行动作)
+// 由 main_cm7_0.c 主循环消费，避免在中断控制路径中阻塞蜂鸣。
+extern volatile uint8 entry_beep_request;
+extern volatile uint8 exit_beep_request;
 
 // ========================= 函数接口 =========================
 
@@ -68,7 +74,7 @@ void NavReplay_Stop(void);
 /**
  * @brief  惯性导航复现控制周期函数
  * @note   建议放在 10ms 或 20ms 定时器中断或主循环中调用
- *         它会根据当前 inertial_nav 坐标计算 target_speed_set 和 err_degree
+ *         它会根据当前视觉/惯导融合坐标计算 target_speed_set 和 err_degree
  */
 void NavReplay_Process(void);
 

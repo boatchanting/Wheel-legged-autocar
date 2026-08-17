@@ -23,6 +23,8 @@
 // --- 全局变量定义 ---
 // 定义在 .h 文件中声明的全局导航状态实例
 InertialNav_t inertial_nav;
+volatile float nav_vision_fusion_x = 0.0f;
+volatile float nav_vision_fusion_y = 0.0f;
 
 /**
  * @brief 初始化惯性导航系统
@@ -36,6 +38,8 @@ void InertialNav_Init(void) {
     inertial_nav.vy_body = 0.0f;
     inertial_nav.slip_flag = 0;// 初始化打滑标志位
     inertial_nav.slip_timer_ms = 0;
+    nav_vision_fusion_x = 0.0f;//视觉和惯导提供的世界坐标系 X 位置 (mm)
+    nav_vision_fusion_y = 0.0f;// 视觉和惯导提供的世界坐标系 Y 位置 (mm)
 }
 
 /**
@@ -141,4 +145,7 @@ void InertialNav_Update(float curr_yaw,
     // 如果 vx_world 是正（前进），则 dx 应为负
     inertial_nav.x += vx_world * NAV_DT; 
     inertial_nav.y += vy_world * NAV_DT; 
+    
+    nav_vision_fusion_x += vx_world * NAV_DT;// 视觉和惯导提供的世界坐标系 X 位置 (mm)
+    nav_vision_fusion_y += vy_world * NAV_DT;// 视觉和惯导提供的世界坐标系 Y 位置 (mm)
 }

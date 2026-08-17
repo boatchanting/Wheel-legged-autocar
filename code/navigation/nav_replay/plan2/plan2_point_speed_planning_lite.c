@@ -33,7 +33,7 @@ volatile float g_nav_point_special_debug_speed_ref_mm_s = 0.0f;
 volatile uint8 g_nav_point_special_debug_zero_brake_issued = 0;
 volatile uint8 g_nav_point_special_debug_zero_brake_active = 0;
 
-static float s_special_brake_dist_ratio = 0.8f; // 刹车修正系数
+static float s_special_brake_dist_ratio = 0.6f; // 刹车修正系数
 static uint8 s_special_zero_brake_issued = 0U;
 static float s_prev_speed_cmd = 0.0f;
 static uint8 s_dash_latched = 0U;
@@ -178,7 +178,7 @@ static float CalcSpecialBrakeRadius(float v_actual)
     // 确保刹车距离不会算成负数
     if (stop_dist < 0.0f) stop_dist = 0.0f;
 
-    return NAV_POINT_SPECIAL_EXECUTE_RADIUS + NAV_POINT_SPECIAL_BRAKE_MARGIN_MM + stop_dist;
+    return NAV_POINT_SPECIAL_BRAKE_MARGIN_MM + stop_dist;//NAV_POINT_SPECIAL_EXECUTE_RADIUS 
 }
 
 // 处理特殊点的刹车和触发（精简版兜底策略）

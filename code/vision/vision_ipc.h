@@ -46,11 +46,7 @@ typedef enum
 #define VISION_VALID_STAIR              (1U << 4)
 #define VISION_VALID_GRASS              (1U << 5)
 #define VISION_VALID_PROFILE            (1U << 6)
-
-#define VISION_BRIDGE_STATE_NONE          (0U)
-#define VISION_BRIDGE_STATE_PREPARE_ENTER (1U)
-#define VISION_BRIDGE_STATE_ON_BRIDGE     (2U)
-#define VISION_BRIDGE_STATE_PREPARE_EXIT  (3U)
+#define VISION_VALID_BRIDGE_V2          (1U << 7)   /* 新单边桥管线(bridge_detect)仲裁+中值滤波输出 */
 
 typedef struct
 {
@@ -120,40 +116,6 @@ typedef struct
     uint8 pvc_component_count;
     uint8 pvc_candidate_count;
 
-    /* bridge begin */
-    /* Single-bridge result. Coordinates are in the 94x60 camera image;
-     * -1 denotes an unavailable endpoint. */
-    uint8 bridge_detected;
-    uint8 bridge_stable_detected;
-    uint8 bridge_geometry_detected;
-    uint8 bridge_geometry_stable_detected;
-    uint8 bridge_state;
-    uint8 bridge_geometry_valid;
-    uint16 bridge_reserved0;
-
-    int16 bridge_left_line_x0;
-    int16 bridge_left_line_y0;
-    int16 bridge_left_line_x1;
-    int16 bridge_left_line_y1;
-    int16 bridge_right_line_x0;
-    int16 bridge_right_line_y0;
-    int16 bridge_right_line_x1;
-    int16 bridge_right_line_y1;
-    int16 bridge_down_line_x0;
-    int16 bridge_down_line_y0;
-    int16 bridge_down_line_x1;
-    int16 bridge_down_line_y1;
-    int16 bridge_up_line_x0;
-    int16 bridge_up_line_y0;
-    int16 bridge_up_line_x1;
-    int16 bridge_up_line_y1;
-    int16 bridge_center_line_x0;
-    int16 bridge_center_line_y0;
-    int16 bridge_center_line_x1;
-    int16 bridge_center_line_y1;
-
-    /* bridge end */
-
     /* Bumpy road start */
     uint8 bumpy_detected;
     float bumpy_direction_x;
@@ -175,9 +137,43 @@ typedef struct
     uint8 grass_end_seen;
     uint16 reserved0;
 
+    /* bridge V2 begin (C01: 新单边桥管线 bridge_detect 仲裁输出, 设计文档 §4.3;
+   2026-08-14 起数据源为 bridge_output_filter 中值滤波层, valid/source/mode/gate 直通, 线系数为窗内中值, has_top 经多帧门控) */
+    /* 控制线 x=a*y+b, 图像坐标 94x60; 定点 a×1000 b×100; 支撑 u_lo/u_hi 为 y 范围 */
+    uint8 b2_valid;              /* 本帧仲裁后控制线原始可信 (0=失能回锁角) */
+    uint8 b2_source;             /* 桥上: 0=红蓝中点 1=绿线 2=失能; ref阶段: 3=准备进入 4=准备脱出 (诊断) */
+    uint8 b2_mode;               /* 位掩码 (2026-08-14 融合迁移起, 宏见下方 B2M_*): 高4位=检测状态, 低3位=融合阶段 */
+    uint8 b2_gate;               /* 底部变白锁存 (融合层 gate_bottom, >75% 单帧锁存) */
+    uint8 b2_has_top;            /* 退出线有效 (需 gate=1) */
+    uint8 b2_line_u_lo;          /* 控制线支撑 y 下限 */
+    uint8 b2_line_u_hi;          /* 控制线支撑 y 上限 */
+    int16 b2_line_a_x1000;       /* 控制线斜率 a ×1000 */
+    int16 b2_line_b_x100;        /* 控制线截距 b ×100 */
+    int16 b2_top_a_x1000;        /* 退出线斜率 a ×1000 (横线 y=a*x+b) */
+    int16 b2_top_b_x100;         /* 退出线截距 b ×100 */
+    uint16 b2_spacing_x100;      /* 红蓝间距@y=55 ×100 (诊断) */
+    uint16 b2_mid_ratio_x1000;   /* 中线底间距比 ×1000 (诊断) */
+    /* bridge V2 end */
+
     uint32 reserved1;
     uint16 crc;
 } vision_ipc_packet_t;
+
+/* ---- b2_mode 位掩码 (2026-08-14 远近融合迁移起; 仅语义定义, 不改包布局) ----
+ * 高 4 位 = 检测状态 (按当前阶段取对应引擎的检出标志):
+ *   v8 桥上阶段: DET_RED/GREEN/BLUE/TOP = v8 红(左界)/绿(中缝)/蓝(右界)/结束线检出
+ *   ref 阶段:    DET_RED=左边线有效  DET_GREEN=bridge_found  DET_BLUE=右边线有效  DET_TOP=顶边线(脱出线)检出
+ * 低 3 位 = 正在干活的状态机 (融合阶段, 由 gate_bottom/gate_top 导出):
+ *   0=准备进入(ref 远处中线)  1=桥上(v8)  2=准备脱出(ref 脱出线)
+ * 0核解码: stage = b2_mode & B2M_STAGE_MASK; det = b2_mode & 0xF0            */
+#define B2M_STAGE_MASK          0x07U
+#define B2M_STAGE_PREPARE_ENTER 0x00U   /* 准备进入 (ref 引擎, 远处中线) */
+#define B2M_STAGE_ON_BRIDGE     0x01U   /* 桥上     (v8 引擎)            */
+#define B2M_STAGE_PREPARE_EXIT  0x02U   /* 准备脱出 (ref 引擎, 脱出线)   */
+#define B2M_DET_TOP             0x10U
+#define B2M_DET_BLUE            0x20U
+#define B2M_DET_GREEN           0x40U
+#define B2M_DET_RED             0x80U
 
 static inline uint16 vision_ipc_checksum16(const void *data, uint16 size_without_crc)
 {

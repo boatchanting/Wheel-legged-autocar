@@ -62,13 +62,13 @@ extern "C" {
  * 亮度阈值：灰度值（0-255）大于等于这个数，才被认为是白色的 PVC
  * 室内灯光亮就用 245，阴天或暗处用 235
  */
-#define PVC_VISION_WHITE_THRESHOLD        (200U)
+#define PVC_VISION_WHITE_THRESHOLD        (180U)
 
 /*
  * 尺寸门槛：过滤掉太小、太窄、太稀疏的“假 PVC”
  */
 #define PVC_VISION_MIN_AREA               (120)   /* 面积：白点少于 120 个不要 */
-#define PVC_VISION_MIN_WIDTH              (12)    /* 宽度：不够宽不要 */
+#define PVC_VISION_MIN_WIDTH              (20)    /* 宽度：不够宽不要 */ //为了放止反光，这个应该调大一点，以过滤蓝布反光侧向的情形 //下午反光调大该参数，20左右
 #define PVC_VISION_MIN_HEIGHT             (4)     /* 高度：不够高不要 */
 #define PVC_VISION_MIN_FILL_RATIO         (0.25f) /* 填充率：如果是零零散散的白点（不到 25%）也不要 */
 

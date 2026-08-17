@@ -12,6 +12,7 @@
 #include "../../code1/vision/ipm_transform.h"
 #include "plan/bridge.h"
 #include "tools/sbus.h"
+#include "../config/sys_options.h"   /* DEBUG_LOG_ENABLE (zf_common_headfile 不含 config) */
 
 #if VISION_BRIDGE_TASK_ENABLE
 
@@ -25,10 +26,13 @@ extern uint8_t roll_balance_enable;         /* 滚转平衡（过单边桥防翻
 extern int32 acc_limit;                     /* 加速度限制 */
 extern int32 dec_limit;                     /* 减速度限制 */
 extern float servo_height;                  /* 舵机高度（比如过桥时可能要抬高底盘） */
+extern volatile uint8 exit_beep_request;    /* 出口蜂鸣请求(视觉确认2声): 脱出判定处置位 (定义于 nav_replay/plan4, 主循环消费) */
 
 /* --- 全局变量 --- */
 volatile uint8 g_bridge_vision_task_enable = 0U; /* 任务总开关，别人可以把它设为 1 来启动任务 */
 volatile vision_bridge_task_status_t g_bridge_vision_task_status = {0}; /* 记录当前任务的详细状态供外人看 */
+volatile vision_bridge_exit_reason_e g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_NONE;
+volatile uint8 g_bridge_exit_timeout_beep_request = 0U; /* 兜底退出(AUTO_TIMEOUT)蜂鸣请求: 主循环消费响1声 (2026-08-08) */
 
 /* --- 内部数据结构 --- */
 /**
@@ -39,13 +43,13 @@ typedef struct
 {
     vision_bridge_task_state_e state; /* 当前处于哪个阶段 */
     uint32 state_ticks;               /* 在这个阶段待了多久了（每个 tick 是 2ms） */
-    uint16 exit_lost_ticks;           /* 下桥阶段：连续多少次没看到线了 */
-    uint16 bridge_hold_ticks;         /* 看见桥面黑块后的“闭眼盲跑”倒计时 */
+    uint16 bridge_hold_ticks;         /* 看见桥面(gate)后的“闭眼盲跑”倒计时 */
     uint16 align_ok_ticks;            /* 桥头对齐：连续多少次对准了 */
     uint32 last_seq;                  /* 上次滤波处理的 IPC 序号 */
     uint8 center_filter_valid;
     uint8 center_filter_pending_jump;
     uint8 center_filter_lost_frames;
+    uint8 center_filter_recover_frames; /* 恢复计数: 连续有效帧 (C09) */
     float filtered_lookahead_x;
     float filtered_heading_deg;
     float pending_lookahead_x;
@@ -54,15 +58,47 @@ typedef struct
     float start_y_mm;                 /* 上桥那一刻的 Y 坐标（惯导） */
     float exit_start_x_mm;            /* 开始下桥那一刻的 X 坐标 */
     float exit_start_y_mm;            /* 开始下桥那一刻的 Y 坐标 */
-    float locked_yaw_deg;             /* 上桥前锁定的车头朝向（如果桥上看不见线，就照着这个方向开） */
-    uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定当前航向 */
+    float locked_yaw_deg;             /* 锁角盲跑的目标航向（视觉失效时改回 entry_yaw_deg） */
+    float entry_yaw_deg;              /* 进入任务那一刻的 yaw (视觉失效/锁角盲跑时改回此角, 2026-08-15) */
+    uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定航向 */
+    uint8 err_source;                 /* 当前 err 来源: 0=视觉 1=锁角 (C10 换源 ramp) */
+    float last_err_ramp;              /* ramp 输出的上一帧 err (C10) */
+    float exit_line_y;                /* 退出线在 x=47 处的图像行 (调试, 无效为 -1) */
+    uint32 exit_last_seq;             /* 脱出确认已处理的最新视觉包 seq (按真帧去重) */
+    uint8  exit_consec_frames;        /* 连续 N 帧(视觉包) y>阈值 计数 (非 2ms tick) */
     int32 saved_acc_limit;            /* 备份原来的加速度限制，下桥后恢复 */
     int32 saved_dec_limit;            /* 备份原来的减速度限制，下桥后恢复 */
+    float saved_servo_height;         /* 备份进入任务时的腿高 (servo_height)，退出后恢复到它而非写死值 (同雷区做法, 2026-08-14) */
     uint8 saved_limits_valid;         /* 标记备份数据是否有效 */
+    float filtered_lateral_m;         /* 前视横向误差 e (m, 低通, 控制 P 项用) */
+    float edot_mps;                   /* 横向误差导数 ė (m/s, 低通+限幅, D 项用) */
+    float last_lateral_m;             /* 上一视觉包的原始 e, 用于 ė 帧差 */
+    uint8 edot_has_history;           /* 首次/重捕获后不计算 ė (防微分冲击) */
 } vision_bridge_task_ctx_t;
 
 /* 这个就是真正的“记事本”本尊，只有这个文件能用 */
 static vision_bridge_task_ctx_t s_bridge_task;
+
+/* 方向控制可调参数面板默认值 (参照 trials/track.html 与 trials/index.html) */
+const vision_bridge_tune_t g_vision_bridge_tune_defaults =
+{
+    .lat_kp               = 6.0f,
+    .lat_ki               = 0.0f,
+    .lat_kd               = 6.0f,
+    .lat_int_max          = 3.0f,
+    .lat_adaptive_enable  = 1U,
+    .edot_alpha           = 0.25f,
+    .edot_clamp_mps       = 3.0f,
+    .edot_fps             = 30.0f,
+    .lookahead_m          = 1.0f,
+    .yaw_hold_kp          = 1.8f,
+    .yaw_hold_src_sel     = VISION_BRIDGE_YAWHOLD_SRC_ENTRY,
+    .out_max_deg          = 22.9f,
+    .ramp_step_deg_per_2ms = 0.5f,
+    .lat_sign             = 1.0f,
+    .edot_sign            = 1.0f,
+    .yaw_hold_sign        = 1.0f,
+};
 
 /* --- 基础数学工具函数 --- */
 
@@ -123,50 +159,31 @@ static float vision_bridge_distance_from(float x_mm, float y_mm)
 
 static uint8 vision_bridge_get_control_measurement(const volatile vision_ipc_packet_t *packet,
                                                    float *lookahead_x,
-                                                   float *heading_deg)
+                                                   float *heading_deg,
+                                                   float *lateral_m)
 {
-    float bottom_x;
-    float top_x;
-    float bottom_y;
-    float top_y;
-    float forward_px;
-    float interpolation;
+    float x_at_lookahead;
+    uint8_t lookahead_img_x;
     IPM_Point_t target_point;
     IPM_Point_t reference_point;
-    uint8_t lookahead_img_x;
     const uint8_t lookahead_img_y = (uint8_t)VISION_BRIDGE_TASK_LOOKAHEAD_Y;
 
-    if ((packet == NULL) || (packet->bridge_geometry_valid == 0U))
+    if ((packet == NULL) || (packet->b2_valid == 0U))
     {
         return 0U;
     }
 
-    if (packet->bridge_center_line_y0 >= packet->bridge_center_line_y1)
-    {
-        bottom_x = (float)packet->bridge_center_line_x0;
-        bottom_y = (float)packet->bridge_center_line_y0;
-        top_x = (float)packet->bridge_center_line_x1;
-        top_y = (float)packet->bridge_center_line_y1;
-    }
-    else
-    {
-        bottom_x = (float)packet->bridge_center_line_x1;
-        bottom_y = (float)packet->bridge_center_line_y1;
-        top_x = (float)packet->bridge_center_line_x0;
-        top_y = (float)packet->bridge_center_line_y0;
-    }
-
-    forward_px = bottom_y - top_y;
-    if ((forward_px <= 0.0f) ||
-        ((float)VISION_BRIDGE_TASK_LOOKAHEAD_Y < top_y) ||
-        ((float)VISION_BRIDGE_TASK_LOOKAHEAD_Y > bottom_y) ||
-        (lookahead_img_y >= IPM_IMG_HEIGHT))
+    /* 第①级 (C07): 支撑校验 — 前视行必须落在控制线支撑范围 [u_lo, u_hi] 内 */
+    if ((lookahead_img_y < packet->b2_line_u_lo) ||
+        (lookahead_img_y > packet->b2_line_u_hi))
     {
         return 0U;
     }
 
-    interpolation = (bottom_y - (float)VISION_BRIDGE_TASK_LOOKAHEAD_Y) / forward_px;
-    *lookahead_x = bottom_x + (top_x - bottom_x) * interpolation;
+    /* 第①级 (C07): 系数直接代入 x = a*y + b (a×1000, b×100), 不再用两点插值 */
+    x_at_lookahead = ((float)packet->b2_line_a_x1000 * (float)lookahead_img_y) / 1000.0f +
+                     ((float)packet->b2_line_b_x100) / 100.0f;
+    *lookahead_x = x_at_lookahead;
     if ((*lookahead_x < 0.0f) || (*lookahead_x > (float)(IPM_IMG_WIDTH - 1U)))
     {
         return 0U;
@@ -181,6 +198,9 @@ static uint8 vision_bridge_get_control_measurement(const volatile vision_ipc_pac
     {
         return 0U;
     }
+
+    /* 前视横向误差 e (m): IPM 物理 x 差 (target - 中心列同行参考点), 向右为正 */
+    *lateral_m = (float)(target_point.x_mm - reference_point.x_mm) / 1000.0f;
 
     /* The LUT gives physical X (right) / Y (forward).  Subtract the calibrated
      * straight-ahead ray so a line at IMAGE_CENTER_X produces exactly 0 deg. */
@@ -201,8 +221,10 @@ static uint8 vision_bridge_center_jump_is_confirmed(float lookahead_x,
 
 static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_t *packet)
 {
+    const vision_bridge_tune_t *t = &g_vision_bridge_tune_defaults;
     float lookahead_x;
     float heading_deg;
+    float lateral_m;
     uint8 is_jump;
 
     /* The control loop is 2 ms while vision packets arrive much slower.  A
@@ -213,15 +235,17 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
     }
     s_bridge_task.last_seq = packet->seq;
 
-    if ((packet->bridge_geometry_stable_detected == 0U) ||
-        (vision_bridge_get_control_measurement(packet, &lookahead_x, &heading_deg) == 0U))
+    /* C08: 原始可信来自 b2_valid (1核仲裁层输出); C09: 失能连续 N 帧才回锁角 */
+    if ((packet->b2_valid == 0U) ||
+        (vision_bridge_get_control_measurement(packet, &lookahead_x, &heading_deg, &lateral_m) == 0U))
     {
         s_bridge_task.center_filter_pending_jump = 0U;
+        s_bridge_task.center_filter_recover_frames = 0U;
         if (s_bridge_task.center_filter_lost_frames < 255U)
         {
             s_bridge_task.center_filter_lost_frames++;
         }
-        if (s_bridge_task.center_filter_lost_frames >= VISION_BRIDGE_TASK_CENTER_LOST_FRAMES)
+        if (s_bridge_task.center_filter_lost_frames >= VISION_BRIDGE_TASK_VALID_LOST_FRAMES)
         {
             s_bridge_task.center_filter_valid = 0U;
         }
@@ -231,8 +255,22 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
     s_bridge_task.center_filter_lost_frames = 0U;
     if (s_bridge_task.center_filter_valid == 0U)
     {
+        /* C09: 恢复需连续 M 帧有效才回视觉 */
+        if (s_bridge_task.center_filter_recover_frames < 255U)
+        {
+            s_bridge_task.center_filter_recover_frames++;
+        }
+        if (s_bridge_task.center_filter_recover_frames < VISION_BRIDGE_TASK_VALID_RECOVER_FRAMES)
+        {
+            return;
+        }
+        s_bridge_task.center_filter_recover_frames = 0U;
         s_bridge_task.filtered_lookahead_x = lookahead_x;
         s_bridge_task.filtered_heading_deg = heading_deg;
+        s_bridge_task.filtered_lateral_m = lateral_m;
+        s_bridge_task.last_lateral_m = lateral_m;
+        s_bridge_task.edot_mps = 0.0f;
+        s_bridge_task.edot_has_history = 0U; /* 重捕获防微分冲击 */
         s_bridge_task.center_filter_valid = 1U;
         s_bridge_task.center_filter_pending_jump = 0U;
         return;
@@ -259,50 +297,216 @@ static void vision_bridge_update_center_filter(const volatile vision_ipc_packet_
                                            (lookahead_x - s_bridge_task.filtered_lookahead_x);
     s_bridge_task.filtered_heading_deg += VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA *
                                            (heading_deg - s_bridge_task.filtered_heading_deg);
+    s_bridge_task.filtered_lateral_m += VISION_BRIDGE_TASK_CENTER_FILTER_ALPHA *
+                                         (lateral_m - s_bridge_task.filtered_lateral_m);
+
+    /* ė: 原始 e 帧差 + 强低通 + 限幅 (复刻 track.html, 仅在新视觉包时更新) */
+    if (s_bridge_task.edot_has_history != 0U)
+    {
+        const float d_raw = vision_bridge_constrain_f(
+            (lateral_m - s_bridge_task.last_lateral_m) * t->edot_fps,
+            -t->edot_clamp_mps,
+            t->edot_clamp_mps);
+        s_bridge_task.edot_mps += t->edot_alpha * (d_raw - s_bridge_task.edot_mps);
+    }
+    else
+    {
+        s_bridge_task.edot_mps = 0.0f;
+    }
+    s_bridge_task.last_lateral_m = lateral_m;
+    s_bridge_task.edot_has_history = 1U;
 }
 
 /* --- 控制核心辅助函数 --- */
 
 /**
- * @brief 根据 IPM 查表得到的前视点，直接计算给底层航向环的差角
+ * @brief stage1 (v8 循迹) 横向乘性 PID, 输出 err_degree(deg)
  *
- * @param packet 1 核传来的数据包
- * @return float 算出的方向盘打角（有最大值限制）
- *
- * @note IPM 前视点已将横向偏差和线方向合并为几何夹角，不能再叠加视觉侧 PID。
+ * 落地公式 (保持 err_degree → 底层转向角环):
+ *   e = filtered_lateral_m (m),  ė = edot_mps (m/s),  v = |vx_body|/1000 (m/s)
+ *   ω_radps = LAT_SIGN·Kp·e·v + EDOT_SIGN·Kd·ė   (乘性自适应; Ki 默认 0 未启用)
+ *   err_degree = ω_radps·(180/π) / TURN_ANG_KP
+ * @return float 给底层转向角环的 err_degree
  */
-static float vision_bridge_calc_geometry_err_degree(const volatile vision_ipc_packet_t *packet)
+static float vision_bridge_calc_visual_err_degree(void)
 {
-    (void)packet;
+    const vision_bridge_tune_t *t = &g_vision_bridge_tune_defaults;
+    const float v_mps = vision_bridge_abs_f(inertial_nav.vx_body) / 1000.0f;
+    float omega_radps;
+    float err_deg;
+
     if (s_bridge_task.center_filter_valid == 0U)
     {
         return 0.0f;
     }
 
-    const float err = VISION_BRIDGE_TASK_LINE_SIGN * s_bridge_task.filtered_heading_deg;
+    if (t->lat_adaptive_enable != 0U)
+    {
+        /* 乘性速度自适应: 横向 P 通道随车速缩放 */
+        omega_radps = t->lat_sign * t->lat_kp * s_bridge_task.filtered_lateral_m * v_mps;
+    }
+    else
+    {
+        /* 固定增益: 力度与车速无关 (对应仿真非自适应模式) */
+        omega_radps = t->lat_sign * t->lat_kp * s_bridge_task.filtered_lateral_m;
+    }
+    /* D 通道 (Ki 默认 0, 未启用积分) */
+    omega_radps += t->edot_sign * t->lat_kd * s_bridge_task.edot_mps;
 
-    /* 限制在最大允许的范围内，防止车子突然猛打方向 */
-    return vision_bridge_constrain_f(err,
-                                     -VISION_BRIDGE_TASK_MAX_ERR_DEG,
-                                     VISION_BRIDGE_TASK_MAX_ERR_DEG);
+    err_deg = omega_radps * 57.2957795f / VISION_BRIDGE_TURN_ANG_KP_REF;
+    return vision_bridge_constrain_f(err_deg, -t->out_max_deg, t->out_max_deg);
 }
 
 /**
- * @brief 在桥上盲跑时，根据惯导保持车头方向
- * 
- * @return float 算出的方向盘打角
- * 
- * @note 如果在桥上看不见线，就照着上桥前记下的方向开，偏了就用惯导纠正。
+ * @brief 锁角目标航向 (stage0/stage2/丢线共用)
+ *
+ * @note  yaw_hold_src_sel: 0=进入任务时刻 entry_yaw; 1=路表当前点 target_yaw。
+ *        路表 target_yaw 的具体访问接口移植时需确认 (见实现文档风险项),
+ *        当前未接入时回退到 entry_yaw。
+ */
+static float vision_bridge_yaw_hold_target_deg(void)
+{
+    if (g_vision_bridge_tune_defaults.yaw_hold_src_sel == VISION_BRIDGE_YAWHOLD_SRC_ROUTE)
+    {
+        /* TODO(落地确认): 接入路表当前点 nav_ram_data.points[?].target_yaw_deg。
+         * 桥任务期间 nav_replay 暂停, 无统一 current index 接口, 暂回退 locked_yaw_deg。 */
+        return s_bridge_task.locked_yaw_deg;
+    }
+    /* ENTRY 模式: 状态机维护的锁角目标 (= 进入任务时刻 yaw) */
+    return s_bridge_task.locked_yaw_deg;
+}
+
+/**
+ * @brief 在桥上盲跑/进场/脱出时，根据惯导保持车头方向 (返回 ψ_err, deg)
+ *
+ * @note 目标航向按 yaw_hold_src_sel 选择; 偏了就靠惯导纠正。
  */
 static float vision_bridge_calc_yaw_hold_err(void)
 {
+    const float target = vision_bridge_yaw_hold_target_deg();
     /* 误差 = 目标方向 - 当前惯导测出的方向 */
-    const float err = vision_bridge_normalize_angle(s_bridge_task.locked_yaw_deg -
-                                                   inertial_nav.relative_yaw);
+    const float err = vision_bridge_normalize_angle(target - inertial_nav.relative_yaw);
     /* 限制在盲跑允许的最大范围内 */
     return vision_bridge_constrain_f(err,
                                      -VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG,
                                      VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG);
+}
+
+/**
+ * @brief 锁角纯 P, 输出 err_degree(deg)
+ *
+ * 落地公式: err_degree = YAWHOLD_SIGN · Kψ_lock · ψ_err,
+ *           Kψ_lock = yaw_hold_kp / |TURN_ANG_KP| = 1.8/8 = 0.225
+ */
+static float vision_bridge_calc_yaw_hold_err_degree(void)
+{
+    const vision_bridge_tune_t *t = &g_vision_bridge_tune_defaults;
+    const float psi_err = vision_bridge_calc_yaw_hold_err();
+    const float k_lock = t->yaw_hold_kp / vision_bridge_abs_f(VISION_BRIDGE_TURN_ANG_KP_REF);
+    const float err = t->yaw_hold_sign * k_lock * psi_err;
+    return vision_bridge_constrain_f(err, -t->out_max_deg, t->out_max_deg);
+}
+
+/**
+ * @brief 判断视觉侧状态机是否已切到"准备脱出"(寻找脱出线)阶段
+ * @note  b2_mode 低 3 位 = 融合阶段 (B2M_*, 见 vision_ipc.h);
+ *        阶段 2 = 1 核已锁存 gate_top 并切回 ref 检测器找脱出线。
+ */
+static uint8 vision_bridge_packet_in_exit_stage(const volatile vision_ipc_packet_t *packet)
+{
+    return (uint8)((packet != NULL) &&
+                   ((packet->b2_mode & B2M_STAGE_MASK) == B2M_STAGE_PREPARE_EXIT));
+}
+
+/**
+ * @brief 换源 ramp (C10): err_degree 变化率限 ≤ RAMP_STEP/2ms
+ * @note  视觉 err 与锁角 err 切换时的跳变被限速; 源切换靠 source 记录 (诊断)。
+ */
+static float vision_bridge_apply_err_ramp(float target, uint8 source)
+{
+    float diff;
+
+    (void)source; /* 统一限速, 源切换跳变天然被钳住 */
+    diff = target - s_bridge_task.last_err_ramp;
+    if (diff > g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms)
+    {
+        s_bridge_task.last_err_ramp += g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms;
+    }
+    else if (diff < -g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms)
+    {
+        s_bridge_task.last_err_ramp -= g_vision_bridge_tune_defaults.ramp_step_deg_per_2ms;
+    }
+    else
+    {
+        s_bridge_task.last_err_ramp = target;
+    }
+    return s_bridge_task.last_err_ramp;
+}
+
+/**
+ * @brief 退出线图像行测量: b2_top 横线 y=a*x+b 在图像中心列 x=47 处的行坐标
+ * @note  结果同时写入 s_bridge_task.exit_line_y 供状态发布/调试。
+ * @return 行坐标 (0~59); 无效返回 -1
+ */
+static float vision_bridge_exit_line_measure_y(const volatile vision_ipc_packet_t *packet)
+{
+    const uint8_t x = (uint8_t)VISION_BRIDGE_TASK_IMAGE_CENTER_X;
+    float y;
+
+    if ((packet == NULL) || (packet->b2_gate == 0U) || (packet->b2_has_top == 0U))
+    {
+        s_bridge_task.exit_line_y = -1.0f;
+        return -1.0f;
+    }
+    y = ((float)packet->b2_top_a_x1000 * (float)x) / 1000.0f +
+        ((float)packet->b2_top_b_x100) / 100.0f;
+    if ((y < 0.0f) || (y > (float)(IPM_IMG_HEIGHT - 1U)))
+    {
+        s_bridge_task.exit_line_y = -1.0f;
+        return -1.0f;
+    }
+    s_bridge_task.exit_line_y = y;
+    return y;
+}
+
+/**
+ * @brief 脱出门控: 连续 N 帧(真帧) exit_y>阈值 即触发 (2026-08-15)
+ * @note  按视觉包 seq 去重(真帧), 与 2ms tick 无关: 同一包只计一次。
+ *        exit_y>阈值 → 连击+1; 未达阈值/无数据 → 清零重来 (严格连续)。
+ *        measure_y 每 tick 仍刷新 exit_line_y 供调试观测。
+ * @return 1=确认脱出 (FIRE) → VISUAL_CONFIRMED
+ */
+static uint8 vision_bridge_exit_update_gate(const volatile vision_ipc_packet_t *packet)
+{
+    const float y = vision_bridge_exit_line_measure_y(packet);
+    uint8 new_packet;
+
+    if (packet == NULL)
+    {
+        return 0U;
+    }
+
+    /* 真帧判定: seq 变化才算新视觉包; 同一包被多个 2ms tick 重复调用时直接返回现状态 */
+    new_packet = (uint8)((packet->seq != 0U) && (packet->seq != s_bridge_task.exit_last_seq));
+    if (new_packet == 0U)
+    {
+        return (uint8)(s_bridge_task.exit_consec_frames >= VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES);
+    }
+    s_bridge_task.exit_last_seq = packet->seq;
+
+    if ((y >= 0.0f) && (y <= (float)(IPM_IMG_HEIGHT - 1U)) &&
+        (y > VISION_BRIDGE_TASK_EXIT_Y_TH_PX))
+    {
+        if (s_bridge_task.exit_consec_frames < 0xFFU)
+        {
+            s_bridge_task.exit_consec_frames++;
+        }
+    }
+    else
+    {
+        s_bridge_task.exit_consec_frames = 0U; /* 连续中断, 清零重来 */
+    }
+    return (uint8)(s_bridge_task.exit_consec_frames >= VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES);
 }
 
 /**
@@ -335,8 +539,17 @@ static void vision_bridge_apply_high_posture(void)
 }
 
 /**
+ * @brief 退出后要恢复到的腿高: 进入任务时的备份值, 无备份兜底 height_normal
+ */
+static float vision_bridge_restore_height_target(void)
+{
+    return (s_bridge_task.saved_limits_valid) ? s_bridge_task.saved_servo_height
+                                              : bridge_params.height_normal;
+}
+
+/**
  * @brief 切换回“正常姿态”
- * @note  恢复加速度限制、关掉滚转平衡、把底盘降下来。
+ * @note  恢复加速度限制、关掉滚转平衡、把底盘降回进入任务时的高度。
  */
 static void vision_bridge_apply_normal_posture(void)
 {
@@ -346,8 +559,8 @@ static void vision_bridge_apply_normal_posture(void)
         acc_limit = s_bridge_task.saved_acc_limit;
         dec_limit = s_bridge_task.saved_dec_limit;
     }
-    /* 降下底盘 */
-    Bridge_Apply_Height_Control(bridge_params.height_normal,
+    /* 降下底盘 (恢复到进入时的腿高, 不写死 3.0f) */
+    Bridge_Apply_Height_Control(vision_bridge_restore_height_target(),
                                 bridge_params.height_step_drop * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
 }
 
@@ -356,7 +569,7 @@ static void vision_bridge_apply_normal_posture(void)
  * 
  * @param next_state 下一个阶段是什么
  * 
- * @note 切换时，把计时器清零。如果是切换到“下桥”，还要记下下桥那一刻的位置。
+ * @note 切换时把计时器清零；下桥完成由视觉确认或时间兜底决定，不依赖惯导距离。
  */
 static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
 {
@@ -372,11 +585,6 @@ static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
         s_bridge_task.run_yaw_locked = 0U;
     }
 
-    if (next_state == VISION_BRIDGE_TASK_EXIT)
-    {
-        s_bridge_task.exit_start_x_mm = inertial_nav.x;
-        s_bridge_task.exit_start_y_mm = inertial_nav.y;
-    }
 }
 
 /**
@@ -397,24 +605,23 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.traveled_mm = traveled_mm;
     status.err_degree_cmd = err_cmd;
     status.speed_cmd = speed_cmd;
-    status.exit_lost_ticks = s_bridge_task.exit_lost_ticks;
     status.bridge_hold_ticks = s_bridge_task.bridge_hold_ticks;
 
     if (packet != NULL)
     {
-        status.bridge_stable = packet->bridge_stable_detected;
-        status.geometry_stable = packet->bridge_geometry_stable_detected;
-        status.geometry_valid = packet->bridge_geometry_valid;
-        status.bridge_state = packet->bridge_state;
-        status.center_line_x0 = packet->bridge_center_line_x0;
-        status.center_line_y0 = packet->bridge_center_line_y0;
-        status.center_line_x1 = packet->bridge_center_line_x1;
-        status.center_line_y1 = packet->bridge_center_line_y1;
+        status.b2_valid   = packet->b2_valid;
+        status.b2_source  = packet->b2_source;
+        status.b2_mode    = packet->b2_mode;
+        status.b2_gate    = packet->b2_gate;
+        status.b2_has_top = packet->b2_has_top;
+        status.exit_line_y = s_bridge_task.exit_line_y;
     }
     status.center_filter_valid = s_bridge_task.center_filter_valid;
     status.center_filter_pending_jump = s_bridge_task.center_filter_pending_jump;
     status.filtered_lookahead_x = s_bridge_task.filtered_lookahead_x;
     status.filtered_heading_deg = s_bridge_task.filtered_heading_deg;
+    status.filtered_lateral_m = s_bridge_task.filtered_lateral_m;
+    status.edot_mps = s_bridge_task.edot_mps;
     g_bridge_vision_task_status = status;
 }
 
@@ -483,6 +690,7 @@ void VisionBridgeTask_Init(void)
     memset(&s_bridge_task, 0, sizeof(s_bridge_task));
     memset((void *)&g_bridge_vision_task_status, 0, sizeof(g_bridge_vision_task_status));
     g_bridge_vision_task_enable = 0U;
+    g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_NONE;
 }
 
 /**
@@ -491,6 +699,7 @@ void VisionBridgeTask_Init(void)
  */
 void VisionBridgeTask_Start(void)
 {
+    g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_NONE;
     g_bridge_vision_task_enable = 1U;
 }
 
@@ -523,8 +732,10 @@ static void vision_bridge_enter_task(void)
     s_bridge_task.start_x_mm = inertial_nav.x;
     s_bridge_task.start_y_mm = inertial_nav.y;
     s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+    s_bridge_task.entry_yaw_deg  = inertial_nav.relative_yaw; /* 进入时刻锁存的 yaw, 视觉失效时改回此角 */
     s_bridge_task.saved_acc_limit = acc_limit;
     s_bridge_task.saved_dec_limit = dec_limit;
+    s_bridge_task.saved_servo_height = servo_height; /* 备份进入时腿高, 退出恢复用 */
     s_bridge_task.saved_limits_valid = 1U;
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
@@ -551,6 +762,7 @@ void VisionBridgeTask_Update_2ms(void)
     float traveled_mm = 0.0f; /* 跑了多远 */
     float err_cmd = 0.0f;     /* 打算给方向盘的指令 */
     float speed_cmd = 0.0f;   /* 打算给电机的指令 */
+    uint8 exit_fire = 0U;     /* 方案B 视觉脱出确认 (每 tick 更新) */
 
     /* 如果没开启任务，且现在是空闲状态，啥也不干 */
     if ((g_bridge_vision_task_enable == 0U) &&
@@ -593,29 +805,25 @@ void VisionBridgeTask_Update_2ms(void)
     {
         case VISION_BRIDGE_TASK_ALIGN:
             speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
-            if (s_bridge_task.center_filter_valid)
+            /* stage0 = PVC + IMU: 方向只来自 IMU 锁角 (PVC 只做入口检测, 不提供转向) */
+            err_cmd = vision_bridge_calc_yaw_hold_err_degree();
+            s_bridge_task.err_source = 1U;
+            if (vision_bridge_abs_f(vision_bridge_calc_yaw_hold_err()) <= VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG)
             {
-                err_cmd = vision_bridge_calc_geometry_err_degree(packet);
-                if (vision_bridge_abs_f(err_cmd) <= VISION_BRIDGE_TASK_ALIGN_ERR_TOL_DEG)
-                {
-                    s_bridge_task.align_ok_ticks++;
-                }
-                else
-                {
-                    s_bridge_task.align_ok_ticks = 0U;
-                }
+                s_bridge_task.align_ok_ticks++;
             }
             else
             {
-                err_cmd = vision_bridge_calc_yaw_hold_err();
                 s_bridge_task.align_ok_ticks = 0U;
             }
 
+            err_cmd = vision_bridge_apply_err_ramp(err_cmd, s_bridge_task.err_source);
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
-                (packet->bridge_stable_detected != 0U))
+            /* 视觉确认上桥 (沿用旧逻辑 ON_BRIDGE+stable 语义): 控制线可信且桥面
+               已到底部(锁存) → 抬底盘进 RUN。只有这条路抬底盘。 */
+            if ((packet->b2_valid != 0U) && (packet->b2_gate != 0U))
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
                 vision_bridge_apply_high_posture();
@@ -623,22 +831,29 @@ void VisionBridgeTask_Update_2ms(void)
                 break;
             }
 
+            /* 惯导门: 从交接点起 traveled ≥ 阈值进 RUN (不抬底盘, 与旧逻辑兜底路径一致) */
+            if (traveled_mm >= VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM)
+            {
+                s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
+                vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
+                break;
+            }
+
+            /* 兜底: 对齐达标或超时也上桥 (不抬底盘, 与旧逻辑一致) */
             if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ALIGN_OK_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS))
             {
-                s_bridge_task.start_x_mm = inertial_nav.x;
-                s_bridge_task.start_y_mm = inertial_nav.y;
-                s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
-                s_bridge_task.exit_lost_ticks = 0U;
+                s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
             }
             break;
 
         /* --- 阶段 3：在桥上跑 --- */
         case VISION_BRIDGE_TASK_RUN:
-            /* 看到桥梁黑块了，刷新“防抖”倒计时 */
-            if ((packet->bridge_state == VISION_BRIDGE_STATE_ON_BRIDGE) &&
-                (packet->bridge_stable_detected != 0U))
+            /* 桥面证据 (沿用旧逻辑 ON_BRIDGE 语义): b2_gate 锁存表示桥面曾到底部,
+               b2_valid 每帧表示控制线仍在; 两者同时在场才刷新防抖倒计时。
+               (0809 只看 b2_gate 锁存量 → 一旦锁存全程刷新 → 全程高腿, 2026-08-14 修复) */
+            if ((packet->b2_valid != 0U) && (packet->b2_gate != 0U))
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
             }
@@ -646,6 +861,10 @@ void VisionBridgeTask_Update_2ms(void)
             {
                 s_bridge_task.bridge_hold_ticks--; /* 没看到，倒计时减 1 */
             }
+
+            vision_bridge_exit_line_measure_y(packet); /* 每 tick 刷新退出线行坐标 (调试可观测) */
+            /* 方案B: 每 tick 更新远场基准/累计 (traveled 未到里程门前也要学远场基准) */
+            exit_fire = vision_bridge_exit_update_gate(packet);
 
             /* 如果倒计时没归零，说明现在车还在桥上 */
             if (s_bridge_task.bridge_hold_ticks > 0U)
@@ -669,49 +888,63 @@ void VisionBridgeTask_Update_2ms(void)
                 }
             }
 
-            if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
+            if (vision_bridge_packet_in_exit_stage(packet))
             {
-                /* 上桥前 1.2m：有可靠中心线则继续使用 IPM 差角。 */
-                err_cmd = s_bridge_task.center_filter_valid ?
-                          vision_bridge_calc_geometry_err_degree(packet) :
-                          vision_bridge_calc_yaw_hold_err();
-            }
-            else
-            {
-                /* 超过 1.2m：锁住进入该阶段时的实际航向，视觉不再干预转向。 */
+                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向; 目标改回进入时刻 yaw (2026-08-15) */
                 if (s_bridge_task.run_yaw_locked == 0U)
                 {
-                    s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
+                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
                     s_bridge_task.run_yaw_locked = 1U;
                 }
-                err_cmd = vision_bridge_calc_yaw_hold_err();
-                speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;
+                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
+                s_bridge_task.err_source = 1U;
             }
-
-            err_degree = err_cmd;
-            target_speed_set = speed_cmd;
-
-            /* 至少跑够一定距离（比如 1 米）才允许判断是不是下桥了 */
-            if (traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM)
+            else if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
             {
-                /* 怎么判断下桥？线看不见 + 桥看不见 + 倒计时归零 + 画面里的白赛道不多 */
-                const uint8 no_visual = (uint8)((packet->bridge_geometry_stable_detected == 0U) &&
-                                                (packet->bridge_stable_detected == 0U) &&
-                                                (s_bridge_task.bridge_hold_ticks == 0U));
-                if (no_visual)
+                /* 前 1.2m：有可靠中心线用横向乘性 PID, 否则锁角 */
+                if (s_bridge_task.center_filter_valid)
                 {
-                    s_bridge_task.exit_lost_ticks++; /* 疑似下桥次数 +1 */
+                    err_cmd = vision_bridge_calc_visual_err_degree();
+                    s_bridge_task.err_source = 0U;
                 }
                 else
                 {
-                    s_bridge_task.exit_lost_ticks = 0U; /* 误报，重新数 */
+                    err_cmd = vision_bridge_calc_yaw_hold_err_degree();
+                    s_bridge_task.err_source = 1U;
                 }
             }
-
-            /* 如果连续很多次都疑似下桥，或者跑得太远了（超时保护），进入下桥阶段 */
-            if ((s_bridge_task.exit_lost_ticks >= VISION_BRIDGE_TASK_EXIT_LOST_TICKS) ||
-                (traveled_mm >= VISION_BRIDGE_TASK_RUN_MAX_MM))
+            else
             {
+                /* 超过 1.2m：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 (2026-08-15)。 */
+                if (s_bridge_task.run_yaw_locked == 0U)
+                {
+                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
+                    s_bridge_task.run_yaw_locked = 1U;
+                }
+                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
+                s_bridge_task.err_source = 1U;
+                speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;
+            }
+
+            err_cmd = vision_bridge_apply_err_ramp(err_cmd, s_bridge_task.err_source);
+            err_degree = err_cmd;
+            target_speed_set = speed_cmd;
+
+            /* 出口判定: 仅视觉状态机2(mode2=准备脱出) + 里程门 + 视觉 FIRE 确认;
+               距离/超时强制兜底 (不 rebase)。0808 分支的 1D EKF 退出融合已放弃。 */
+            if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM) && (exit_fire != 0U) &&
+                vision_bridge_packet_in_exit_stage(packet))
+            {
+                g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_VISUAL_CONFIRMED;
+                exit_beep_request = 1U; /* 脱出时刻: 视觉确认响 2 声 (侧键/Plan4 驱动都响) */
+                vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
+            }
+            else if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MAX_MM) ||        /* 距离过大强制下桥 (恢复 12b6fe4 的历史上界, 2026-08-14) */
+                     (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS))
+            {
+                // 视觉异常时自动继续；Plan3/Plan4 会知道这不是已确认的视觉出口，不会重定位。
+                g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_AUTO_TIMEOUT;
+                g_bridge_exit_timeout_beep_request = 1U; /* 兜底退出: 主循环响 1 声 (区别于视觉确认的 2 声) */
                 vision_bridge_set_state(VISION_BRIDGE_TASK_EXIT);
             }
             break;
@@ -719,16 +952,14 @@ void VisionBridgeTask_Update_2ms(void)
         /* --- 阶段 4：下桥缓冲 --- */
         case VISION_BRIDGE_TASK_EXIT:
             vision_bridge_apply_normal_posture(); /* 确保底盘降下来 */
-            err_cmd = vision_bridge_calc_yaw_hold_err(); /* 锁死方向冲出桥区 */
+            err_cmd = vision_bridge_apply_err_ramp(vision_bridge_calc_yaw_hold_err_degree(), 1U); /* 锁死方向冲出桥区 */
             speed_cmd = VISION_BRIDGE_TASK_EXIT_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 再往前开一小段距离，且底盘已经降到位了，任务才算彻底结束 */
-            if ((vision_bridge_distance_from(s_bridge_task.exit_start_x_mm,
-                                             s_bridge_task.exit_start_y_mm) >=
-                 VISION_BRIDGE_TASK_EXIT_BUFFER_MM) &&
-                (vision_bridge_abs_f(servo_height - bridge_params.height_normal) < 0.2f))
+            /* 底盘恢复后即可交还导航；异常时到达时间上限也继续前进。 */
+            if ((vision_bridge_abs_f(servo_height - vision_bridge_restore_height_target()) < 0.2f) ||
+                (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS))
             {
 #if VISION_BRIDGE_TASK_NAV_CORRECT_ENABLE
                 vision_bridge_apply_nav_correction(); /* 修正惯导 */
@@ -739,7 +970,7 @@ void VisionBridgeTask_Update_2ms(void)
 
         /* --- 阶段 5：任务完成 --- */
         case VISION_BRIDGE_TASK_FINISH:
-            vision_bridge_cleanup(1U); /* 打扫战场，交还控制权 */
+            vision_bridge_cleanup(0U); /* 保持最后的退出速度/航向，交给 Plan3 平滑接管 */
             break;
 
         /* --- 阶段 6：故障处理 --- */
@@ -751,6 +982,34 @@ void VisionBridgeTask_Update_2ms(void)
 
     /* 把这一刻的状态广播出去 */
     vision_bridge_publish_status(packet, traveled_mm, err_cmd, speed_cmd);
+
+#if DEBUG_LOG_ENABLE
+    /* 0核 状态串口调试 (500ms 一条, 2ms tick): 状态机/滤波/退出线全链路可见 */
+    {
+        static uint32 ctrl_dbg_div = 0U;
+        if ((ctrl_dbg_div++ % 250U) == 0U)
+        {
+            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f e=%.3f ed=%.3f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f consec=%u\r\n",
+                   (int)s_bridge_task.state,
+                   (unsigned long)s_bridge_task.state_ticks,
+                   (double)traveled_mm,
+                   (double)err_cmd,
+                   (double)speed_cmd,
+                   (double)s_bridge_task.filtered_lateral_m,
+                   (double)s_bridge_task.edot_mps,
+                   (unsigned int)s_bridge_task.center_filter_valid,
+                   (unsigned int)s_bridge_task.center_filter_lost_frames,
+                   (unsigned int)s_bridge_task.center_filter_recover_frames,
+                   (unsigned int)(packet ? packet->b2_valid : 0U),
+                   (unsigned int)(packet ? packet->b2_source : 0U),
+                   (unsigned int)(packet ? packet->b2_mode : 0U),
+                   (unsigned int)(packet ? packet->b2_gate : 0U),
+                   (unsigned int)(packet ? packet->b2_has_top : 0U),
+                   (double)s_bridge_task.exit_line_y,
+                   (unsigned int)s_bridge_task.exit_consec_frames);
+        }
+    }
+#endif
 }
 
 #endif

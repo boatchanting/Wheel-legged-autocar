@@ -74,6 +74,25 @@
 #define SERVO_MOTOR_PWM4_DIR            (-1)      // 左后 LR --
 #endif
 
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版参数与小车3相同，待实车标定
+// *************************** 【小车4】硬件引脚定义开始 ***************************
+#define SERVO_MOTOR_PWM1            (TCPWM_CH29_P22_5)     // 左前 LF
+#define SERVO_MOTOR_PWM2            (TCPWM_CH28_P22_6)      // 右前 RF
+#define SERVO_MOTOR_PWM3            (TCPWM_CH30_P22_4)       // 右后 RR
+#define SERVO_MOTOR_PWM4            (TCPWM_CH31_P22_3)      // 左后 LR
+// *************************** 【小车4】硬件引脚定义结束 ***************************
+// ===================== 舵机平腿(90度)占空比定义 (Duty级)【小车4】=====================
+#define SERVO_MOTOR_PWM1_90            (4450)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_90            (4500)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_90            (4500)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_90            (4700)      // 左后 LR --
+// ===================== 舵机极性定义 (向下伸腿为正) 【小车4】====================
+#define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
+#define SERVO_MOTOR_PWM2_DIR            (-1)      // 右前 RF --
+#define SERVO_MOTOR_PWM3_DIR            (1)      // 右后 RR ++
+#define SERVO_MOTOR_PWM4_DIR            (-1)      // 左后 LR --
+#endif
+
 // ===================== 舵机全局配置 =====================
 #define SERVO_FREQ          (300)      // 频率300Hz
 

@@ -31,20 +31,41 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 #define VISION_THREE_STAGE_MAX_ERR_DEG                   (18.0f)
 #define VISION_THREE_STAGE_DEADBAND_DEG                  (0.30f)
 
+/* 第一跳前远景修正参数：仅在 PVC 底边尚未到达该行号时生效。 */
+// 三级跳轻微修正逻辑，将成功率从80%拉到几乎100%，在台阶前进行一定量的轻微修正，这个参数是默认的，不是很好【优化点】
+#define VISION_THREE_STAGE_JUMP1_CORRECTION_BOTTOM_Y_DEFAULT (24U) //按行号由上到下递增：在远景 bottom_y < 修正阈值 时允许轻微修正；进入近景后停止更新并平滑回正，
+#define VISION_THREE_STAGE_JUMP1_CORRECTION_LPF_ALPHA        (0.25f)
+#define VISION_THREE_STAGE_JUMP1_CORRECTION_LATERAL_SIGN     (0.0f) //上台阶前修正 -1.0f是使用，cxz发车不使用
+#define VISION_THREE_STAGE_JUMP1_CORRECTION_K_LAT_DEG_PER_MM (0.04f)
+#define VISION_THREE_STAGE_JUMP1_CORRECTION_MAX_ERR_DEG      (4.0f)
+
+/* 第二跳触发策略开关（编译期默认值，运行时可用 g_vision_three_stage_jump2_delay_enable 覆盖）：
+ *   1 = 固定延时策略（第一跳触发后延时 VISION_THREE_STAGE_JUMP2_DELAY_AFTER_JUMP1_TICKS 触发第二跳，与第三跳写法一致）
+ *   0 = 旧视觉策略（PVC 上边界 top_y >= jump2_top_y 阈值触发第二跳） */
+#define VISION_THREE_STAGE_JUMP2_DELAY_ENABLE_DEFAULT        (1U)
+
 /* 时序参数（2ms tick） */
 #define VISION_THREE_STAGE_STALE_TIMEOUT_TICKS           (1500U)  /* 3.0s */
 #define VISION_THREE_STAGE_STATE_TIMEOUT_TICKS           (8000U)  /* 16.0s */
-#define VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS           (22U)    /* 100ms */
+#define VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS           (22U)    /* 44ms */
+/* 注意：以下两个延时宏数值虽然注释写 180ms，但 170 ticks × 2ms = 340ms，以代码为准 */
+#define VISION_THREE_STAGE_JUMP3_DELAY_AFTER_JUMP2_TICKS (145U)    /* 第三跳：第二跳触发后固定延时触发（实际 340ms） */
+#define VISION_THREE_STAGE_JUMP2_DELAY_AFTER_JUMP1_TICKS (145U)    /* 第二跳：第一跳触发后固定延时触发（实际 340ms），与第三跳延时保持一致 */
 #define VISION_THREE_STAGE_LOCK_STABLE_FRAMES            (3U)
 #define VISION_THREE_STAGE_BLACK_GAP_LOST_FRAMES         (2U)
 #define VISION_THREE_STAGE_REACQUIRE_STABLE_FRAMES       (2U)
 #define VISION_THREE_STAGE_EXIT_STABLE_FRAMES            (2U)
+/* 视觉确认出口并重定位融合坐标后，继续以原始惯导坐标累计的脱出距离。 */
+#define VISION_THREE_STAGE_POST_EXIT_DISTANCE_MM         (0.0f)
+#define VISION_THREE_STAGE_POST_EXIT_SPEED_SET           (-350.0f)
 
 /* 像素阈值默认值（可在线调整） */
-#define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (32U) //第一级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳
-#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (32U) //第二级台阶顶端小于该值时跳跃，增大阈值，车必须走得更近才跳
-#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (32U)//第三级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳，粗调参时候，可以用第一级台阶那个值用一下
-#define VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT            (24U)
+#define VISION_THREE_STAGE_JUMP1_BOTTOM_Y_DEFAULT        (29U) //第一级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳
+#define VISION_THREE_STAGE_JUMP2_TOP_Y_DEFAULT           (33U) //第二级台阶顶端小于该值时跳跃，增大阈值，车必须走得更近才跳 
+//在30-40阈值情况下大概1cm参数加1 ，不识别竖着的台阶，只识别横着的台阶，群里7.29早晨的图片，大概4cm的阴影，使用的是40阈值；大概1cm的，用的38的阈值；也就是阴影越大相当于应该离"台阶"(小车认为的白块)越近再跳；台阶正对着太阳无阴影的时候，参数给36；
+#define VISION_THREE_STAGE_JUMP3_BOTTOM_Y_DEFAULT        (32U)//这个没有使用。科目三目前的逻辑最后一跳是依赖写死时间实现的，需要调的话调上面那个“VISION_THREE_STAGE_JUMP3_DELAY_AFTER_JUMP2_TICKS”
+//第三级台阶底端小于该值时跳跃，增大阈值，车必须走得更近才跳，粗调参时候，可以用第一级台阶那个值用一下
+#define VISION_THREE_STAGE_EXIT_TOP_Y_DEFAULT            (24U)//脱出时候阈值，目前来看这个阈值会在三级跳顶部脱出，比较稳定
 
 typedef enum
 {
@@ -55,6 +76,7 @@ typedef enum
     VISION_THREE_STAGE_CTRL_WAIT_SECOND_PVC,
     VISION_THREE_STAGE_CTRL_WAIT_JUMP3_BOTTOM,
     VISION_THREE_STAGE_CTRL_WAIT_EXIT_TOP,
+    VISION_THREE_STAGE_CTRL_POST_EXIT_RUNOUT,
     VISION_THREE_STAGE_CTRL_FINISH,
     VISION_THREE_STAGE_CTRL_FAILSAFE,
 } vision_three_stage_ctrl_state_e;
@@ -89,6 +111,7 @@ typedef struct
     uint32 last_seq;                     /* 最近处理的数据包序号 */
     int16 pvc_lateral_mm;                /* 方向控制输入：横向偏差 */
     int16 pvc_yaw_error_deg_x100;        /* 方向控制输入：偏航误差 */
+    float pvc_lateral_filtered_mm;       /* 第一跳前远景修正使用的低通横向偏差 */
     float err_degree_cmd;                /* 输出给底盘的方向修正量 */
     vision_three_stage_exit_reason_e exit_reason;
 } vision_three_stage_control_status_t;
@@ -102,6 +125,11 @@ extern volatile uint8 g_vision_three_stage_jump2_top_y;
 extern volatile uint8 g_vision_three_stage_jump3_bottom_y;
 extern volatile uint8 g_vision_three_stage_exit_top_y;
 
+extern volatile uint8 g_vision_three_stage_jump1_correction_bottom_y;
+
+/* 第二跳触发策略：1=固定延时（默认），0=旧视觉 top_y 阈值 */
+extern volatile uint8 g_vision_three_stage_jump2_delay_enable;
+
 void VisionThreeStageControl_Init(void);
 void VisionThreeStageControl_SetEnable(uint8 enable);
 uint8 VisionThreeStageControl_IsEnabled(void);
@@ -109,6 +137,7 @@ uint8 VisionThreeStageControl_IsEnabled(void);
 void VisionThreeStageControl_Start(void);
 void VisionThreeStageControl_Stop(void);
 uint8 VisionThreeStageControl_IsActive(void);
+void VisionThreeStageControl_SetExitAnchor(float x_mm, float y_mm);
 
 void VisionThreeStageControl_Update_2ms(void);
 

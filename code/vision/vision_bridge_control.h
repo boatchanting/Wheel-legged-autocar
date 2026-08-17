@@ -26,13 +26,12 @@ extern "C" {
 /* (注意：这些 TICKS 都是基于 2ms 中断的，所以 1000 TICKS = 2 秒) */
 #define VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS       (1500U)     /* 对齐超时：3秒还没对齐好，强行上桥 */
 #define VISION_BRIDGE_TASK_ALIGN_OK_TICKS            (60U)       /* 连续对齐好的帧数：大约 0.12秒 都稳定，认为对齐成功 */
-#define VISION_BRIDGE_TASK_RUN_MIN_MM                (1000.0f)   /* 上桥后，至少跑 1 米才允许判定下桥（防误判） */
-#define VISION_BRIDGE_TASK_RUN_MAX_MM                (3400.0f)   /* 桥上最多跑 3.4 米，跑到就强制下桥 */
-#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1200.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
+#define VISION_BRIDGE_TASK_RUN_MIN_MM                (2300.0f)   /* 上桥后至少行驶 1m，才允许根据视觉出口线脱出 */
+#define VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM (1100.0f)  /* 上桥后仅前 1.2m 使用视觉方向控制 */
 #define VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE        (2.0f)      /* 超过视觉控制距离后，速度提高倍率 */
-#define VISION_BRIDGE_TASK_EXIT_BUFFER_MM            (300.0f)    /* 下桥后，再往前缓冲 30 厘米才算任务彻底结束 */
-#define VISION_BRIDGE_TASK_EXIT_LOST_TICKS           (150U)      /* 连续 0.3 秒看不到桥，认为桥已经走完了 */
 #define VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS         (220U)      /* 看到桥梁黑块后，保持“桥梁模式”0.44秒，防抖 */
+#define VISION_BRIDGE_TASK_RUN_AUTO_EXIT_TICKS       (5000U)     /* 视觉长期异常时，10 秒后自动进入退出阶段，不停车等待 */
+#define VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS         (1000U)     /* 退出阶段最长 2 秒，随后自动交还导航 */
 
 /* --- 3. 角度与偏差阈值 --- */
 #define VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG         (3.0f)      /* 对齐时，车头偏角误差允许的范围（小于 4 度算对齐） */
@@ -48,7 +47,19 @@ extern "C" {
 #define VISION_BRIDGE_TASK_CENTER_JUMP_REJECT_DEG    (8.0f)
 #define VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_PX    (3.0f)
 #define VISION_BRIDGE_TASK_CENTER_JUMP_CONFIRM_DEG   (3.0f)
-#define VISION_BRIDGE_TASK_CENTER_LOST_FRAMES        (3U)
+
+/* --- 3.5 新管线 (b2_*) 专用参数 (C15) --- */
+#define VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM       (900.0f)  /* 上桥惯导门: 从交接点起 traveled 达此值进 RUN (桥入口→桥面起点+余量, 现场标定) */
+#define VISION_BRIDGE_TASK_RUN_MAX_MM                 (5000.0f) /* 距离强制脱出: 桥上最多跑 3.4 米, 跑到就强制下桥 (恢复 12b6fe4 历史上界, 2026-08-14) */
+#define VISION_BRIDGE_TASK_VALID_LOST_FRAMES          (8U)      /* b2_valid 失能连续帧数: 达到回锁角 (N, C09) */
+#define VISION_BRIDGE_TASK_VALID_RECOVER_FRAMES       (4U)      /* b2_valid 恢复连续帧数: 达到回视觉 (M, C09) */
+#define VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG          (0.5f)    /* 视觉↔锁角换源 ramp: 每 2ms 最多变化 (C10) */
+/* --- 3.6 退出线视觉确认: 连续 N 帧(真帧) exit_y>阈值 即触发 (2026-08-15 定版) ---
+   按"真帧"(视觉包 seq)计数, 与 2ms tick 无关: 同一视觉包只计一次, 不受 tick 重复调用影响。
+   exit_y 远场 ≈4~11, 接近桥尾下移; 未达阈值/无数据即中断连击、清零重来 (严格连续)。
+   EXIT_CONSEC_FRAMES 与 EXIT_Y_TH_PX 均为现场可调标定参数。 */
+#define VISION_BRIDGE_TASK_EXIT_Y_TH_PX               (30.0f)   /* 退出线下移带 (图像行), 可调 */
+#define VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES         (2U)      /* 连续 N 帧(视觉包) y>阈值 即触发, 可调 */
 
 /* --- 4. 转向指令参数 --- */
 /* IPM 坐标为 X 向右、Y 向前；底层航向环的正方向与其相反，因此默认取 -1。
@@ -57,12 +68,54 @@ extern "C" {
 #define VISION_BRIDGE_TASK_MAX_ERR_DEG               (16.0f)     /* 发送到底层航向环前的差角限幅 */
 #define VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG      (10.0f)     /* 锁死航向盲跑时，最多修 10 度 */
 
+/* --- 4.5 方向控制可调参数面板 (v2, 按视觉状态机分阶段) ---
+ * 参照: trials/track.html (stage1 v8 循迹), trials/index.html (stage0/锁角)
+ * 单位: 物理公式用 SI (m, m/s, rad/s); err_degree 落地域用 deg。
+ * 关键换算: err_degree = ω_radps·(180/π) / TURN_ANG_KP,  TURN_ANG_KP = -8 (pid-new.h)
+ * 数值来自仿真, 落地位需按调节指南现场标定。 */
+typedef struct
+{
+    /* stage1 (v8 循迹) 横向乘性 PID (SI: e[m] -> ω[rad/s]) */
+    float lat_kp;               /* 6.0   [1/m²]     ω_P = Kp·e·v */
+    float lat_ki;               /* 0.0   [1/(m²·s)] ω_I = Ki·∫e·v (默认关闭) */
+    float lat_kd;               /* 6.0   [1/m]      ω_D = Kd·ė */
+    float lat_int_max;          /* 3.0   [m·s]      ∫e 限幅 (Ki=0 时无效) */
+    uint8 lat_adaptive_enable;  /* 1     1=乘性 ω=(Kp·e+Ki·∫e)·v+Kd·ė; 0=固定 ω=Kp·e+Kd·ė+Ki·∫e */
+
+    /* ė 微分滤波 (复刻 track.html) */
+    float edot_alpha;           /* 0.25   ė += α·(dRaw − ė) */
+    float edot_clamp_mps;       /* 3.0    [m/s] ė 限幅 */
+    float edot_fps;             /* 30.0   [Hz]  视觉帧率(微分节拍) */
+
+    /* 前视 */
+    float lookahead_m;          /* 1.0    [m] 文档/限幅用; e 由 IPM x 差直接求 */
+
+    /* 锁角 (IMU, stage0/丢线/stage2 共用) */
+    float yaw_hold_kp;          /* 1.8    [rad/s per rad] 仿真锁角增益 */
+    uint8 yaw_hold_src_sel;     /* 0      stage0 锁角目标源: 0=entry_yaw 1=路表当前点target_yaw */
+
+    /* 输出与限幅 (err_degree 落地域) */
+    float out_max_deg;          /* 22.9   [deg] err_degree 输出限幅(≈3.2rad/s ÷ 8 × 180/π) */
+    float ramp_step_deg_per_2ms;/* 0.5    [deg] 换源/输出变化率(每 2ms) */
+
+    /* 符号通道 (现场翻转, 勿改控制逻辑) */
+    float lat_sign;             /* +1.0   横向通道符号 */
+    float edot_sign;            /* +1.0   D 通道符号 */
+    float yaw_hold_sign;        /* +1.0   锁角通道符号 */
+} vision_bridge_tune_t;
+
+/* 锁角目标源选择 */
+#define VISION_BRIDGE_YAWHOLD_SRC_ENTRY  (0U)
+#define VISION_BRIDGE_YAWHOLD_SRC_ROUTE  (1U)
+/* 底层转向角环 Kp 引用(换算用), 定义在 pid-new.h: TURN_ANG_KP = -8.0f */
+#define VISION_BRIDGE_TURN_ANG_KP_REF     (TURN_ANG_KP)
+
 /* --- 5. 各阶段速度与姿态设置 --- */
 #define VISION_BRIDGE_TASK_ALIGN_SPEED_SET           (0.0f)      /* 对齐时：速度为 0（边停边对） */
-#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-150.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
-#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-110.0f)   /* 看见黑块时：速度 110 */
-#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-90.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
-#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-90.0f)    /* 下桥缓冲时：速度 90 */
+#define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-200.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
+#define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-200.0f)   /* 看见黑块时：速度 110 */
+#define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-200.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
+#define VISION_BRIDGE_TASK_EXIT_SPEED_SET            (-200.0f)    /* 下桥缓冲时：速度 90 */
 #define VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE         (0.10f)     /* 舵机升降的高度步进步长比例 */
 
 /* --- 6. 数据结构定义 --- */
@@ -80,6 +133,13 @@ typedef enum
     VISION_BRIDGE_TASK_FAILSAFE,         /* 故障：出了问题，紧急放弃 */
 } vision_bridge_task_state_e;
 
+typedef enum
+{
+    VISION_BRIDGE_EXIT_NONE = 0,
+    VISION_BRIDGE_EXIT_VISUAL_CONFIRMED,
+    VISION_BRIDGE_EXIT_AUTO_TIMEOUT
+} vision_bridge_exit_reason_e;
+
 /**
  * @brief 桥梁任务运行时的状态信息（供监控或调试看）
  */
@@ -92,25 +152,27 @@ typedef struct
     float traveled_mm;                   /* 从上桥到现在跑了多远 */
     float err_degree_cmd;                /* 当前给方向盘下发的指令 */
     float speed_cmd;                     /* 当前给电机下发的速度指令 */
-    uint8 bridge_stable;                 /* 1 核是否稳定检测到桥 */
-    uint8 geometry_stable;               /* 1 核是否稳定得到可控的桥中心线 */
-    uint8 geometry_valid;                /* 当前 IPC 中心线坐标是否有效 */
-    uint8 bridge_state;                  /* BridgeDetectionState */
-    int16 center_line_x0;
-    int16 center_line_y0;
-    int16 center_line_x1;
-    int16 center_line_y1;
+    uint8 b2_valid;                      /* 仲裁后控制线原始可信 */
+    uint8 b2_source;                     /* 桥上: 0=红蓝中点 1=绿线 2=失能; ref阶段: 3=准备进入 4=准备脱出 */
+    uint8 b2_mode;                       /* 位掩码: 高4位=检测状态, 低3位=融合阶段 (B2M_*, 见 vision_ipc.h) */
+    uint8 b2_gate;                       /* 底部变白锁存 (融合层 gate_bottom) */
+    uint8 b2_has_top;                    /* 退出线有效 */
+    float exit_line_y;                   /* 退出线在图像中心列 x=47 处的行坐标(调试用, 无效为 -1) */
     uint8 center_filter_valid;
     uint8 center_filter_pending_jump;
     float filtered_lookahead_x;
     float filtered_heading_deg;          /* IPM 前视点相对标定直行方向的差角 */
-    uint16 exit_lost_ticks;              /* 下桥时，连续看不到桥的计时 */
+    float filtered_lateral_m;            /* 前视横向误差 e (m, 控制用) */
+    float edot_mps;                      /* 横向误差导数 ė (m/s, 低通+限幅) */
     uint16 bridge_hold_ticks;            /* 看见黑块后的保持倒计时 */
 } vision_bridge_task_status_t;
 
 /* --- 7. 外部变量与函数接口 --- */
 extern volatile uint8 g_bridge_vision_task_enable;           /* 桥梁任务总开关 */
 extern volatile vision_bridge_task_status_t g_bridge_vision_task_status; /* 任务状态大表 */
+extern volatile vision_bridge_exit_reason_e g_bridge_vision_task_exit_reason;
+extern volatile uint8 g_bridge_exit_timeout_beep_request;    /* 兜底退出(AUTO_TIMEOUT)蜂鸣请求 (主循环响1声; 视觉确认用 exit_beep_request 响2声) */
+extern const vision_bridge_tune_t g_vision_bridge_tune_defaults; /* 方向控制可调参数默认值 */
 
 /**
  * @brief 初始化桥梁任务

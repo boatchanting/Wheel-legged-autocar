@@ -36,6 +36,7 @@ int flash_write = 0;      // flash写使能标志位
 int flash_write_flag = 0; // flash写标志位
 #include "wifi.h"
 #include "zf_common_headfile.h"
+#include "vision/vision_ipc.h"
 
 // 只有X边界
 uint8 xy_x1_boundary[BOUNDARY_NUM], xy_x2_boundary[BOUNDARY_NUM], xy_x3_boundary[BOUNDARY_NUM];
@@ -590,74 +591,115 @@ static void draw_line_on_image(int x0, int y0, int x1, int y1, uint8 color)
     }
 }
 
-void render_bridge_vision_to_image(void)
+/* v8 竖线: x = a*y + b, 支撑范围 [u_lo, u_hi] */
+static void render_v8_vertical(const bridge_line_t *L, uint8 color)
 {
-    const volatile bridge_vision_output_t *bridge_out = bridge_vision_get_output();
-    bridge_vision_frame_result_t result;
-
-    if ((bridge_out->bridge_stable_detected != 0U) ||
-        (bridge_out->stable_detected != 0U))
+    int y0 = (int)L->u_lo;
+    int y1 = (int)L->u_hi;
+    int x0;
+    int x1;
+    if (y1 <= y0)
     {
-        result = bridge_out->stable;
+        return;
+    }
+    x0 = (int)(L->a * (float)y0 + L->b + 0.5f);
+    x1 = (int)(L->a * (float)y1 + L->b + 0.5f);
+    draw_line_on_image(x0, y0, x1, y1, color);
+}
+
+/* v8 横线(结束线): y = a*x + b, x 取全宽 */
+static void render_v8_horizontal(const bridge_line_t *T, uint8 color)
+{
+    int x0 = 0;
+    int x1 = (int)(PVC_IMAGE_W - 1);
+    int y0 = (int)(T->b + 0.5f);
+    int y1 = (int)(T->a * (float)x1 + T->b + 0.5f);
+    draw_line_on_image(x0, y0, x1, y1, color);
+}
+
+void render_bridge_vision_to_image(const bf_result_t *r)
+{
+    if (r == NULL)
+    {
+        return;
+    }
+
+    if (r->source == BF_SRC_V8)
+    {
+        const bridge_result_t *v8 = &r->v8;
+        /* 左右边线 (检测到时) */
+        if (v8->has_red)
+        {
+            render_v8_vertical(&v8->red, 0U);
+        }
+        if (v8->has_blue)
+        {
+            render_v8_vertical(&v8->blue, 0U);
+        }
+        /* 中线直出: 仅 RM/MB (仲裁输出=绿线) */
+        if (v8->has_green &&
+            (v8->mode == BRIDGE_MODE_RM || v8->mode == BRIDGE_MODE_MB))
+        {
+            render_v8_vertical(&v8->green, 0U);
+        }
+        /* 结束线 (v8 top) */
+        if (v8->has_top)
+        {
+            render_v8_horizontal(&v8->top, 0U);
+        }
+    }
+    else if (r->source == BF_SRC_PVC)
+    {
+        /* 专用 PVC: 渲染入口目标竖直线 x = target_x (统一中线 center) */
+        if (r->valid)
+        {
+            int x0 = (int)(r->center.b + 0.5f);
+            if (x0 >= 0 && x0 < BF_W)
+            {
+                draw_line_on_image(x0, 0, x0, BF_H - 1, 0U);
+            }
+        }
     }
     else
     {
-        result = bridge_out->raw;
+        const BridgeDetectionResult *ref = &r->ref;
+        /* 左右边线 (实测线段) */
+        if (ref->left_segment.valid)
+        {
+            draw_line_on_image(ref->left_segment.x0, ref->left_segment.y0,
+                               ref->left_segment.x1, ref->left_segment.y1, 0U);
+        }
+        if (ref->right_segment.valid)
+        {
+            draw_line_on_image(ref->right_segment.x0, ref->right_segment.y0,
+                               ref->right_segment.x1, ref->right_segment.y1, 0U);
+        }
+        /* 结束线 (top) */
+        if (ref->top_line_visible && ref->top_segment.valid)
+        {
+            draw_line_on_image(ref->top_segment.x0, ref->top_segment.y0,
+                               ref->top_segment.x1, ref->top_segment.y1, 0U);
+        }
+        /* 进入线 (entry) */
+        if (ref->entry_line_visible && ref->entry_segment.valid)
+        {
+            draw_line_on_image(ref->entry_segment.x0, ref->entry_segment.y0,
+                               ref->entry_segment.x1, ref->entry_segment.y1, 0U);
+        }
     }
 
-    if ((result.left_line_x0 >= 0) && (result.left_line_y0 >= 0) &&
-        (result.left_line_x1 >= 0) && (result.left_line_y1 >= 0))
+#if VISION_IMAGE_RENDER_ENABLE && VISION_IMAGE_RENDER_NUMERIC_ENABLE
     {
-        draw_line_on_image((int)result.left_line_x0,
-                           (int)result.left_line_y0,
-                           (int)result.left_line_x1,
-                           (int)result.left_line_y1,
-                           0U);
+        /* 白底黑字阶段号: 由融合门控直接导出 */
+        uint8 stage = r->gate_top ? 2U : (r->gate_bottom ? 1U : 0U);
+        int yy;
+        for (yy = 0; yy <= 6; yy++)
+        {
+            draw_hline_on_image(0, 6, yy, 255U);      /* 7x7 白底 */
+        }
+        (void)draw_digit3x5_on_image(2, 1, stage, 0U);
     }
-
-    if ((result.right_line_x0 >= 0) && (result.right_line_y0 >= 0) &&
-        (result.right_line_x1 >= 0) && (result.right_line_y1 >= 0))
-    {
-        draw_line_on_image((int)result.right_line_x0,
-                           (int)result.right_line_y0,
-                           (int)result.right_line_x1,
-                           (int)result.right_line_y1,
-                           0U);
-    }
-
-    if ((result.up_line_x0 >= 0) && (result.up_line_y0 >= 0) &&
-        (result.up_line_x1 >= 0) && (result.up_line_y1 >= 0))
-    {
-        draw_line_on_image((int)result.up_line_x0,
-                           (int)result.up_line_y0,
-                           (int)result.up_line_x1,
-                           (int)result.up_line_y1,
-                           0U);
-    }
-
-    if ((result.down_line_x0 >= 0) && (result.down_line_y0 >= 0) &&
-        (result.down_line_x1 >= 0) && (result.down_line_y1 >= 0))
-    {
-        draw_line_on_image((int)result.down_line_x0,
-                           (int)result.down_line_y0,
-                           (int)result.down_line_x1,
-                           (int)result.down_line_y1,
-                           0U);
-    }
-
-    /* 中线是控制真正使用的几何输出，最后单独强调画出来。 */
-    if (result.geometry_valid != 0U)
-    {
-        draw_line_on_image((int)result.center_line_x0,
-                           (int)result.center_line_y0,
-                           (int)result.center_line_x1,
-                           (int)result.center_line_y1,
-                           0U);
-        draw_cross_on_image((int)result.center_line_x1,
-                            (int)result.center_line_y1,
-                            2,
-                            0U);
-    }
+#endif
 }
 
 #if 0

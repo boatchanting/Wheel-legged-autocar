@@ -46,6 +46,62 @@ PAYLOAD_SIZE_TRACE = PAYLOAD_SIZE_GPS_TRACE + PAYLOAD_FUSION_TRACE_FLOAT_BYTES +
 PAYLOAD_SIZE_TRACE_CTRL = PAYLOAD_SIZE_TRACE + PAYLOAD_GPS_TRACE_CTRL_BYTES
 PAYLOAD_SIZE_TRACE_DEBUG = PAYLOAD_SIZE_TRACE_CTRL + PAYLOAD_DEBUG_BYTES
 
+# Compact V3 payload layout (all values are little-endian):
+#   <Iffff  navigation prefix: loop, nav_x, nav_y, vx_body, vy_body
+#   NMV3    four-byte version marker, written as four write_u8() calls on MCU
+#   <2B     mark_trigger, point_type
+#   <4f     roll, pitch, yaw, relative_yaw
+#   <4f     servo_angle_rf, servo_angle_rr, servo_angle_lf, servo_angle_lr
+#   <9f     imu_acc_xyz, imu_gyro_xyz, imu_grav_xyz
+#   <3B     pid_mode, slip_flag, minefield_active
+#   <5f     target_speed, speed_L, speed_R, theoretical_yaw_rate, actual_yaw_rate
+#   <3BI    bumpy_state, bumpy_event, bumpy_exit_reason, bumpy_event_sequence
+#   <25f    optional, append-only Plan-2 diagnostic block
+#
+# Only the two documented fixed lengths are accepted.  This avoids mistaking a
+# legacy GNSS packet for V3 if its bytes happen to contain the marker.
+COMPACT_V3_NAV_PREFIX_FORMAT = "<Iffff"
+COMPACT_V3_NAV_PREFIX_SIZE = struct.calcsize(COMPACT_V3_NAV_PREFIX_FORMAT)
+COMPACT_V3_MARKER = b"NMV3"
+COMPACT_V3_CORE_FORMAT = "<2B4f4f9f3B5f3BI"
+COMPACT_V3_CORE_SIZE = struct.calcsize(COMPACT_V3_CORE_FORMAT)
+COMPACT_V3_PLAN2_DIAGNOSTIC_FORMAT = "<25f"
+COMPACT_V3_PLAN2_DIAGNOSTIC_SIZE = struct.calcsize(COMPACT_V3_PLAN2_DIAGNOSTIC_FORMAT)
+PAYLOAD_SIZE_COMPACT_V3 = (
+    COMPACT_V3_NAV_PREFIX_SIZE + len(COMPACT_V3_MARKER) + COMPACT_V3_CORE_SIZE
+)
+PAYLOAD_SIZE_COMPACT_V3_WITH_PLAN2_DIAGNOSTICS = (
+    PAYLOAD_SIZE_COMPACT_V3 + COMPACT_V3_PLAN2_DIAGNOSTIC_SIZE
+)
+
+COMPACT_V3_PLAN2_DIAGNOSTIC_FIELDS = [
+    "plan2_nav_replay_state",
+    "plan2_nav_special_action_trigger",
+    "plan2_nav_current_point_type",
+    "plan2_nav_special_target_idx",
+    "plan2_nav_special_target_x",
+    "plan2_nav_special_target_y",
+    "plan2_nav_special_dist_mm",
+    "plan2_nav_special_brake_radius_mm",
+    "plan2_nav_special_speed_ref_mm_s",
+    "plan2_nav_special_zero_brake_issued",
+    "plan2_nav_special_zero_brake_active",
+    "plan2_nav_special_crawl_active",
+    "plan2_nav_special_prep_zero_latched",
+    "plan2_brake_feedforward_pwm",
+    "plan2_accel_feedforward_pwm",
+    "plan2_motor_enable",
+    "plan2_fallen",
+    "plan2_remote_brake_active",
+    "plan2_remote_reverse_brake_active",
+    "plan2_minefield_accumulated_angle",
+    "plan2_minefield_angle_cmd",
+    "plan2_minefield_feedforward_speed",
+    "plan2_minefield_current_speed_cmd",
+    "plan2_minefield_stall_elapsed_s",
+    "plan2_minefield_abort_reason",
+]
+
 STRUCT_FMT_V1 = "<IffffHBBBBBBHHHHHHddbbffBfBfff"
 
 FIELD_NAMES_V1 = [
@@ -83,27 +139,53 @@ FIELD_NAMES_V1 = [
 
 FIELD_NAMES_V2 = FIELD_NAMES_V1 + ["mark_trigger", "point_type"]
 
-WIFI_TELEMETRY_LOG_FIELDS = [
-    "recorded_at",
-    "frame_index",
-    "frame_cmd",
-    "raw_frame_hex",
-] + FIELD_NAMES_V2 + [
-    "gps_x",
-    "gps_y",
-    "gps_valid",
-    "gps_origin_set",
-    "fusion_x",
-    "fusion_y",
-    "fusion_valid",
+COMPACT_V3_TELEMETRY_FIELDS = [
+    "telemetry_version",
+    "loop",
+    "nav_x",
+    "nav_y",
+    "vx_body",
+    "vy_body",
+    "mark_trigger",
+    "point_type",
+    "roll",
+    "pitch",
+    "yaw",
+    "relative_yaw",
+    "servo_angle_rf",
+    "servo_angle_rr",
+    "servo_angle_lf",
+    "servo_angle_lr",
+    "imu_acc_x",
+    "imu_acc_y",
+    "imu_acc_z",
+    "imu_gyro_x",
+    "imu_gyro_y",
+    "imu_gyro_z",
+    "imu_grav_x",
+    "imu_grav_y",
+    "imu_grav_z",
     "pid_mode",
     "slip_flag",
+    "minefield_active",
     "target_speed",
     "speed_L",
     "speed_R",
     "theoretical_yaw_rate",
     "actual_yaw_rate",
-    "has_debug",
+    "bumpy_state",
+    "bumpy_event",
+    "bumpy_exit_reason",
+    "bumpy_event_sequence",
+    "has_plan2_diagnostics",
+] + COMPACT_V3_PLAN2_DIAGNOSTIC_FIELDS
+
+WIFI_TELEMETRY_LOG_FIELDS = [
+    "recorded_at",
+    "frame_index",
+    "frame_cmd",
+    "raw_frame_hex",
+] + COMPACT_V3_TELEMETRY_FIELDS + [
     "payload_size",
     "time_str",
 ]
@@ -398,8 +480,96 @@ def _resolve_trace_layout(size):
     }
 
 
+def _is_compact_v3_payload(payload_bytes):
+    """Return whether *payload_bytes* exactly matches a documented V3 layout."""
+    size = len(payload_bytes)
+    return (
+        size in (
+            PAYLOAD_SIZE_COMPACT_V3,
+            PAYLOAD_SIZE_COMPACT_V3_WITH_PLAN2_DIAGNOSTICS,
+        )
+        and payload_bytes[
+            COMPACT_V3_NAV_PREFIX_SIZE : COMPACT_V3_NAV_PREFIX_SIZE + len(COMPACT_V3_MARKER)
+        ]
+        == COMPACT_V3_MARKER
+    )
+
+
+def _has_compact_v3_marker(payload_bytes):
+    """Recognize malformed V3 packets so they are not decoded as legacy data."""
+    marker_end = COMPACT_V3_NAV_PREFIX_SIZE + len(COMPACT_V3_MARKER)
+    return len(payload_bytes) >= marker_end and payload_bytes[
+        COMPACT_V3_NAV_PREFIX_SIZE:marker_end
+    ] == COMPACT_V3_MARKER
+
+
+def _decode_compact_v3_payload(payload_bytes):
+    prefix = struct.unpack_from(COMPACT_V3_NAV_PREFIX_FORMAT, payload_bytes)
+    data = dict(zip(("loop", "nav_x", "nav_y", "vx_body", "vy_body"), prefix))
+    data["telemetry_version"] = 3
+
+    values = struct.unpack_from(
+        COMPACT_V3_CORE_FORMAT,
+        payload_bytes,
+        COMPACT_V3_NAV_PREFIX_SIZE + len(COMPACT_V3_MARKER),
+    )
+    index = 0
+
+    for field in ("mark_trigger", "point_type"):
+        data[field] = values[index]
+        index += 1
+    for field in ("roll", "pitch", "yaw", "relative_yaw"):
+        data[field] = values[index]
+        index += 1
+    for field in ("servo_angle_rf", "servo_angle_rr", "servo_angle_lf", "servo_angle_lr"):
+        data[field] = values[index]
+        index += 1
+    for field in (
+        "imu_acc_x", "imu_acc_y", "imu_acc_z",
+        "imu_gyro_x", "imu_gyro_y", "imu_gyro_z",
+        "imu_grav_x", "imu_grav_y", "imu_grav_z",
+    ):
+        data[field] = values[index]
+        index += 1
+    for field in ("pid_mode", "slip_flag", "minefield_active"):
+        data[field] = values[index]
+        index += 1
+    for field in (
+        "target_speed", "speed_L", "speed_R", "theoretical_yaw_rate", "actual_yaw_rate",
+    ):
+        data[field] = values[index]
+        index += 1
+    for field in ("bumpy_state", "bumpy_event", "bumpy_exit_reason", "bumpy_event_sequence"):
+        data[field] = values[index]
+        index += 1
+
+    if len(payload_bytes) == PAYLOAD_SIZE_COMPACT_V3_WITH_PLAN2_DIAGNOSTICS:
+        diagnostics = struct.unpack_from(
+            COMPACT_V3_PLAN2_DIAGNOSTIC_FORMAT,
+            payload_bytes,
+            PAYLOAD_SIZE_COMPACT_V3,
+        )
+        data.update(zip(COMPACT_V3_PLAN2_DIAGNOSTIC_FIELDS, diagnostics))
+        data["has_plan2_diagnostics"] = True
+    else:
+        data["has_plan2_diagnostics"] = False
+
+    # Preserve the values the existing display and debug-log paths expect,
+    # without pretending that this GNSS-free packet carries GPS data or time.
+    data["heading"] = data["yaw"]
+    data["has_debug"] = True
+    data["payload_size"] = len(payload_bytes)
+    data["time_str"] = ""
+    return data
+
+
 def _decode_payload(payload_bytes):
     size = len(payload_bytes)
+
+    if _is_compact_v3_payload(payload_bytes):
+        return _decode_compact_v3_payload(payload_bytes)
+    if _has_compact_v3_marker(payload_bytes):
+        return None
 
     if size < PAYLOAD_SIZE_V1:
         return None

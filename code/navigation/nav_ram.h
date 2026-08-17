@@ -19,11 +19,18 @@ typedef enum
 {
     NAV_POINT_PATH = 0,     // 普通路点
     NAV_POINT_CIRCLE = 1,   // 转圈点
-    NAV_POINT_SLOPE = 2,    // 坡道
-    NAV_POINT_JUMP = 3,     // 飞包
-    NAV_POINT_BRIDGE = 4,   // 桥道
-    NAV_POINT_BUMP = 5,     // 颠簸路段
-    NAV_POINT_FLYBY = 6     // 飞越点/绕桩点 (不减速直接切角)
+    NAV_POINT_SLOPE = 2,    // 上坡点
+    NAV_POINT_JUMP = 3,     // 跳跃点
+    NAV_POINT_BRIDGE = 4,   // 单边桥点
+    NAV_POINT_BUMP = 5,     // 颠簸路段点
+
+    // 特殊元素的退出锚点：进入标签末尾追加 0。
+    // 退出点不触发特殊状态机，仅供视觉任务完成后修正融合坐标并跳过。
+    NAV_POINT_CIRCLE_EXIT = 10,
+    NAV_POINT_SLOPE_EXIT = 20,
+    NAV_POINT_JUMP_EXIT = 30,
+    NAV_POINT_BRIDGE_EXIT = 40,
+    NAV_POINT_BUMP_EXIT = 50
 } NavPointType_e;
 
 // ========================= plan 类型 =========================
@@ -84,6 +91,12 @@ uint8 NavRam_RecordPoint(uint8 point_type);
  * @return 点数量
  */
 uint16 NavRam_GetPointCount(void);
+
+/**
+ * @brief  按指定次数鸣叫蜂鸣器
+ * @param  beep_times 鸣叫次数；0 表示不鸣叫
+ */
+void Buzzer_Beep_Times(uint8 beep_times);
 
 /**
  * @brief  根据点类型鸣叫蜂鸣器

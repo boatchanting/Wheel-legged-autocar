@@ -186,6 +186,7 @@ TelemetryIpc_Core0_Init();
 VisionPvcControl_Init(); // Bring-up: 0核通过2ms中断调度1核开启PVC入口检测，并用回传数据做入口引导
 VisionBumpyControl_Init(); // 颠簸路段：0核读取1核视觉并生成方向控制量
 VisionBridgeTask_Init();
+VisionSlopeTask_Init();
 VisionThreeStageControl_Init(); // three-stage vision jump state machine
 //===============惯性导航初始化结束==================
 #if DEBUG_DISPLAY_CORE0
@@ -229,6 +230,7 @@ uint8 imu_refresh_test_printed = 0; // IMU刷新率测试结果只打印一次
 #endif
     vision_detected_marker = 0;//雷区调用,测试用
     vision_detected_bumpy_point = 0;//颠簸路段调用,测试用
+    vision_detected_slope_point = 0;//斜坡路段调用,测试用
     //-------------------------------------------------------------------
     //******************************系统初始化结束************************
     //-------------------------------------------------------------------

@@ -1,11 +1,11 @@
 #ifndef __SYS_OPTIONS_H__
 #define __SYS_OPTIONS_H__
 
-#define JUMP_ENABLE_LANDING_BUFFER 0U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
+#define JUMP_ENABLE_LANDING_BUFFER 1U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 
-#define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用
-#define WIFI_CORE_SELECT 0 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI
-#define WIFI_PROTOCOL_SELECT  2// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议
+#define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用 (2026-08-14 单边桥调试状态: 开)
+#define WIFI_CORE_SELECT 1 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI (2026-08-14 单边桥调试状态: 1核, 网页上位机看图+示波器)
+#define WIFI_PROTOCOL_SELECT  2// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议 (2026-08-14 单边桥调试状态: 自定义=视觉图像上位机)
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
 #define DEBUG_DISPLAY 1                  // 【全局开关】1:开启屏幕调试显示  0:关闭
 #define DEBUG_DISPLAY_CORE_SELECT 0      // 【显示核心选择】0: 0核独占屏幕  1: 1核视觉屏幕
@@ -15,6 +15,7 @@
 
 #define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
+#define CONTROL_PROFILE_PID_ENABLE 1U // 【多预设PID开关】1:按正常/加速/刹车预设每1ms平滑回写PID；0:仅初始化加载宏定义，允许WiFi持续调参
 #define ACCEL_FF_ENABLE 0U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
 #define ACCEL_FF_MODE 1U // 【加速前馈模式】0:关闭  1:直接叠加 PWM 前馈  2:加速时临时增强舵机速度环 Kp
 #define ACCEL_FF_BUZZER_ENABLE 0U // 【全局开关】1:大幅加速前馈触发时蜂鸣提示  0:关闭
@@ -22,11 +23,11 @@
 #define IMU_CATEGORY 3//【全局开关】1:imu660ra  2:imu660rb 3:imu963ra 注：imu660ra被赛事禁用
 #define IMU_REFRESH_TEST_ENABLE 0 // 1: 上电后测试IMU刷新频率，运行10秒后串口打印一次结果
 #define SUBS_CATEGORY 2  //【遥控器选择】1.旧遥控器2.新遥控器。选反会导致前进后退相反
-#define SBUS_ACTIVE_POINT 0 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段
+#define SBUS_ACTIVE_POINT 0 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段 (2026-08-14 单边桥调试状态: 4)
 #define SLIP_DETECTION_ENABLE 1U //【全局开关】1:开启基于侧向加速度的纯横向打滑检测  0:关闭（默认正常抓地权重）
 // ---------------- plan 配置 ----------------
 #define GNSS_NAV 0 // 【全局开关】gps寻迹还是惯导寻迹，现阶段暂时还没联合(date0511)，联合后考虑去除该开关，1表示使用gnss寻迹，0表示不使用gnss寻迹，惯导开关常开
-#define CURRENT_NAV_PLAN   2   // 【全局开关】在这里切换科目几，科目一为1，科目二2，科目三3，nav_replay模版函数99，每个科目的主要逻辑会单独优化，上层控制参数层不共享，互不干扰，后面做到各自独立优化，这个开关现在对惯导寻迹和gps方案均有效(date0520)
+#define CURRENT_NAV_PLAN   4   // 【全局开关】在这里切换科目几，科目一为1，科目二2，科目三3，科目四4(国赛科目2和3融合版本)，nav_replay模版函数99，每个科目的主要逻辑会单独优化，上层控制参数层不共享，互不干扰，后面做到各自独立优化，这个开关现在对惯导寻迹和gps方案均有效(date0520)
 #define PLAN1_FAST_UTURN_ENABLE 0               // 【科目一极速掉头开关】0=关闭，沿用普通科目一路径跟踪；1=开启极速掉头运行逻辑
 
 /*
@@ -70,6 +71,10 @@
 
 #if (JUMP_ENABLE_LANDING_BUFFER != 0U) && (JUMP_ENABLE_LANDING_BUFFER != 1U)
 #error "JUMP config error: JUMP_ENABLE_LANDING_BUFFER must be 0 or 1."
+#endif
+
+#if (CONTROL_PROFILE_PID_ENABLE != 0U) && (CONTROL_PROFILE_PID_ENABLE != 1U)
+#error "PID config error: CONTROL_PROFILE_PID_ENABLE must be 0 or 1."
 #endif
 
 #define DEBUG_DISPLAY_CORE0 (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT == 0))

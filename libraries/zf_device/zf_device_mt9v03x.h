@@ -74,6 +74,10 @@
 #define MT9V03X_COF_IIC_SCL     ( P17_2 )                                       // 总钻风 IIC-SCL 引脚
 #define MT9V03X_COF_IIC_SDA     ( P17_1 )                                       // 总钻风 IIC-SDA 引脚
 #endif
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版引脚与小车3相同，待实车标定
+#define MT9V03X_COF_IIC_SCL     ( P17_2 )                                       // 总钻风 IIC-SCL 引脚
+#define MT9V03X_COF_IIC_SDA     ( P17_1 )                                       // 总钻风 IIC-SDA 引脚
+#endif
 
 #define MT9V03X_PCLK_PIN        ( P06_5 )                                       // 总钻风 PCLK 触发信号引脚
 #define MT9V03X_VSYNC_PIN       ( P06_6 )                                       // 总钻风 场中断  引脚
@@ -95,7 +99,10 @@
                                                                                 // 一一一一一一   如果自动曝光开启  EXP_TIME命令设置自动曝光时间的上限
                                                                                 // 一一一一一一   一般情况是不需要开启自动曝光设置 如果遇到光线非常不均匀的情况可以尝试设置自动曝光，增加图像稳定性
 
-#define MT9V03X_EXP_TIME_DEF    ( 400 )                                         // 曝光时间设置   摄像头收到后会自动计算出最大曝光时间，如果设置过大则设置为计算出来的最大曝光值
+#define MT9V03X_EXP_TIME_DEF    ( 3)                                         // 曝光时间设置   摄像头收到后会自动计算出最大曝光时间，如果设置过大则设置为计算出来的最大曝光值 //室内300-400 //华东室外晚上400
+// 曝光5，室外大太阳，可见度，大概晴朗天气9点-10点
+// 曝光20-40，室外下午5点-6点
+// 曝光300-400，室内
 
 #define MT9V03X_FPS_DEF         ( 100 )                                         // 图像帧率设置   摄像头收到后会自动计算出最大FPS，如果过大则设置为计算出来的最大FPS
 

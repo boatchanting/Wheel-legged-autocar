@@ -20,23 +20,19 @@
 // --- 【换车或者修车需要更换】里程计校准系数 ---
 // 通过实验确定此值: 系数 = 实际行驶距离 / 程序计算距离
 // 初始值设为 1.0f, 如果程序计算的距离偏小, 则该值 > 1.0; 如果偏大, 则该值 < 1.0
-#if CAR_SELECT == 0 // 0代表学习板小车 板子 学习板 v1.2
-#define NAV_DISTANCE_SCALE_FACTOR   3.4596f // <--- 在这里填入你计算出的校准值，未调用【优化点】
-#define WHEEL_BASE_MM       159.7f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       3.4596f//大致为车轮半径
-#endif
-#if CAR_SELECT == 2 // 2代表我们新车 板子 2026 /01/16 锦鲤跃龙门
-
-#define NAV_DISTANCE_SCALE_FACTOR   3.566666f // <--- 在这里填入你计算出的校准值，未调用【优化点】
-#define WHEEL_BASE_MM       185.0f  // 小车轮距 (单位: mm)
-#define SPEED_TO_MM_S       4.866666f*1.065//大致为车轮半径
-#endif
 
 #if CAR_SELECT ==  3 // 3代表 【2026/3/30新车】 对应板子 【2026/03/24 最后的舵机v腿】
 
 #define NAV_DISTANCE_SCALE_FACTOR   1.0f // <--- 在这里填入你计算出的校准值，未调用【优化点】
 #define WHEEL_BASE_MM       175.0f  // 小车轮距 (单位: mm)
 #define SPEED_TO_MM_S       4.79f//大致为车轮半径
+#endif
+
+#if CAR_SELECT == 4 // 4代表 【小车4】 初版参数与小车3相同，待实车标定
+
+#define NAV_DISTANCE_SCALE_FACTOR   1.0f // 小车4初版与小车3相同
+#define WHEEL_BASE_MM       175.0f  // 小车4轮距 (单位: mm)
+#define SPEED_TO_MM_S       4.79f//小车4初版与小车3相同
 #endif
 
 // --- 坐标系数据结构 ---
@@ -64,6 +60,9 @@ typedef struct {
 
 // --- 全局变量声明 ---
 extern InertialNav_t inertial_nav; 
+
+extern volatile float nav_vision_fusion_x;   // 视觉和惯导提供的世界坐标系 X 位置 (mm)
+extern volatile float nav_vision_fusion_y;   // 视觉和惯导提供的世界坐标系 Y 位置 (mm)
 
 // --- 函数声明 ---
 void InertialNav_Init(void);//初始化惯性导航系统
