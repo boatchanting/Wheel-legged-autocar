@@ -68,6 +68,8 @@ BRIDGE_APPROACH_DISTANCE_MM = 2500.0
 BRIDGE_APPROACH_TARGET_SPEED_MAX = 300.0
 BUMP_APPROACH_DISTANCE_MM = 2500.0
 BUMP_APPROACH_TARGET_SPEED_MAX = 400.0
+SLOPE_APPROACH_DISTANCE_MM = 2500.0
+SLOPE_APPROACH_TARGET_SPEED_MAX = 500.0
 
 # 与 csv_to_nav_table.py 保持一致：每个值都从记录的出口点朝对应入口点测量，
 # 使视觉状态机出口锚定在车辆实际离开任务的位置。
@@ -600,6 +602,22 @@ def limit_bumpy_approach_output_speed(
     return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
 
 
+def limit_slope_approach_output_speed(
+    samples: list[PathSample],
+    s: np.ndarray,
+    target_speed: np.ndarray,
+    approach_distance_mm: float,
+    target_speed_max: float,
+) -> np.ndarray:
+    """Limit the slope approach to the PVC alignment speed."""
+    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
+    slope_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 2]
+    for current_entry_s in slope_entry_s:
+        approach_range = (s >= current_entry_s - approach_distance_mm) & (s <= current_entry_s)
+        speed_limit[approach_range] = np.minimum(speed_limit[approach_range], target_speed_max * SPEED_TO_MM_S)
+    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+
+
 
 def generate_path(markers: list[Marker], sample_step_mm: float) -> list[PathSample]:
     pairs = find_event_pairs(markers)
@@ -820,6 +838,13 @@ def main() -> int:
         output_target_speed,
         BUMP_APPROACH_DISTANCE_MM,
         BUMP_APPROACH_TARGET_SPEED_MAX,
+    )
+    output_target_speed = limit_slope_approach_output_speed(
+        samples,
+        s,
+        output_target_speed,
+        SLOPE_APPROACH_DISTANCE_MM,
+        SLOPE_APPROACH_TARGET_SPEED_MAX,
     )
     output_target_speed = apply_response_delay_compensation(
         output_target_speed,
