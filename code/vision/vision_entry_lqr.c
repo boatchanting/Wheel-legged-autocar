@@ -88,8 +88,8 @@ uint8 VisionEntryLqr_UpdateVision(int16 phy_x_mm, int16 phy_y_mm, float yaw_deg,
     psi_err_deg = vision_entry_lqr_normalize_angle(s_lqr.entry_yaw_deg - yaw_deg);
     psi_err_rad = psi_err_deg * deg2rad;
 
-    /* 横向偏差重建（与仿真 e = D·sin(β+ψ) 同式） */
-    e_m = dist_m * sinf(beta_rad + yaw_rad);
+    /* 横向偏差重建（投影至斜坡基准坐标系：beta_rad + (yaw_rad - entry_yaw_rad) = beta_rad - psi_err_rad） */
+    e_m = dist_m * sinf(beta_rad - psi_err_rad);
 
     /* CARE 闭式增益：k1=√Qy，k2=√(2·max(v,0.3)·k1+Qψ) */
     k1 = sqrtf(LQR_QY);
