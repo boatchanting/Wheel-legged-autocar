@@ -9,6 +9,7 @@
  */
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_ipc_core0.h"
+#include "vision/vision_entry_lqr.h"
 #include "../../code1/vision/ipm_transform.h"
 #include "plan/bridge.h"
 #include "tools/sbus.h"
@@ -58,9 +59,8 @@ typedef struct
     float start_y_mm;                 /* 上桥那一刻的 Y 坐标（惯导） */
     float exit_start_x_mm;            /* 开始下桥那一刻的 X 坐标 */
     float exit_start_y_mm;            /* 开始下桥那一刻的 Y 坐标 */
-    float locked_yaw_deg;             /* 锁角盲跑的目标航向（视觉失效时改回 entry_yaw_deg） */
-    float entry_yaw_deg;              /* 进入任务那一刻的 yaw (视觉失效/锁角盲跑时改回此角, 2026-08-15) */
-    uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定航向 */
+    float locked_yaw_deg;             /* 锁角目标航向 (导航修正用, 与 entry_yaw_deg 同步) */
+    float entry_yaw_deg;              /* 进入任务那一刻锁存的 yaw: 视觉失效/锁角盲跑/脱出锁向共用目标 (2026-08-16) */
     uint8 err_source;                 /* 当前 err 来源: 0=视觉 1=锁角 (C10 换源 ramp) */
     float last_err_ramp;              /* ramp 输出的上一帧 err (C10) */
     float exit_line_y;                /* 退出线在 x=47 处的图像行 (调试, 无效为 -1) */
@@ -79,25 +79,48 @@ typedef struct
 /* 这个就是真正的“记事本”本尊，只有这个文件能用 */
 static vision_bridge_task_ctx_t s_bridge_task;
 
-/* 方向控制可调参数面板默认值 (参照 trials/track.html 与 trials/index.html) */
+/* ============================================================================
+ * 方向控制可调参数面板（默认值）—— 现场调参主要改这里
+ * ----------------------------------------------------------------------------
+ * 字段类型定义与单位说明见 vision_bridge_control.h 的 4.5 节; 此处为就地调参注释。
+ * 落地换算: err_degree = ω_radps × (180/π) / TURN_ANG_KP,  TURN_ANG_KP = -8 (pid-new.h)
+ *
+ * 快速调参口诀:
+ *   - 车往线外甩 / 画龙        → 减 lat_kp 或 lat_kd
+ *   - 修正不够、压线偏慢        → 加 lat_kp
+ *   - 过桥后左右来回摆         → 加 edot_alpha(更平滑) 或减 lat_kd
+ *   - 打角太猛 / 太肉          → 改 out_max_deg / ramp_step_deg_per_2ms
+ * ========================================================================== */
 const vision_bridge_tune_t g_vision_bridge_tune_defaults =
 {
-    .lat_kp               = 6.0f,
-    .lat_ki               = 0.0f,
-    .lat_kd               = 6.0f,
-    .lat_int_max          = 3.0f,
-    .lat_adaptive_enable  = 1U,
-    .edot_alpha           = 0.25f,
-    .edot_clamp_mps       = 3.0f,
-    .edot_fps             = 30.0f,
-    .lookahead_m          = 1.0f,
-    .yaw_hold_kp          = 1.8f,
-    .yaw_hold_src_sel     = VISION_BRIDGE_YAWHOLD_SRC_ENTRY,
-    .out_max_deg          = 22.9f,
-    .ramp_step_deg_per_2ms = 0.5f,
-    .lat_sign             = 1.0f,
-    .edot_sign            = 1.0f,
-    .yaw_hold_sign        = 1.0f,
+    /* ---- stage1 (v8 循迹) 横向乘性 PID: e[m] → ω[rad/s] ---- */
+    .lat_kp               = 6.0f,   /* 横向比例增益 [1/m²]: 调大→纠偏更猛, 调小→更柔和; 乘性下随车速缩放 */
+    .lat_ki               = 0.0f,   /* 横向积分增益 [1/(m²·s)]: 默认 0 关闭; 需消除稳态横向偏差才打开 */
+    .lat_kd               = 6.0f,   /* 横向微分增益 [1/m]: 抑制超调/摆动; 调大→阻尼强但可能迟滞 */
+    .lat_int_max          = 3.0f,   /* 积分项限幅 [m·s]: 防积分饱和; 仅 lat_ki≠0 时生效 */
+
+    .lat_adaptive_enable  = 1U,     /* 自适应开关: 1=乘性 ω=Kp·e·v(随车速), 0=固定增益(与车速无关) */
+
+    /* ---- ė 微分滤波 (复刻 track.html) ---- */
+    .edot_alpha           = 0.25f,  /* ė 低通系数(0~1): 越大跟踪越快但噪声大, 越小越平滑但滞后 */
+    .edot_clamp_mps       = 3.0f,   /* ė 限幅 [m/s]: 防微分冲击; 按最大横向速度约一半取值 */
+    .edot_fps             = 30.0f,  /* 视觉帧率 [Hz]: 微分帧差节拍, 应与 1 核实际输出帧率对齐 */
+
+    /* ---- 前视 ---- */
+    .lookahead_m          = 1.0f,   /* 前视距离 [m]: 文档/参考用; 实际 e 由 IPM x 差直接求得 */
+
+    /* ---- 锁角 (IMU 航向保持, stage0/丢线/脱出共用) ---- */
+    .yaw_hold_kp          = 1.8f,   /* 锁角增益 [rad/s per rad]: 盲跑/丢线时修正航向的力度 */
+    .yaw_hold_src_sel     = VISION_BRIDGE_YAWHOLD_SRC_ENTRY, /* 锁角目标源: ENTRY=进入任务时刻 yaw; ROUTE=路表当前点(暂未接入, 回退 entry) */
+
+    /* ---- 输出与限幅 (err_degree 落地域) ---- */
+    .out_max_deg          = 22.9f,  /* 输出限幅 [deg]: 最大打角指令; 调大→允许更大转向, 调小→限制转向 */
+    .ramp_step_deg_per_2ms = 0.5f,  /* 输出变化率 [deg/2ms]: 换源/打角限速; 调大→响应快但可能抖 */
+
+    /* ---- 符号通道 (实车方向反了只改这里, 勿动控制逻辑) ---- */
+    .lat_sign             = 1.0f,   /* 横向通道符号: +1 正向; 实测反向则改 -1 */
+    .edot_sign            = 1.0f,   /* 微分通道符号 */
+    .yaw_hold_sign        = 1.0f,   /* 锁角通道符号 */
 };
 
 /* --- 基础数学工具函数 --- */
@@ -369,11 +392,11 @@ static float vision_bridge_yaw_hold_target_deg(void)
     if (g_vision_bridge_tune_defaults.yaw_hold_src_sel == VISION_BRIDGE_YAWHOLD_SRC_ROUTE)
     {
         /* TODO(落地确认): 接入路表当前点 nav_ram_data.points[?].target_yaw_deg。
-         * 桥任务期间 nav_replay 暂停, 无统一 current index 接口, 暂回退 locked_yaw_deg。 */
-        return s_bridge_task.locked_yaw_deg;
+         * 桥任务期间 nav_replay 暂停, 无统一 current index 接口, 暂回退 entry_yaw_deg。 */
+        return s_bridge_task.entry_yaw_deg;
     }
-    /* ENTRY 模式: 状态机维护的锁角目标 (= 进入任务时刻 yaw) */
-    return s_bridge_task.locked_yaw_deg;
+    /* ENTRY 模式: 进入任务时刻锁存的 yaw (视觉失效/锁角盲跑/脱出锁向共用) */
+    return s_bridge_task.entry_yaw_deg;
 }
 
 /**
@@ -579,10 +602,9 @@ static void vision_bridge_set_state(vision_bridge_task_state_e next_state)
 
     if (next_state == VISION_BRIDGE_TASK_RUN)
     {
-        /* RUN 距离从真正上桥的时刻开始计；到 1.2m 时再锁定当时的实际航向。 */
+        /* RUN 距离从真正上桥的时刻开始计；锁向目标固定为 entry_yaw_deg, 无需再锁存。 */
         s_bridge_task.start_x_mm = inertial_nav.x;
         s_bridge_task.start_y_mm = inertial_nav.y;
-        s_bridge_task.run_yaw_locked = 0U;
     }
 
 }
@@ -622,6 +644,12 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.filtered_heading_deg = s_bridge_task.filtered_heading_deg;
     status.filtered_lateral_m = s_bridge_task.filtered_lateral_m;
     status.edot_mps = s_bridge_task.edot_mps;
+    {
+        const vision_entry_lqr_state_t *lqr = VisionEntryLqr_GetState();
+        status.lqr_e_m = lqr->e_m;
+        status.lqr_psi_err_deg = lqr->psi_err_rad * 57.29578f;
+        status.lqr_dist_m = lqr->dist_m;
+    }
     g_bridge_vision_task_status = status;
 }
 
@@ -740,6 +768,7 @@ static void vision_bridge_enter_task(void)
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
     
+    VisionEntryLqr_Reset(s_bridge_task.entry_yaw_deg);
     VisionIpc_Core0_SetBridgeEnable(1U);
 }
 
@@ -805,9 +834,19 @@ void VisionBridgeTask_Update_2ms(void)
     {
         case VISION_BRIDGE_TASK_ALIGN:
             speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
-            /* stage0 = PVC + IMU: 方向只来自 IMU 锁角 (PVC 只做入口检测, 不提供转向) */
-            err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-            s_bridge_task.err_source = 1U;
+            /* stage0 进入段: 视觉段 LQR（D≤1.5m），盲区段 IMU 锁角保向 */
+            if (VisionEntryLqr_UpdateVision(packet->pvc_phy_x_mm, packet->pvc_phy_y_mm,
+                                            inertial_nav.relative_yaw,
+                                            vision_bridge_abs_f(inertial_nav.vx_body) / 1000.0f))
+            {
+                err_cmd = VisionEntryLqr_GetErrDegree();
+                s_bridge_task.err_source = 0U;   /* 视觉 LQR */
+            }
+            else
+            {
+                err_cmd = vision_bridge_calc_yaw_hold_err_degree();  /* 盲区锁角（现状） */
+                s_bridge_task.err_source = 1U;
+            }
             if (vision_bridge_abs_f(vision_bridge_calc_yaw_hold_err()) <= VISION_BRIDGE_TASK_ALIGN_YAW_TOL_DEG)
             {
                 s_bridge_task.align_ok_ticks++;
@@ -888,20 +927,10 @@ void VisionBridgeTask_Update_2ms(void)
                 }
             }
 
-            if (vision_bridge_packet_in_exit_stage(packet))
+            if (vision_bridge_packet_in_exit_stage(packet) ||
+                (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM))
             {
-                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向; 目标改回进入时刻 yaw (2026-08-15) */
-                if (s_bridge_task.run_yaw_locked == 0U)
-                {
-                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
-                    s_bridge_task.run_yaw_locked = 1U;
-                }
-                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-                s_bridge_task.err_source = 1U;
-            }
-            else if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
-            {
-                /* 前 1.2m：有可靠中心线用横向乘性 PID, 否则锁角 */
+                /* 前 1.2m 或视觉侧已切到"准备脱出"(寻找脱出线): 有可靠中线走横向乘性 PID, 否则锁角 (2026-08-16) */
                 if (s_bridge_task.center_filter_valid)
                 {
                     err_cmd = vision_bridge_calc_visual_err_degree();
@@ -915,12 +944,7 @@ void VisionBridgeTask_Update_2ms(void)
             }
             else
             {
-                /* 超过 1.2m：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 (2026-08-15)。 */
-                if (s_bridge_task.run_yaw_locked == 0U)
-                {
-                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
-                    s_bridge_task.run_yaw_locked = 1U;
-                }
+                /* 超过 1.2m 且未进入脱出阶段：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 */
                 err_cmd = vision_bridge_calc_yaw_hold_err_degree();
                 s_bridge_task.err_source = 1U;
                 speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;

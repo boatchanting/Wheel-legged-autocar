@@ -165,6 +165,9 @@ typedef struct
     float filtered_lateral_m;            /* 前视横向误差 e (m, 控制用) */
     float edot_mps;                      /* 横向误差导数 ė (m/s, 低通+限幅) */
     uint16 bridge_hold_ticks;            /* 看见黑块后的保持倒计时 */
+    float lqr_e_m;                       /* LQR 横向偏差重建 e (m, 诊断) */
+    float lqr_psi_err_deg;               /* LQR 航向偏差 ψ_err (deg, 诊断) */
+    float lqr_dist_m;                    /* LQR 桥唇距离 D (m, 诊断) */
 } vision_bridge_task_status_t;
 
 /* --- 7. 外部变量与函数接口 --- */

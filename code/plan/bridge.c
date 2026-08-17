@@ -263,7 +263,7 @@ void Bridge_Init(void) {
 
     // 姿态参数
     bridge_params.height_normal = 3.0f;   // 平地正常高度
-    bridge_params.height_bridge = 6.0f;  // 桥上高度 (留一点余量给一边缩短)
+    bridge_params.height_bridge = 7.3f;  // 桥上高度 (留一点余量给一边缩短)
     
     // 高度步长：假设 20ms 调用一次此函数
     // 升高13cm需要：13 / 0.5 = 26次 = 0.52秒，时间足够
