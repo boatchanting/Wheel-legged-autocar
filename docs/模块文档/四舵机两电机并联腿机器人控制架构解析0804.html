@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>四舵机两电机并联腿机器人控制架构解析（0804）</title>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--ink:#1f2937;--muted:#5b6472;--line:#d9e0ea;--blue:#1d4ed8;--cyan:#0e7490;--amber:#b45309;--red:#b91c1c;--green:#047857}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.7 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}main{max-width:1180px;margin:0 auto;padding:28px 22px 56px}h1{font-size:30px;line-height:1.25;margin:0 0 8px}h2{font-size:22px;margin:34px 0 12px;border-left:4px solid var(--blue);padding-left:10px}h3{font-size:17px;margin:22px 0 8px;color:#243b64}p{margin:8px 0}small,.muted{color:var(--muted)}.lead{font-size:17px;color:#334155}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:14px 0;box-shadow:0 2px 8px #0f172a0b}table{width:100%;border-collapse:collapse;margin:10px 0 16px;background:var(--card)}th,td{border:1px solid var(--line);padding:8px 10px;vertical-align:top;text-align:left}th{background:#eef3fb;color:#173b75}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:#eef2f7;border-radius:4px;padding:1px 4px;font-size:.92em}.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600;margin-right:5px}.p0{background:#fee2e2;color:var(--red)}.p1{background:#fef3c7;color:var(--amber)}.p2{background:#d1fae5;color:var(--green)}.flow{overflow:auto;border:1px solid var(--line);background:#fbfdff;border-radius:8px;padding:10px}.flow svg{display:block;margin:auto;min-width:920px;max-width:100%}.formula{font-family:ui-monospace,Consolas,monospace;background:#0f172a;color:#e2e8f0;border-radius:8px;padding:12px 15px;white-space:pre-wrap}.warn{border-left:4px solid var(--red);background:#fff1f2;padding:10px 14px}.ok{border-left:4px solid var(--green);background:#ecfdf5;padding:10px 14px}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}.footer{margin-top:36px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body><main>
+<h1>四舵机两电机并联腿机器人控制架构解析（0804）</h1>
+<p class="lead">对象：CYT4BB，四个并联腿舵机（LF/RF/RR/LR）+ 左右两个轮毂电机的两轮自平衡机器人。本文以 <code>pid-new.c/.h</code>、<code>servo.c/.h</code>、<code>servo_executor.c/.h</code>、<code>main_cm7_0.c</code> 为主，另外沿调用链核对了 1 ms PIT ISR 与初始化代码，以还原实际时序。</p>
+
+<div class="card"><b>一句话结论：</b>系统是“实时中断闭环、主循环任务编排、场景 profile 参数调度、舵机目标向量合成”的分层架构。两电机负责纵向平衡/行驶/偏航，四舵机负责车身高度、俯仰前馈、转向侧倾及特殊动作；最终每个执行器都经过限幅、斜率限制和安全仲裁。</div>
+
+<h2>1. 总体控制链路</h2>
+<div class="flow"><svg viewBox="0 0 1080 300" role="img" aria-label="控制架构数据流">
+<defs><marker id="a" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8z" fill="#1d4ed8"/></marker></defs>
+<g font-family="Microsoft YaHei, sans-serif" font-size="15" text-anchor="middle"><rect x="20" y="35" width="150" height="56" rx="9" fill="#dbeafe" stroke="#2563eb"/><text x="95" y="69">视觉 / 导航 / 遥控</text><rect x="215" y="35" width="150" height="56" rx="9" fill="#e0f2fe" stroke="#0891b2"/><text x="290" y="61">目标速度、航向</text><text x="290" y="81">场景状态机</text><rect x="410" y="35" width="190" height="56" rx="9" fill="#ede9fe" stroke="#7c3aed"/><text x="505" y="61">Control Profile</text><text x="505" y="81">NORMAL/ACCEL/BRAKE</text><rect x="645" y="20" width="195" height="86" rx="9" fill="#dcfce7" stroke="#059669"/><text x="742" y="48">1 ms PIT ISR</text><text x="742" y="70">EKF + 多速率控制环</text><text x="742" y="92">安全与仲裁</text><rect x="885" y="35" width="175" height="56" rx="9" fill="#fef3c7" stroke="#d97706"/><text x="972" y="61">两电机 PWM</text><text x="972" y="81">左/右差动输出</text>
+<rect x="410" y="175" width="190" height="60" rx="9" fill="#fce7f3" stroke="#db2777"/><text x="505" y="201">舵机目标向量</text><text x="505" y="222">高度+速度+转向+侧倾</text><rect x="645" y="175" width="195" height="60" rx="9" fill="#f3e8ff" stroke="#9333ea"/><text x="742" y="201">servo_executor</text><text x="742" y="222">斜率限制 / 独立限幅</text><rect x="885" y="175" width="175" height="60" rx="9" fill="#ffedd5" stroke="#ea580c"/><text x="972" y="201">四路 300 Hz PWM</text><text x="972" y="222">LF RF RR LR</text>
+<path d="M170 63h42M365 63h42M600 63h42M840 63h42M600 205h42M840 205h42" stroke="#1d4ed8" stroke-width="2" marker-end="url(#a)"/><path d="M742 107v66M505 91v83" stroke="#1d4ed8" stroke-width="2" marker-end="url(#a)"/>
+</g></svg></div>
+<p>闭环的主反馈来自编码器速度、EKF 俯仰/横滚/偏航和 IMU 陀螺仪。主循环只消费 ISR 置位的标志，执行 WiFi/示波器/屏幕、视觉触发、导航录制与复现启动等非实时工作。</p>
+
+<h2>2. 实际任务时序</h2>
+<table><tr><th>周期</th><th>代码位置/任务</th><th>作用</th><th>注意</th></tr>
+<tr><td>1 ms</td><td><code>pit0_ch0_isr</code></td><td>清 PIT 标志、EKF_UpData、陀螺内环、转向角速度环、Profile 平滑、舵机执行器、PWM 输出</td><td>硬实时；ISR 负载必须低于 1 ms</td></tr>
+<tr><td>2 ms</td><td>视觉 IPC/PVC/颠簸/桥/坡/三级跳更新</td><td>读取 Core1 视觉结果并刷新任务状态机</td><td>由 1 ms 计数偶数次触发</td></tr>
+<tr><td>3 ms</td><td>转向角度环、俯仰角度环</td><td>外环给角速度目标</td><td>调用点为 <code>loop_counter%3</code></td></tr>
+<tr><td>5 ms</td><td>Rolling 侧倾环；IMU963RA 航向磁更新</td><td>单边桥被动 Rolling，普通转向主动侧倾反馈</td><td>普通转向时被动反馈被压到 10%，上限 80 PWM</td></tr>
+<tr><td>9 ms</td><td>舵机速度环、刹车/加速前馈、倒地检测</td><td>由目标速度生成四腿俯仰调整；前馈建立/释放</td><td>速度实际值为 <code>0.5*(right-left)</code></td></tr>
+<tr><td>10 ms</td><td>惯导更新、导航复现</td><td>位置/航向积分与路径点控制</td><td>跳跃时冻结惯导速度状态</td></tr>
+<tr><td>20 ms</td><td>单边桥惯导测试</td><td>特殊任务动作</td><td>会接管 Rolling</td></tr>
+<tr><td>50 ms / 100 ms</td><td>ISR 置 <code>pit_state</code>；主循环消费</td><td>WiFi/遥测约 50 ms；屏幕再分频到 100 ms</td><td>注释中“10 ms wifi”与实际 50 ms 置位不一致</td></tr></table>
+
+<h2>3. 两电机平衡与行驶控制</h2>
+<h3>3.1 三层纵向串级环</h3>
+<div class="formula">速度环（舵机，9 ms）
+e_v = target_speed - LPF(actual_speed)
+u_servo = PID_v(e_v)，写入 g_target_pwm_speed_adj
+
+角度环（3 ms）
+target_pitch = ANG_MECH_ZERO - speed_loop_out（当前 ISR 传入 speed_loop_out=0）
+u_angle = -PID_pitch(target_pitch - pitch)
+
+角速度环（1 ms）
+e_g = angle_loop_out - gyro_pitch
+u_balance = PID_gyro(e_g) + sign(e_g)·GYR_DEAD_ZONE
+</div>
+<p>当前 CAR_SELECT=3 的基础参数为：舵机速度 <code>Kp=-4.5, Ki=0, Kd=-0.17, max=2000</code>；俯仰角 <code>-12,0,-13.3333,max=8000,机械零点=-3°</code>；俯仰角速度 <code>-16,0,0,max=9000</code>。这是一套以 PD 为主、积分关闭的自平衡控制器。</p>
+<p>速度测量先做三点加权滤波 <code>0.6·v(k)+0.3·v(k-1)+0.1·v(k-2)</code>。速度环存在自适应 Kp：误差越大倍率从约 0.4 平滑接近 1.0；ACCEL profile 还可通过 <code>ACCEL_FF_MODE_KP</code> 临时把 Kp 乘到最高 1.6。</p>
+
+<h3>3.2 电机矢量融合</h3>
+<div class="formula">drive_ff = brake_ff + accel_ff_effective
+pwm_left  =  gyro_loop_out + drive_ff + turn_gyro_loop_out
+pwm_right = -gyro_loop_out - drive_ff + turn_gyro_loop_out
+两路统一限幅到 ±OUR_PWM_MAX_LIMIT；电机禁用或倒地时强制置零。</div>
+<p>因此平衡项是左右反向差动，驱动前馈也是左右反向差动，转向项是左右同向叠加。转向角速度环输入来自偏航角度外环，或雷区旋转控制器的覆盖指令。</p>
+
+<h2>4. 四舵机并联腿目标合成</h2>
+<table><tr><th>层</th><th>变量/来源</th><th>LF、RF、RR、LR 的物理含义</th></tr>
+<tr><td>高度基准</td><td><code>servo_height → high_control_table → g_target_pwm_high</code></td><td>四腿同一高度分量；五连杆高度范围 P_min=2.70 cm、P_max=14.50 cm，步长 0.03 cm</td></tr>
+<tr><td>速度/俯仰</td><td><code>g_target_pwm_speed_adj</code></td><td>前腿同号、后腿反号：加速前倾=前腿伸展+后腿收缩</td></tr>
+<tr><td>转向/姿态</td><td><code>g_target_pwm_angle_adj</code></td><td>LF/RF 减、RR/LR 加，形成前后姿态差动</td></tr>
+<tr><td>主动侧倾</td><td><code>g_target_pwm_turn_roll_* </code></td><td>左右两侧分别由高度差查表产生，可实现内侧收腿/外侧伸腿</td></tr>
+<tr><td>被动 Rolling</td><td><code>g_target_pwm_roll_adj</code></td><td>正值只缩左侧，负值只缩右侧；单边桥采用“一边不动、一边缩短”</td></tr></table>
+<p>执行器最终计算为 <code>target_final_duty = duty_90 + DIR·height + DIR·speed ± angle + DIR·turn_roll ± roll</code>。其中 PWM1~4 按 LF/RF/RR/LR 定义，CAR_SELECT=3 中位分别为 4550/4700/4700/4800，方向为 +1/-1/+1/-1，舵机频率 300 Hz。</p>
+
+<h2>5. 舵机执行器与查表</h2>
+<p><code>high_control_table</code> 将高度映射到 394 点 <code>pwm_high_table</code>；<code>servo_control_table</code> 通过高度×腿角二维表输出角度差。当前运行路径主要使用高度一维表，普通转向主动侧倾先按 <code>a_lat=v·ω</code> 计算目标滚转角，再用 <code>Δh=half_track·tan(roll)</code> 和高度表转为四路差动 PWM。</p>
+<p><code>servo_executor_update</code> 每 1 ms 更新：读取当前高度、合成四路目标、按运行场景动态计算加/减速斜率、对每路做 <code>last + constrain(target-last,-dec,+acc)</code>，最后按 LF/RF/RR/LR 独立限幅并写入 PWM。NORMAL/ACCEL/BRAKE 的基准执行器参数分别约为 (10,10)、(22,16)、(14,28) duty/ms；误差/速度越大还会增加斜率，最大增量 60/95/80。</p>
+
+<h2>6. 刹车、加速与场景 Profile</h2>
+<h3>6.1 刹车前馈</h3>
+<p><code>Brake_Feedforward_Update</code> 根据目标降速、实际超速、速度区间和持续 tick 数分级：轻/中/重刹；目标过零、目标归零、CH5 急停和导航强停可直接提高等级。输出约为 <code>-gain·actual_speed</code>，再做最大值和斜率限制，并有零速迟滞、超速计数、导航强停寿命 tick、复位锁。</p>
+<p>默认档前馈约为 gain=4/10/22、max=800/1600/3500；导航强停可渐变到 gain=80、max=8200。刹车 PWM 超过 2500 时，速度环强制给反后坐支撑 180 duty 并清积分；超过 2500 的侧倾输出被清零。</p>
+<h3>6.2 加速前馈</h3>
+<p>只在复现运行、目标速度明显抬升且没有特殊任务/强刹时生成。以速度缺口乘 gain（默认 10）得到 PWM，峰值 3000，9 ms 周期斜率上升 800、下降 650；可选 PWM 直接叠加或 Kp 增强。最终仲裁规则是“刹车主导、轻刹保留 35% 加速前馈、无刹车全量加速前馈”。</p>
+<h3>6.3 Profile 调度</h3>
+<p>上层只调用 <code>Control_Profile_RequestMode</code> 请求 NORMAL/ACCEL/BRAKE；1 ms 更新器用 alpha=0.12（PID）、0.10（前馈）、0.18（限幅）追踪目标，避免切档冲击。<code>ApplyNow</code> 用于上电/复位。Profile 同时覆盖六个 PID、刹车/加速前馈和舵机执行器斜率。</p>
+
+<h2>7. 安全状态与任务接管</h2>
+<ul><li><b>初始化门控：</b>偏航未初始化时不输出转向环，舵机执行器也不运行。</li><li><b>倒地保护：</b>启动 2 s 后，俯仰相对机械零点超过 ±70° 判定倒地；清电机 PWM、PID 运行态、前馈和导航复现，进入 <code>g_fallen</code>。</li><li><b>跳跃保护：</b>跳跃时冻结惯导速度，电机按跳跃阶段执行专用逻辑，舵机切换到 <code>servo_jump_executor</code>。</li><li><b>特殊任务互斥：</b>雷区、颠簸、PVC、桥、坡、三级跳、推车等任务会屏蔽加速前馈或清主动侧倾，防止多个模块抢写同一执行量。</li><li><b>刹车安全：</b>电机禁用、倒地、跳跃时释放刹车前馈；前馈和加速前馈最终统一仲裁再限幅。</li></ul>
+
+<h2>8. 当前实现的关键问题（按风险排序）</h2>
+<div class="warn"><b>P0：舵机角度接口符号/顺序不一致。</b><code>update_servo_angle</code> 使用 DIR，<code>servo_write_angle</code> 与 <code>servo_write_duty</code> 的角度回算未使用 DIR；<code>servo_get_current_angles</code> 又把 RF/RR/LF/LR 重排，而其他接口按 LF/RF/RR/LR。必须统一“逻辑角度、duty、物理角度”的坐标合同，否则标定、日志和任务判断可能相反。</div>
+<div class="warn"><b>P0：执行器状态可能越过限幅。</b><code>current_duty_* / PWM_CH*_LAST</code> 先保存未限幅值，只有 <code>pwm_set_duty</code> 使用限幅值；目标回到合法区时会出现额外追赶，角度缓存也可能与实际 PWM 不同。应把限幅后的 duty 写回状态。</div>
+<div class="warn"><b>P1：二维查表失败会沿用旧值。</b><code>servo_control_table</code> 对 raw=10000 使用旧的 <code>pwm_angle</code>，而不是明确故障值；且它依赖调用前已更新的 <code>pwm_high</code>。应返回有效标志、先显式刷新高度，并对非法输入采用安全中位/保持策略。</div>
+<div class="warn"><b>P1：Profile 的 applied 语义不严格。</b><code>Control_Profile_Update1ms</code> 每个 tick 都把 <code>g_control_mode_applied=requested</code>，但参数仍在渐变。建议拆成 requested、transitioning、settled 三态，只有误差小于阈值才报告 settled。</div>
+<div class="warn"><b>P1：PID 微分/积分与真实 dt 脱钩。</b>误差差分未除以 dt，积分也未乘 dt；当前 Ki 多为 0，仍建议统一改为 dt-aware，并给 D 项加测量微分/低通以降低跳变噪声。</div>
+<div class="warn"><b>P1：共享浮点量缺少一致性快照。</b>主循环、ISR、Core1 视觉可能同时读写目标速度、侧倾分量和任务标志；32 位浮点在多核/中断交错下可能读到半更新值。建议采用序号锁、双缓冲或短临界区。</div>
+<div class="warn"><b>P2：实时负载缺少硬预算。</b>1 ms ISR 同时执行 EKF、多个状态机、浮点三角函数、查表和 PWM；已有 profiler，但应把“最大执行时间 < 700 µs、抖动 < 50 µs”纳入验收。</div>
+
+<h2>9. 小车详细控制优化方案</h2>
+<h3><span class="tag p0">P0</span> 先修坐标、状态和限幅，再调参</h3>
+<table><tr><th>改造项</th><th>实施要点</th><th>验收</th></tr>
+<tr><td>统一舵机坐标合同</td><td>定义唯一枚举 LF/RF/RR/LR；所有写角、写 duty、缓存、遥测均按同序；角度回算统一乘 DIR，并增加单元测试“正高度=伸腿、正侧倾=右侧抬高”。</td><td>四路静态误差≤1.5°；正负动作方向 100% 一致</td></tr>
+<tr><td>限幅闭环化</td><td>计算候选 duty→独立限幅→把限幅结果写回 <code>PWM_CH*_LAST/current_duty_*</code>→再输出；增加限位到达标志。</td><td>触边后无积分/斜率追赶；限位不抖动</td></tr>
+<tr><td>查表 API 改造</td><td>返回 <code>{value,valid}</code>；非法高度/角度安全保持上一有效值或回中；调用前显式刷新 <code>pwm_high</code>。</td><td>越界输入不产生旧值串入；故障可观测</td></tr>
+<tr><td>Profile 状态机</td><td>requested→ramping→settled；切换时保存旧输出，必要时重置 D 历史而不清零目标，做到 bumpless transfer。</td><td>切换无 PWM 突跳；settled 延迟可测</td></tr></table>
+
+<h3><span class="tag p1">P1</span> 提高平衡、转向和腿部协调性</h3>
+<ol><li><b>时间归一化 PID：</b>给每个环传入固定 dt（1/3/5/9 ms），积分使用 <code>I+=e·dt</code>，D 使用 <code>(e-e_prev)/dt</code>；D 改为对测量值微分，前置一阶低通（建议 30~50 Hz 俯仰、15~25 Hz 偏航）。</li><li><b>抗饱和：</b>当角速度环或电机融合达到限幅且误差继续同向时冻结/回算积分；刹车保护清积分时同步清速度滤波历史，避免释放后反冲。</li><li><b>速度环与舵机姿态解耦：</b>保留当前“速度环只调腿”的策略，但将 <code>speed_loop_out</code> 明确置零并改名为 <code>pitch_target_offset</code>，或者实现真正的慢速俯仰外环，避免维护者误以为速度环输出丢失。</li><li><b>电机差速标定：</b>对左右电机建立 PWM→加速度/稳态速度地图，按电池电压、载荷做增益调度；增加左右速度差 <code>v_diff</code> 小环补偿直行偏航。</li><li><b>主动侧倾前馈：</b>继续使用 <code>a_lat=v·ω</code>，但对 v、ω 先限幅和低通；将目标滚转角按速度区间调度（低速 0、高速逐步放大），并在电机饱和、刹车、低电量时降权。</li><li><b>四腿同步：</b>增加左右平均高度和前后平均高度监控；执行器每 1 ms 使用同一输入快照，目标更新采用 2-phase commit，避免某一路先更新造成瞬时扭矩。</li></ol>
+
+<h3><span class="tag p1">P1</span> 前馈与场景策略</h3>
+<ul><li>建立实测 <code>F(v,Δv,V_bat)</code> 加速前馈表，替代单一 <code>gain·缺口</code>；起步、出弯、坡道分别使用不同曲线。</li><li>刹车采用目标减速度规划（梯形/S 曲线）产生刹车请求，前馈只补偿动力学，不直接由速度跳变决定重刹；导航强停仍保留，但加入最小持续时间与释放速度的状态图。</li><li>把 <code>g_brake_active/g_reverse_brake_active/g_special_action_trigger</code> 收敛成单一仲裁器，输出“驱动、刹车、特殊动作”的优先级和原因码，避免多个 if 条件散落。</li><li>普通转向主动侧倾与单边桥 Rolling 明确互斥；任务接管时冻结普通侧倾目标并平滑归零，结束时再斜率恢复。</li></ul>
+
+<h3><span class="tag p2">P2</span> 可观测性、验证和工程化</h3>
+<ul><li>每 10/50 ms 记录环路输入、P/I/D、限幅标志、profile、前馈、四路目标/实际 duty、ISR 最大/平均耗时。</li><li>增加离线回放：用编码器+IMU日志复现控制计算，先在 PC 上验证符号、限幅和切档，再上车。</li><li>做四组阶跃测试：速度 ±30、±60；航向 ±10°；横滚 ±5°；刹车 220→0。记录上升时间、超调、稳态误差、峰值电流和腿差。</li><li>把参数从宏逐步迁移到带版本号的结构体，Flash 存储加入 CRC、范围检查和回滚默认值。</li></ul>
+
+<h2>10. 推荐调参顺序与指标</h2>
+<div class="card"><ol><li>机械：逐路确认中位、DIR、限位和高度查表单调性。</li><li>传感器：静止测 gyro 零偏，验证 pitch/roll/yaw 符号及 EKF dt。</li><li>内环：只开 Gyro PD，逐步提高 Kp，再加 D；目标是 1 ms 内快速抑制角速度且不高频啸叫。</li><li>中环：调 ANG_KP，再调 ANG_KD；以 ±2° 扰动的恢复时间和超调为准。</li><li>速度/腿：先关闭前馈，调速度环；再小步加入加速前馈和刹车前馈。</li><li>转向与侧倾：先转向角速度内环，再角度外环，最后加入主动侧倾，确认不会抢占单边桥任务。</li></ol><p><b>建议首轮验收目标：</b>平地直立稳态 pitch 误差 RMS≤1.0°；直行左右速度差≤5%；10° 航向阶跃超调≤15%；停车后 300 ms 内速度进入 ±15（当前速度单位）；四路高度差≤0.3 cm；ISR 最大耗时≤700 µs。</p></div>
+
+<h2>11. 源码索引</h2>
+<table><tr><th>文件</th><th>本文件关注点</th></tr>
+<tr><td><code>code/calculate/pid-new.h</code></td><td>PID/Profile 结构、CAR_SELECT=3 参数、刹车/加速/主动侧倾常量与 API</td></tr>
+<tr><td><code>code/calculate/pid-new.c</code></td><td>六个控制环、Profile 平滑、前馈、主动侧倾查表差动、Rolling 输出</td></tr>
+<tr><td><code>code/servo/servo.h</code></td><td>四路 PWM、中位、DIR、独立限幅、五连杆查表范围</td></tr>
+<tr><td><code>code/servo/servo.c</code></td><td>高度/角度查表、PWM 写入、角度缓存与读取</td></tr>
+<tr><td><code>code/servo/servo_executor.h/.c</code></td><td>目标分量接口、四路目标合成、动态斜率与 1 ms 输出</td></tr>
+<tr><td><code>user/main_cm7_0.c</code></td><td>Main0_Init、主循环、低频遥测/导航/视觉触发</td></tr>
+<tr><td>调用链核对：<code>user/cm7_0_isr.c</code>、<code>user/main0/init_main0.c</code></td><td>真实 1 ms 调度、PWM 矢量融合和初始化顺序</td></tr></table>
+<p class="footer">文档日期：2026-08-04。本文是对当前代码行为的工程解析，不替代实车低速、架空、断电和限位测试。任何参数改动都应先降低电机使能、设置机械支撑并保留串口急停。</p>
+</main></body></html>
