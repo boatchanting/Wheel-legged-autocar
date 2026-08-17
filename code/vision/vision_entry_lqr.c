@@ -48,6 +48,14 @@ void VisionEntryLqr_Reset(float entry_yaw_deg)
 {
     memset(&s_lqr, 0, sizeof(s_lqr));
     s_lqr.entry_yaw_deg = entry_yaw_deg;
+
+    /* 调参诊断副本：同步编译期宏，供日志/上位机确认当前生效参数（只读，不参与控制） */
+    s_lqr.qy             = LQR_QY;
+    s_lqr.qpsi           = LQR_QPSI;
+    s_lqr.detect_range_m = LQR_DETECT_RANGE_M;
+    s_lqr.w_max_radps    = LQR_W_MAX_RADPS;
+    s_lqr.v_floor_mps    = LQR_V_FLOOR_MPS;
+    s_lqr.err_max_deg    = LQR_ERR_MAX_DEG;
 }
 
 uint8 VisionEntryLqr_UpdateVision(int16 phy_x_mm, int16 phy_y_mm, float yaw_deg, float v_mps)

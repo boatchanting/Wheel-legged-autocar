@@ -243,6 +243,18 @@ int main(void)
                 // seekfree_assistant_oscilloscope_data.data[6] = g_bridge_vision_task_status.traveled_mm;
                 // seekfree_assistant_oscilloscope_data.data[7] = g_bridge_vision_task_status.err_degree_cmd;
 
+                // 5.【调 LQR 进入段 (单边桥/坡道共用 vision_entry_lqr, 2026-08-17)】
+                // 启用: 取消下面 8 行注释, 并注释掉上方"1.直立环"组
+                // 参数集看 [LqrParam] 串口打印; 观察 e/ψ/D/ω 判断 Qy/Qψ 是否合适
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)g_bridge_vision_task_status.lqr_valid;
+                // seekfree_assistant_oscilloscope_data.data[1] = g_bridge_vision_task_status.lqr_e_m;
+                // seekfree_assistant_oscilloscope_data.data[2] = g_bridge_vision_task_status.lqr_psi_err_deg;
+                // seekfree_assistant_oscilloscope_data.data[3] = g_bridge_vision_task_status.lqr_dist_m;
+                // seekfree_assistant_oscilloscope_data.data[4] = g_bridge_vision_task_status.lqr_omega_radps;
+                // seekfree_assistant_oscilloscope_data.data[5] = g_bridge_vision_task_status.err_degree_cmd;
+                // seekfree_assistant_oscilloscope_data.data[6] = g_bridge_vision_task_status.lqr_entry_yaw_deg;
+                // seekfree_assistant_oscilloscope_data.data[7] = g_bridge_vision_task_status.traveled_mm;
+
                 // 4.【调节pvc识别】
                 // data[0] 左轮速度
                 // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;

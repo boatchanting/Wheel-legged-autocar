@@ -138,8 +138,71 @@ err_degree = clamp(omega·57.29578f/TURN_ANG_KP, ±15.76°);
 
 ---
 
-## 7. 回退方案
+## 7. LQR 调参参数全集与日志说明（2026-08-17 增补）
+
+> 本次增补：为 LQR 调参补齐「日志可见性」——确认当前生效参数 + 观察运行时值，全部落入现有日志。仅改日志/诊断，**控制算法零改动**。
+
+### 7.1 LQR 调节所需参数全集（`vision_entry_lqr.h`）
+
+控制律：`ω = k1·e + k2(v)·ψ_err`，`k1=√Qy`、`k2=√(2·max(v,0.3)·√Qy+Qψ)`，
+`err_degree = ω·(180/π)/TURN_ANG_KP`（TURN_ANG_KP=-8）。
+
+| 宏 | 值 | 类别 | 是否旋钮 | 作用 |
+|---|---|---|---|---|
+| `LQR_QY` | 150.0f | 权重 | ✅ **旋钮** | k1=√Qy，横向收敛速度；唇口 e 大→+10~25；过冲/ω贴2.2→−10~25；上限≈200、下限≥100 |
+| `LQR_QPSI` | 24.0f | 权重 | ✅ **旋钮** | 航向权重；ψ唇>3°→+2~4；航向抖动→−2~4 |
+| `LQR_DETECT_RANGE_M` | 1.5f | 检测窗 | ✅ 现场标定 | 视觉段检测距离；1.5m 撑 2.5 m/s |
+| `LQR_W_MAX_RADPS` | 2.2f | 执行器极限 | ❌ 外部标定 | ω 钳位；换车/换硬件才改 |
+| `LQR_ERR_MAX_DEG` | ≈15.76° | 派生 | ❌ 勿单独调 | err_degree 钳位 = W_MAX·57.29578/8 |
+| `LQR_V_FLOOR_MPS` | 0.3f | 调度下限 | ❌ 一般不调 | k2 内 max(v,0.3) |
+| `LQR_KLOCK` | 1.8f | 冗余 | ❌ 未使用 | 实现中未使用（盲区锁角由 bridge `yaw_hold_kp=1.8` 负责） |
+| `LQR_PHY_INVALID_MM` | 32767 | 固定常量 | ❌ | phy 无效标记 |
+
+**只动 Qy / Qψ 两个旋钮；检测距离现场标定；其余勿动。**
+
+### 7.2 运行时诊断值（调参观察对象）
+
+| 字段 | 含义 | 单位 |
+|---|---|---|
+| `valid` | 本周期视觉段是否有效（1=LQR 输出，0=盲区回退） | - |
+| `e_m` | 横向偏差重建 e = D·sin(β+ψ) | m |
+| `psi_err_deg` | 航向偏差 ψ_err = ψ_存储 − ψ | deg |
+| `dist_m` | 桥唇/入口距离 D | m |
+| `omega_radps` | 期望角速度 ω（已钳 W_MAX） | rad/s |
+| `entry_yaw_deg` | ψ_存储 基准航向 | deg |
+
+### 7.3 日志落地明细（本次改动）
+
+1. **状态结构体**（`vision_bridge_task_status_t` / `vision_slope_task_status_t`，上位机可读）：
+   在原有 `lqr_e_m / lqr_psi_err_deg / lqr_dist_m` 基础上新增
+   `lqr_valid / lqr_omega_radps / lqr_entry_yaw_deg`，以及参数副本
+   `lqr_qy / lqr_qpsi / lqr_detect_range_m / lqr_w_max_radps / lqr_v_floor_mps / lqr_err_max_deg`。
+2. **`[BridgeCtrl]` 串口日志**（`vision_bridge_control.c`，500ms/条）：
+   行尾追加 `lqr=%u le=%.3f lpsi=%.1f lD=%.2f lw=%.2f`（valid / e / ψ / D / ω）。
+   命名加 `l` 前缀，与既有 `e/ed`（RUN 段 PID）区分。
+3. **`[LqrParam]` 参数集打印**（`vision_bridge_control.c`，进入任务时打印一次）：
+   `qy=%.1f qpsi=%.1f D=%.2f wmax=%.2f vfloor=%.2f errmax=%.1f`，确认本次构建生效参数。
+4. **示波器**（`main_cm7_0.c`）：新增「5.【调 LQR 进入段】」注释调试组
+   （valid / e / ψ / D / ω / err_degree_cmd / entry_yaw / traveled），取消注释并注释掉「1.直立环」组即可使用。
+
+> 说明：规划 §8 要求 `[BridgeCtrl]` 追加 LQR 字段（原始接入落地时漏做，仅加了 status 三字段），本次一并补齐。
+
+### 7.4 调参时怎么看日志
+
+- 进任务瞬间先看 `[LqrParam]`：确认 Qy/Qψ/检测距离是否期望值。
+- 视觉段（`lqr=1`）逐条看 `le / lpsi / lD / lw`：
+  - 唇口 e 大、横向收敛慢 → **Qy +10~25**
+  - 接近段过冲 / S 形摆动 / `lw` 持续贴 2.2 → **Qy −10~25**
+  - ψ唇>3° 但 e 正常 → **Qψ +2~4**；航向抖动 → **Qψ −2~4**
+  - e、ψ 都差 → 先动 Qψ，再动 Qy（短窗架构航向是稀缺资源）
+  - `lqr=0` 期间为盲区锁角/直行回退，属正常
+- 参数副本（`lqr_qy` 等）随状态结构体持续可读，供上位机确认版本。
+
+---
+
+## 8. 回退方案
 
 - **L1（参数级）**：将 `VisionEntryLqr_UpdateVision` 的有效判定恒置 0（等效回退现状锁角/直行搜索）。
 - **L2（代码级）**：`git checkout` 回退以下文件：
   `code/vision/vision_entry_lqr.c/.h`（删除）、`vision_slope_control.c/.h`、`vision_bridge_control.c/.h`、`code1/vision/vision_ipc_core1.c`、`iar/project_config/cyt4bb7_cm_7_0.ewp/.ewt`。
+- **L3（日志级）**：本次日志增补为纯加法，如需撤销仅回退 `vision_entry_lqr.c/.h` 参数副本字段与 `vision_bridge_control.c` printf 即可。

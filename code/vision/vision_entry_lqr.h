@@ -24,7 +24,8 @@ extern "C" {
  * 只有 Qy、Qψ 两个调参旋钮；其余为外部标定/物理常数，勿动。
  *
  * 【调参纪律】（必须遵守，违反必翻车）
- *   1. 每次只动一个旋钮，观察唇口 e / ψ 读数（上位机 [BridgeCtrl] 串口 / lqr_* 字段）。
+ *   1. 每次只动一个旋钮，观察唇口 e / ψ 读数（上位机 [BridgeCtrl] 串口 lqr=le/lpsi/lD/lw 字段，
+ *      参数集见进入任务时的 [LqrParam] 一次性打印；状态结构体 lqr_* 字段持续可读）。
  *   2. 先 Qψ 后 Qy：短窗架构里航向是稀缺资源，横向其次；e、ψ 都差时先动 Qψ。
  *   3. 在目标最高速度下调：低速裕量天然大，高速通过的参数低速必过（已验单调）。
  *   4. 恶化方向判断：改完若 ω 曲线饱和段变长（|ω| 持续贴 W_MAX）→ 方向反了，立即回退。
@@ -84,6 +85,10 @@ extern "C" {
 
 /**
  * @brief LQR 进入段控制器的内部状态（诊断可观测）。
+ *
+ * @note 末尾 6 个 qy/qpsi/detect_range_m/w_max_radps/v_floor_mps/err_max_deg
+ *       为「调参诊断副本」：Reset 时从编译期宏同步，只读、不参与控制计算，
+ *       供日志/上位机确认当前实际生效参数（2026-08-17 增）。
  */
 typedef struct
 {
@@ -94,6 +99,13 @@ typedef struct
     float   e_m;               /* 横向偏差重建 e = D·sin(β+ψ) */
     float   psi_err_rad;       /* 航向偏差 ψ_err = ψ_存储 − ψ */
     float   omega_radps;       /* 期望角速度 ω（已钳 W_MAX） */
+    /* --- 调参诊断副本（Reset 同步自宏，勿在控制路径使用） --- */
+    float   qy;                /* 横向权重 Qy（k1=√Qy），LQR_QY */
+    float   qpsi;              /* 航向权重 Qψ，LQR_QPSI */
+    float   detect_range_m;    /* 视觉段检测距离（m），LQR_DETECT_RANGE_M */
+    float   w_max_radps;       /* ω 输出钳位（rad/s），LQR_W_MAX_RADPS */
+    float   v_floor_mps;       /* k2 速度下限（m/s），LQR_V_FLOOR_MPS */
+    float   err_max_deg;       /* err_degree 钳位（deg），LQR_ERR_MAX_DEG */
 } vision_entry_lqr_state_t;
 
 /**

@@ -137,9 +137,18 @@ static void vision_slope_publish_status(const volatile vision_ipc_packet_t *pack
     g_slope_vision_task_status.pvc_steer_error_px_x100 = g_vision_pvc_control_status.steer_error_px_x100;
     {
         const vision_entry_lqr_state_t *lqr = VisionEntryLqr_GetState();
-        g_slope_vision_task_status.lqr_e_m = lqr->e_m;
-        g_slope_vision_task_status.lqr_psi_err_deg = lqr->psi_err_rad * 57.29578f;
-        g_slope_vision_task_status.lqr_dist_m = lqr->dist_m;
+        g_slope_vision_task_status.lqr_valid          = lqr->valid;
+        g_slope_vision_task_status.lqr_e_m            = lqr->e_m;
+        g_slope_vision_task_status.lqr_psi_err_deg    = lqr->psi_err_rad * 57.29578f;
+        g_slope_vision_task_status.lqr_dist_m         = lqr->dist_m;
+        g_slope_vision_task_status.lqr_omega_radps    = lqr->omega_radps;
+        g_slope_vision_task_status.lqr_entry_yaw_deg  = lqr->entry_yaw_deg;
+        g_slope_vision_task_status.lqr_qy             = lqr->qy;
+        g_slope_vision_task_status.lqr_qpsi           = lqr->qpsi;
+        g_slope_vision_task_status.lqr_detect_range_m = lqr->detect_range_m;
+        g_slope_vision_task_status.lqr_w_max_radps    = lqr->w_max_radps;
+        g_slope_vision_task_status.lqr_v_floor_mps    = lqr->v_floor_mps;
+        g_slope_vision_task_status.lqr_err_max_deg    = lqr->err_max_deg;
     }
 }
 

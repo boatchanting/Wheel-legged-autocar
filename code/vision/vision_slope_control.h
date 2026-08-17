@@ -63,9 +63,20 @@ typedef struct
     uint8 pvc_stable_detected;           /* PVC 控制模块是否稳定检测到入口 */
     uint16 pvc_ratio_u16;                /* PVC 白色区域在画面内的占比，千分比 */
     int16 pvc_steer_error_px_x100;       /* PVC 给出的横向像素误差，放大 100 倍 */
-    float lqr_e_m;                       /* LQR 横向偏差重建 e (m, 诊断) */
-    float lqr_psi_err_deg;               /* LQR 航向偏差 ψ_err (deg, 诊断) */
-    float lqr_dist_m;                    /* LQR 桥唇距离 D (m, 诊断) */
+    /* --- LQR 进入段方向控制（诊断/调参日志, 2026-08-17）--- */
+    uint8 lqr_valid;                     /* 本周期 LQR 视觉段是否有效 (1=视觉 LQR 输出) */
+    float lqr_e_m;                       /* LQR 横向偏差重建 e (m) */
+    float lqr_psi_err_deg;               /* LQR 航向偏差 ψ_err (deg) */
+    float lqr_dist_m;                    /* LQR 桥唇距离 D (m) */
+    float lqr_omega_radps;               /* LQR 期望角速度 ω (已钳 W_MAX, rad/s) */
+    float lqr_entry_yaw_deg;             /* LQR ψ_存储 基准航向 (deg) */
+    /* 当前生效 LQR 参数副本 (与 vision_entry_lqr.h 宏同步, 供确认调参版本) */
+    float lqr_qy;                        /* 横向权重 Qy (k1=√Qy) */
+    float lqr_qpsi;                      /* 航向权重 Qψ */
+    float lqr_detect_range_m;            /* 视觉段检测距离 (m) */
+    float lqr_w_max_radps;               /* ω 钳位 (rad/s) */
+    float lqr_v_floor_mps;               /* k2 速度下限 (m/s) */
+    float lqr_err_max_deg;               /* err_degree 钳位 (deg) */
 } vision_slope_task_status_t;
 
 /* --- 4. 对外变量与函数接口 --- */

@@ -646,9 +646,18 @@ static void vision_bridge_publish_status(const volatile vision_ipc_packet_t *pac
     status.edot_mps = s_bridge_task.edot_mps;
     {
         const vision_entry_lqr_state_t *lqr = VisionEntryLqr_GetState();
-        status.lqr_e_m = lqr->e_m;
-        status.lqr_psi_err_deg = lqr->psi_err_rad * 57.29578f;
-        status.lqr_dist_m = lqr->dist_m;
+        status.lqr_valid          = lqr->valid;
+        status.lqr_e_m            = lqr->e_m;
+        status.lqr_psi_err_deg    = lqr->psi_err_rad * 57.29578f;
+        status.lqr_dist_m         = lqr->dist_m;
+        status.lqr_omega_radps    = lqr->omega_radps;
+        status.lqr_entry_yaw_deg  = lqr->entry_yaw_deg;
+        status.lqr_qy             = lqr->qy;
+        status.lqr_qpsi           = lqr->qpsi;
+        status.lqr_detect_range_m = lqr->detect_range_m;
+        status.lqr_w_max_radps    = lqr->w_max_radps;
+        status.lqr_v_floor_mps    = lqr->v_floor_mps;
+        status.lqr_err_max_deg    = lqr->err_max_deg;
     }
     g_bridge_vision_task_status = status;
 }
@@ -770,6 +779,16 @@ static void vision_bridge_enter_task(void)
     
     VisionEntryLqr_Reset(s_bridge_task.entry_yaw_deg);
     VisionIpc_Core0_SetBridgeEnable(1U);
+
+#if DEBUG_LOG_ENABLE
+    /* LQR 参数集一次性打印: 确认本次构建实际生效的调参参数 (每任务进入打印一次) */
+    {
+        const vision_entry_lqr_state_t *lqr = VisionEntryLqr_GetState();
+        printf("[LqrParam] qy=%.1f qpsi=%.1f D=%.2f wmax=%.2f vfloor=%.2f errmax=%.1f\r\n",
+               (double)lqr->qy, (double)lqr->qpsi, (double)lqr->detect_range_m,
+               (double)lqr->w_max_radps, (double)lqr->v_floor_mps, (double)lqr->err_max_deg);
+    }
+#endif
 }
 
 /* --- 核心状态机 --- */
@@ -1008,12 +1027,15 @@ void VisionBridgeTask_Update_2ms(void)
     vision_bridge_publish_status(packet, traveled_mm, err_cmd, speed_cmd);
 
 #if DEBUG_LOG_ENABLE
-    /* 0核 状态串口调试 (500ms 一条, 2ms tick): 状态机/滤波/退出线全链路可见 */
+    /* 0核 状态串口调试 (500ms 一条, 2ms tick): 状态机/滤波/退出线/LQR 全链路可见
+     * LQR 字段: lqr=视觉段有效 le=横向偏差e(m) lpsi=航向偏差ψ(deg) lD=桥唇距离D(m) lw=期望ω(rad/s)
+     * 调参参数集见进入任务时的 [LqrParam] 一次性打印。 */
     {
         static uint32 ctrl_dbg_div = 0U;
+        const vision_entry_lqr_state_t *lqr = VisionEntryLqr_GetState();
         if ((ctrl_dbg_div++ % 250U) == 0U)
         {
-            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f e=%.3f ed=%.3f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f consec=%u\r\n",
+            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f e=%.3f ed=%.3f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f consec=%u lqr=%u le=%.3f lpsi=%.1f lD=%.2f lw=%.2f\r\n",
                    (int)s_bridge_task.state,
                    (unsigned long)s_bridge_task.state_ticks,
                    (double)traveled_mm,
@@ -1030,7 +1052,12 @@ void VisionBridgeTask_Update_2ms(void)
                    (unsigned int)(packet ? packet->b2_gate : 0U),
                    (unsigned int)(packet ? packet->b2_has_top : 0U),
                    (double)s_bridge_task.exit_line_y,
-                   (unsigned int)s_bridge_task.exit_consec_frames);
+                   (unsigned int)s_bridge_task.exit_consec_frames,
+                   (unsigned int)lqr->valid,
+                   (double)lqr->e_m,
+                   (double)(lqr->psi_err_rad * 57.29578f),
+                   (double)lqr->dist_m,
+                   (double)lqr->omega_radps);
         }
     }
 #endif

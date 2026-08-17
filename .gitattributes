@@ -1,0 +1,5 @@
+# 统一 LF 行尾：提交与检出均使用 LF（2026-08-17）
+* text=auto eol=lf
+
+# Windows 批处理脚本保持 CRLF（cmd 兼容）
+*.bat text eol=crlf
