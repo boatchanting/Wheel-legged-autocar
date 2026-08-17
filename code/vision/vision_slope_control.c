@@ -107,12 +107,12 @@ static void vision_slope_set_state(vision_slope_task_state_e next_state)
     s_slope_task.state = next_state;
     s_slope_task.state_ticks = 0U;
 
-    /* PVC 入口确认完成的瞬间记录航向和位置，后续里程从这里开始累计。 */
+    /* PVC 入口确认完成的瞬间记录起点位置，锁定进入任务时记录的基准斜坡航向。 */
     if (next_state == VISION_SLOPE_TASK_ENTRY_HOLD)
     {
         s_slope_task.start_x_mm = inertial_nav.x;
         s_slope_task.start_y_mm = inertial_nav.y;
-        s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
+        s_slope_task.locked_yaw_deg = s_slope_task.entry_yaw_deg;
     }
 }
 
