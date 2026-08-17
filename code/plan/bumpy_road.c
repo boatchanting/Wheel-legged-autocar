@@ -19,9 +19,8 @@ extern volatile uint8 exit_beep_request;
 #define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务 // 
 #define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms更新一次距离
 
-#define BUMPY_ROAD_STEER_FILTER_ALPHA    (0.05f)        // 方向偏差轻度低通滤波系数 (0~1，越小越平滑)
-/* 朝向修正与出口叠加（2026-08-17 规划 §4.2/§5，详见 docs/任务规划/颠簸路段视觉跨核接口规划.md） */
-#define BUMPY_HEADING_HOLD_MAX_ERR_DEG   (10.0f)        // 视觉失稳时：与入口航向偏差≤该值 → 锁"失稳前航向"；超过才回退锁入口航向（可调）
+/* 出口修正（2026-08-18 方案 v5 §3.4）：脱出状态机确认时刻，用 1 核稳定滤波 lat_stable 一次性修正惯导；
+   方向车往右偏时融合坐标应往右移=+1；方向反了改成 -1 */
 #define BUMPY_LATERAL_OVERLAY_SIGN       (1.0f)         // 出口叠加方向：车往右偏时融合坐标应往右移=+1；方向反了改成-1
 
 #define BUMPY_ROAD_GYRO_WIN_SIZE         (200U)         // (改小窗口) 1000Hz下200ms的帧数，减小延迟
@@ -61,27 +60,9 @@ typedef struct
     uint16_t bump_entry_cnt;
     uint8_t on_bump;
     float current_speed_set;
-    float filtered_err_degree;
-
-    /* 朝向修正（2026-08-17 规划 §4.2）：失稳前航向锁存 */
-    float held_yaw_deg;          /* 失稳前最后一次稳定航向（失稳瞬间锁存） */
-    uint8_t last_heading_stable; /* 上一周期 heading_stable，检测 稳定→失稳 边沿 */
 } BumpyRoadContext_t;
 
 static BumpyRoadContext_t s_bumpy_ctx = {BUMPY_ROAD_STATE_IDLE};
-
-static float BumpyRoad_NormalizeAngle(float angle_deg)
-{
-    while (angle_deg > 180.0f)
-    {
-        angle_deg -= 360.0f;
-    }
-    while (angle_deg < -180.0f)
-    {
-        angle_deg += 360.0f;
-    }
-    return angle_deg;
-}
 
 static void BumpyRoad_PublishEvent(BumpyRoadEvent_e event)
 {
@@ -105,34 +86,11 @@ static float BumpyRoad_CalcCorrectionDistanceMm(void)
 
 static void BumpyRoad_ApplyYawHold(void)
 {
-    float cmd;
-    const uint8_t stable = VisionBumpyControl_IsHeadingStable();
-    const float entry_err = BumpyRoad_NormalizeAngle(
-        s_bumpy_ctx.locked_yaw_deg - inertial_nav.relative_yaw);
-
-    if (stable != 0U)
-    {
-        /* 修正期（2026-08-17 规划 §4.2）：已测得准确朝向，用偏差角度实时修正朝向 */
-        cmd = VisionBumpyControl_GetErrDegreeCmd();
-    }
-    else
-    {
-        /* 失稳期：与入口偏差 ≤ BUMPY_HEADING_HOLD_MAX_ERR_DEG 时锁住失稳前航向
-         * （不回入口，避免已修正过的角度突然跳回造成扭动）；偏差过大才回退锁入口航向兜底。 */
-        if (fabsf(entry_err) <= BUMPY_HEADING_HOLD_MAX_ERR_DEG)
-        {
-            cmd = BumpyRoad_NormalizeAngle(s_bumpy_ctx.held_yaw_deg - inertial_nav.relative_yaw);
-        }
-        else
-        {
-            cmd = entry_err;
-        }
-    }
-
-    // 一阶低通滤波 (EMA)，减少视觉识别跳变带来的左右扭动
-    s_bumpy_ctx.filtered_err_degree = (cmd * BUMPY_ROAD_STEER_FILTER_ALPHA) + 
-                                      (s_bumpy_ctx.filtered_err_degree * (1.0f - BUMPY_ROAD_STEER_FILTER_ALPHA));
-    err_degree = s_bumpy_ctx.filtered_err_degree;
+    /* 2026-08-18 方案 v5 §1：0 核控制数据零限制——
+       视觉提案（整形+自适应EMA）无条件直送 err_degree 管线，无门控、无二次平滑；
+       失稳锁当前角度已由视觉层 err_f 保持实现（meas_valid=0 时 err_degree_cmd 不变）。
+       仅出口修正完成后强制归零（避免出段后继续用视觉）。 */
+    err_degree = VisionBumpyControl_GetErrDegreeCmd();
 }
 
 static void BumpyRoad_Cleanup(uint8_t stop_car)
@@ -192,9 +150,6 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.bump_entry_cnt = 0;
     s_bumpy_ctx.on_bump = 0;
     s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
-    s_bumpy_ctx.filtered_err_degree = 0.0f;
-    s_bumpy_ctx.held_yaw_deg = 0.0f;
-    s_bumpy_ctx.last_heading_stable = 0U;
 
     if (was_active != 0U)
     {
@@ -243,9 +198,6 @@ void BumpyRoad_Trigger(void)
     s_bumpy_ctx.bump_entry_cnt = 0;
     s_bumpy_ctx.on_bump = 0;
     s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
-    s_bumpy_ctx.filtered_err_degree = 0.0f;
-    s_bumpy_ctx.held_yaw_deg = s_bumpy_ctx.locked_yaw_deg; /* 视觉未稳过时失稳即锁入口航向，兼容现状 */
-    s_bumpy_ctx.last_heading_stable = 0U;
 
     /* 进入任务时独占控制权：开启1核颠簸视觉，并启用0核方向控制器。 */
     g_special_action_trigger = 1U;
@@ -281,18 +233,12 @@ void BumpyRoad_Update_1ms(void)
     {
         if (s_bumpy_ctx.correction_applied != 0U)
         {
+            /* 出口修正完成后：视觉不再接入转向，保持直行 */
             err_degree = 0.0f;
         }
         else
         {
-            /* 锁存失稳前航向（2026-08-17 规划 §4.2）：稳定→失稳 边沿瞬间记录 */
-            const uint8_t stable_now = VisionBumpyControl_IsHeadingStable();
-            if ((s_bumpy_ctx.last_heading_stable != 0U) && (stable_now == 0U))
-            {
-                s_bumpy_ctx.held_yaw_deg = inertial_nav.relative_yaw;
-            }
-            s_bumpy_ctx.last_heading_stable = stable_now;
-
+            /* 视觉提案无条件直送 err_degree（2026-08-18 方案 v5 §1） */
             BumpyRoad_ApplyYawHold();
         }
         
@@ -378,10 +324,13 @@ void BumpyRoad_Update_1ms(void)
                     nav_vision_fusion_x = s_bumpy_ctx.exit_anchor_x_mm;
                     nav_vision_fusion_y = s_bumpy_ctx.exit_anchor_y_mm;
 
-                    /* 出口修正叠加（2026-08-17 规划 §5）：把记录的横向偏差换算成世界系偏移。
+                    /* 出口修正叠加（2026-08-18 方案 v5 §3.4）：脱出时刻一次性修正惯导。
+                     * lat 取 1 核稳定滤波值 lat_stable（3帧满窗中值+门控+保持状态机输出，
+                     * 即 IPC lateral_mm → g_vision_bumpy_control_status.lateral_mm；脱出时刻
+                     * 正处 HOLD 保持/FREEZE 冻结的最近可信值）。
                      * 车身右侧单位向量 r=(sinθ,-cosθ) 由 inertial_nav 车体→世界变换推导；
                      * 符号方向实车必测，反了翻转 BUMPY_LATERAL_OVERLAY_SIGN。 */
-                    const float lat = VisionBumpyControl_GetRecordedLateralMm();
+                    const float lat = (float)g_vision_bumpy_control_status.lateral_mm;
                     if (lat != 0.0f)
                     {
                         const float theta = inertial_nav.relative_yaw * (3.14159265358979f / 180.0f);

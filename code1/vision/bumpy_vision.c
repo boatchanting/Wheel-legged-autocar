@@ -299,6 +299,76 @@ static uint32 g_bumpy_last_frame_time_us = 0U;
 /* —— 新管线实例与辅助（2026-08-17 落地）—— */
 static bumpy_pipeline_t s_bumpy_pipeline;   /* 新管线状态（gx/gy/mag2/labels 等，~121KB） */
 
+/* —— lateral 稳定滤波（2026-08-18 方案 v5 §3，docs/任务规划/颠簸视觉角度响应整形与横向偏差稳定滤波方案.md）——
+   3 帧满窗中值（替代旧"连续3帧"时序门控）+ 门控（观测存在/野值剔除） + LOCK/HOLD/FREEZE 状态机：
+     LOCK  : 满 3 个可检测帧 → 中值 → EMA 更新（miss 清零）
+     HOLD  : 无观测/野值且 miss≤K → 保持 s_lat_stable 不更新（丢失 5 帧内仍可信）
+     FREEZE: miss>K → 冻结并剥离 meas_valid（唯一"横向完全不可信"出口）
+   0 值帧（无线/间距自检失败）不入窗，从源头消除 0 值污染偏置（见方案 §3.3.2e）。 */
+#define BUMPY_LAT_FILTER_N         (3U)    /* 中值窗长：必须满 3 个可检测帧（lateral_raw≠0 且非野值）才输出 */
+#define BUMPY_LAT_JERK_MM          (80.0f) /* 单帧野值门限：|Δx| > J 视为野值，不入窗直接进 HOLD */
+#define BUMPY_LAT_EMA_BETA         (0.30f) /* LOCK 态 EMA 系数（0~1，越小越平滑） */
+#define BUMPY_LAT_HOLD_MAX         (5U)    /* HOLD 保持上限帧（50ms@100fps） */
+static float   s_lat_win[BUMPY_LAT_FILTER_N];
+static uint8_t s_lat_win_cnt;             /* 窗口内有效样本数（≤N） */
+static uint8_t s_lat_miss;                /* 连续无观测/野值帧计数 */
+static float   s_lat_stable;              /* 稳定输出 lat_stable */
+
+/**
+ * @brief lateral 稳定滤波（方案 v5 §3.2）
+ * @param lateral_raw 本帧原始横向偏差（0=无横向观测）
+ * @param freeze      出参：1=FREEZE（长期丢失，需剥离 meas_valid）
+ * @return 稳定滤波值 lat_stable（LOCK 更新 / HOLD 保持 / FREEZE 冻结）
+ */
+static float bumpy_vision_lateral_filter(float lateral_raw, uint8_t *freeze)
+{
+    int i;
+
+    *freeze = 0U;
+
+    /* C1 观测存在且非野值（|Δx| 相对当前稳定值）→ 入窗 */
+    if ((lateral_raw != 0.0f) &&
+        (fabsf(lateral_raw - s_lat_stable) <= BUMPY_LAT_JERK_MM))
+    {
+        if (s_lat_win_cnt < BUMPY_LAT_FILTER_N)
+        {
+            s_lat_win_cnt++;
+        }
+        for (i = (int)BUMPY_LAT_FILTER_N - 1; i > 0; i--)
+        {
+            s_lat_win[i] = s_lat_win[i - 1];
+        }
+        s_lat_win[0] = lateral_raw;
+
+        if (s_lat_win_cnt >= BUMPY_LAT_FILTER_N)
+        {
+            /* 满 3 窗：三值排序求中值 → EMA 更新（LOCK） */
+            float a = s_lat_win[0], b = s_lat_win[1], c = s_lat_win[2];
+            float x_mid, t;
+            if (a > b) { t = a; a = b; b = t; }
+            if (b > c) { t = b; b = c; c = t; }
+            if (a > b) { t = a; a = b; b = t; }
+            x_mid = b;
+            s_lat_stable += (x_mid - s_lat_stable) * BUMPY_LAT_EMA_BETA;
+            s_lat_miss = 0U;
+        }
+    }
+    else
+    {
+        /* 无观测/野值：HOLD 计数；超上限 FREEZE */
+        if (s_lat_miss < 0xFFU)
+        {
+            s_lat_miss++;
+        }
+        if (s_lat_miss > BUMPY_LAT_HOLD_MAX)
+        {
+            *freeze = 1U;
+        }
+    }
+
+    return s_lat_stable;
+}
+
 /**
  * @brief 边线与图像第 BUMPY_IPM_BASE_ROW 行交点的物理 x（IPM 查表）
  * @note  边线 IPM 后基本竖直，固定行求 x 即可代表整条边线位置，
@@ -340,6 +410,11 @@ void bumpy_vision_reset_filter(void)
 
 #if BUMPY_USE_NEW_PIPELINE
     bumpy_pipeline_init(&s_bumpy_pipeline);   /* 时间验证历史按路段/视频隔离 */
+    /* lateral 稳定滤波状态按路段/视频隔离（与管线历史同生命周期，2026-08-18 v5 §5.4） */
+    s_lat_win_cnt = 0U;
+    s_lat_miss = 0U;
+    s_lat_stable = 0.0f;
+    memset(s_lat_win, 0, sizeof(s_lat_win));
 #endif
 
     memset(&empty, 0, sizeof(empty));
@@ -417,9 +492,12 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     }
 
     /* 横向偏差：固定 y=BUMPY_IPM_BASE_ROW 行 IPM + 已知 1m 边线间距（审批方案 §3.2）
-       双侧：中点 + 间距自检；单侧：±500mm 逆解算；两侧都没有：0 */
+       双侧：中点 + 间距自检；单侧：±500mm 逆解算；两侧都没有：0
+       → 稳定滤波（3帧满窗中值+门控+保持状态机，2026-08-18 方案 v5 §3）后输出 lat_stable */
     {
         float xl = 0.0f, xr = 0.0f;
+        float lateral_raw = 0.0f;
+        uint8_t lat_freeze = 0U;
         const int ok_l = (res.L.valid && bumpy_vision_edge_x_at_base_row(&res.L, &xl));
         const int ok_r = (res.R.valid && bumpy_vision_edge_x_at_base_row(&res.R, &xr));
 
@@ -428,17 +506,23 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
             /* 物理 x 向右为正，右边线 x 应比左边线大约 BUMPY_EDGE_SPACING_MM */
             if (fabsf((xr - xl) - (float)BUMPY_EDGE_SPACING_MM) <= (float)BUMPY_WIDTH_TOL_MM)
             {
-                next.lateral_mm = (int16)(-(xl + xr) * 0.5f);   /* 车身偏右为正 */
+                lateral_raw = -(xl + xr) * 0.5f;   /* 车身偏右为正 */
             }
-            /* 间距自检失败：lateral_mm 保持 0，meas_valid 不受影响 */
+            /* 间距自检失败：lateral_raw 保持 0（无横向观测），meas_valid 不受影响 */
         }
         else if (ok_l)
         {
-            next.lateral_mm = (int16)(-(xl + (float)BUMPY_HALF_SPACING_MM));
+            lateral_raw = -(xl + (float)BUMPY_HALF_SPACING_MM);
         }
         else if (ok_r)
         {
-            next.lateral_mm = (int16)(-(xr - (float)BUMPY_HALF_SPACING_MM));
+            lateral_raw = -(xr - (float)BUMPY_HALF_SPACING_MM);
+        }
+
+        next.lateral_mm = (int16)bumpy_vision_lateral_filter(lateral_raw, &lat_freeze);
+        if (lat_freeze != 0U)
+        {
+            next.meas_valid = 0U;   /* FREEZE：横向长期丢失，角度一并剥离可信（条纹同样长期缺失） */
         }
     }
 

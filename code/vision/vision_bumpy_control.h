@@ -27,15 +27,20 @@ extern "C" {
 #define VISION_BUMPY_STALE_TIMEOUT_TICKS       (120U)  // 数据包过期超时时间(2ms周期计数, 120=240ms)
 #define VISION_BUMPY_MAX_ERR_DEG               (18.0f)   // 最大转向误差角度限制(度)
 #define VISION_BUMPY_DEADBAND_DEG              (0.20f)  // 转向误差死区(度), 小于此值的误差将被忽略
-#define VISION_BUMPY_PID_KP                    (1.00f)
-#define VISION_BUMPY_PID_KI                    (0.03f)
-#define VISION_BUMPY_PID_KD                    (0.05f)
-#define VISION_BUMPY_PID_I_LIMIT               (12.0f)
 
-/* 朝向修正（2026-08-17 规划 §4.2） */
+/* 角度响应整形（2026-08-18 方案 v5 §1：近高远低 + 自适应阻尼，替代 PID 与 heading_stable 门控）
+   整形 S(e)=e/(1+B·|e|)：1/B≈等效输出限幅（连续饱和），|e| 大 → 增益小 → 阻尼；|e|→0 → 增益→1 → 灵敏
+   自适应 EMA α=ALPHA_MAX·exp(−|e|/TAU)：小角度 α 大 → 跟手；大角度 α 小 → 压抖 */
 #define VISION_BUMPY_YAW_SIGN                  (1.0f)   // 偏差角度符号：正值=需右转；反了改 -1
-#define VISION_BUMPY_HEADING_STABLE_FRAMES     (3U)     // 连续 3 帧可信且平稳才算"准确朝向"
-#define VISION_BUMPY_HEADING_STABLE_TOL_DEG    (1.0f)   // 相邻帧角度变化小于该值才算平稳
+#define VISION_BUMPY_ANGLE_SHAPE_B             (0.06f)  // 整形强度(/°)；1/B≈16.7° 等效饱和限幅
+#define VISION_BUMPY_ANGLE_ALPHA_MAX           (0.40f)  // 小角度最大平滑增益（0~1）
+#define VISION_BUMPY_ANGLE_TAU_DEG             (3.0f)   // α 随 |e| 的衰减尺度(°)
+
+/* 横向记录（2026-08-17 规划 §4.3；2026-08-18 起正式横向源为 1 核 lat_stable，recorded 保留为遥测） */
+#define VISION_BUMPY_LATERAL_RECORD_ALPHA      (0.50f)  // 记录 EMA 系数：0~1，越小越平滑
+#define VISION_BUMPY_LATERAL_RECORD_MAX_MM     (200.0f) // 记录值限幅，防视觉异常导致出口跳变
+#define VISION_BUMPY_ENTRY_DETECT_FRAMES        (3U)     // 连续 5 个新视觉帧检测到颠簸，确认进入路段
+#define VISION_BUMPY_EXIT_MISS_FRAMES          (3U)     // 连续 5 个新视觉帧未检测到颠簸，确认视觉出口
 
 /* 横向记录（2026-08-17 规划 §4.3） */
 #define VISION_BUMPY_LATERAL_RECORD_ALPHA      (0.50f)  // 记录 EMA 系数：0~1，越小越平滑
@@ -54,17 +59,6 @@ typedef enum
     VISION_BUMPY_CTRL_TRACK,       // 跟踪状态(稳定跟踪凹凸路面)
     VISION_BUMPY_CTRL_STALE,       // 过期状态(数据包过期或无效)
 } vision_bumpy_control_state_e;
-
-typedef struct
-{
-    float Kp;
-    float Ki;
-    float Kd;
-    float error;
-    float last_error;
-    float integral;
-    float output;
-} vision_bumpy_pid_t;
 
 /* 结构体类型定义区 */
 /**
@@ -86,17 +80,14 @@ typedef struct
     vision_bumpy_control_state_e state;    // 当前控制状态
     float direction_x;                     // 视觉方向向量 X 分量
     float direction_y;                     // 视觉方向向量 Y 分量
-    float err_degree_cmd;                  // 转向误差角度指令(度)
-    vision_bumpy_pid_t pid;
-    /* —— 新视觉接口（2026-08-17 规划 §4，详见 docs/任务规划/颠簸路段视觉跨核接口规划.md）—— */
-    /* 朝向修正（偏差角度 → err_degree） */
-    uint8 heading_stable;                  // 已连续 N 帧测得准确朝向，允许实时修正
-    uint16 heading_stable_count;           // 连续可信且角度平稳的帧计数
-    int16 yaw_error_deg_x100;              // 最近一帧偏差角度（PID 输入，遥测用）
-    float last_err_deg;                    // 上一帧偏差角度（平稳性判定用）
-    /* 横向记录（lateral_mm → recorded，只记录不修正） */
+    /* —— 角度响应整形（2026-08-18 方案 v5 §1，详见 docs/任务规划/颠簸视觉角度响应整形与横向偏差稳定滤波方案.md）
+       0 核零 PID、零门控：err_degree_cmd 由 整形+自适应EMA 直接产出，供 bumpy_road 无条件直送 err_degree —— */
+    int16 yaw_error_deg_x100;              // 最近一帧偏差角度（整形输入，遥测用）
+    float err_f;                           // 自适应 EMA 滤波状态（失稳时保持=锁当前角度）
+    float err_degree_cmd;                  // 转向误差角度指令(度)，即最终提案值
+    /* 横向记录（lateral_mm → recorded，只记录不修正；正式消费源为 1 核 lat_stable） */
     int16 lateral_mm;                      // 最近一帧可信横向偏差（原始观测，遥测用）
-    float recorded_lateral_mm;             // 记录的横向偏差（EMA 滤波，失稳时冻结）
+    float recorded_lateral_mm;             // 记录的横向偏差（EMA 滤波，失稳时冻结，遥测用）
     uint8 meas_valid;                      // 最近一帧是否可信（VISION_VALID_BUMPY_MEAS）
 } vision_bumpy_control_status_t;
 
@@ -137,19 +128,19 @@ uint8 VisionBumpyControl_IsEnabled(void);
 void VisionBumpyControl_Update_2ms(void);
 
 /**
- * @brief   获取转向误差指令
+ * @brief   获取转向误差指令（角度响应整形输出，直接送 err_degree 管线）
  * @return  当前转向误差指令(度)
  */
 float VisionBumpyControl_GetErrDegreeCmd(void);
 
 /**
- * @brief   查询是否已测得准确朝向（新视觉接口 2026-08-17 规划 §4.2）
- * @return  1: 视觉朝向稳定，可实时修正；0: 未稳定/失稳
+ * @brief   查询最近一帧角度测量是否可信（VISION_VALID_BUMPY_MEAS 直通，含横向 HOLD 透传）
+ * @return  1: 本帧角度可信；0: 严重丢失（无条纹），锁当前角度
  */
-uint8 VisionBumpyControl_IsHeadingStable(void);
+uint8 VisionBumpyControl_IsMeasurementValid(void);
 
 /**
- * @brief   获取冻结后的横向偏差记录值（新视觉接口 2026-08-17 规划 §4.3）
+ * @brief   获取冻结后的横向偏差记录值（新视觉接口 2026-08-17 规划 §4.3；遥测用）
  * @return  记录的横向偏差（mm，正值=车身偏右）
  */
 float VisionBumpyControl_GetRecordedLateralMm(void);
