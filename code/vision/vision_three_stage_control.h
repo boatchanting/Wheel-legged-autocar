@@ -56,7 +56,7 @@ extern volatile float target_speed_set;     /* 目标速度（负数代表前进
 #define VISION_THREE_STAGE_REACQUIRE_STABLE_FRAMES       (2U)
 #define VISION_THREE_STAGE_EXIT_STABLE_FRAMES            (2U)
 /* 视觉确认出口并重定位融合坐标后，继续以原始惯导坐标累计的脱出距离。 */
-#define VISION_THREE_STAGE_POST_EXIT_DISTANCE_MM         (800.0f)
+#define VISION_THREE_STAGE_POST_EXIT_DISTANCE_MM         (0.0f)
 #define VISION_THREE_STAGE_POST_EXIT_SPEED_SET           (-350.0f)
 
 /* 像素阈值默认值（可在线调整） */

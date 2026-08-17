@@ -49,7 +49,7 @@
 #define PLAN4_FINISH_STOP_SPEED_MM_S                150.0f  // 末点减速完成后锁定转向的实测速度阈值（mm/s）
 
 /* 成对视觉任务在生成的 500 mm 入口直线段内提前交接。 */
-#define PLAN4_SPECIAL_HANDOFF_LEAD_MM               500.0f  // 距特殊任务入口小于该距离时开始交接（mm）
+#define PLAN4_SPECIAL_HANDOFF_LEAD_MM               100.0f  // 距特殊任务入口小于该距离时开始交接（mm）
 #define PLAN4_SPECIAL_HANDOFF_TICKS                  10U     // 特殊任务结束后恢复 LQR 输出的渐变周期数
 #define PLAN4_SPECIAL_HANDOFF_SPEED_STEP             40.0f   // 交接恢复期间每周期速度指令的最大变化量
 #define PLAN4_SPECIAL_HANDOFF_ERR_STEP_DEG            1.0f   // 交接恢复期间每周期转向指令的最大变化量（度）
