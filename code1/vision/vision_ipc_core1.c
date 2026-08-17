@@ -186,6 +186,14 @@ static void vision_ipc_core1_fill_bumpy(vision_ipc_packet_t *packet,
     packet->bumpy_detected = bumpy.bumpy_detected;
     packet->bumpy_direction_x = bumpy.direction_x;
     packet->bumpy_direction_y = bumpy.direction_y;
+
+    /* 新视觉预留接口（2026-08-17 规划 §3）：偏差角度 + 水平方向偏差 + 可信位 */
+    packet->yaw_error_deg_x100 = bumpy.yaw_error_deg_x100;
+    packet->lateral_mm = bumpy.lateral_mm;
+    if (bumpy.meas_valid != 0U)
+    {
+        packet->valid_mask = (uint16)(packet->valid_mask | VISION_VALID_BUMPY_MEAS);
+    }
 }
 
 void VisionIpc_Core1_Init(void)
@@ -503,9 +511,11 @@ void VisionIpc_Core1_PublishCurrent(void)
         packet.detected = packet.bumpy_detected;
         packet.raw_detected = packet.bumpy_detected;
         packet.confidence_u16 = packet.bumpy_detected ? 1000U : 0U;
+        /* 新视觉预留接口（2026-08-17 规划 §3）：lateral_mm / yaw_error_deg_x100
+         * 由 vision_ipc_core1_fill_bumpy() 填充，此处不再清零；forward_mm 颠簸不使用。 */
         packet.forward_mm = 0;
-        packet.lateral_mm = 0;
-        packet.yaw_error_deg_x100 = 0;
+        /* packet.lateral_mm = 0;           // 删除：由 fill_bumpy 填充 */
+        /* packet.yaw_error_deg_x100 = 0;   // 删除：由 fill_bumpy 填充 */
 
         if (packet.bumpy_detected)
         {

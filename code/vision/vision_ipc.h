@@ -47,6 +47,7 @@ typedef enum
 #define VISION_VALID_GRASS              (1U << 5)
 #define VISION_VALID_PROFILE            (1U << 6)
 #define VISION_VALID_BRIDGE_V2          (1U << 7)   /* 新单边桥管线(bridge_detect)仲裁+中值滤波输出 */
+#define VISION_VALID_BUMPY_MEAS         (1U << 8)   /* 新视觉预留：颠簸 yaw_error_deg_x100 / lateral_mm 为可信观测（2026-08-17 规划 §3） */
 
 typedef struct
 {
@@ -92,6 +93,9 @@ typedef struct
     uint8 raw_detected;
     uint16 confidence_u16;
     int16 forward_mm;
+    /* 新视觉预留（颠簸，2026-08-17 规划 §3）：
+     *   lateral_mm      = 水平方向偏差，车身偏右为正（单位 mm）
+     *   yaw_error_deg_x100 = 偏差角度 ×100，正值=需右转 */
     int16 lateral_mm;
     int16 yaw_error_deg_x100;
 
@@ -118,8 +122,10 @@ typedef struct
 
     /* Bumpy road start */
     uint8 bumpy_detected;
-    float bumpy_direction_x;
+    float bumpy_direction_x;   /* 条纹主方向向量（保留：渲染/调试） */
     float bumpy_direction_y;
+    /* 偏差角度/横向偏差走上方通用字段 lateral_mm / yaw_error_deg_x100，
+     * 由 VISION_VALID_BUMPY_MEAS 标记本帧是否可信 */
     /* Bumpy road end */
 
     /* Reserved: stairs. */

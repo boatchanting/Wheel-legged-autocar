@@ -1166,6 +1166,24 @@
                 <name>$PROJ_DIR$\..\..\code1\vision\edge_conv_asm.c</name>
             </file>
             <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\edge_conv7_asm.s</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\edge_conv7_asm.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bumpy_conv.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bumpy_conv.h</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bumpy_pipeline.c</name>
+            </file>
+            <file>
+                <name>$PROJ_DIR$\..\..\code1\vision\bumpy_pipeline.h</name>
+            </file>
+            <file>
                 <name>$PROJ_DIR$\..\..\code1\vision\bridge_detect.c</name>
             </file>
             <file>

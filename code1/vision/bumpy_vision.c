@@ -295,9 +295,52 @@ static bumpy_vision_output_t g_bumpy_vision_output_shadow;
 static uint32 g_bumpy_last_frame_time_us = 0U;
 #endif
 
+#if BUMPY_USE_NEW_PIPELINE
+/* —— 新管线实例与辅助（2026-08-17 落地）—— */
+static bumpy_pipeline_t s_bumpy_pipeline;   /* 新管线状态（gx/gy/mag2/labels 等，~121KB） */
+
+/**
+ * @brief 边线与图像第 BUMPY_IPM_BASE_ROW 行交点的物理 x（IPM 查表）
+ * @note  边线 IPM 后基本竖直，固定行求 x 即可代表整条边线位置，
+ *        避免"解算点随可见边线长度漂移"（审批方案 §3.2）
+ * @return 1=成功（*x_mm_out 有效），0=失败（IPM 无效/交点出图/线近水平不可交）
+ */
+static int bumpy_vision_edge_x_at_base_row(const bumpy_line_t *line, float *x_mm_out)
+{
+    IPM_Point_t p;
+    const float arad = line->ang * 0.01745329251f;
+    const float s = sinf(arad);     /* 像素系 x 向右/y 向下，直线方向 (cos,sin) */
+
+    if (fabsf(s) < 0.0872f)         /* <sin5°：近水平，与水平基准行不可交，降级用拟合中心 */
+    {
+        p = IPM_GetPhysicalCoord((uint8_t)(line->cx + 0.5f), (uint8_t)(line->cy + 0.5f));
+    }
+    else
+    {
+        const float x_pix = line->cx + ((float)BUMPY_IPM_BASE_ROW - line->cy) * cosf(arad) / s;
+        if (x_pix < 0.0f || x_pix > (float)(IPM_IMG_WIDTH - 1))
+        {
+            return 0;
+        }
+        p = IPM_GetPhysicalCoord((uint8_t)(x_pix + 0.5f), (uint8_t)BUMPY_IPM_BASE_ROW);
+    }
+
+    if (!p.is_valid || (p.x_mm == IPM_INVALID_VAL))
+    {
+        return 0;
+    }
+    *x_mm_out = (float)p.x_mm;
+    return 1;
+}
+#endif
+
 void bumpy_vision_reset_filter(void)
 {
     bumpy_vision_output_t empty;
+
+#if BUMPY_USE_NEW_PIPELINE
+    bumpy_pipeline_init(&s_bumpy_pipeline);   /* 时间验证历史按路段/视频隔离 */
+#endif
 
     memset(&empty, 0, sizeof(empty));
     empty.direction_y = 1.0f;
@@ -309,7 +352,11 @@ void bumpy_vision_reset_filter(void)
 
 void bumpy_vision_init(void)
 {
+#if BUMPY_USE_NEW_PIPELINE
+    bumpy_pipeline_init(&s_bumpy_pipeline);
+#else
     bumpy_edge_detect_init();
+#endif
     bumpy_vision_reset_filter();
 
 #if BUMPY_VISION_PROFILE_ENABLE
@@ -328,6 +375,81 @@ const volatile bumpy_vision_output_t *bumpy_vision_get_output(void)
 
 void bumpy_vision_process_camera_frame(const uint8 *gray)
 {
+#if BUMPY_USE_NEW_PIPELINE
+    /* ============================================================
+     * 新管线（2026-08-17 落地）：输入 94×60 压缩图
+     *   bumpy_pipeline_frame → 左右边线 → 对准 IPC 契约字段
+     *   （bumpy_detected / direction_x/y / yaw_error_deg_x100 /
+     *     lateral_mm / meas_valid，详见 docs/任务规划/颠簸路段新视觉管线落地文档.md）
+     * ============================================================ */
+    bumpy_frame_result_t res;
+    bumpy_vision_output_t next;
+
+    if (gray == NULL)
+    {
+        return;
+    }
+
+    bumpy_pipeline_frame(&s_bumpy_pipeline, gray, &res);
+
+    next.frame_id        = g_bumpy_vision_output_shadow.frame_id + 1U;
+    next.bumpy_detected  = (uint8)((res.L.valid || res.R.valid) ? 1U : 0U);
+    next.coherence_r     = 0.0f;   /* 新管线无 R² 概念，保留字段置 0 */
+    next.strong_count    = 0U;
+    next.total_pixels    = 0U;
+    next.max_gradient_mag = 0U;
+    next.direction_x     = 0.0f;
+    next.direction_y     = 1.0f;
+    next.yaw_error_deg_x100 = 0;
+    next.lateral_mm      = 0;
+    next.meas_valid      = 0U;
+
+    /* 条纹倾斜角：永远取自管线 frame_heading（与边线成败无关，常输出）；
+       valid 位只标"条纹也没有"的严重丢失（审批方案 §3.1） */
+    if (res.hdg_valid)
+    {
+        const float arad = res.hdg * 0.01745329251f;
+        next.direction_x = cosf(arad);
+        next.direction_y = sinf(arad);
+        /* 偏差角度：条纹法向相对车头(图像 +y/前)，正=需右转（0核 VISION_BUMPY_YAW_SIGN 兜底验符号） */
+        next.yaw_error_deg_x100 = (int16)(atan2f(-sinf(arad), cosf(arad)) * 57.2957795f * 100.0f);
+        next.meas_valid = 1U;
+    }
+
+    /* 横向偏差：固定 y=BUMPY_IPM_BASE_ROW 行 IPM + 已知 1m 边线间距（审批方案 §3.2）
+       双侧：中点 + 间距自检；单侧：±500mm 逆解算；两侧都没有：0 */
+    {
+        float xl = 0.0f, xr = 0.0f;
+        const int ok_l = (res.L.valid && bumpy_vision_edge_x_at_base_row(&res.L, &xl));
+        const int ok_r = (res.R.valid && bumpy_vision_edge_x_at_base_row(&res.R, &xr));
+
+        if (ok_l && ok_r)
+        {
+            /* 物理 x 向右为正，右边线 x 应比左边线大约 BUMPY_EDGE_SPACING_MM */
+            if (fabsf((xr - xl) - (float)BUMPY_EDGE_SPACING_MM) <= (float)BUMPY_WIDTH_TOL_MM)
+            {
+                next.lateral_mm = (int16)(-(xl + xr) * 0.5f);   /* 车身偏右为正 */
+            }
+            /* 间距自检失败：lateral_mm 保持 0，meas_valid 不受影响 */
+        }
+        else if (ok_l)
+        {
+            next.lateral_mm = (int16)(-(xl + (float)BUMPY_HALF_SPACING_MM));
+        }
+        else if (ok_r)
+        {
+            next.lateral_mm = (int16)(-(xr - (float)BUMPY_HALF_SPACING_MM));
+        }
+    }
+
+    g_bumpy_vision_output_write_busy = 1U;
+    g_bumpy_vision_output = next;
+    g_bumpy_vision_output_shadow = next;
+    g_bumpy_vision_output_write_busy = 0U;
+#else
+    /* ============================================================
+     * 旧算法（BUMPY_USE_NEW_PIPELINE=0）：输入 188×120 原图
+     * ============================================================ */
     bumpy_edge_detect_output_t edge = {0};
     bumpy_vision_output_t next = g_bumpy_vision_output_shadow;
 
@@ -361,6 +483,36 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     next.total_pixels = edge.total_pixels;
     next.max_gradient_mag = edge.max_gradient_mag;
 
+    /* =====================================================================
+     * 新视觉预留接口（2026-08-17 规划 §3，详见 docs/任务规划/颠簸路段视觉跨核接口规划.md）
+     *   视觉核需直接输出两个物理量 + 一个可信位：
+     *     1) yaw_error_deg_x100：偏差角度（条纹主方向相对车头，正值=需右转，×100）
+     *     2) lateral_mm        ：水平方向偏差（车身偏右为正，单位 mm）
+     *     3) meas_valid        ：本帧 yaw_error/lateral 是否可信
+     *                             → 0 核经 IPC VISION_VALID_BUMPY_MEAS 消费
+     * ===================================================================== */
+    if (edge.is_bumpy != 0U)
+    {
+        /* 偏差角度：与 0 核 vision_bumpy_calc_err_degree() 同号（-atan2f(dir_x,dir_y)）。
+         * 新视觉算法若直接输出角度，可跳过此换算直接填该字段。 */
+        const float yaw_deg = -atan2f(edge.dir_x, edge.dir_y) * (180.0f / 3.14159265358979f);
+        next.yaw_error_deg_x100 = (int16)(yaw_deg * 100.0f);
+
+        /* TODO(新视觉)：计算水平方向偏差 lateral_mm
+         *   - 用 IPM_GetPhysicalCoord() 求"条纹中心点"与"车辆中心点"物理 x 之差；
+         *   - 约定：车身偏右为正（与单边桥 lateral_mm 口径一致）；
+         *   - 未实现前保持 0；后续需同时校验 IPM 有效、|lateral| 未饱和，
+         *     再置 meas_valid（当前暂由 is_bumpy 代表可信）。 */
+        next.lateral_mm = 0;
+        next.meas_valid = 1U;
+    }
+    else
+    {
+        next.yaw_error_deg_x100 = 0;
+        next.lateral_mm = 0;
+        next.meas_valid = 0U;
+    }
+
     g_bumpy_vision_output_write_busy = 1U;
     g_bumpy_vision_output = next;
     g_bumpy_vision_output_shadow = next;
@@ -368,5 +520,6 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
 
 #if BUMPY_VISION_PROFILE_ENABLE
     RUNTIME_PROFILE_END(&g_bumpy_vision_cost_profiler, BUMPY_VISION_PROFILE_TIMER);
+#endif
 #endif
 }

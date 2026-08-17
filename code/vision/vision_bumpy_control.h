@@ -31,6 +31,15 @@ extern "C" {
 #define VISION_BUMPY_PID_KI                    (0.03f)
 #define VISION_BUMPY_PID_KD                    (0.05f)
 #define VISION_BUMPY_PID_I_LIMIT               (12.0f)
+
+/* 朝向修正（2026-08-17 规划 §4.2） */
+#define VISION_BUMPY_YAW_SIGN                  (1.0f)   // 偏差角度符号：正值=需右转；反了改 -1
+#define VISION_BUMPY_HEADING_STABLE_FRAMES     (3U)     // 连续 3 帧可信且平稳才算"准确朝向"
+#define VISION_BUMPY_HEADING_STABLE_TOL_DEG    (1.0f)   // 相邻帧角度变化小于该值才算平稳
+
+/* 横向记录（2026-08-17 规划 §4.3） */
+#define VISION_BUMPY_LATERAL_RECORD_ALPHA      (0.50f)  // 记录 EMA 系数：0~1，越小越平滑
+#define VISION_BUMPY_LATERAL_RECORD_MAX_MM     (200.0f) // 记录值限幅，防视觉异常导致出口跳变
 #define VISION_BUMPY_ENTRY_DETECT_FRAMES        (3U)     // 连续 5 个新视觉帧检测到颠簸，确认进入路段
 #define VISION_BUMPY_EXIT_MISS_FRAMES          (3U)     // 连续 5 个新视觉帧未检测到颠簸，确认视觉出口
 
@@ -79,6 +88,16 @@ typedef struct
     float direction_y;                     // 视觉方向向量 Y 分量
     float err_degree_cmd;                  // 转向误差角度指令(度)
     vision_bumpy_pid_t pid;
+    /* —— 新视觉接口（2026-08-17 规划 §4，详见 docs/任务规划/颠簸路段视觉跨核接口规划.md）—— */
+    /* 朝向修正（偏差角度 → err_degree） */
+    uint8 heading_stable;                  // 已连续 N 帧测得准确朝向，允许实时修正
+    uint16 heading_stable_count;           // 连续可信且角度平稳的帧计数
+    int16 yaw_error_deg_x100;              // 最近一帧偏差角度（PID 输入，遥测用）
+    float last_err_deg;                    // 上一帧偏差角度（平稳性判定用）
+    /* 横向记录（lateral_mm → recorded，只记录不修正） */
+    int16 lateral_mm;                      // 最近一帧可信横向偏差（原始观测，遥测用）
+    float recorded_lateral_mm;             // 记录的横向偏差（EMA 滤波，失稳时冻结）
+    uint8 meas_valid;                      // 最近一帧是否可信（VISION_VALID_BUMPY_MEAS）
 } vision_bumpy_control_status_t;
 
 /* 全局变量声明区 */
@@ -122,6 +141,18 @@ void VisionBumpyControl_Update_2ms(void);
  * @return  当前转向误差指令(度)
  */
 float VisionBumpyControl_GetErrDegreeCmd(void);
+
+/**
+ * @brief   查询是否已测得准确朝向（新视觉接口 2026-08-17 规划 §4.2）
+ * @return  1: 视觉朝向稳定，可实时修正；0: 未稳定/失稳
+ */
+uint8 VisionBumpyControl_IsHeadingStable(void);
+
+/**
+ * @brief   获取冻结后的横向偏差记录值（新视觉接口 2026-08-17 规划 §4.3）
+ * @return  记录的横向偏差（mm，正值=车身偏右）
+ */
+float VisionBumpyControl_GetRecordedLateralMm(void);
 
 /**
  * @brief   清空颠簸视觉出口判定历史（进入颠簸任务时调用）

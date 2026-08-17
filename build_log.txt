@@ -1,0 +1,157 @@
+﻿
+     IAR Command Line Build Utility V9.2.2.10770
+     Copyright 2002-2023 IAR Systems AB.
+
+
+cyt4bb7_cm_7_1 - Debug
+Reading project nodes...
+
+Cleaning... 130 files.
+camera_menu.c
+bridge_output_filter.c
+bridge_v2_arbiter.c
+ipm_transform.c
+bridge_fusion.c
+bumpy_conv.c
+bridge_pvc_vision.c
+D:\WORKS\2026LunTui\project\code1\vision\bridge_pvc_vision.c(40) : Warning[Pe177]: variable "g_bpvc_last_frame_time_us" was declared but never referenced
+wifi_protocol.c
+bumpy_vision.c
+D:\WORKS\2026LunTui\project\code1\vision\bumpy_vision.c(90) : Warning[Pe177]: function "bumpy_edge_detect_init" was declared but never referenced
+D:\WORKS\2026LunTui\project\code1\vision\bumpy_vision.c(97) : Warning[Pe177]: function "bumpy_edge_detect_process" was declared but never referenced
+D:\WORKS\2026LunTui\project\code1\vision\bumpy_vision.c(295) : Warning[Pe550]: variable "g_bumpy_last_frame_time_us" was set but never used
+telemetry_ipc_core1.c
+wifi_diff_stream.c
+bumpy_pipeline.c
+cy_adc.c
+cy_i2s.c
+vision_ipc_core1.c
+pvc_vision.c
+D:\WORKS\2026LunTui\project\code1\vision\pvc_vision.c(39) : Warning[Pe177]: variable "g_pvc_last_frame_time_us" was declared but never referenced
+wifi.c
+cy_crypto_config.c
+cy_canfd.c
+bridge_detect.c
+D:\WORKS\2026LunTui\project\code1\vision\bridge_detect.c(299) : Warning[Pe177]: variable "s_topc" was declared but never referenced
+D:\WORKS\2026LunTui\project\code1\vision\bridge_detect.c(343) : Warning[Pe177]: function "cmp_u8" was declared but never referenced
+D:\WORKS\2026LunTui\project\code1\vision\bridge_detect.c(1448) : Warning[Pe177]: function "inner_threshold" was declared but never referenced
+D:\WORKS\2026LunTui\project\code1\vision\bridge_detect.c(1830) : Warning[Pe177]: function "extract_top_region" was declared but never referenced
+D:\WORKS\2026LunTui\project\code1\vision\bridge_detect.c(2724) : Warning[Pe550]: variable "s_tp" was set but never used
+D:\WORKS\2026LunTui\project\code1\vision\bridge_detect.c(2724) : Warning[Pe550]: variable "s_tn" was set but never used
+cy_cpu.c
+cy_mdma.c
+cy_pdma.c
+cy_evtgen.c
+cy_flash.c
+cy_gpio.c
+edd_tx.c
+cy_ipc_pipe.c
+cy_ipc_drv.c
+cy_ipc_sema.c
+cy_lvd.c
+bridge_ref_detection.c
+cy_scb_ezi2c.c
+edd_rx.c
+cy_lin.c
+cy_ethif.c
+cy_mcwdt.c
+cy_mpu.c
+cy_scb_common.c
+cy_scb_spi.c
+cy_scb_uart.c
+edd.c
+cy_smartio.c
+cy_prot.c
+cy_scb_i2c.c
+cy_smif_memslot.c
+cy_smif.c
+cy_smif_ver_specific.c
+cy_syslib.c
+cy_syspm.c
+cy_sysflt.c
+cy_tcpwm_sr.c
+cy_sysreghc.c
+cy_srom.c
+cy_sysint.c
+cy_sysreset.c
+cy_tcpwm_quaddec.c
+cy_syswdt.c
+cy_systick.c
+cy_tcpwm_counter.c
+cy_tcpwm_pwm.c
+cy_sd_host.c
+cy_sysrtc.c
+cy_sysclk.c
+cy_tcpwm.c
+cy_trigmux.c
+cy_semihosting.c
+cy_mw_flash.c
+cy_interrupt_map.c
+cy_power.c
+cy_dp83867.c
+cy_button.c
+cy_smif_semp.c
+startup.c
+cy_sw_tmr.c
+cy_smif_s25fs.c
+system_tviibh4m_cm7.c
+cy_smif_s25fl.c
+zf_device_dl1b.c
+zf_device_imu660ra.c
+cy_smif_hb_flash.c
+zf_device_icm20602.c
+zf_device_key.c
+zf_device_imu963ra.c
+cy_smif_device_common.c
+zf_device_ips200pro.c
+cm7_1_isr.c
+zf_device_ips114.c
+zf_device_ips200.c
+zf_device_gnss.c
+zf_common_clock.c
+seekfree_assistant.c
+zf_common_interrupt.c
+zf_common_fifo.c
+zf_device_mt9v03x.c
+zf_common_font.c
+zf_device_type.c
+seekfree_assistant_interface.c
+zf_common_debug.c
+zf_device_ble6a20.c
+zf_common_function.c
+zf_device_dl1a.c
+zf_device_tsl1401.c
+zf_device_tft180.c
+zf_device_wireless_uart.c
+main_cm7_1.c
+zf_device_wifi_spi.c
+zf_driver_adc.c
+zf_device_oled.c
+zf_driver_delay.c
+zf_driver_encoder.c
+zf_driver_flash.c
+zf_device_wifi_uart.c
+zf_driver_dma.c
+zf_driver_ipc.c
+edge_conv_asm.s
+zf_driver_gpio.c
+bridge_asm_ops.s
+cy_syslib_iar.s
+edge_conv7_asm.s
+zf_driver_pit.c
+zf_driver_exti.c
+startup_cm7.s
+zf_driver_pwm.c
+zf_driver_soft_spi.c
+zf_driver_soft_iic.c
+zf_driver_timer.c
+zf_driver_uart.c
+zf_driver_spi.c
+cyt4bb7_cm_7_1.out
+Error[Lp011]: section placement failed
+            unable to allocate space for sections/blocks with a total estimated minimum size of 0x5'cf64 bytes (max align 0x80) in <[0x2808'0000-0x280b'ffff]> (total uncommitted space 0x3'e000).
+Error[Lp017]: the address of "s_rem (bridge_detect.o)" was needed when computing compressed initializers for section .itcm_text (bridge_detect.o #14), but that address hasn't been set yet, since the size of the compressed initializers are needed in order to set it
+
+Total number of errors: 2
+Total number of warnings: 11
+Build failed

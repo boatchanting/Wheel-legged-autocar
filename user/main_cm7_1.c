@@ -304,7 +304,11 @@ int main(void)
             }
             if(VisionIpc_Core1_ShouldRunBumpy()) //  ，测试时用 1 0
             {
-                bumpy_vision_process_camera_frame(image_copy[0]);
+#if BUMPY_USE_NEW_PIPELINE
+                bumpy_vision_process_camera_frame(compressed_image_copy[0]);   /* 新管线：94×60 压缩图 */
+#else
+                bumpy_vision_process_camera_frame(image_copy[0]);              /* 旧算法：188×120 原图 */
+#endif
                 render_bumpy_vision_to_image();
             }
 #endif
