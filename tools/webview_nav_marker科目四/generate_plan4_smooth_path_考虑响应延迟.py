@@ -61,11 +61,11 @@ LOCAL_CORNER_HANDLE_RATIO = 0.18
 LOCAL_CORNER_NEIGHBOR_RATIO = 0.35
 LOCAL_CORNER_HANDLE_MAX_MM = 600.0
 
-# 以下限速值使用写入 NavRamPoint_t 的 target_speed 指令单位。
+# 以下任务恒速值使用写入 NavRamPoint_t 的 target_speed 指令单位。
 STAIRS_APPROACH_DISTANCE_MM = 4000.0
 STAIRS_APPROACH_TARGET_SPEED_MAX = 220.0
 BRIDGE_APPROACH_DISTANCE_MM = 2500.0
-BRIDGE_APPROACH_TARGET_SPEED_MAX = 300.0
+BRIDGE_APPROACH_TARGET_SPEED_MAX = 200.0
 BUMP_APPROACH_DISTANCE_MM = 2500.0
 BUMP_APPROACH_TARGET_SPEED_MAX = 400.0
 SLOPE_APPROACH_DISTANCE_MM = 2500.0
@@ -487,6 +487,7 @@ def apply_response_delay_compensation(
     target_speed: np.ndarray,
     s: np.ndarray,
     response_delay_s: float,
+    preserve_mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Advance only deceleration commands by the chassis response delay.
 
@@ -504,9 +505,43 @@ def apply_response_delay_compensation(
     for index, current_speed in enumerate(desired_speed):
         delayed_s = min(path_end_s, float(s[index]) + current_speed * response_delay_s)
         future_speed = float(np.interp(delayed_s, s, desired_speed))
-        command_speed[index] = min(current_speed, future_speed)
+        if preserve_mask is None or not preserve_mask[index]:
+            command_speed[index] = min(current_speed, future_speed)
 
     return -command_speed / SPEED_TO_MM_S
+
+
+def apply_fixed_speed_envelope(
+    speed_limit: np.ndarray,
+    s: np.ndarray,
+    fixed_mask: np.ndarray,
+) -> np.ndarray:
+    """Apply longitudinal reachability while preserving hard task speeds.
+
+    Task state machines require an exact command speed over their complete
+    approach-to-exit interval.  The samples immediately before and after that
+    interval are allowed to ramp under the normal acceleration/deceleration
+    limits, so the route remains continuous without changing the task speed.
+    """
+    planned_speed = np.array(speed_limit, copy=True)
+    for _ in range(2):
+        for index in range(len(planned_speed) - 2, -1, -1):
+            if fixed_mask[index]:
+                continue
+            ds = s[index + 1] - s[index]
+            planned_speed[index] = min(
+                planned_speed[index],
+                math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds)),
+            )
+        for index in range(1, len(planned_speed)):
+            if fixed_mask[index]:
+                continue
+            ds = s[index] - s[index - 1]
+            planned_speed[index] = min(
+                planned_speed[index],
+                math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds)),
+            )
+    return planned_speed
 
 
 def calculate_target_speed(
@@ -542,80 +577,82 @@ def calculate_target_speed(
     return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
 
 
-def limit_stairs_approach_output_speed(
+def _task_speed_ranges(
+    samples: list[PathSample],
+    s: np.ndarray,
+    entry_type: int,
+    exit_type: int,
+    approach_distance_mm: float,
+    target_speed: float,
+) -> list[tuple[float, float, float]]:
+    """Return (approach start, state-machine exit, physical speed) ranges."""
+    entries = [float(s[index]) for index, sample in enumerate(samples) if sample.point_type == entry_type]
+    exits = [float(s[index]) for index, sample in enumerate(samples) if sample.point_type == exit_type]
+    if len(entries) != len(exits):
+        raise ValueError(
+            f"任务 point_type={entry_type} 的入口/出口数量不匹配: {len(entries)} != {len(exits)}"
+        )
+    ranges: list[tuple[float, float, float]] = []
+    for entry_s, exit_s in zip(entries, exits):
+        start_s = max(0.0, entry_s - approach_distance_mm)
+        if exit_s < start_s:
+            raise ValueError(f"任务 point_type={entry_type} 的出口早于 approach 起点。")
+        ranges.append((start_s, exit_s, target_speed * SPEED_TO_MM_S))
+    return ranges
+
+
+def apply_constant_task_speeds(
     samples: list[PathSample],
     s: np.ndarray,
     target_speed: np.ndarray,
-    approach_distance_mm: float,
-) -> np.ndarray:
-    """Cap the table output before and through the three-step task.
-
-    The state machine owns the physical runout after its exit marker.  Keeping
-    the approach cap after that marker used to hold normal path tracking at
-    task speed for another full approach distance.
-    """
-    # 先转换为物理速度单位，使任务限速插入后仍可应用与基础规划相同的加减速约束。
+    task_ranges: Iterable[tuple[float, float, float]],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Plan normal route sections around hard constant-speed task sections."""
     speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
-    stairs_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 3]
-    stairs_exit_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 30]
-    
-    # 将入口和出口配对，确保完整覆盖整个stairs段
-    for entry_s, exit_s in zip(stairs_entry_s, stairs_exit_s):
-        # 限制范围：从入口前 approach_distance_mm 到状态机出口锚点。
-        full_stairs_range = (s >= entry_s - approach_distance_mm) & (s <= exit_s)
-        speed_limit[full_stairs_range] = np.minimum(
-            speed_limit[full_stairs_range],
-            STAIRS_APPROACH_TARGET_SPEED_MAX * SPEED_TO_MM_S,
-        )
-    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+    fixed_mask = np.zeros(len(samples), dtype=bool)
+    fixed_values = np.zeros(len(samples), dtype=float)
+    for start_s, end_s, physical_speed in sorted(task_ranges, key=lambda item: item[0]):
+        mask = (s >= start_s) & (s <= end_s)
+        overlap = fixed_mask & mask & (np.abs(fixed_values - physical_speed) > 1e-6)
+        if np.any(overlap):
+            raise ValueError("不同状态机的恒速区间发生重叠。")
+        fixed_mask[mask] = True
+        fixed_values[mask] = physical_speed
+    speed_limit[fixed_mask] = fixed_values[fixed_mask]
+    planned_speed = apply_fixed_speed_envelope(speed_limit, s, fixed_mask)
+    planned_speed[fixed_mask] = fixed_values[fixed_mask]
+    return -planned_speed / SPEED_TO_MM_S, fixed_mask
+
+
+def limit_stairs_approach_output_speed(
+    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray, approach_distance_mm: float
+) -> np.ndarray:
+    ranges = _task_speed_ranges(samples, s, 3, 30, approach_distance_mm, STAIRS_APPROACH_TARGET_SPEED_MAX)
+    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
 
 
 def limit_bridge_approach_output_speed(
-    samples: list[PathSample],
-    s: np.ndarray,
-    target_speed: np.ndarray,
-    approach_distance_mm: float,
-    target_speed_max: float,
+    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray,
+    approach_distance_mm: float, target_speed_max: float,
 ) -> np.ndarray:
-    """限制单边桥状态机入口前的速度，并重新建立纵向速度包络。"""
-    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
-    bridge_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 4]
-    for current_entry_s in bridge_entry_s:
-        approach_range = (s >= current_entry_s - approach_distance_mm) & (s <= current_entry_s)
-        speed_limit[approach_range] = np.minimum(speed_limit[approach_range], target_speed_max * SPEED_TO_MM_S)
-    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+    ranges = _task_speed_ranges(samples, s, 4, 40, approach_distance_mm, target_speed_max)
+    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
 
 
 def limit_bumpy_approach_output_speed(
-    samples: list[PathSample],
-    s: np.ndarray,
-    target_speed: np.ndarray,
-    approach_distance_mm: float,
-    target_speed_max: float,
+    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray,
+    approach_distance_mm: float, target_speed_max: float,
 ) -> np.ndarray:
-    """Limit the bumpy-road approach to its state machine's initial speed."""
-    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
-    bump_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 5]
-    for current_entry_s in bump_entry_s:
-        approach_range = (s >= current_entry_s - approach_distance_mm) & (s <= current_entry_s)
-        speed_limit[approach_range] = np.minimum(speed_limit[approach_range], target_speed_max * SPEED_TO_MM_S)
-    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+    ranges = _task_speed_ranges(samples, s, 5, 50, approach_distance_mm, target_speed_max)
+    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
 
 
 def limit_slope_approach_output_speed(
-    samples: list[PathSample],
-    s: np.ndarray,
-    target_speed: np.ndarray,
-    approach_distance_mm: float,
-    target_speed_max: float,
+    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray,
+    approach_distance_mm: float, target_speed_max: float,
 ) -> np.ndarray:
-    """Limit the slope approach to the PVC alignment speed."""
-    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
-    slope_entry_s = [s[index] for index, sample in enumerate(samples) if sample.point_type == 2]
-    for current_entry_s in slope_entry_s:
-        approach_range = (s >= current_entry_s - approach_distance_mm) & (s <= current_entry_s)
-        speed_limit[approach_range] = np.minimum(speed_limit[approach_range], target_speed_max * SPEED_TO_MM_S)
-    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+    ranges = _task_speed_ranges(samples, s, 2, 20, approach_distance_mm, target_speed_max)
+    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
 
 
 
@@ -819,38 +856,26 @@ def main() -> int:
     samples, effective_sample_step_mm = generate_path_with_point_cap(markers)
     s, yaw, curvature = calculate_yaw_and_curvature(samples)
     target_speed = calculate_target_speed(samples, s, curvature)
-    output_target_speed = limit_stairs_approach_output_speed(
-        samples,
-        s,
-        target_speed,
-        args.stairs_approach_distance_mm,
-    )
-    output_target_speed = limit_bridge_approach_output_speed(
-        samples,
-        s,
-        output_target_speed,
-        BRIDGE_APPROACH_DISTANCE_MM,
-        BRIDGE_APPROACH_TARGET_SPEED_MAX,
-    )
-    output_target_speed = limit_bumpy_approach_output_speed(
-        samples,
-        s,
-        output_target_speed,
-        BUMP_APPROACH_DISTANCE_MM,
-        BUMP_APPROACH_TARGET_SPEED_MAX,
-    )
-    output_target_speed = limit_slope_approach_output_speed(
-        samples,
-        s,
-        output_target_speed,
-        SLOPE_APPROACH_DISTANCE_MM,
-        SLOPE_APPROACH_TARGET_SPEED_MAX,
+    task_ranges = [
+        *_task_speed_ranges(samples, s, 3, 30, args.stairs_approach_distance_mm, STAIRS_APPROACH_TARGET_SPEED_MAX),
+        *_task_speed_ranges(samples, s, 2, 20, SLOPE_APPROACH_DISTANCE_MM, SLOPE_APPROACH_TARGET_SPEED_MAX),
+        *_task_speed_ranges(samples, s, 5, 50, BUMP_APPROACH_DISTANCE_MM, BUMP_APPROACH_TARGET_SPEED_MAX),
+        *_task_speed_ranges(samples, s, 4, 40, BRIDGE_APPROACH_DISTANCE_MM, BRIDGE_APPROACH_TARGET_SPEED_MAX),
+    ]
+    output_target_speed, task_speed_mask = apply_constant_task_speeds(
+        samples, s, target_speed, task_ranges
     )
     output_target_speed = apply_response_delay_compensation(
         output_target_speed,
         s,
         args.speed_response_delay_s,
+        preserve_mask=task_speed_mask,
     )
+    # 延时补偿只提前减速命令；补偿后的边界仍重新检查可达性，避免在
+    # 状态机恒速段出口产生不可实现的速度跳变。
+    compensated_speed = np.abs(output_target_speed) * SPEED_TO_MM_S
+    compensated_speed = apply_fixed_speed_envelope(compensated_speed, s, task_speed_mask)
+    output_target_speed = -compensated_speed / SPEED_TO_MM_S
     speed_heatmap_output = render_output.with_name(f"{render_output.stem}_speed_heatmap{render_output.suffix}")
     # 如需导出路径 CSV，取消下一行注释。
     # write_csv(csv_output, samples, yaw, curvature, output_target_speed)
