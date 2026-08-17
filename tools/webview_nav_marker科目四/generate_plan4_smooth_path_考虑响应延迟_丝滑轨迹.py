@@ -41,33 +41,36 @@ START_POINT_X_MM = 0.0
 START_POINT_Y_MM = 0.0
 
 # 与 tools/webview_nav_marker速度规划/caculate_path.py 保持一致的离线路径速度约束。
-PATH_SPEED_MAX_MM_S = 5000.0
-SPRINT_SPEED_MM_S = 5000.0
+PATH_SPEED_MAX_MM_S = 8000.0
+SPRINT_SPEED_MM_S = 8000.0
 ENABLE_FINISH_SPRINT = True
-MAX_ACCEL_MM_S2 = 4500.0  #3500室内
-MAX_DECEL_MM_S2 = 2500.0  #2500室内
-MAX_LATERAL_ACCEL_MM_S2 = 2000.0  #2000室内
-MAX_PATH_YAW_RATE_RAD_S = 2.2 # 2.2室内
+MAX_ACCEL_MM_S2 = 10500.0  #3500室内
+MAX_DECEL_MM_S2 = 10500.0  #2500室内
+MAX_LATERAL_ACCEL_MM_S2 = 4000.0  #2000室内
+MAX_PATH_YAW_RATE_RAD_S = 2.8 # 2.2室内
 SPEED_TO_MM_S = 4.79
 CURVATURE_EPS = 1e-6
 
 # Advance deceleration commands by the measured chassis response delay.
 # Keep acceleration unshifted so a future higher speed never violates the
 # current curve or special-task speed ceiling.
-SPEED_RESPONSE_DELAY_S = 0.8
+SPEED_RESPONSE_DELAY_S = 0.0
 
 # 局部圆角控制柄同时受相邻边长限制，避免稀疏或急转标记使 Bezier 曲线偏离局部走廊。
 LOCAL_CORNER_HANDLE_RATIO = 0.18
 LOCAL_CORNER_NEIGHBOR_RATIO = 0.35
 LOCAL_CORNER_HANDLE_MAX_MM = 600.0
+# 台阶出口到单边桥入口之间没有可靠的人工路径点；两端任务方向接近，
+# 使用更长的专用控制柄，降低这条直接连接曲线的曲率，避免离线速度被压低。
+SMOOTH_TASK_LINK_HANDLE_MM = 900.0
 
 # 以下任务恒速值使用写入 NavRamPoint_t 的 target_speed 指令单位。
 STAIRS_APPROACH_DISTANCE_MM = 4000.0
 STAIRS_APPROACH_TARGET_SPEED_MAX = 320.0
 BRIDGE_APPROACH_DISTANCE_MM = 500.0
-BRIDGE_APPROACH_TARGET_SPEED_MAX = 200.0
+BRIDGE_APPROACH_TARGET_SPEED_MAX = 300.0
 BUMP_APPROACH_DISTANCE_MM = 500.0
-BUMP_APPROACH_TARGET_SPEED_MAX = 400.0
+BUMP_APPROACH_TARGET_SPEED_MAX = 500.0
 SLOPE_APPROACH_DISTANCE_MM = 500.0
 SLOPE_APPROACH_TARGET_SPEED_MAX = 500.0
 
@@ -252,6 +255,32 @@ def apply_special_exit_corrections(markers: list[Marker], pairs: dict[int, int])
     return corrected
 
 
+def collapse_stairs_to_bridge_markers(markers: list[Marker]) -> tuple[list[Marker], int]:
+    """Remove hand-recorded ordinary points between stairs and bridge.
+
+    The latest route has a direct, nearly collinear task transition, but the
+    intermediate ordinary points bend the generated path unnecessarily.  Only
+    ordinary points are removed; if another state-machine marker is present,
+    the route is left untouched so task ordering remains unambiguous.
+    """
+    collapsed: list[Marker] = []
+    removed_count = 0
+    index = 0
+    while index < len(markers):
+        marker = markers[index]
+        collapsed.append(marker)
+        if marker.point_type == 30:
+            next_index = index + 1
+            while next_index < len(markers) and markers[next_index].point_type == 0:
+                next_index += 1
+            if next_index < len(markers) and markers[next_index].point_type == 4:
+                removed_count += next_index - index - 1
+                index = next_index
+                continue
+        index += 1
+    return collapsed, removed_count
+
+
 def add_sample(samples: list[PathSample], point: np.ndarray, point_type: int, forced: bool, segment: str) -> None:
     if samples and math.hypot(samples[-1].x - point[0], samples[-1].y - point[1]) < 0.01:
         # 若事件点与前一个几何点重合，保留事件标签。
@@ -299,8 +328,13 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
     tangent_end = unit(end.tangent if end.tangent is not None else chord)
     # 两端控制柄独立限幅，等效于局部圆角，使曲线靠近相邻锚点，避免短边引起过度外扩。
     default_handle = min(LOCAL_CORNER_HANDLE_RATIO * chord_length, LOCAL_CORNER_HANDLE_MAX_MM)
-    start_handle = min(default_handle, start.corner_handle_mm or default_handle)
-    end_handle = min(default_handle, end.corner_handle_mm or default_handle)
+    # 显式 corner_handle_mm 用于专用过渡段；普通节点仍使用 default_handle。
+    start_handle = start.corner_handle_mm if start.corner_handle_mm is not None else default_handle
+    end_handle = end.corner_handle_mm if end.corner_handle_mm is not None else default_handle
+    # 控制柄不能达到整条弦长，否则五次曲线会出现回折。
+    max_safe_handle = 0.45 * chord_length
+    start_handle = min(start_handle, max_safe_handle)
+    end_handle = min(end_handle, max_safe_handle)
     control = np.array([
         start_vec,
         start_vec + start_handle * tangent_start,
@@ -363,6 +397,15 @@ def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node]
 
     if len(nodes) < 2:
         raise ValueError("展开后路径锚点不足。")
+
+    # nodes 顺序为：台阶出口 -> 台阶出口后走廊 -> 单边桥入口前走廊 -> 单边桥入口。
+    # 仅放宽中间这一条 G2 连接，不改变任务入口/出口的直线走廊。
+    for index in range(1, len(nodes) - 2):
+        if (nodes[index - 1].point_type == 30 and
+                nodes[index + 2].point_type == 4):
+            nodes[index].corner_handle_mm = SMOOTH_TASK_LINK_HANDLE_MM
+            nodes[index + 1].corner_handle_mm = SMOOTH_TASK_LINK_HANDLE_MM
+            break
 
     # 无标签路点使用角平分线切向量，使相邻 G2 曲线满足 C1 连续；同时根据相邻边长计算局部控制柄。
     for index, node in enumerate(nodes):
@@ -853,6 +896,7 @@ def main() -> int:
     markers, start_heading = read_markers(source)
     pairs = find_event_pairs(markers)
     markers = apply_special_exit_corrections(markers, pairs)
+    markers, collapsed_marker_count = collapse_stairs_to_bridge_markers(markers)
     samples, effective_sample_step_mm = generate_path_with_point_cap(markers)
     s, yaw, curvature = calculate_yaw_and_curvature(samples)
     target_speed = calculate_target_speed(samples, s, curvature)
@@ -892,6 +936,7 @@ def main() -> int:
     print(f"目标速度范围: {output_target_speed.min():.1f} ~ {output_target_speed.max():.1f}（负数为前进指令）")
     print(f"渲染图: {render_output}")
     print(f"强制直线累计长度: {forced_length:.1f} mm")
+    print(f"台阶到单边桥忽略普通路径点: {collapsed_marker_count} 个")
     print(f"C 路表: {args.header}")
     return 0
 

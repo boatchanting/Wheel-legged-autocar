@@ -57,7 +57,7 @@
 #define PLAN4_SPECIAL_ALIGN_CROSS_FULL_MM            60.0f  // 小于该横向误差时不因入任务对准额外限速
 #define PLAN4_SPECIAL_ALIGN_CROSS_BLOCK_MM          220.0f  // 大于该横向误差时仅保留爬行速度
 #define PLAN4_SPECIAL_ALIGN_MIN_SPEED_FACTOR          0.25f // 未对准时的最低行驶速度比例，仍可边跑边收敛
-#define PLAN4_SPECIAL_ENTRY_YAW_TOLERANCE_DEG         2.0f  // 交接给台阶/单边桥/颠簸状态机的最大航向误差
+#define PLAN4_SPECIAL_ENTRY_YAW_TOLERANCE_DEG         6.0f  // 交接给台阶/单边桥/颠簸状态机的最大航向误差
 #define PLAN4_SPECIAL_ENTRY_CROSS_TOLERANCE_MM      100.0f  // 交接给台阶/单边桥/颠簸状态机的最大横向误差
 #define PLAN4_SPECIAL_HANDOFF_TICKS                  20U     // 特殊任务结束后恢复 LQR 输出的渐变周期数
 #define PLAN4_SPECIAL_HANDOFF_SPEED_STEP             40.0f   // 交接恢复期间每周期速度指令的最大变化量
