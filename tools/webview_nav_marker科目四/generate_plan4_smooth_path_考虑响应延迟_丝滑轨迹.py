@@ -243,8 +243,9 @@ class PlanningConfiguration:
     """从 TOML 文件读取的、仅作用于本次生成的完整规划配置。"""
 
     task_profiles: dict[int, TaskSpeedProfile]
-    default_trajectory_profile: SpeedPlanningProfile
-    trajectory_overrides: dict[str, SpeedPlanningProfile]
+    # 通用 TOML 按连接预设保存速度档案。首次创建路线专属 TOML 时，
+    # 对应预设的档案会完整复制到每个 [trajectory."起点->终点"] 中。
+    preset_speed_profiles: dict[TransitionPreset, SpeedPlanningProfile]
     turnaround_stake_radius_mm: float
     turnaround_stake_clearance_mm: float
 
@@ -304,7 +305,7 @@ def overlay_task_profile(
 
 
 def load_planning_configuration(config_path: Path) -> PlanningConfiguration:
-    """读取带注释 TOML，并将缺省项回退到代码内的默认档案。"""
+    """读取通用 TOML；每种连接预设拥有独立的默认速度档案。"""
     if not config_path.is_file():
         raise FileNotFoundError(f"找不到速度规划配置文件: {config_path}")
     try:
@@ -331,19 +332,26 @@ def load_planning_configuration(config_path: Path) -> PlanningConfiguration:
     raw_trajectory = raw.get("trajectory", {})
     if not isinstance(raw_trajectory, dict):
         raise ValueError("[trajectory] 必须是 TOML 表。")
-    raw_default = raw_trajectory.get("default", {})
-    if not isinstance(raw_default, dict):
-        raise ValueError("[trajectory.default] 必须是 TOML 表。")
-    default_profile = overlay_speed_profile(
-        DEFAULT_TRAJECTORY_SPEED_PROFILE, raw_default, "[trajectory.default]"
-    )
-    overrides: dict[str, SpeedPlanningProfile] = {}
-    for key, values in raw_trajectory.items():
-        if key == "default":
-            continue
+    expected_preset_names = {preset.value for preset in TransitionPreset}
+    unknown_preset_names = set(raw_trajectory) - expected_preset_names
+    if unknown_preset_names:
+        raise ValueError(
+            "[trajectory] 只允许按连接预设配置速度参数，"
+            f"不支持: {', '.join(sorted(unknown_preset_names))}。"
+        )
+    preset_profiles: dict[TransitionPreset, SpeedPlanningProfile] = {}
+    for preset in TransitionPreset:
+        values = raw_trajectory.get(preset.value)
         if not isinstance(values, dict):
-            raise ValueError(f"[trajectory.{key}] 必须是 TOML 表。")
-        overrides[key] = overlay_speed_profile(default_profile, values, f"[trajectory.{key}]")
+            raise ValueError(
+                f"通用 TOML 缺少 [trajectory.{preset.value}]，"
+                "每一种连接预设都必须有独立速度参数。"
+            )
+        preset_profiles[preset] = overlay_speed_profile(
+            DEFAULT_TRAJECTORY_SPEED_PROFILE,
+            values,
+            f"[trajectory.{preset.value}]",
+        )
 
     raw_turnaround = raw.get("turnaround_stake", {})
     if not isinstance(raw_turnaround, dict):
@@ -356,19 +364,17 @@ def load_planning_configuration(config_path: Path) -> PlanningConfiguration:
     clearance = float(raw_turnaround.get("clearance_mm", TURNAROUND_STAKE_CLEARANCE_MM))
     if radius <= 0.0 or clearance < 0.0:
         raise ValueError("[turnaround_stake] radius_mm 必须为正，clearance_mm 不能为负。")
-    return PlanningConfiguration(task_profiles, default_profile, overrides, radius, clearance)
+    return PlanningConfiguration(task_profiles, preset_profiles, radius, clearance)
 
 
 def apply_configuration_to_trajectories(
     trajectories: list[TrajectorySegment], configuration: PlanningConfiguration
 ) -> list[TrajectorySegment]:
-    """用 ``trajectory.<起点->终点>`` 覆盖对应轨迹段，未匹配项继承 default。"""
+    """按每段选择的连接预设，应用通用 TOML 中对应的速度档案。"""
     return [
         replace(
             trajectory,
-            speed_profile=configuration.trajectory_overrides.get(
-                trajectory_config_key(trajectory), configuration.default_trajectory_profile
-            ),
+            speed_profile=configuration.preset_speed_profiles[trajectory.preset],
         )
         for trajectory in trajectories
     ]
@@ -441,20 +447,32 @@ def toml_speed_profile_lines(profile: SpeedPlanningProfile) -> list[str]:
     ]
 
 
+def toml_task_profile_lines(profile: TaskSpeedProfile) -> list[str]:
+    """将状态机档案完整写入路线专属 TOML，避免继续依赖通用文件。"""
+    return [
+        f"approach_distance_mm = {profile.approach_distance_mm:.6g}",
+        f"entry_speed_command = {profile.entry_speed_command:.6g}",
+        f"state_speed_command = {profile.state_speed_command:.6g}",
+        f"exit_speed_command = {profile.exit_speed_command:.6g}",
+        f"entry_corridor_mm = {profile.entry_corridor_mm:.6g}",
+        f"exit_corridor_mm = {profile.exit_corridor_mm:.6g}",
+    ]
+
+
 def write_nav_toml_template(
     output: Path,
     source: Path,
     state_segments: list[StateMachineSegment],
     trajectories: list[TrajectorySegment],
+    configuration: PlanningConfiguration,
 ) -> None:
     """首次发现点表时写入可直接编辑的路线专属 TOML 模板。"""
     identifiers = state_machine_identifiers(state_segments)
     lines = [
         "# Plan4 路线专属轨迹规划配置（自动生成）",
         "#",
-        "# 本文件只描述本点表的状态机顺序、轨迹连接预设和逐段速度参数。",
-        "# 状态机进出直线长度、状态机固定速度、掉头桩半径与安全裕量继承上级",
-        "# ../plan4_speed_planning.toml；请在通用文件中修改这些共享参数。",
+        "# 本文件是生成时对通用配置的完整复制，仅作用于当前点表。",
+        "# 修改本文件的状态机、掉头桩或逐段速度参数，不会改动 ../plan4_speed_planning.toml。",
         "# 修改本文件后重新运行脚本，脚本会自动读取并生成轨迹和渲染图。",
         "# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest。",
         "# 预设 turnaround_stake_fastest 要求该段点表中有且仅有一个 point_type=7 掉头桩。",
@@ -463,8 +481,25 @@ def write_nav_toml_template(
         f"source_csv = \"{source.name}\"",
         f"state_signature = \"{route_state_signature(state_segments)}\"",
         "",
-        "# 以下状态机段由点表自动识别，仅用于人工核对；其中参数继承通用 TOML。",
+        "# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅预设 4 使用此参数。",
+        "[turnaround_stake]",
+        f"radius_mm = {configuration.turnaround_stake_radius_mm:.6g}",
+        f"clearance_mm = {configuration.turnaround_stake_clearance_mm:.6g}",
+        "",
+        "# 每类状态机的完整参数复制自通用 TOML。即使本点表暂未出现某类状态机，也保留",
+        "# 该段，以便点表后续小幅调整时可继续在本文件内完成调参。",
     ]
+    for point_type in sorted(configuration.task_profiles):
+        lines.extend([
+            "",
+            f"[task.\"{point_type}\"]",
+            *toml_task_profile_lines(configuration.task_profiles[point_type]),
+        ])
+
+    lines.extend([
+        "",
+        "# 以下状态机段由点表自动识别，仅用于人工核对。",
+    ])
     for identifier, state in zip(identifiers, state_segments):
         lines.extend([
             "",
@@ -478,7 +513,8 @@ def write_nav_toml_template(
     lines.extend([
         "",
         "# 每个普通轨迹段的详细参数。键采用点表事件序号，首尾以 start/end 标识。",
-        "# 这些参数会覆盖通用 TOML 的 trajectory.default；可逐项修改。",
+        "# 速度参数已从该段 preset 对应的通用默认段完整复制；在这里可逐项修改。",
+        "# 修改 preset 后请同步检查下面的速度参数，它们不会再随通用 TOML 自动改变。",
     ])
     for trajectory in trajectories:
         key = trajectory_config_key(trajectory)
@@ -492,13 +528,52 @@ def write_nav_toml_template(
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def overlay_route_shared_configuration(
+    raw: dict[str, object], base: PlanningConfiguration
+) -> PlanningConfiguration:
+    """用路线 TOML 的共享段覆盖通用配置，路线修改不会写回通用 TOML。"""
+    task_profiles = dict(base.task_profiles)
+    raw_tasks = raw.get("task", {})
+    if not isinstance(raw_tasks, dict):
+        raise ValueError("路线专属 TOML 的 [task] 必须是 TOML 表。")
+    for key, values in raw_tasks.items():
+        try:
+            point_type = int(key)
+        except ValueError as exc:
+            raise ValueError(f"路线专属 TOML 的 [task] 键必须是状态机入口类型，例如 '3'。") from exc
+        if point_type not in task_profiles or not isinstance(values, dict):
+            raise ValueError(f"路线专属 TOML 的 [task.{key}] 不是可配置的配对状态机。")
+        task_profiles[point_type] = overlay_task_profile(
+            task_profiles[point_type], values, f"路线专属 [task.{key}]"
+        )
+
+    raw_turnaround = raw.get("turnaround_stake", {})
+    if not isinstance(raw_turnaround, dict):
+        raise ValueError("路线专属 TOML 的 [turnaround_stake] 必须是 TOML 表。")
+    allowed_turnaround = {"radius_mm", "clearance_mm"}
+    unknown_turnaround = set(raw_turnaround) - allowed_turnaround
+    if unknown_turnaround:
+        raise ValueError(
+            "路线专属 [turnaround_stake] 包含不支持的参数: "
+            f"{', '.join(sorted(unknown_turnaround))}"
+        )
+    radius = float(raw_turnaround.get("radius_mm", base.turnaround_stake_radius_mm))
+    clearance = float(raw_turnaround.get("clearance_mm", base.turnaround_stake_clearance_mm))
+    if radius <= 0.0 or clearance < 0.0:
+        raise ValueError("路线专属 [turnaround_stake] radius_mm 必须为正，clearance_mm 不能为负。")
+    return PlanningConfiguration(
+        task_profiles, base.preset_speed_profiles, radius, clearance
+    )
+
+
 def load_nav_toml_configuration(
     config_path: Path,
     source: Path,
     state_segments: list[StateMachineSegment],
     trajectories: list[TrajectorySegment],
-) -> list[TrajectorySegment]:
-    """读取专属 TOML，将连接预设与完整速度参数应用到当前路线。"""
+    base_configuration: PlanningConfiguration,
+) -> tuple[PlanningConfiguration, list[TrajectorySegment]]:
+    """读取专属 TOML，将共享参数、连接预设和逐段速度应用到当前路线。"""
     try:
         with config_path.open("rb") as config_file:
             raw = tomllib.load(config_file)
@@ -513,6 +588,7 @@ def load_nav_toml_configuration(
         raise ValueError(
             "当前点表的状态机数量或顺序与专属 TOML 不一致。请删除该专属 TOML 后重新运行以生成新模板。"
         )
+    route_configuration = overlay_route_shared_configuration(raw, base_configuration)
     raw_trajectory = raw.get("trajectory")
     if not isinstance(raw_trajectory, dict):
         raise ValueError("专属 TOML 缺少 [trajectory]。")
@@ -549,7 +625,7 @@ def load_nav_toml_configuration(
         speed_values = {name: value for name, value in values.items() if name != "preset"}
         speed_profile = overlay_speed_profile(trajectory.speed_profile, speed_values, f"[trajectory.{key}]")
         updated.append(replace(trajectory, preset=preset, speed_profile=speed_profile))
-    return updated
+    return route_configuration, updated
 
 
 def normalize_key(value: str) -> str:
@@ -1932,26 +2008,48 @@ def main() -> int:
     markers, start_heading = read_markers(source)
     pairs = find_event_pairs(markers)
     markers = apply_special_exit_corrections(markers, pairs)
-    # 先从原始点表建立交替的“状态机段 / 轨迹段”计划。首次运行时所有段
-    # 暂用插值型默认值，只为生成可编辑的路线专属 TOML，不输出任何路表。
+    # 先从原始点表建立交替的“状态机段 / 轨迹段”计划。首次运行只生成
+    # 可编辑的路线专属 TOML，不输出任何路表。
     state_segments = build_state_machine_segments(markers, pairs, task_speed_profiles)
     trajectory_segments, _ = choose_trajectory_segments(state_segments, interactive=False)
-    trajectory_segments = apply_configuration_to_trajectories(trajectory_segments, configuration)
     nav_configuration_path = nav_toml_path_for_source(source)
     if not nav_configuration_path.is_file():
         trajectory_segments = suggest_initial_trajectory_presets(trajectory_segments, markers)
+        # 预设 4 等自动建议必须先完成，再复制相应预设的默认速度参数到专属 TOML。
+        trajectory_segments = apply_configuration_to_trajectories(trajectory_segments, configuration)
         write_nav_toml_template(
-            nav_configuration_path, source, state_segments, trajectory_segments
+            nav_configuration_path, source, state_segments, trajectory_segments, configuration
         )
         print(f"已生成路线专属配置: {nav_configuration_path}")
-        print("请修改其中每段 [trajectory.*] 的 preset 和速度参数，然后重新运行本脚本生成轨迹与渲染图。")
-        print("状态机进出长度、固定速度、掉头桩半径等共享参数请修改通用配置:")
-        print(f"  {configuration_path}")
+        print("请修改其中的 [task.*]、[turnaround_stake]、每段 [trajectory.*] 的 preset 和速度参数，")
+        print("然后重新运行本脚本生成轨迹与渲染图。上述修改只影响这一份点表。")
         return 0
-    # 专属配置控制该点表的连接预设和逐段速度；拓扑签名不匹配时会停止，
-    # 防止状态机数目或顺序改变后意外套用旧路线参数。
-    trajectory_segments = load_nav_toml_configuration(
-        nav_configuration_path, source, state_segments, trajectory_segments
+    # 专属配置控制该点表的状态机、掉头桩、连接预设和逐段速度；拓扑签名
+    # 不匹配时会停止，防止状态机数目或顺序改变后意外套用旧路线参数。
+    route_configuration, _ = load_nav_toml_configuration(
+        nav_configuration_path, source, state_segments, trajectory_segments, configuration
+    )
+    task_speed_profiles = dict(route_configuration.task_profiles)
+    if args.stairs_approach_distance_mm is not None:
+        task_speed_profiles[3] = replace(
+            task_speed_profiles[3], approach_distance_mm=args.stairs_approach_distance_mm
+        )
+    turnaround_stake_radius_mm = (
+        args.turnaround_stake_radius_mm
+        if args.turnaround_stake_radius_mm is not None
+        else route_configuration.turnaround_stake_radius_mm
+    )
+    turnaround_stake_clearance_mm = (
+        args.turnaround_stake_clearance_mm
+        if args.turnaround_stake_clearance_mm is not None
+        else route_configuration.turnaround_stake_clearance_mm
+    )
+    # task.* 可以改入口/出口走廊与速度，因此读取专属配置后必须重新建立
+    # 状态机段和它们相邻的轨迹段，才能把本路线的局部参数传入几何与速度规划。
+    state_segments = build_state_machine_segments(markers, pairs, task_speed_profiles)
+    trajectory_segments, _ = choose_trajectory_segments(state_segments, interactive=False)
+    route_configuration, trajectory_segments = load_nav_toml_configuration(
+        nav_configuration_path, source, state_segments, trajectory_segments, configuration
     )
     if args.configure_segment_parameters:
         task_speed_profiles, trajectory_segments = configure_segment_parameters(
