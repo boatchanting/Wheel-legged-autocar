@@ -21,9 +21,9 @@ extern "C" {
 /* --- 2. 速度、时间与里程参数 --- */
 /* 注意：任务由 2ms 中断调度，因此 150 TICKS 对应 300ms。 */
 #define VISION_SLOPE_TASK_PVC_ALIGN_TIMEOUT_TICKS    (2500U)     /* PVC 入口阶段最长 5s，防止识别异常时一直占用控制权 */
-#define VISION_SLOPE_TASK_ENTRY_SPEED_SET            (-800.0f)   /* PVC 校准及刚进入斜坡时的速度 */
-#define VISION_SLOPE_TASK_RUN_SPEED_SET              (-800.0f)   /* 进入斜坡 300ms 后的稳定行驶速度 */
-#define VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET        (-500.0f)   /* 搜索并校准白色 PVC 斜坡入口时的低速 */
+#define VISION_SLOPE_TASK_ENTRY_SPEED_SET            (-600.0f)   /* PVC 校准及刚进入斜坡时的速度 */
+#define VISION_SLOPE_TASK_RUN_SPEED_SET              (-600.0f)   /* 进入斜坡 300ms 后的稳定行驶速度 */
+#define VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET        (-600.0f)   /* 搜索并校准白色 PVC 斜坡入口时的低速 */
 #define VISION_SLOPE_TASK_ENTRY_HOLD_TICKS           (150U)      /* 上坡后保持入口速度的时长：300ms */
 #define VISION_SLOPE_TASK_EXIT_DISTANCE_MM           (2500.0f)   /* 从锁定航向开始累计 2500mm 后退出 */
 #define VISION_SLOPE_TASK_PVC_FULL_RATIO_U16          (400U)      /* 白色 PVC 占图比例达到 40% 时认为车辆已进入斜坡入口 */
