@@ -1707,15 +1707,15 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
                                     TURN_ACTIVE_ROLL_FB_MAX_PWM);
     }
     
-    // 3. 将总输出转换为 "一边不动，一边缩短" 的逻辑
+    // 3. 将总输出转换为 "一边不动，一边伸长" 的逻辑
     // total_out 的物理含义：
-    // 如果 roll > 0 (右高)，error < 0，total_out < 0。我们需要缩短右腿。
-    // 如果 roll < 0 (左高)，error > 0，total_out > 0。我们需要缩短左腿。
+    // 如果 roll > 0 (右高)，error < 0，total_out < 0。我们需要伸长左腿抬高低侧。
+    // 如果 roll < 0 (左高)，error > 0，total_out > 0。我们需要伸长右腿抬高低侧。
     
     // 我们约定 g_target_pwm_roll_adj 的含义：
-    // 这个变量不再直接加减，而是作为一个“带符号的缩短量”传递给 servo_executor。
-    // > 0 : 表示左侧需要缩短 (值越大缩得越多)
-    // < 0 : 表示右侧需要缩短 (绝对值越大缩得越多)
+    // 这个变量作为一个“带符号的调节量”传递给 servo_executor：
+    // > 0 : 表示左高右低，需要右侧伸长
+    // < 0 : 表示右高左低，需要左侧伸长
     // = 0 : 大家都不动
     
     g_target_pwm_roll_adj = (int16)total_out;

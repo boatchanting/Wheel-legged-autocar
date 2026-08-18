@@ -148,34 +148,29 @@ void servo_executor_update(void)
     target_final_duty_lr += SERVO_MOTOR_PWM4_DIR * g_target_pwm_turn_roll_lr;
 
     // ==========================================================
-    // 3.5 叠加 Rolling 补偿 (一边不动一边缩短)
+    // 3.5 叠加 Rolling 补偿 (一边不动一边伸长)
     // 约定：g_target_pwm_roll_adj
-    //      > 0 : 左侧缩短，右侧不动
-    //      < 0 : 右侧缩短，左侧不动
-    //      (假设收缩是 PWM 减小，伸长是 PWM 增加。需确认你的舵机DIR方向！)
+    //      > 0 : 左高右低 (error > 0)，策略为左侧不动，右侧伸长
+    //      < 0 : 右高左低 (error < 0)，策略为右侧不动，左侧伸长
+    //      (加 SERVO_MOTOR_PWMx_DIR 为伸长，减 SERVO_MOTOR_PWMx_DIR 为收缩)
     // ==========================================================
     int16 adj = g_target_pwm_roll_adj;
-    // 假设 SERVO_MOTOR_PWMx_DIR 为 1 表示增加PWM是伸长，减少PWM是收缩。
-    // 如果你的硬件相反，请反转下面的逻辑。
     
     if (adj > 0) {
         // --- 情况 B: 左高右低 (adj > 0) ---
-        // 策略：左侧缩短，右侧不动
-        // adj 是正数，缩短需要减去它 (假设收缩是减)
-        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj; // 左前缩
-        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj; // 左后缩
-        // 右侧 rf, rr 保持不动
+        // 策略：左侧保持基准高度不动，右侧伸长以垫平车身
+        // adj 为正数，伸长直接加上 SERVO_MOTOR_PWMx_DIR * adj
+        target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj; // 右前伸
+        target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj; // 右后伸
+        // 左侧 lf, lr 保持不动
     } 
     else if (adj < 0) {
         // --- 情况 A: 右高左低 (adj < 0) ---
-        // 策略：右侧缩短，左侧不动
-        // adj 是负数，缩短需要加上它 (负负得正? 不对，缩短是减)
-        // 让我们理一下：我们需要一个正的量去减。
-        // 所以取 -adj (变成正数)，然后减去它。或者直接 += adj (因为adj是负数)
-        
-        target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj; // 右前缩 (+=负数 = 减)
-        target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj; // 右后缩 (+=负数 = 减)
-        // 左侧 lf, lr 保持不动
+        // 策略：右侧保持基准高度不动，左侧伸长以垫平车身
+        // adj 为负数，伸长量为 -adj (>0)，故加上 SERVO_MOTOR_PWMx_DIR * (-adj) 即减去 SERVO_MOTOR_PWMx_DIR * adj
+        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj; // 左前伸
+        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj; // 左后伸
+        // 右侧 rf, rr 保持不动
     }
 
     // 4. 【核心】使用斜率限制，平滑地趋近目标值

@@ -199,14 +199,15 @@ void wifi_camera_init(void)
 // =================================================================================
 // ★★★ 上位机参数调节映射 (PC -> MCU) ★★★
 // =================================================================================
-// 参数 0: 角速度环 Kp (pid_gyro.kp)
-// 参数 1: 角速度环 Kd (pid_gyro.kd)
-// 参数 2: 角度环   Kp (pid_angle.kp)
-// 参数 3: 角度环   Kd (pid_angle.kd)
-// 参数 4: 速度环   Kp (pid_speed.kp)
-// 参数 5: 速度环   Ki (pid_speed.ki)
-// 参数 6: 期望速度 (target_speed_set)
-// 参数 7: 电机使能 (g_motor_enable) -> 1.0f为使能, 0.0f为失能
+// 【当前激活：调节Rolling平衡环】
+// 参数 0: Rolling 比例刚度 Kp (pid_roll.kp)
+// 参数 1: Rolling 微分阻尼 Kd (pid_roll.kd)
+// 参数 2: Rolling 舵机最大调整 PWM 限幅 (pid_roll.max_output)
+// 参数 3: 期望目标横滚角 (roll_degree)
+// 参数 4: Rolling 平衡环使能开关 (roll_balance_enable) -> 1.0f使能, 0.0f失能
+// 参数 5: 基础车身高度 (servo_height)
+// 参数 6: Rolling 机械零点偏置补偿 (pid_roll.compensation)
+// 参数 7: 电机使能总开关 (g_motor_enable) -> 1.0f为使能, 0.0f为失能
 /**
  * @brief  检查并更新从上位机接收到的PID等参数
  * @param  void
@@ -230,24 +231,43 @@ void wifi_update_pid_params(void)
             // 这个映射关系需要在逐飞助手软件上对应设置
             switch(i)
             {
-                //【调节直立环】
-                //参数 0: 角速度环 Kp (pid_gyro.kp)
-                case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
-                // 参数 1: 角度环Kp
-                case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
-                // 参数 2: 角度环kd
-                case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
-                // 参数 3: 舵机速度环kp 
-                case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
-                // 参数 4: 舵机速度环ki 
-                case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
-                // 参数 5: 电机使能 
-                case 5: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
-                // 参数 6: 机械零点
-                case 6:pid_angle.compensation = seekfree_assistant_parameter[i]; break;
-                // 参数 7: 舵机高度 (1.0f为使能, 0.0f为失能)
-                case 7: servo_height = seekfree_assistant_parameter[i]; break; 
+                //【调节Rolling平衡环】
+                // 参数 0: Rolling 比例刚度 Kp (pid_roll.kp)
+                case 0: pid_roll.kp = seekfree_assistant_parameter[i]; break;
+                // 参数 1: Rolling 微分阻尼 Kd (pid_roll.kd)
+                case 1: pid_roll.kd = seekfree_assistant_parameter[i]; break;
+                // 参数 2: Rolling 舵机最大调整 PWM 限幅 (pid_roll.max_output)
+                case 2: pid_roll.max_output = seekfree_assistant_parameter[i]; break;
+                // 参数 3: 期望目标横滚角 (roll_degree，可用于给定倾斜测试)
+                case 3: roll_degree = seekfree_assistant_parameter[i]; break;
+                // 参数 4: Rolling 平衡环使能开关 (1.0f为使能, 0.0f为失能)
+                case 4: roll_balance_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // 参数 5: 基础车身高度 (servo_height，因伸长策略需配合基础高度留出余量)
+                case 5: servo_height = seekfree_assistant_parameter[i]; break;
+                // 参数 6: Rolling 机械零点偏置补偿 (pid_roll.compensation)
+                case 6: pid_roll.compensation = seekfree_assistant_parameter[i]; break;
+                // 参数 7: 电机使能总开关 (g_motor_enable，1.0f为使能, 0.0f为失能)
+                case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;
+
+                // //【调节直立环】
+                // //参数 0: 角速度环 Kp (pid_gyro.kp)
+                // case 0: pid_gyro.kp  = seekfree_assistant_parameter[i]; break;
+                // // 参数 1: 角度环Kp
+                // case 1: pid_angle.kp  = seekfree_assistant_parameter[i]; break;
+                // // 参数 2: 角度环kd
+                // case 2: pid_angle.kd  = seekfree_assistant_parameter[i]; break;
+                // // 参数 3: 舵机速度环kp 
+                // case 3: pid_servo_speed.kp = seekfree_assistant_parameter[i]; break;
+                // // 参数 4: 舵机速度环ki 
+                // case 4: pid_servo_speed.ki = seekfree_assistant_parameter[i]; break;
+                // // 参数 5: 电机使能 
+                // case 5: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
+                // // 参数 6: 机械零点
+                // case 6: pid_angle.compensation = seekfree_assistant_parameter[i]; break;
+                // // 参数 7: 舵机高度 (1.0f为使能, 0.0f为失能)
+                // case 7: servo_height = seekfree_assistant_parameter[i]; break; 
+                // default: break;
                                 
                 // //【调节转向环】
                 // //注意调试的时候需要将isr中 调节pid转向角度环时使用【调试pid打开】

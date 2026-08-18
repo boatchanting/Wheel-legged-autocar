@@ -189,16 +189,25 @@ int main(void)
             #endif
                 //TelemetryIpc_Core0_PublishPvcDefault();
             #if WIFI_CORE0_ASSISTANT
-                //逐飞助手示波器发送代码        
-                //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)gyro_loop_out;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)pid_gyro.kp;
+                // 1.【调试Rolling平衡环：横滚角、期望目标角、Rolling输出、横滚误差、底盘高度、俯仰角、左右轮速】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.roll;                      // CH0: 车身实际横滚角 Roll (deg)
+                seekfree_assistant_oscilloscope_data.data[1] = (float)roll_degree;                           // CH1: 期望目标横滚角 (deg)
+                seekfree_assistant_oscilloscope_data.data[2] = (float)pid_roll.output;                       // CH2: Rolling 环 PID 调节输出 (左右腿高度差补偿)
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_roll.error;                        // CH3: 横滚角实时误差 Error (deg)
+                seekfree_assistant_oscilloscope_data.data[4] = (float)servo_height;                          // CH4: 基础车身高度 (cm)
+                seekfree_assistant_oscilloscope_data.data[5] = (float)euler_angle.pitch;                     // CH5: 车身俯仰角 Pitch (deg，观察侧倾对直立的耦合扰动)
+                seekfree_assistant_oscilloscope_data.data[6] = (float)motor_value.receive_left_speed_data;  // CH6: 左轮反馈速度
+                seekfree_assistant_oscilloscope_data.data[7] = (float)motor_value.receive_right_speed_data; // CH7: 右轮反馈速度
+
+                // 【备用：调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)gyro_loop_out;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)pid_gyro.kp;
 
 
                 // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】

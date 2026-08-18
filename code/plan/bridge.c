@@ -328,7 +328,7 @@ void Bridge_Update(void) {
             // 越过桥头一段距离，说明车身已完全上了单边桥
             if (remaining_dist < -bridge_params.enter_bridge_dist) {
                 
-                // 【核心开启】：放开舵机速度，开启底层“一边不动一边缩短”的横滚平衡
+                // 【核心开启】：放开舵机速度，开启底层“一边不动一边伸长”的横滚平衡
                 acc_limit = bridge_params.servo_acc_bridge;
                 dec_limit = bridge_params.servo_dec_bridge;
                 roll_balance_enable = 0; 
