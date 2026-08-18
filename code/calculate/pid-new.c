@@ -980,11 +980,23 @@ static void Control_Profile_ApplyToControllers(const ControlProfile_t *profile)
     pid_roll.max_integral = profile->roll_max_integral;
     pid_roll.compensation = profile->roll_compensation;
 
-    servo_executor_set_profile(profile->servo_exec_acc_limit,
-                               profile->servo_exec_dec_limit,
-                               profile->servo_exec_boost_from_speed,
-                               profile->servo_exec_boost_from_error,
-                               profile->servo_exec_boost_max);
+    if (roll_balance_enable == 0U)
+    {
+        servo_executor_set_profile(profile->servo_exec_acc_limit,
+                                   profile->servo_exec_dec_limit,
+                                   profile->servo_exec_boost_from_speed,
+                                   profile->servo_exec_boost_from_error,
+                                   profile->servo_exec_boost_max);
+    }
+    else
+    {
+        /* Rolling 开启时（如单边桥阶段），保留桥梁状态机设置的高响应斜率，避免被平地巡航低值(10)覆盖 */
+        servo_executor_set_profile(acc_limit,
+                                   dec_limit,
+                                   profile->servo_exec_boost_from_speed,
+                                   profile->servo_exec_boost_from_error,
+                                   profile->servo_exec_boost_max);
+    }
 }
 
 void Control_Profile_RequestMode(ControlMode_e mode)
@@ -1670,6 +1682,27 @@ float Gyro_Loop_Control(float angle_loop_output, float actual_gyro)
 #define ROLL_MIN_OUTPUT_DEADBAND_PWM 6.0f    // 舵机微动死区（<6 duty 时直接归零，杜绝微步死区振荡）
 
 /**
+ * @brief 将车身坐标系下的 roll 转换为相对于车身前进方向水平转轴的真实水平横滚角
+ * @param roll_deg 车身 roll 欧拉角 (度)
+ * @param pitch_deg 车身 pitch 欧拉角 (度)
+ * @return float 水平前进转轴下的实际旋转角 (度)
+ * @note 当车身俯仰时，车身 X 轴与地面存在夹角，通过坐标系转换消除俯仰角带来的横滚投影畸变
+ */
+float Calculate_Horizontal_Roll_Degree(float roll_deg, float pitch_deg)
+{
+    const float deg_to_rad = 0.0174532925f;
+    const float rad_to_deg = 57.2957795f;
+
+    float roll_rad = roll_deg * deg_to_rad;
+    float pitch_rad = pitch_deg * deg_to_rad;
+
+    /* 水平转轴投影转换：tan(roll_horizontal) = tan(roll) * cos(pitch) */
+    float roll_horizontal = atan2f(cosf(pitch_rad) * sinf(roll_rad), cosf(roll_rad)) * rad_to_deg;
+
+    return roll_horizontal;
+}
+
+/**
  * @brief Rolling 自适应平衡控制，主要用于单边桥
  * @param actual_roll 当前横滚角 (单位: 度, 右高左低为正)
  * @return float 计算出的单侧调整量 (PWM值)
@@ -1691,8 +1724,8 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
         return 0.0f;
     }
 
-    // 1. 输入低通滤波（平滑掉传感器高频噪点与手持微抖）
-    s_roll_filtered = 0.75f * s_roll_filtered + 0.25f * actual_roll;
+    // 1. 输入低通滤波（2.0m/s 高速单边桥：降低滞后，测量响应 < 5ms）
+    s_roll_filtered = 0.35f * s_roll_filtered + 0.65f * actual_roll;
 
     // 2. 计算误差并加入动态零点死区（防止零位微抖引起左右腿高频倒换）
     float error = target_roll - s_roll_filtered;
@@ -1700,16 +1733,34 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
         error = 0.0f;
     }
 
-    // 3. 计算微分并低通滤波（平滑 D 项，消除离散采样差分毛刺）
+    // 3. 计算微分并低通滤波（提升微分首拍推力）
     float raw_diff = error - pid_roll.last_error;
     pid_roll.last_error = error;
-    s_diff_filtered = 0.65f * s_diff_filtered + 0.35f * raw_diff;
+    s_diff_filtered = 0.40f * s_diff_filtered + 0.60f * raw_diff;
 
-    // 4. [方案2] 计算增量并累加 (把 Roll 环变成纯积分器)
+    // 4. [方案2] 计算增量并累加 (把 Roll 环变成纯积分器，并加入离桥自适应泄漏与快速回零)
     float p_inc = pid_roll.kp * error;
     float d_inc = pid_roll.kd * s_diff_filtered;
-    
-    s_incremental_total += (p_inc + d_inc);
+    float inc_total = p_inc + d_inc;
+
+    // 【自适应离桥快速姿态还原】：当倾角误差方向与当前长短腿累加器方向相反时（下坡/回平过程）
+    if ((s_incremental_total * error) < -0.01f)
+    {
+        // 1. 指数主动泄漏，打破纯积分器记忆死锁
+        s_incremental_total *= ROLL_LEAKY_DECAY_RATE;
+        // 2. 放大反向抽取推力，加速长短腿拉平
+        s_incremental_total += (inc_total * ROLL_REVERSAL_BOOST_MULT);
+        // 3. 过零硬截断与死区归零保护
+        if (fabsf(s_incremental_total) < ROLL_RESET_SNAP_DUTY_TH)
+        {
+            s_incremental_total = 0.0f;
+        }
+    }
+    else
+    {
+        // 正常单边冲坡/保持阶段：常规增量累加
+        s_incremental_total += inc_total;
+    }
     
     // 限幅
     s_incremental_total = Float_Constrain(s_incremental_total, -pid_roll.max_output, pid_roll.max_output);

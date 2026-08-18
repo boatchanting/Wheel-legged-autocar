@@ -262,17 +262,22 @@ void Bridge_Init(void) {
     bridge_params.speed_normal  = -180.0f; 
 
     // 姿态参数
+#if CAR_SELECT == 4
+    bridge_params.height_normal = 4.5f;   // 平地正常高度
+    bridge_params.height_bridge = 4.5f;  // 桥上保持正常高度，留足单侧大行程伸腿空间
+#else
     bridge_params.height_normal = 3.0f;   // 平地正常高度
-    bridge_params.height_bridge = 6.0f;  // 桥上高度 (留一点余量给一边缩短)
+    bridge_params.height_bridge = 3.0f;  // 桥上保持正常高度，留足单侧大行程伸腿空间
+#endif
     
     // 高度步长：假设 20ms 调用一次此函数
     // 升高13cm需要：13 / 0.5 = 26次 = 0.52秒，时间足够
     bridge_params.height_step_rise = 0.5f;   
     bridge_params.height_step_drop = 0.8f;   
 
-    // 舵机刚度：上桥时放开限制，允许 100 满斜率响应 PID
-    bridge_params.servo_acc_bridge = 100;  
-    bridge_params.servo_dec_bridge = 100;
+    // 舵机斜率限制：每 1ms 周期限幅 20 duty/ms
+    bridge_params.servo_acc_bridge = 80;  
+    bridge_params.servo_dec_bridge = 150;
 }
 
 void Bridge_Trigger(float distance_to_bridge) {

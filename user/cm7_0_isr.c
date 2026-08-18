@@ -768,16 +768,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         // 彻底清空并屏蔽历史转向主动侧倾差动，防止干扰纯净的单边桥横滚平衡
         Turn_Active_Roll_Duty_Clear();
 
+        // 坐标系转换：计算相对于车身前进方向水平转轴的旋转角 (消除车身俯仰时车身 roll 轴倾斜引起的投影误差)
+        float actual_horizontal_roll = Calculate_Horizontal_Roll_Degree(euler_angle.roll, euler_angle.pitch);
+
         if (roll_balance_enable != 0U)
         {
             // 开启了 Rolling 环使能时，执行纯净的横滚平衡闭环 (以 roll_degree 为目标，默认 0.0f)
-            Roll_Balance_Control(euler_angle.roll, roll_degree);
+            Roll_Balance_Control(actual_horizontal_roll, roll_degree);
         }
         else
         {
             // 普通未开启 Rolling 时，关闭被动 Rolling
             roll_degree = 0.0f;
-            Roll_Balance_Control(euler_angle.roll, euler_angle.roll);
+            Roll_Balance_Control(actual_horizontal_roll, actual_horizontal_roll);
             g_target_pwm_roll_adj = 0;
         }
     }

@@ -1,5 +1,6 @@
 #include "servo_executor.h"
 #include "../calculate/pid-new.h"
+#include "plan/bridge.h"
 // --- 目标值定义 ---
 volatile int16 g_target_pwm_high = 0;
 volatile int16 g_target_pwm_speed_adj = 0;
@@ -94,6 +95,13 @@ static void servo_executor_get_runtime_limits(int32 *runtime_acc_limit, int32 *r
         dec_runtime += (int32)(boost * 0.20f);
     }
 
+    // 【单边桥高动态保障】：当 Rolling 使能时，确保执行器生效斜率不低于桥梁设定值 (如 200 duty/ms)
+    if (roll_balance_enable != 0U)
+    {
+        if (acc_runtime < bridge_params.servo_acc_bridge) acc_runtime = bridge_params.servo_acc_bridge;
+        if (dec_runtime < bridge_params.servo_dec_bridge) dec_runtime = bridge_params.servo_dec_bridge;
+    }
+
     if (acc_runtime < 1) acc_runtime = 1;
     if (dec_runtime < 1) dec_runtime = 1;
 
@@ -148,17 +156,17 @@ void servo_executor_update(void)
     target_final_duty_lr += SERVO_MOTOR_PWM4_DIR * g_target_pwm_turn_roll_lr;
 
     // ==========================================================
-    // 3.5 叠加 Rolling 补偿 (低侧伸腿同时高侧收腿，向上收腿量最大为 1000 duty)
+    // 3.5 叠加 Rolling 补偿 (低侧伸腿同时高侧收腿，向上收腿量最大为 400 duty)
     // 约定：g_target_pwm_roll_adj
-    //      > 0 : 左高右低 (error > 0)，策略为右侧伸长，左侧收缩 (收缩最大 1000 duty)
-    //      < 0 : 右高左低 (error < 0)，策略为左侧伸长，右侧收缩 (收缩最大 1000 duty)
+    //      > 0 : 左高右低 (error > 0)，策略为右侧伸长，左侧收缩 (收缩最大 400 duty)
+    //      < 0 : 右高左低 (error < 0)，策略为左侧伸长，右侧收缩 (收缩最大 400 duty)
     //      (加 SERVO_MOTOR_PWMx_DIR 为伸长，减 SERVO_MOTOR_PWMx_DIR 为收缩)
     // ==========================================================
     int16 adj = g_target_pwm_roll_adj;
     
     if (adj > 0) {
         // --- 情况 B: 左高右低 (adj > 0) ---
-        // 策略：低侧(右侧)伸长以垫平车身，高侧(左侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (1000 duty)
+        // 策略：低侧(右侧)伸长以垫平车身，高侧(左侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (400 duty)
         int16 retract = (adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : adj;
         target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj;     // 右前伸
         target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj;     // 右后伸
@@ -167,7 +175,7 @@ void servo_executor_update(void)
     } 
     else if (adj < 0) {
         // --- 情况 A: 右高左低 (adj < 0) ---
-        // 策略：低侧(左侧)伸长以垫平车身，高侧(右侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (1000 duty)
+        // 策略：低侧(左侧)伸长以垫平车身，高侧(右侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (400 duty)
         int16 retract = (-adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : (int16)(-adj);
         target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj;     // 左前伸 (-adj > 0)
         target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj;     // 左后伸 (-adj > 0)

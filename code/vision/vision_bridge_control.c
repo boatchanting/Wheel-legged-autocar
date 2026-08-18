@@ -851,42 +851,21 @@ void VisionBridgeTask_Update_2ms(void)
 
         /* --- 阶段 3：在桥上跑 --- */
         case VISION_BRIDGE_TASK_RUN:
-            /* 桥面证据 (沿用旧逻辑 ON_BRIDGE 语义): b2_gate 锁存表示桥面曾到底部,
-               b2_valid 每帧表示控制线仍在; 两者同时在场才刷新防抖倒计时。
-               (0809 只看 b2_gate 锁存量 → 一旦锁存全程刷新 → 全程高腿, 2026-08-14 修复) */
-            if ((packet->b2_valid != 0U) && (packet->b2_gate != 0U))
-            {
-                s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
-            }
-            else if (s_bridge_task.bridge_hold_ticks > 0U)
-            {
-                s_bridge_task.bridge_hold_ticks--; /* 没看到，倒计时减 1 */
-            }
-
             vision_bridge_exit_line_measure_y(packet); /* 每 tick 刷新退出线行坐标 (调试可观测) */
             /* 方案B: 每 tick 更新远场基准/累计 (traveled 未到里程门前也要学远场基准) */
             exit_fire = vision_bridge_exit_update_gate(packet);
 
-            /* 如果倒计时没归零，说明现在车还在桥上 */
-            if (s_bridge_task.bridge_hold_ticks > 0U)
+            /* 桥上全程保持高动态斜率与 Rolling 平衡使能 */
+            vision_bridge_apply_high_posture();
+
+            /* 速度选择：可见中心线用正常过桥速，否则用盲跑速 */
+            if (s_bridge_task.center_filter_valid)
             {
-                vision_bridge_apply_high_posture(); /* 保持高底盘 */
-                speed_cmd = VISION_BRIDGE_TASK_BRIDGE_SPEED_SET; /* 桥上速度 */
+                speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
             }
             else
             {
-                /* 如果归零了，说明可能快下桥了或者在桥的平缓段 */
-                vision_bridge_apply_normal_posture(); /* 降下底盘 */
-                /* 如果能看到地上的线，就跟着线跑 */
-                if (s_bridge_task.center_filter_valid)
-                {
-                    speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
-                }
-                else
-                {
-                    /* 线也看不见，只能盲跑了 */
-                    speed_cmd = VISION_BRIDGE_TASK_BLIND_SPEED_SET;
-                }
+                speed_cmd = VISION_BRIDGE_TASK_BLIND_SPEED_SET;
             }
 
             if (vision_bridge_packet_in_exit_stage(packet))
@@ -952,13 +931,14 @@ void VisionBridgeTask_Update_2ms(void)
 
         /* --- 阶段 4：下桥缓冲 --- */
         case VISION_BRIDGE_TASK_EXIT:
-            vision_bridge_apply_normal_posture(); /* 确保底盘降下来 */
+            /* 下坡冲出阶段仍保持 Rolling 闭环使能以完成泄漏回平与防歪斜 */
+            vision_bridge_apply_high_posture();
             err_cmd = vision_bridge_apply_err_ramp(vision_bridge_calc_yaw_hold_err_degree(), 1U); /* 锁死方向冲出桥区 */
             speed_cmd = VISION_BRIDGE_TASK_EXIT_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 底盘恢复后即可交还导航；异常时到达时间上限也继续前进。 */
+            /* 缓冲一定时间或平稳后交还导航 */
             if ((vision_bridge_abs_f(servo_height - vision_bridge_restore_height_target()) < 0.2f) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS))
             {

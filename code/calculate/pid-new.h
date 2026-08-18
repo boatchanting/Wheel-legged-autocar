@@ -110,13 +110,13 @@ extern float current_actual_speed;
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
 //    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      6.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
+#define ROLL_KP      9.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      12.0f   // [阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      15.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
 #define ROLL_MAX_O   1200.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
-#define ROLL_MAX_RETRACT_DUTY 1000 // [收腿限幅] 高侧向上收腿最大占空比
+#define ROLL_MAX_RETRACT_DUTY 400  // [收腿限幅] 高侧向上收腿最大占空比 (由1000缩减至400)
 
 // *************************** 【2026/03/24 最后的舵机v腿】pid参数定义结束***************************
 #endif
@@ -208,19 +208,30 @@ extern float current_actual_speed;
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
 //    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      6.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
+#define ROLL_KP      9.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      12.0f   // [阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      15.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
 #define ROLL_MAX_O   1200.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
-#define ROLL_MAX_RETRACT_DUTY 1000 // [收腿限幅] 高侧向上收腿最大占空比
+#define ROLL_MAX_RETRACT_DUTY 400  // [收腿限幅] 高侧向上收腿最大占空比 (由1000缩减至400)
 
 // *************************** 【小车4】PID参数定义结束 ***************************
 #endif
 
 #ifndef ROLL_MAX_RETRACT_DUTY
-#define ROLL_MAX_RETRACT_DUTY 1000
+#define ROLL_MAX_RETRACT_DUTY 400
+#endif
+
+// 单边桥离桥快速姿态还原参数
+#ifndef ROLL_LEAKY_DECAY_RATE
+#define ROLL_LEAKY_DECAY_RATE        0.82f   /* 下坡/反向回平时的指数泄漏率(每5ms) */
+#endif
+#ifndef ROLL_REVERSAL_BOOST_MULT
+#define ROLL_REVERSAL_BOOST_MULT     2.50f   /* 反向回零时的增量放大倍率 */
+#endif
+#ifndef ROLL_RESET_SNAP_DUTY_TH
+#define ROLL_RESET_SNAP_DUTY_TH      35.0f   /* 归零截断阈值 */
 #endif
 
 // ============================================================================
@@ -531,6 +542,7 @@ void Servo_Speed_Control_Reset(void);//重置速度环运行态（不重置参�
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
+float Calculate_Horizontal_Roll_Degree(float roll_deg, float pitch_deg); // 坐标系转换：计算相对于车身前进方向水平转轴的旋转角
 void PID_Roll_Update_Kp(float kp);
 void PID_Roll_Update_Kd(float kd);
 void PID_Roll_Update_MaxOutput(float max_output);
