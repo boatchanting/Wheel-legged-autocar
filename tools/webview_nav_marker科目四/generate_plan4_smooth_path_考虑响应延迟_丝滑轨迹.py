@@ -9,7 +9,7 @@
 所有剩余的连接段均为五次贝塞尔曲线，且其两端的曲率为零。因此，相邻的连接段与直线走廊共享切线和曲率（即G2连续性）。生成的路径旨在作为连续跟踪的路线输入；它在普通采样点处不会发出停止指令。
 
 示例：
-    .venv\\Scripts\\python.exe tools\\webview_nav_marker科目三\\generate_plan3_smooth_path.py
+    .venv\\Scripts\\python.exe tools/webview_nav_marker科目四/generate_plan4_smooth_path_考虑响应延迟_丝滑轨迹.py
 
 默认的CSV文件特意指定为项目要求的最新Plan3记录。如果需要基于其他记录生成路径，请传入 ``--input`` 参数。
 """
@@ -21,6 +21,7 @@ import csv
 import math
 import sys
 from dataclasses import dataclass, replace
+from enum import Enum
 from pathlib import Path
 from typing import Iterable, Optional
 
@@ -60,19 +61,15 @@ SPEED_RESPONSE_DELAY_S = 0.0
 LOCAL_CORNER_HANDLE_RATIO = 0.18
 LOCAL_CORNER_NEIGHBOR_RATIO = 0.35
 LOCAL_CORNER_HANDLE_MAX_MM = 600.0
-# 台阶出口到单边桥入口之间没有可靠的人工路径点；两端任务方向接近，
-# 使用更长的专用控制柄，降低这条直接连接曲线的曲率，避免离线速度被压低。
-SMOOTH_TASK_LINK_HANDLE_MM = 900.0
+# 近似平行型过渡使用独立的控制柄。它比普通局部圆角更长，适合两条
+# 方向接近、但存在明显横向错位的状态机通道（例如三级跳 -> 单边桥）。
+PARALLEL_TRANSITION_HANDLE_MM = 900.0
 
-# 以下任务恒速值使用写入 NavRamPoint_t 的 target_speed 指令单位。
-STAIRS_APPROACH_DISTANCE_MM = 4000.0
-STAIRS_APPROACH_TARGET_SPEED_MAX = 320.0
-BRIDGE_APPROACH_DISTANCE_MM = 500.0
-BRIDGE_APPROACH_TARGET_SPEED_MAX = 300.0
-BUMP_APPROACH_DISTANCE_MM = 500.0
-BUMP_APPROACH_TARGET_SPEED_MAX = 500.0
-SLOPE_APPROACH_DISTANCE_MM = 500.0
-SLOPE_APPROACH_TARGET_SPEED_MAX = 500.0
+# 以下任务速度使用写入 NavRamPoint_t 的 target_speed 指令单位。每个状态机
+# 显式区分“进入速度 / 状态机运行速度 / 退出速度”，即使当前默认三者相同。
+# 这样一条完整路线可表达为：
+#   轨迹1 -> 状态机1进入(v1) -> 状态机1 -> 状态机1退出(v2) -> 轨迹2 -> ...
+# 将来某一状态机需要以不同速度进出时，只需改对应配置，不必重写连接逻辑。
 
 # 与 csv_to_nav_table.py 保持一致：每个值都从记录的出口点朝对应入口点测量，
 # 使视觉状态机出口锚定在车辆实际离开任务的位置。
@@ -138,6 +135,73 @@ class PathSample:
     point_type: int
     forced_straight: bool
     segment: str
+
+
+class TransitionPreset(str, Enum):
+    """两段状态机之间的人工可选轨迹连接策略。"""
+
+    INTERPOLATED = "interpolated"
+    NEAR_PARALLEL = "near_parallel"
+    PURE_LINE = "pure_line"
+
+
+TRANSITION_PRESET_LABEL = {
+    TransitionPreset.INTERPOLATED: "轨迹插值型",
+    TransitionPreset.NEAR_PARALLEL: "近似平行型",
+    TransitionPreset.PURE_LINE: "纯直线型",
+}
+
+
+@dataclass(frozen=True)
+class TaskSpeedProfile:
+    """单个状态机的入口、运行及出口速度约束。"""
+
+    approach_distance_mm: float
+    entry_speed_command: float
+    state_speed_command: float
+    exit_speed_command: float
+
+
+# 每种有配对出口的状态机都使用一个独立速度档案。现有任务的进入、运行、
+# 退出速度保持一致，以完全保留原来的控制行为；后续可以按任务单独拆开。
+TASK_SPEED_PROFILES = {
+    3: TaskSpeedProfile(4000.0, 320.0, 320.0, 320.0),  # 三级跳
+    4: TaskSpeedProfile(500.0, 300.0, 300.0, 300.0),    # 单边桥
+    5: TaskSpeedProfile(500.0, 500.0, 500.0, 500.0),    # 颠簸路
+    2: TaskSpeedProfile(500.0, 500.0, 500.0, 500.0),    # 坡道
+}
+
+
+@dataclass(frozen=True)
+class StateMachineSegment:
+    """点表中一个完整状态机段：入口(v_in) -> 状态机 -> 出口(v_out)。"""
+
+    entry_order: int
+    exit_order: int
+    entry_type: int
+    exit_type: int
+    entry_speed_command: Optional[float]
+    exit_speed_command: Optional[float]
+
+
+@dataclass(frozen=True)
+class TrajectorySegment:
+    """两个状态机之间的普通轨迹段及其人工选择的连接预设。"""
+
+    source_exit_order: int
+    target_entry_order: int
+    preset: TransitionPreset
+    source_exit_speed_command: Optional[float]
+    target_entry_speed_command: Optional[float]
+
+
+@dataclass(frozen=True)
+class TransitionPlan:
+    """供几何生成使用的状态机间连接计划。"""
+
+    source_exit_order: int
+    target_entry_order: int
+    preset: TransitionPreset
 
 
 def normalize_key(value: str) -> str:
@@ -244,7 +308,8 @@ def apply_special_exit_corrections(markers: list[Marker], pairs: dict[int, int])
         entry = corrected[entry_index]
         exit_marker = corrected[exit_index]
         offset = SPECIAL_EXIT_DISTANCE_OFFSETS_MM.get(exit_marker.point_type, 0.0)
-        if offset <= 0.0:
+        # 0 表示不修正；正负值都有效，方向语义由配置注释定义。
+        if math.isclose(offset, 0.0, abs_tol=1e-9):
             continue
         direction = unit(np.array([entry.x - exit_marker.x, entry.y - exit_marker.y], dtype=float))
         corrected[exit_index] = replace(
@@ -255,30 +320,148 @@ def apply_special_exit_corrections(markers: list[Marker], pairs: dict[int, int])
     return corrected
 
 
-def collapse_stairs_to_bridge_markers(markers: list[Marker]) -> tuple[list[Marker], int]:
-    """Remove hand-recorded ordinary points between stairs and bridge.
+def build_state_machine_segments(
+    markers: list[Marker], pairs: dict[int, int]
+) -> list[StateMachineSegment]:
+    """按点表顺序提取状态机段，供交互选择和速度规划共同使用。
 
-    The latest route has a direct, nearly collinear task transition, but the
-    intermediate ordinary points bend the generated path unnecessarily.  Only
-    ordinary points are removed; if another state-machine marker is present,
-    the route is left untouched so task ordering remains unambiguous.
+    配对任务（2/3/4/5）有明确入口和出口。圆环/雷区（1）只有触发入口，
+    因而把该点同时作为它的入口与退出锚点：这样“雷区 -> 雷区”同样可以
+    选择纯直线型，而不会伪造一个不存在的 type=10 出口点。
     """
-    collapsed: list[Marker] = []
-    removed_count = 0
-    index = 0
-    while index < len(markers):
-        marker = markers[index]
-        collapsed.append(marker)
-        if marker.point_type == 30:
-            next_index = index + 1
-            while next_index < len(markers) and markers[next_index].point_type == 0:
-                next_index += 1
-            if next_index < len(markers) and markers[next_index].point_type == 4:
-                removed_count += next_index - index - 1
-                index = next_index
-                continue
-        index += 1
-    return collapsed, removed_count
+    segments: list[StateMachineSegment] = []
+    for entry_index, marker in enumerate(markers):
+        if entry_index in pairs:
+            exit_marker = markers[pairs[entry_index]]
+            profile = TASK_SPEED_PROFILES[marker.point_type]
+            segments.append(
+                StateMachineSegment(
+                    marker.order,
+                    exit_marker.order,
+                    marker.point_type,
+                    exit_marker.point_type,
+                    profile.entry_speed_command,
+                    profile.exit_speed_command,
+                )
+            )
+        elif marker.point_type == 1:
+            segments.append(
+                StateMachineSegment(marker.order, marker.order, 1, 1, None, None)
+            )
+    return segments
+
+
+def describe_speed(speed: Optional[float]) -> str:
+    return "由状态机控制" if speed is None else f"{speed:.0f}"
+
+
+def choose_trajectory_segments(
+    state_segments: list[StateMachineSegment], interactive: bool
+) -> tuple[list[TrajectorySegment], dict[tuple[int, int], TransitionPlan]]:
+    """在终端依点表顺序选择每两个状态机之间的连接预设。
+
+    选择 1 时保留普通打点，并按原有 G2 平滑插值连接；选择 2/3 时将
+    该对状态机之间的普通打点移除，分别构造近似平行 G2 换道或纯直线。
+    非交互模式只用于批处理，统一采用预设 1，避免 CI 或脚本调用卡在 input()。
+    """
+    trajectories: list[TrajectorySegment] = []
+    plans: dict[tuple[int, int], TransitionPlan] = {}
+    preset_by_choice = {
+        "1": TransitionPreset.INTERPOLATED,
+        "2": TransitionPreset.NEAR_PARALLEL,
+        "3": TransitionPreset.PURE_LINE,
+    }
+
+    for position, (source, target) in enumerate(zip(state_segments, state_segments[1:]), start=1):
+        source_name = TYPE_LABEL[source.exit_type]
+        target_name = TYPE_LABEL[target.entry_type]
+        if interactive:
+            print(
+                f"\n[{position}/{len(state_segments) - 1}] {source_name} (v={describe_speed(source.exit_speed_command)}) "
+                f"-> {target_name} (v={describe_speed(target.entry_speed_command)})"
+            )
+            print("  1. 轨迹插值型：保留普通打点，按原有 G2 曲线逐段平滑连接")
+            print("  2. 近似平行型：删除中间普通打点，用两端平行走廊之间的 G2 换道连接")
+            print("  3. 纯直线型：删除中间普通打点，两个锚点之间直接连直线（常用于雷区到雷区）")
+            while True:
+                try:
+                    choice = input("  选择预设 [1]: ").strip() or "1"
+                except EOFError:
+                    # 无交互终端仍可安全执行，且行为与显式批处理保持一致。
+                    choice = "1"
+                    print("1（未检测到终端输入，使用轨迹插值型）")
+                if choice in preset_by_choice:
+                    break
+                print("  输入无效，请输入 1、2 或 3。")
+        else:
+            choice = "1"
+
+        preset = preset_by_choice[choice]
+        trajectory = TrajectorySegment(
+            source.exit_order,
+            target.entry_order,
+            preset,
+            source.exit_speed_command,
+            target.entry_speed_command,
+        )
+        trajectories.append(trajectory)
+        plans[(trajectory.source_exit_order, trajectory.target_entry_order)] = TransitionPlan(
+            trajectory.source_exit_order,
+            trajectory.target_entry_order,
+            preset,
+        )
+    return trajectories, plans
+
+
+def print_segment_plan(
+    state_segments: list[StateMachineSegment], trajectories: list[TrajectorySegment]
+) -> None:
+    """显示最终的交替分段计划，便于把终端选择和点表顺序逐项核对。"""
+    if not state_segments:
+        return
+    trajectory_by_source = {segment.source_exit_order: segment for segment in trajectories}
+    print("\n最终分段规划：")
+    print("  轨迹起点")
+    for state in state_segments:
+        print(
+            f"  -> {TYPE_LABEL[state.entry_type]}(v={describe_speed(state.entry_speed_command)})"
+            f" -> 状态机 -> {TYPE_LABEL[state.exit_type]}(v={describe_speed(state.exit_speed_command)})"
+        )
+        trajectory = trajectory_by_source.get(state.exit_order)
+        if trajectory is not None:
+            print(
+                f"  -> 轨迹段[{TRANSITION_PRESET_LABEL[trajectory.preset]}]"
+                f" (v={describe_speed(trajectory.source_exit_speed_command)}"
+                f" -> v={describe_speed(trajectory.target_entry_speed_command)})"
+            )
+    print("  -> 轨迹终点")
+
+
+def apply_trajectory_marker_policy(
+    markers: list[Marker], trajectories: Iterable[TrajectorySegment]
+) -> tuple[list[Marker], int]:
+    """根据预设决定普通打点是否参与两个状态机之间的几何插值。
+
+    近似平行型和纯直线型都直接从前一状态机的退出锚点连到后一状态机的
+    入口锚点，因此中间只能有 type=0 普通点；遇到其他状态机标记时拒绝
+    删除，防止人工选择破坏点表中的任务触发顺序。
+    """
+    index_by_order = {marker.order: index for index, marker in enumerate(markers)}
+    remove_indices: set[int] = set()
+    for trajectory in trajectories:
+        if trajectory.preset == TransitionPreset.INTERPOLATED:
+            continue
+        source_index = index_by_order[trajectory.source_exit_order]
+        target_index = index_by_order[trajectory.target_entry_order]
+        if target_index <= source_index:
+            raise ValueError("状态机连接顺序无效：目标入口必须位于源出口之后。")
+        between = range(source_index + 1, target_index)
+        non_ordinary = [markers[index] for index in between if markers[index].point_type != 0]
+        if non_ordinary:
+            labels = ", ".join(TYPE_LABEL[marker.point_type] for marker in non_ordinary)
+            raise ValueError(f"{TRANSITION_PRESET_LABEL[trajectory.preset]} 不能跨越其他状态机标记: {labels}")
+        remove_indices.update(between)
+    return [marker for index, marker in enumerate(markers) if index not in remove_indices], len(remove_indices)
 
 
 def add_sample(samples: list[PathSample], point: np.ndarray, point_type: int, forced: bool, segment: str) -> None:
@@ -356,7 +539,11 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
         add_sample(samples, np.array([px, py]), start.point_type if index == 0 else (end.point_type if index == len(x) - 1 else 0), False, segment)
 
 
-def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node], dict[tuple[int, int], bool]]:
+def make_nodes(
+    markers: list[Marker],
+    pairs: dict[int, int],
+    transition_plans: dict[tuple[int, int], TransitionPlan],
+) -> tuple[list[Node], dict[tuple[int, int], str]]:
     """展开特殊标记对，并在开头补充未记录的车辆原点。"""
     # 录制是在车辆驶离 (0, 0) 原点之后才开始的。
     # 包含这个虚拟节点可以使得表中的第一条记录成为真正的路线起点。
@@ -366,8 +553,12 @@ def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node]
     # 入口到出口的连接段是一个直接的任务区域占位符；故意的，
     # 它不被算作导航路径的强制直线段。
 
-    straight_links: dict[tuple[int, int], bool] = {}
+    # 只有状态机内部和进出走廊天生是直线；状态机之间的连接类型由
+    # transition_plans 决定，未显式标记的普通路段一律走 G2 插值。
+    link_modes: dict[tuple[int, int], str] = {}
     entry_by_exit = {exit_index: entry_index for entry_index, exit_index in pairs.items()}
+    exit_anchor_nodes: dict[int, int] = {}
+    entry_anchor_nodes: dict[int, int] = {}
     marker_index = 0
 
     while marker_index < len(markers):
@@ -384,28 +575,46 @@ def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node]
                 raise ValueError(f"{entry.name} 前 0.5m 直线与上一锚点重叠，无法构造平滑连接。")
             nodes.extend((pre, entry, exit_node, post))
             base = len(nodes) - 4
-            straight_links[(base, base + 1)] = True
-            straight_links[(base + 1, base + 2)] = False
-            straight_links[(base + 2, base + 3)] = True
+            link_modes[(base, base + 1)] = "forced_line"
+            link_modes[(base + 1, base + 2)] = "task_internal"
+            link_modes[(base + 2, base + 3)] = "forced_line"
+            entry_anchor_nodes[marker.order] = base
+            exit_anchor_nodes[exit_marker.order] = base + 3
             marker_index = exit_index + 1
             continue
         if marker_index in entry_by_exit:
             marker_index += 1
             continue
         nodes.append(Node(marker.x, marker.y, marker.point_type, None, TYPE_LABEL[marker.point_type]))
+        # 雷区/圆环只有一个入口事件点。该点同时充当连接段两端的锚点，
+        # 使“雷区 -> 雷区”的纯直线预设能够复用同一套分段机制。
+        if marker.point_type == 1:
+            entry_anchor_nodes[marker.order] = len(nodes) - 1
+            exit_anchor_nodes[marker.order] = len(nodes) - 1
         marker_index += 1
 
     if len(nodes) < 2:
         raise ValueError("展开后路径锚点不足。")
 
-    # nodes 顺序为：台阶出口 -> 台阶出口后走廊 -> 单边桥入口前走廊 -> 单边桥入口。
-    # 仅放宽中间这一条 G2 连接，不改变任务入口/出口的直线走廊。
-    for index in range(1, len(nodes) - 2):
-        if (nodes[index - 1].point_type == 30 and
-                nodes[index + 2].point_type == 4):
-            nodes[index].corner_handle_mm = SMOOTH_TASK_LINK_HANDLE_MM
-            nodes[index + 1].corner_handle_mm = SMOOTH_TASK_LINK_HANDLE_MM
-            break
+    for plan in transition_plans.values():
+        source_node_index = exit_anchor_nodes.get(plan.source_exit_order)
+        target_node_index = entry_anchor_nodes.get(plan.target_entry_order)
+        if source_node_index is None or target_node_index is None:
+            raise ValueError("状态机连接计划缺少对应的入口或出口锚点。")
+        if plan.preset == TransitionPreset.INTERPOLATED:
+            continue
+        # 非插值预设会在前处理阶段删除中间普通点，因此两个锚点必须相邻。
+        # 这里再次检查可防止点表或前处理逻辑变更后悄悄产生错误连线。
+        if target_node_index != source_node_index + 1:
+            raise ValueError(
+                f"{TRANSITION_PRESET_LABEL[plan.preset]} 的两端锚点不相邻，无法直接连接。"
+            )
+        if plan.preset == TransitionPreset.NEAR_PARALLEL:
+            nodes[source_node_index].corner_handle_mm = PARALLEL_TRANSITION_HANDLE_MM
+            nodes[target_node_index].corner_handle_mm = PARALLEL_TRANSITION_HANDLE_MM
+            link_modes[(source_node_index, target_node_index)] = "near_parallel_g2"
+        elif plan.preset == TransitionPreset.PURE_LINE:
+            link_modes[(source_node_index, target_node_index)] = "pure_line"
 
     # 无标签路点使用角平分线切向量，使相邻 G2 曲线满足 C1 连续；同时根据相邻边长计算局部控制柄。
     for index, node in enumerate(nodes):
@@ -424,11 +633,12 @@ def make_nodes(markers: list[Marker], pairs: dict[int, int]) -> tuple[list[Node]
                 node.tangent = outgoing
             incoming_length = distance(nodes[index - 1], node)
             outgoing_length = distance(node, nodes[index + 1])
-            node.corner_handle_mm = min(
-                LOCAL_CORNER_HANDLE_MAX_MM,
-                LOCAL_CORNER_NEIGHBOR_RATIO * min(incoming_length, outgoing_length),
-            )
-    return nodes, straight_links
+            if node.corner_handle_mm is None:
+                node.corner_handle_mm = min(
+                    LOCAL_CORNER_HANDLE_MAX_MM,
+                    LOCAL_CORNER_NEIGHBOR_RATIO * min(incoming_length, outgoing_length),
+                )
+    return nodes, link_modes
 
 
 def resample_path_by_arclength(dense_samples: list[PathSample], sample_step_mm: float) -> list[PathSample]:
@@ -667,57 +877,75 @@ def apply_constant_task_speeds(
     return -planned_speed / SPEED_TO_MM_S, fixed_mask
 
 
-def limit_stairs_approach_output_speed(
-    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray, approach_distance_mm: float
-) -> np.ndarray:
-    ranges = _task_speed_ranges(samples, s, 3, 30, approach_distance_mm, STAIRS_APPROACH_TARGET_SPEED_MAX)
-    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
+def build_task_speed_ranges(
+    samples: list[PathSample], s: np.ndarray, profiles: dict[int, TaskSpeedProfile]
+) -> list[tuple[float, float, float]]:
+    """把状态机速度档案展开为可供全局包络规划使用的固定速度区间。
 
-
-def limit_bridge_approach_output_speed(
-    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray,
-    approach_distance_mm: float, target_speed_max: float,
-) -> np.ndarray:
-    ranges = _task_speed_ranges(samples, s, 4, 40, approach_distance_mm, target_speed_max)
-    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
-
-
-def limit_bumpy_approach_output_speed(
-    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray,
-    approach_distance_mm: float, target_speed_max: float,
-) -> np.ndarray:
-    ranges = _task_speed_ranges(samples, s, 5, 50, approach_distance_mm, target_speed_max)
-    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
-
-
-def limit_slope_approach_output_speed(
-    samples: list[PathSample], s: np.ndarray, target_speed: np.ndarray,
-    approach_distance_mm: float, target_speed_max: float,
-) -> np.ndarray:
-    ranges = _task_speed_ranges(samples, s, 2, 20, approach_distance_mm, target_speed_max)
-    return apply_constant_task_speeds(samples, s, target_speed, ranges)[0]
+    当前底盘状态机要求其进场到出口使用同一条固定速度命令，所以使用
+    state_speed_command 作为硬约束。entry/exit_speed_command 同时保存在
+    StateMachineSegment 和 TrajectorySegment 中，作为相邻轨迹段的速度合约；
+    默认三者相同，兼容原实现，并为以后状态机支持变速进出预留接口。
+    """
+    ranges: list[tuple[float, float, float]] = []
+    for entry_type, profile in profiles.items():
+        exit_type = next(exit_value for exit_value, entry_value in EXIT_TO_ENTRY.items() if entry_value == entry_type)
+        ranges.extend(
+            _task_speed_ranges(
+                samples,
+                s,
+                entry_type,
+                exit_type,
+                profile.approach_distance_mm,
+                profile.state_speed_command,
+            )
+        )
+    return ranges
 
 
 
-def generate_path(markers: list[Marker], sample_step_mm: float) -> list[PathSample]:
+def generate_path(
+    markers: list[Marker], sample_step_mm: float,
+    transition_plans: dict[tuple[int, int], TransitionPlan],
+) -> list[PathSample]:
     pairs = find_event_pairs(markers)
-    nodes, straight_links = make_nodes(markers, pairs)
+    nodes, link_modes = make_nodes(markers, pairs, transition_plans)
     dense_samples: list[PathSample] = []
     for index in range(len(nodes) - 1):
-        if (index, index + 1) in straight_links:
-            is_forced_corridor = straight_links[(index, index + 1)]
-            label = "强制直线" if is_forced_corridor else "任务区直连"
-            append_line(dense_samples, nodes[index], nodes[index + 1], f"{label}: {nodes[index].name} -> {nodes[index + 1].name}", is_forced_corridor, DENSE_SAMPLE_STEP_MM)
+        mode = link_modes.get((index, index + 1), "g2")
+        if mode in {"forced_line", "task_internal", "pure_line"}:
+            label = {
+                "forced_line": "强制直线",
+                "task_internal": "任务区直连",
+                "pure_line": "纯直线过渡",
+            }[mode]
+            append_line(
+                dense_samples,
+                nodes[index],
+                nodes[index + 1],
+                f"{label}: {nodes[index].name} -> {nodes[index + 1].name}",
+                mode != "task_internal",
+                DENSE_SAMPLE_STEP_MM,
+            )
         else:
-            append_g2_link(dense_samples, nodes[index], nodes[index + 1], f"G2: {nodes[index].name} -> {nodes[index + 1].name}", DENSE_SAMPLE_STEP_MM)
+            label = "近似平行 G2" if mode == "near_parallel_g2" else "G2"
+            append_g2_link(
+                dense_samples,
+                nodes[index],
+                nodes[index + 1],
+                f"{label}: {nodes[index].name} -> {nodes[index + 1].name}",
+                DENSE_SAMPLE_STEP_MM,
+            )
     return resample_path_by_arclength(dense_samples, sample_step_mm)
 
 
-def generate_path_with_point_cap(markers: list[Marker]) -> tuple[list[PathSample], float]:
+def generate_path_with_point_cap(
+    markers: list[Marker], transition_plans: dict[tuple[int, int], TransitionPlan]
+) -> tuple[list[PathSample], float]:
     """Prefer 50 mm samples, while never generating a route that RAM truncates."""
     sample_step_mm = SAMPLE_STEP_MM
     for _ in range(8):
-        samples = generate_path(markers, sample_step_mm)
+        samples = generate_path(markers, sample_step_mm, transition_plans)
         if len(samples) <= NAV_ROUTE_MAX_POINTS:
             return samples, sample_step_mm
         # 预留少量余量，避免各段 ceil() 后仍需再次调整采样间距。
@@ -861,7 +1089,7 @@ def render_speed_heatmap(output: Path, samples: list[PathSample], target_speed: 
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="生成带 0.5m 进出直线约束的 Plan3 平滑路径。")
+    parser = argparse.ArgumentParser(description="生成带 0.6m 进出直线约束的 Plan4 分段平滑路径。")
     parser.add_argument("--input", type=Path, help="输入标记 CSV（默认自动选择本目录最新原始 CSV）")
     parser.add_argument("--output-csv", type=Path, help="输出路径 CSV，默认与输入同目录并追加 _planned")
     parser.add_argument("--render", type=Path, help="输出 PNG，默认与输入同目录并追加 _planned")
@@ -869,8 +1097,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--stairs-approach-distance-mm",
         type=float,
-        default=STAIRS_APPROACH_DISTANCE_MM,
+        default=TASK_SPEED_PROFILES[3].approach_distance_mm,
         help="three-step approach speed-cap distance in mm (default: 4000)",
+    )
+    parser.add_argument(
+        "--non-interactive-transitions",
+        action="store_true",
+        help="不在终端询问连接预设；所有状态机间轨迹统一采用预设1（轨迹插值型）",
     )
     parser.add_argument(
         "--speed-response-delay-s",
@@ -896,16 +1129,23 @@ def main() -> int:
     markers, start_heading = read_markers(source)
     pairs = find_event_pairs(markers)
     markers = apply_special_exit_corrections(markers, pairs)
-    markers, collapsed_marker_count = collapse_stairs_to_bridge_markers(markers)
-    samples, effective_sample_step_mm = generate_path_with_point_cap(markers)
+    # 先从原始点表建立交替的“状态机段 / 轨迹段”计划，再按人工选择决定
+    # 哪些普通点参与几何生成。Marker.order 在过滤后保持不变，可作为稳定键。
+    state_segments = build_state_machine_segments(markers, pairs)
+    trajectory_segments, transition_plans = choose_trajectory_segments(
+        state_segments, interactive=not args.non_interactive_transitions
+    )
+    print_segment_plan(state_segments, trajectory_segments)
+    markers, removed_marker_count = apply_trajectory_marker_policy(markers, trajectory_segments)
+    samples, effective_sample_step_mm = generate_path_with_point_cap(markers, transition_plans)
     s, yaw, curvature = calculate_yaw_and_curvature(samples)
     target_speed = calculate_target_speed(samples, s, curvature)
-    task_ranges = [
-        *_task_speed_ranges(samples, s, 3, 30, args.stairs_approach_distance_mm, STAIRS_APPROACH_TARGET_SPEED_MAX),
-        *_task_speed_ranges(samples, s, 2, 20, SLOPE_APPROACH_DISTANCE_MM, SLOPE_APPROACH_TARGET_SPEED_MAX),
-        *_task_speed_ranges(samples, s, 5, 50, BUMP_APPROACH_DISTANCE_MM, BUMP_APPROACH_TARGET_SPEED_MAX),
-        *_task_speed_ranges(samples, s, 4, 40, BRIDGE_APPROACH_DISTANCE_MM, BRIDGE_APPROACH_TARGET_SPEED_MAX),
-    ]
+    task_speed_profiles = dict(TASK_SPEED_PROFILES)
+    # 兼容旧命令行参数，同时使三级跳进场距离真正属于它的状态机速度档案。
+    task_speed_profiles[3] = replace(
+        task_speed_profiles[3], approach_distance_mm=args.stairs_approach_distance_mm
+    )
+    task_ranges = build_task_speed_ranges(samples, s, task_speed_profiles)
     output_target_speed, task_speed_mask = apply_constant_task_speeds(
         samples, s, target_speed, task_ranges
     )
@@ -936,7 +1176,7 @@ def main() -> int:
     print(f"目标速度范围: {output_target_speed.min():.1f} ~ {output_target_speed.max():.1f}（负数为前进指令）")
     print(f"渲染图: {render_output}")
     print(f"强制直线累计长度: {forced_length:.1f} mm")
-    print(f"台阶到单边桥忽略普通路径点: {collapsed_marker_count} 个")
+    print(f"非插值状态机过渡忽略普通路径点: {removed_marker_count} 个")
     print(f"C 路表: {args.header}")
     return 0
 
