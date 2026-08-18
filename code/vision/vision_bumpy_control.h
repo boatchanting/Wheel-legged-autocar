@@ -25,16 +25,8 @@ extern "C" {
 
 /* 控制参数宏定义区 */
 #define VISION_BUMPY_STALE_TIMEOUT_TICKS       (120U)  // 数据包过期超时时间(2ms周期计数, 120=240ms)
-#define VISION_BUMPY_MAX_ERR_DEG               (18.0f)   // 最大转向误差角度限制(度)
-#define VISION_BUMPY_DEADBAND_DEG              (0.20f)  // 转向误差死区(度), 小于此值的误差将被忽略
-
-/* 角度响应整形（2026-08-18 方案 v5 §1：近高远低 + 自适应阻尼，替代 PID 与 heading_stable 门控）
-   整形 S(e)=e/(1+B·|e|)：1/B≈等效输出限幅（连续饱和），|e| 大 → 增益小 → 阻尼；|e|→0 → 增益→1 → 灵敏
-   自适应 EMA α=ALPHA_MAX·exp(−|e|/TAU)：小角度 α 大 → 跟手；大角度 α 小 → 压抖 */
-#define VISION_BUMPY_YAW_SIGN                  (1.0f)   // 偏差角度符号：正值=需右转；反了改 -1
-#define VISION_BUMPY_ANGLE_SHAPE_B             (0.06f)  // 整形强度(/°)；1/B≈16.7° 等效饱和限幅
-#define VISION_BUMPY_ANGLE_ALPHA_MAX           (0.40f)  // 小角度最大平滑增益（0~1）
-#define VISION_BUMPY_ANGLE_TAU_DEG             (3.0f)   // α 随 |e| 的衰减尺度(°)
+/* 角度响应整形/符号参数已于 2026-08-18 上移至 1 核 code1/vision/bumpy_vision.h（VISION_BUMPY_*），
+   0 核不再做整形/EMA/锁角，仅直通 1 核稳定提案。 */
 
 /* 横向记录（2026-08-17 规划 §4.3；2026-08-18 起正式横向源为 1 核 lat_stable，recorded 保留为遥测） */
 #define VISION_BUMPY_LATERAL_RECORD_ALPHA      (0.50f)  // 记录 EMA 系数：0~1，越小越平滑
@@ -80,11 +72,10 @@ typedef struct
     vision_bumpy_control_state_e state;    // 当前控制状态
     float direction_x;                     // 视觉方向向量 X 分量
     float direction_y;                     // 视觉方向向量 Y 分量
-    /* —— 角度响应整形（2026-08-18 方案 v5 §1，详见 docs/任务规划/颠簸视觉角度响应整形与横向偏差稳定滤波方案.md）
-       0 核零 PID、零门控：err_degree_cmd 由 整形+自适应EMA 直接产出，供 bumpy_road 无条件直送 err_degree —— */
-    int16 yaw_error_deg_x100;              // 最近一帧偏差角度（整形输入，遥测用）
-    float err_f;                           // 自适应 EMA 滤波状态（失稳时保持=锁当前角度）
-    float err_degree_cmd;                  // 转向误差角度指令(度)，即最终提案值
+    /* —— 角度路径（2026-08-18 起：1 核完成“按角度大小整形+EMA”，0 核零锁、纯直通）——
+       yaw_error_deg_x100 已是 1 核稳定提案（无条纹报 0）；err_degree_cmd 直通送 err_degree —— */
+    int16 yaw_error_deg_x100;              // 1 核整形后偏差角度×100（遥测用）
+    float err_degree_cmd;                  // 转向误差角度指令(度)：1 核 yaw_error 直通
     /* 横向记录（lateral_mm → recorded，只记录不修正；正式消费源为 1 核 lat_stable） */
     int16 lateral_mm;                      // 最近一帧可信横向偏差（原始观测，遥测用）
     float recorded_lateral_mm;             // 记录的横向偏差（EMA 滤波，失稳时冻结，遥测用）

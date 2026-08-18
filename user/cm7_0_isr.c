@@ -73,6 +73,16 @@ volatile struct {
 volatile float err_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float roll_degree = 0.0f;//  转向控制全局变量（需在视觉/gps/编码器模块中更新）
 volatile float filtered_gyro_z = 0.0f;//陀螺仪数据滤波z轴角速度，用于转向角速度环和示波器观测
+volatile float g_vert_acc_world_g = 0.0f;//世界系竖直方向动态加速度（g，向上为正，已扣除1g重力），1ms更新
+
+/* 加速度计 LSB/g 换算系数（与惯导/回传一致）：垂直加速度解算用 */
+#if IMU_CATEGORY == 1 || IMU_CATEGORY == 2
+    #define VERT_ACC_LSB_PER_G   4096.0f
+#elif IMU_CATEGORY == 3
+    #define VERT_ACC_LSB_PER_G   4098.0f
+#else
+    #error "Unsupported IMU_CATEGORY for g_vert_acc_world_g"
+#endif
 uint32_t loop_counter = 0;
 static uint16 accel_ff_buzzer_on_ticks = 0U;       // 大幅加速前馈蜂鸣剩余时间，1ms 递减
 static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避免持续大前馈时重复鸣叫
@@ -676,6 +686,29 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // 运行姿态解算 (EKF / 互补滤波)
     EKF_UpData();
     record_initial_yaw_task(loop_counter);//初始化偏航角，里面的代码只会在初始化的时候被调用一次，记录初始的偏航角
+
+    // ==========================================================
+    // 步骤 3.5: 垂直方向动态加速度解算（1ms，跟随 EKF 每周期更新）
+    // 原理：原始加速度计数据(LSB)投影到 EKF 估计的世界系竖直方向单位向量
+    //       imu_data.grav_x/y/z，再扣除 1g 重力 →
+    //       g_vert_acc_world_g（g，向上为正）。供示波器/WiFi/其他模块读取。
+    // ==========================================================
+    #if IMU_CATEGORY == 3
+    g_vert_acc_world_g = ((float)imu963ra_acc_x * imu_data.grav_x
+                        + (float)imu963ra_acc_y * imu_data.grav_y
+                        + (float)imu963ra_acc_z * imu_data.grav_z)
+                        * (1.0f / VERT_ACC_LSB_PER_G) - 1.0f;
+    #elif IMU_CATEGORY == 1
+    g_vert_acc_world_g = ((float)imu660ra_acc_x * imu_data.grav_x
+                        + (float)imu660ra_acc_y * imu_data.grav_y
+                        + (float)imu660ra_acc_z * imu_data.grav_z)
+                        * (1.0f / VERT_ACC_LSB_PER_G) - 1.0f;
+    #elif IMU_CATEGORY == 2
+    g_vert_acc_world_g = ((float)imu660rb_acc_x * imu_data.grav_x
+                        + (float)imu660rb_acc_y * imu_data.grav_y
+                        + (float)imu660rb_acc_z * imu_data.grav_z)
+                        * (1.0f / VERT_ACC_LSB_PER_G) - 1.0f;
+    #endif
     #if IMU_CATEGORY == 3 // IMU963RA的磁力计模块
     if (loop_counter % 5 == 2)
     {

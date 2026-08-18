@@ -27,6 +27,11 @@ extern volatile uint8 exit_beep_request;
 #define BUMPY_ROAD_ENTRY_STD_TH          (0.3f)         // (降低阈值) 进入特征标准差阈值 (rad/s)
 #define BUMPY_ROAD_ENTRY_CONFIRM_FRAMES  (50U)          // (减少确认时间) 连续满足进入条件的帧数(50ms)
 
+/* 垂直加速度“起飞”锁存阈值（g，向上为正，可调）：g_vert_acc_world_g（原始加速度计
+   数据 + EKF 重力向量，已扣除 1g）超过该值（>5g 极短突发冲击，车体腾空）即锁存
+   “起飞”标志；锁存期间仅锁住转向控制量（err_degree 归零），视觉数据管线照常更新 */
+#define BUMPY_ROAD_VERT_ACC_TAKEOFF_TH_G    (5.0f)
+
 typedef struct
 {
     BumpyRoadState_e state;
@@ -60,6 +65,8 @@ typedef struct
     uint16_t bump_entry_cnt;
     uint8_t on_bump;
     float current_speed_set;
+    uint8_t takeoff_latched;    // 垂直加速度“起飞”锁存：超过阈值后置位，锁住转向控制量
+    BumpyRoadCorrectionMoment_e correction_moment;  // 中线修正执行时刻：默认起飞时刻(0)，可运行时切换
 } BumpyRoadContext_t;
 
 static BumpyRoadContext_t s_bumpy_ctx = {BUMPY_ROAD_STATE_IDLE};
@@ -86,11 +93,44 @@ static float BumpyRoad_CalcCorrectionDistanceMm(void)
 
 static void BumpyRoad_ApplyYawHold(void)
 {
-    /* 2026-08-18 方案 v5 §1：0 核控制数据零限制——
-       视觉提案（整形+自适应EMA）无条件直送 err_degree 管线，无门控、无二次平滑；
-       失稳锁当前角度已由视觉层 err_f 保持实现（meas_valid=0 时 err_degree_cmd 不变）。
-       仅出口修正完成后强制归零（避免出段后继续用视觉）。 */
+    /* 2026-08-18 重构后：1 核已完成“按角度大小整形+EMA”并输出稳定提案
+       （无条纹报 0）；0 核无条件直送 err_degree，不做任何因视觉可信度带来的锁。
+       仅起飞锁存/出口修正完成后强制归零（物理事件锁，非视觉可信度）。 */
     err_degree = VisionBumpyControl_GetErrDegreeCmd();
+}
+
+/* 一次性中线修正（起飞时刻或视觉脱出时刻调用）：
+   钉出口锚点 + 横向叠加 1 核 lat_stable；correction_applied=1 后不再做任何中线修正 */
+static void BumpyRoad_ApplyExitCorrection(void)
+{
+    exit_beep_request = 1U;
+    if (s_bumpy_ctx.exit_anchor_valid != 0U)
+    {
+        nav_vision_fusion_x = s_bumpy_ctx.exit_anchor_x_mm;
+        nav_vision_fusion_y = s_bumpy_ctx.exit_anchor_y_mm;
+
+        /* 出口修正叠加（2026-08-18 方案 v5 §3.4）：修正时刻一次性修正惯导。
+         * lat 取 1 核稳定滤波值 lat_stable（3帧满窗中值+门控+保持状态机输出，
+         * 即 IPC lateral_mm → g_vision_bumpy_control_status.lateral_mm；读取时刻
+         * 正处 HOLD 保持/FREEZE 冻结的最近可信值）。
+         * 叠加门 = 1 核横向置信度（meas_valid=VISION_VALID_BUMPY_MEAS）：
+         *   只要可信度未耗尽，哪怕修正瞬间边线未测出也修正惯导；
+         *   可信度耗尽（conf==0）或数据过旧才跳过（安全降级）。
+         * lat_stable 值本身与置信度无关（只在有边线时更新），过旧仅控制侧不接。
+         * 车身右侧单位向量 r=(sinθ,-cosθ) 由 inertial_nav 车体→世界变换推导；
+         * 符号方向实车必测，反了翻转 BUMPY_LATERAL_OVERLAY_SIGN。 */
+        if (g_vision_bumpy_control_status.meas_valid != 0U)
+        {
+            const float lat = (float)g_vision_bumpy_control_status.lateral_mm;
+            const float theta = inertial_nav.relative_yaw * (3.14159265358979f / 180.0f);
+            nav_vision_fusion_x += BUMPY_LATERAL_OVERLAY_SIGN * lat * sinf(theta);
+            nav_vision_fusion_y -= BUMPY_LATERAL_OVERLAY_SIGN * lat * cosf(theta);
+        }
+    }
+    s_bumpy_ctx.correction_start_x_mm = inertial_nav.x;
+    s_bumpy_ctx.correction_start_y_mm = inertial_nav.y;
+    s_bumpy_ctx.correction_applied = 1U;
+    err_degree = 0.0f;
 }
 
 static void BumpyRoad_Cleanup(uint8_t stop_car)
@@ -109,6 +149,7 @@ static void BumpyRoad_Cleanup(uint8_t stop_car)
     g_special_action_trigger = 0U;
     s_bumpy_ctx.state = BUMPY_ROAD_STATE_IDLE;
     s_bumpy_ctx.exit_anchor_valid = 0U;
+    s_bumpy_ctx.takeoff_latched = 0U;   // 任务结束清除“起飞”锁存
     if (was_active != 0U)
     {
         BumpyRoad_PublishEvent(BUMPY_ROAD_EVENT_ENDED);
@@ -150,6 +191,7 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.bump_entry_cnt = 0;
     s_bumpy_ctx.on_bump = 0;
     s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+    s_bumpy_ctx.takeoff_latched = 0U;   // 初始化清除“起飞”锁存
 
     if (was_active != 0U)
     {
@@ -198,6 +240,7 @@ void BumpyRoad_Trigger(void)
     s_bumpy_ctx.bump_entry_cnt = 0;
     s_bumpy_ctx.on_bump = 0;
     s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+    s_bumpy_ctx.takeoff_latched = 0U;   // 重新触发清除“起飞”锁存
 
     /* 进入任务时独占控制权：开启1核颠簸视觉，并启用0核方向控制器。 */
     g_special_action_trigger = 1U;
@@ -231,9 +274,34 @@ void BumpyRoad_Update_1ms(void)
 
     if (s_bumpy_ctx.state == BUMPY_ROAD_STATE_RUNNING)
     {
-        if (s_bumpy_ctx.correction_applied != 0U)
+        /* ==========================================================
+         * 0. 垂直加速度“起飞”锁存监控（1ms）
+         *    g_vert_acc_world_g（原始加速度计数据 + EKF 重力向量，单位 g，向上为正，
+         *    已扣除 1g）超过阈值（>5g 的极短突发冲击，车体腾空）即置位“起飞”锁存。
+         *    锁存期间仅锁住转向控制量（err_degree 强制归零，视觉不再接入转向）；
+         *    视觉数据管线（左右偏差/出入口检测）照常更新——出口确认仍依赖视觉。
+         *    锁存不自动释放，需要时由外部显式调用 BumpyRoad_ClearTakeoffLatch() 解除。
+         *    【中线修正时刻=起飞】时，在起飞瞬间执行一次性中线修正；
+         *    修正后 correction_applied=1，视觉脱出路径自然跳过，无需专门处理。
+         * ========================================================== */
+        if (g_vert_acc_world_g > BUMPY_ROAD_VERT_ACC_TAKEOFF_TH_G)
         {
-            /* 出口修正完成后：视觉不再接入转向，保持直行 */
+            if (s_bumpy_ctx.takeoff_latched == 0U)
+            {
+                s_bumpy_ctx.takeoff_latched = 1U;
+
+                if ((s_bumpy_ctx.correction_moment == BUMPY_ROAD_CORRECTION_MOMENT_TAKEOFF) &&
+                    (s_bumpy_ctx.correction_applied == 0U))
+                {
+                    BumpyRoad_ApplyExitCorrection();   /* 起飞时刻：立即一次性中线修正 */
+                }
+            }
+        }
+
+        if ((s_bumpy_ctx.correction_applied != 0U) ||
+            (s_bumpy_ctx.takeoff_latched != 0U))
+        {
+            /* 出口修正完成后 或 起飞锁存期间：视觉不再接入转向，保持直行 */
             err_degree = 0.0f;
         }
         else
@@ -317,32 +385,9 @@ void BumpyRoad_Update_1ms(void)
                 (s_bumpy_ctx.correction_applied == 0U) &&
                 VisionBumpyControl_IsExitConfirmed())
             {
-                /* 视觉确认出口即提示；遥控触发时也可能没有导航出口锚点。 */
-                exit_beep_request = 1U;
-                if (s_bumpy_ctx.exit_anchor_valid != 0U)
-                {
-                    nav_vision_fusion_x = s_bumpy_ctx.exit_anchor_x_mm;
-                    nav_vision_fusion_y = s_bumpy_ctx.exit_anchor_y_mm;
-
-                    /* 出口修正叠加（2026-08-18 方案 v5 §3.4）：脱出时刻一次性修正惯导。
-                     * lat 取 1 核稳定滤波值 lat_stable（3帧满窗中值+门控+保持状态机输出，
-                     * 即 IPC lateral_mm → g_vision_bumpy_control_status.lateral_mm；脱出时刻
-                     * 正处 HOLD 保持/FREEZE 冻结的最近可信值）。
-                     * 车身右侧单位向量 r=(sinθ,-cosθ) 由 inertial_nav 车体→世界变换推导；
-                     * 符号方向实车必测，反了翻转 BUMPY_LATERAL_OVERLAY_SIGN。 */
-                    const float lat = (float)g_vision_bumpy_control_status.lateral_mm;
-                    if (lat != 0.0f)
-                    {
-                        const float theta = inertial_nav.relative_yaw * (3.14159265358979f / 180.0f);
-                        nav_vision_fusion_x += BUMPY_LATERAL_OVERLAY_SIGN * lat * sinf(theta);
-                        nav_vision_fusion_y -= BUMPY_LATERAL_OVERLAY_SIGN * lat * cosf(theta);
-                    }
-                }
-                s_bumpy_ctx.correction_start_x_mm = inertial_nav.x;
-                s_bumpy_ctx.correction_start_y_mm = inertial_nav.y;
-                s_bumpy_ctx.correction_applied = 1U;
-                s_bumpy_ctx.state = BUMPY_ROAD_STATE_RUNNING;
-                err_degree = 0.0f;
+                /* 视觉确认出口即提示；遥控触发时也可能没有导航出口锚点。
+                   起飞时刻已修正时（correction_applied=1）本分支不会进入。 */
+                BumpyRoad_ApplyExitCorrection();
             }
 
             if ((s_bumpy_ctx.correction_applied != 0U) &&
@@ -396,4 +441,25 @@ BumpyRoadEvent_e BumpyRoad_GetLastEvent(void)
 uint32_t BumpyRoad_GetEventSequence(void)
 {
     return s_bumpy_ctx.event_sequence;
+}
+
+void BumpyRoad_ClearTakeoffLatch(void)
+{
+    /* 外部显式解除“起飞”锁存：恢复视觉转向接入（当前不自动释放） */
+    s_bumpy_ctx.takeoff_latched = 0U;
+}
+
+uint8_t BumpyRoad_IsTakeoff(void)
+{
+    return s_bumpy_ctx.takeoff_latched;
+}
+
+void BumpyRoad_SetCorrectionMoment(BumpyRoadCorrectionMoment_e moment)
+{
+    s_bumpy_ctx.correction_moment = moment;
+}
+
+BumpyRoadCorrectionMoment_e BumpyRoad_GetCorrectionMoment(void)
+{
+    return s_bumpy_ctx.correction_moment;
 }

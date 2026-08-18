@@ -10,6 +10,7 @@
 #define K               (0.369043f)
 extern volatile float g_initial_yaw;         // 存储记录下来的初始偏航角
 extern volatile bool  g_yaw_initialized;     // 偏航角是否已成功初始化的标志
+extern volatile float g_vert_acc_world_g;    // 世界系竖直方向动态加速度（g，向上为正，已扣除1g重力），1ms更新（定义于 cm7_0_isr.c）
 
 // --- 函数原型声明 ---
 /**

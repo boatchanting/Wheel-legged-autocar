@@ -300,18 +300,26 @@ static uint32 g_bumpy_last_frame_time_us = 0U;
 static bumpy_pipeline_t s_bumpy_pipeline;   /* 新管线状态（gx/gy/mag2/labels 等，~121KB） */
 
 /* —— lateral 稳定滤波（2026-08-18 方案 v5 §3，docs/任务规划/颠簸视觉角度响应整形与横向偏差稳定滤波方案.md）——
-   3 帧满窗中值（替代旧"连续3帧"时序门控）+ 门控（观测存在/野值剔除） + LOCK/HOLD/FREEZE 状态机：
+   3 帧满窗中值（替代旧"连续3帧"时序门控）+ 门控（观测存在/野值剔除） + LOCK/HOLD 状态机：
      LOCK  : 满 3 个可检测帧 → 中值 → EMA 更新（miss 清零）
-     HOLD  : 无观测/野值且 miss≤K → 保持 s_lat_stable 不更新（丢失 5 帧内仍可信）
-     FREEZE: miss>K → 冻结并剥离 meas_valid（唯一"横向完全不可信"出口）
+     HOLD  : 无观测/野值 → 保持 s_lat_stable 不更新（丢失 5 帧内不扣可信度）
+   可信度（2026-08-18 起替代硬 FREEZE）：
+     - 检测到且稳定（入窗）→ 线性累加（每帧 +STEP，封顶 255=uint8 上限，不卡 100）
+     - 丢失/野值 → 5 帧免扣；超过 5 帧后按递增步长非线性扣减（第 1 帧扣 1、第 2 帧扣 2…，
+       仅每帧步长 +1 再减，无需计算）；可信度耗尽（=0）才 FREEZE 剥离 meas_valid，不再直接清零
    0 值帧（无线/间距自检失败）不入窗，从源头消除 0 值污染偏置（见方案 §3.3.2e）。 */
 #define BUMPY_LAT_FILTER_N         (3U)    /* 中值窗长：必须满 3 个可检测帧（lateral_raw≠0 且非野值）才输出 */
 #define BUMPY_LAT_JERK_MM          (80.0f) /* 单帧野值门限：|Δx| > J 视为野值，不入窗直接进 HOLD */
 #define BUMPY_LAT_EMA_BETA         (0.30f) /* LOCK 态 EMA 系数（0~1，越小越平滑） */
-#define BUMPY_LAT_HOLD_MAX         (5U)    /* HOLD 保持上限帧（50ms@100fps） */
+#define BUMPY_LAT_CONF_MAX         (255U)  /* 横向可信度上限（0~255，uint8 上限，不卡 100） */
+#define BUMPY_LAT_CONF_STEP        (10U)   /* 有效稳定帧线性累加步长（26 帧满置信） */
+#define BUMPY_LAT_CONF_GRACE       (5U)    /* 丢失免扣帧数（5 帧内不扣可信度） */
+#define BUMPY_LAT_CONF_PENALTY_INC (1U)    /* 免扣期后每帧递增扣分步长：第 1 帧扣 1、第 2 帧扣 2… */
 static float   s_lat_win[BUMPY_LAT_FILTER_N];
 static uint8_t s_lat_win_cnt;             /* 窗口内有效样本数（≤N） */
 static uint8_t s_lat_miss;                /* 连续无观测/野值帧计数 */
+static uint8_t s_lat_conf;                /* 横向可信度（0~255，uint8 上限）：有效稳定帧线性累加，丢失非线性扣减 */
+static uint8_t s_lat_penalty;             /* 非线性扣分步长：超过免扣期后每帧 +1（无需计算） */
 static float   s_lat_stable;              /* 稳定输出 lat_stable */
 
 /**
@@ -326,10 +334,19 @@ static float bumpy_vision_lateral_filter(float lateral_raw, uint8_t *freeze)
 
     *freeze = 0U;
 
-    /* C1 观测存在且非野值（|Δx| 相对当前稳定值）→ 入窗 */
+    /* C1 观测存在且非野值（|Δx| 相对当前稳定值）→ 有效稳定帧：入窗 + 线性累加可信度 */
     if ((lateral_raw != 0.0f) &&
         (fabsf(lateral_raw - s_lat_stable) <= BUMPY_LAT_JERK_MM))
     {
+        /* 检测到且稳定：可信度线性累加（封顶），重置丢失计数与扣分步长 */
+        s_lat_conf += BUMPY_LAT_CONF_STEP;
+        if (s_lat_conf > BUMPY_LAT_CONF_MAX)
+        {
+            s_lat_conf = BUMPY_LAT_CONF_MAX;
+        }
+        s_lat_miss = 0U;
+        s_lat_penalty = 0U;
+
         if (s_lat_win_cnt < BUMPY_LAT_FILTER_N)
         {
             s_lat_win_cnt++;
@@ -350,23 +367,71 @@ static float bumpy_vision_lateral_filter(float lateral_raw, uint8_t *freeze)
             if (a > b) { t = a; a = b; b = t; }
             x_mid = b;
             s_lat_stable += (x_mid - s_lat_stable) * BUMPY_LAT_EMA_BETA;
-            s_lat_miss = 0U;
         }
     }
     else
     {
-        /* 无观测/野值：HOLD 计数；超上限 FREEZE */
+        /* 无观测/野值：丢失计数；免扣期（GRACE=5 帧）内不扣可信度；
+           超过后按递增步长非线性扣减（第 1 帧扣 1、第 2 帧扣 2…，仅步长 +1 再减，无需计算）；
+           可信度耗尽（=0）才 FREEZE 剥离 meas_valid——不再直接清零 */
         if (s_lat_miss < 0xFFU)
         {
             s_lat_miss++;
         }
-        if (s_lat_miss > BUMPY_LAT_HOLD_MAX)
+        if (s_lat_miss > BUMPY_LAT_CONF_GRACE)
         {
-            *freeze = 1U;
+            s_lat_penalty += BUMPY_LAT_CONF_PENALTY_INC;
+            if (s_lat_conf >= s_lat_penalty)
+            {
+                s_lat_conf -= s_lat_penalty;
+            }
+            else
+            {
+                s_lat_conf = 0U;
+            }
+        }
+        if (s_lat_conf == 0U)
+        {
+            *freeze = 1U;   /* 可信度耗尽：冻结并剥离 meas_valid */
         }
     }
 
     return s_lat_stable;
+}
+
+/* —— 角度响应整形（2026-08-18 由 0 核 vision_bumpy_control.c 上移，与 valid/横向完全无关）——
+   按角度大小修改响应：小偏差迅速修正、大偏差慢速修正。
+   ① 静态整形 S(e)=e/(1+B·|e|)：|e| 大 → 增益小 → 阻尼；|e|→0 → 增益→1 → 灵敏
+   ② 自适应 EMA α=ALPHA_MAX·exp(−|e|/TAU)：小角度 α 大 → 跟手；大角度 α 小 → 压抖
+   ③ 限幅 + 死区。
+   SIGN 在本函数内应用，0 核仅直通，最终 err_degree 符号与原实现一致。
+   调用方保证：仅 hdg 有效时调用；无条纹时向 0 核报 0（EMA 状态保持不更新）。 */
+static float s_yaw_shaped_deg = 0.0f;   /* 角度整形+EMA 状态（按路段复位） */
+
+static float bumpy_vision_shape_yaw_error(float raw_deg)
+{
+    float err;
+    const float raw = raw_deg * VISION_BUMPY_YAW_SIGN;
+
+    /* ① 静态整形：|e|→0 增益→1（小偏差灵敏）；|e|→∞ 趋 1/B 饱和（大偏差阻尼） */
+    err = raw / (1.0f + VISION_BUMPY_ANGLE_SHAPE_B * fabsf(raw));
+
+    /* ② 自适应 EMA：α 随 |e| 指数衰减（小角度跟手、大角度压抖） */
+    {
+        const float alpha = VISION_BUMPY_ANGLE_ALPHA_MAX *
+                            expf(-fabsf(raw) / VISION_BUMPY_ANGLE_TAU_DEG);
+        err = alpha * err + (1.0f - alpha) * s_yaw_shaped_deg;
+    }
+    s_yaw_shaped_deg = err;
+
+    /* ③ 限幅 + 死区 */
+    if (err >  VISION_BUMPY_MAX_ERR_DEG) err =  VISION_BUMPY_MAX_ERR_DEG;
+    if (err < -VISION_BUMPY_MAX_ERR_DEG) err = -VISION_BUMPY_MAX_ERR_DEG;
+    if (fabsf(err) < VISION_BUMPY_DEADBAND_DEG)
+    {
+        err = 0.0f;
+    }
+    return err;
 }
 
 /**
@@ -413,7 +478,10 @@ void bumpy_vision_reset_filter(void)
     /* lateral 稳定滤波状态按路段/视频隔离（与管线历史同生命周期，2026-08-18 v5 §5.4） */
     s_lat_win_cnt = 0U;
     s_lat_miss = 0U;
+    s_lat_conf = 0U;      /* 可信度随路段复位 */
+    s_lat_penalty = 0U;
     s_lat_stable = 0.0f;
+    s_yaw_shaped_deg = 0.0f;  /* 角度整形 EMA 状态随路段复位 */
     memset(s_lat_win, 0, sizeof(s_lat_win));
 #endif
 
@@ -480,16 +548,19 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     next.meas_valid      = 0U;
 
     /* 条纹倾斜角：永远取自管线 frame_heading（与边线成败无关，常输出）；
-       valid 位只标"条纹也没有"的严重丢失（审批方案 §3.1） */
+       角度路径与 valid/横向完全解耦；无条纹时向 0 核报 0（0 核不做任何视觉可信度锁） */
     if (res.hdg_valid)
     {
         const float arad = res.hdg * 0.01745329251f;
         next.direction_x = cosf(arad);
         next.direction_y = sinf(arad);
-        /* 偏差角度：条纹法向相对车头(图像 +y/前)，正=需右转（0核 VISION_BUMPY_YAW_SIGN 兜底验符号） */
-        next.yaw_error_deg_x100 = (int16)(atan2f(-sinf(arad), cosf(arad)) * 57.2957795f * 100.0f);
-        next.meas_valid = 1U;
+        /* 偏差角度：条纹法向相对车头(图像 +y/前)，正=需右转；
+           经“按角度大小整形+自适应EMA”（1 核，小偏差快修/大偏差慢修）输出稳定提案；
+           SIGN 在 1 核内应用，0 核仅直通，最终 err_degree 符号与原实现一致 */
+        const float raw_deg = atan2f(-sinf(arad), cosf(arad)) * 57.2957795f;
+        next.yaw_error_deg_x100 = (int16)(bumpy_vision_shape_yaw_error(raw_deg) * 100.0f);
     }
+    /* hdg 无效（无条纹）：yaw_error_deg_x100 保持 0 上报，EMA 状态保持不更新 */
 
     /* 横向偏差：固定 y=BUMPY_IPM_BASE_ROW 行 IPM + 已知 1m 边线间距（审批方案 §3.2）
        双侧：中点 + 间距自检；单侧：±500mm 逆解算；两侧都没有：0
@@ -520,10 +591,9 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
         }
 
         next.lateral_mm = (int16)bumpy_vision_lateral_filter(lateral_raw, &lat_freeze);
-        if (lat_freeze != 0U)
-        {
-            next.meas_valid = 0U;   /* FREEZE：横向长期丢失，角度一并剥离可信（条纹同样长期缺失） */
-        }
+        /* valid 只服务横向/边线（0 核出口修正门）：纯置信度驱动，与角度(hdg)解耦。
+           lat_stable 值本身与置信度无关（HOLD 保持、不随 conf 清零）；conf 耗尽才 valid=0。 */
+        next.meas_valid = (s_lat_conf > 0U) ? 1U : 0U;
     }
 
     g_bumpy_vision_output_write_busy = 1U;

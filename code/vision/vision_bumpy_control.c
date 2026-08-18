@@ -20,11 +20,6 @@ static vision_bumpy_control_status_t g_bumpy_ctrl_shadow;  ///< 凹凸路面控�
  * @param   value 输入值
  * @return  输入值的绝对值
  */
-static float vision_bumpy_abs_f(float value)
-{
-    return (value < 0.0f) ? -value : value;
-}
-
 /**
  * @brief   将浮点数限制在指定范围内
  * @param   value 输入值
@@ -44,48 +39,8 @@ static float vision_bumpy_constrain_f(float value, float min_value, float max_va
     }
     return value;
 }
-
-/**
- * @brief   根据视觉偏差角度计算转向误差指令（角度响应整形，2026-08-18 方案 v5 §1）
- * @param   packet 视觉数据包指针
- * @return  计算得到的转向误差角度(度)
- * @details 近高远低非线性整形 S(e)=e/(1+B·|e|) + 自适应 EMA（小角度灵敏、大角度阻尼）。
- *          yaw_error_deg_x100==0 表示"无有效角度观测"（或真对准），返回 0（锁当前角度），
- *          不进入方向向量回退（旧算法 -90° 回退 bug 已修复）。
- */
-static float vision_bumpy_calc_err_degree(const volatile vision_ipc_packet_t *packet)
-{
-    float err;
-    const float raw = (float)packet->yaw_error_deg_x100 * 0.01f * VISION_BUMPY_YAW_SIGN;
-
-    if (packet->yaw_error_deg_x100 == 0)
-    {
-        /* 无角度观测：锁当前角度（err_f 由调用侧保持），不给新指令 */
-        err = 0.0f;
-    }
-    else
-    {
-        /* ① 静态整形：|e|→0 增益→1（灵敏）；|e|→∞ 趋 1/B 饱和（阻尼） */
-        err = raw / (1.0f + VISION_BUMPY_ANGLE_SHAPE_B * vision_bumpy_abs_f(raw));
-
-        /* ② 自适应 EMA：α 随 |e| 指数衰减（平滑强度与偏差自适应）；结果写回状态供下帧/失稳保持 */
-        {
-            const float alpha = VISION_BUMPY_ANGLE_ALPHA_MAX *
-                                expf(-vision_bumpy_abs_f(raw) / VISION_BUMPY_ANGLE_TAU_DEG);
-            err = alpha * err + (1.0f - alpha) * g_bumpy_ctrl_shadow.err_f;
-        }
-        g_bumpy_ctrl_shadow.err_f = err;
-    }
-
-    /* 方向控制仅基于视觉，不叠加惯导角度闭环；按图像误差直接映射。 */
-    err = vision_bumpy_constrain_f(err, -VISION_BUMPY_MAX_ERR_DEG, VISION_BUMPY_MAX_ERR_DEG);  // 限制最大误差角度
-
-    if (vision_bumpy_abs_f(err) < VISION_BUMPY_DEADBAND_DEG)  // 死区处理
-    {
-        err = 0.0f;
-    }
-    return err;
-}
+/* 角度响应整形（vision_bumpy_calc_err_degree）已于 2026-08-18 上移至 1 核
+   code1/vision/bumpy_vision.c（bumpy_vision_shape_yaw_error），0 核不再整形/EMA/锁角。 */
 
 /**
  * @brief   应用空闲输出状态
@@ -94,8 +49,7 @@ static float vision_bumpy_calc_err_degree(const volatile vision_ipc_packet_t *pa
 static void vision_bumpy_apply_idle_outputs(void)
 {
     g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_IDLE;  // 设置状态为空闲
-    g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;           // 清零误差指令
-    g_bumpy_ctrl_shadow.err_f = 0.0f;                    // 清零角度滤波状态
+    g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;           // 清零误差指令（1 核整形状态不受影响）
     /* 新视觉测量（2026-08-17 规划 §4）：禁用/停机时清零 */
     g_bumpy_ctrl_shadow.recorded_lateral_mm = 0.0f;
     g_bumpy_ctrl_shadow.meas_valid = 0U;
@@ -161,7 +115,6 @@ void VisionBumpyControl_ResetExitDetection(void)
 {
     vision_bumpy_reset_all_detection();
     /* 新视觉测量重置（2026-08-17 规划 §4.4）：进入新颠簸任务时清空 */
-    g_bumpy_ctrl_shadow.err_f = 0.0f;
     g_bumpy_ctrl_shadow.recorded_lateral_mm = 0.0f;
     g_bumpy_ctrl_shadow.meas_valid = 0U;
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;
@@ -244,10 +197,9 @@ void VisionBumpyControl_Update_2ms(void)
         g_bumpy_ctrl_shadow.bumpy_detected = 0U;
         g_bumpy_ctrl_shadow.direction_x = 0.0f;
         g_bumpy_ctrl_shadow.direction_y = 0.0f;
-        g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                  // 清零误差指令
-        g_bumpy_ctrl_shadow.err_f = 0.0f;                           // 清零角度滤波状态（锁当前角度=0）
-        /* 新视觉测量（2026-08-17 规划 §4）：失稳 → heading 回 0（由 bumpy_road 锁失稳前航向），
-         * recorded_lateral_mm 保持冻结（绝不清零、绝不更新）。 */
+        g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                  // 过旧不接：角度报 0（1 核整形状态不受影响）
+        /* 新视觉测量（2026-08-17 规划 §4）：过旧仅控制侧不消费（快照清零），
+         * 1 核 lat_stable/置信度独立维护、绝不被 0 核清零；recorded_lateral_mm 保持冻结。 */
         g_bumpy_ctrl_shadow.meas_valid = 0U;
         g_bumpy_ctrl_shadow.yaw_error_deg_x100 = 0;
         g_bumpy_ctrl_shadow.lateral_mm = 0;
@@ -272,36 +224,29 @@ void VisionBumpyControl_Update_2ms(void)
     g_bumpy_ctrl_shadow.meas_valid =
         (uint8)((packet->valid_mask & VISION_VALID_BUMPY_MEAS) != 0U);
 
-    /* 根据检测状态计算控制指令（2026-08-18 方案 v5 §1：0 核零门控——
-       meas_valid=1（条纹在）即整形+自适应EMA 产出 err_degree_cmd，bumpy_road 无条件直送；
-       meas_valid=0（无条纹）时 err_f 保持=锁当前角度，不给新指令） */
+    /* 根据检测状态计算控制指令（2026-08-18 起：0 核零锁、纯直通——
+       1 核已完成“按角度大小整形+EMA”并输出稳定提案（无条纹报 0）；
+       0 核不做任何因视觉可信度带来的锁，直接换算后送 err_degree） */
     g_bumpy_ctrl_shadow.state =
         packet->bumpy_detected ? VISION_BUMPY_CTRL_TRACK : VISION_BUMPY_CTRL_SEARCH;
 
-    if (g_bumpy_ctrl_shadow.meas_valid != 0U)
-    {
-        /* 整形 + 自适应 EMA（内部已更新 err_f） */
-        g_bumpy_ctrl_shadow.err_degree_cmd = vision_bumpy_calc_err_degree(packet);
+    /* 角度直通：1 核稳定数据 → err_degree 管线
+       （后续转向角度环/角速度环的 PID 是控制层通用，与此无关） */
+    g_bumpy_ctrl_shadow.err_degree_cmd = (float)packet->yaw_error_deg_x100 * 0.01f;
 
-        /* 横向记录：EMA 滤波，只记录不修正（失稳时冻结）。
-           非零门控（审批方案 §3.2）：lateral_mm=0 表示本帧无横向观测（无线/间距自检失败），
-           不参与更新，避免这些帧把记录值向 0 污染。 */
-        if (packet->lateral_mm != 0)
-        {
-            const float lat = (float)packet->lateral_mm;
-            g_bumpy_ctrl_shadow.recorded_lateral_mm +=
-                (lat - g_bumpy_ctrl_shadow.recorded_lateral_mm) * VISION_BUMPY_LATERAL_RECORD_ALPHA;
-            g_bumpy_ctrl_shadow.recorded_lateral_mm =
-                vision_bumpy_constrain_f(g_bumpy_ctrl_shadow.recorded_lateral_mm,
-                                         -VISION_BUMPY_LATERAL_RECORD_MAX_MM,
-                                         VISION_BUMPY_LATERAL_RECORD_MAX_MM);
-        }
-    }
-    else
+    /* 横向记录：EMA 滤波，只记录不修正（遥测用）。
+       仅在横向可信（meas_valid=置信度未耗尽）时更新；
+       非零门控（审批方案 §3.2）：lateral_mm=0 表示本帧无横向观测（无线/间距自检失败），
+       不参与更新，避免这些帧把记录值向 0 污染。 */
+    if ((g_bumpy_ctrl_shadow.meas_valid != 0U) && (packet->lateral_mm != 0))
     {
-        /* 严重丢失（无条纹，唯一 meas_valid=0 场景）：不给新指令、
-           err_f 保持（锁当前角度）、recorded 冻结 */
-        g_bumpy_ctrl_shadow.err_degree_cmd = g_bumpy_ctrl_shadow.err_f;
+        const float lat = (float)packet->lateral_mm;
+        g_bumpy_ctrl_shadow.recorded_lateral_mm +=
+            (lat - g_bumpy_ctrl_shadow.recorded_lateral_mm) * VISION_BUMPY_LATERAL_RECORD_ALPHA;
+        g_bumpy_ctrl_shadow.recorded_lateral_mm =
+            vision_bumpy_constrain_f(g_bumpy_ctrl_shadow.recorded_lateral_mm,
+                                     -VISION_BUMPY_LATERAL_RECORD_MAX_MM,
+                                     VISION_BUMPY_LATERAL_RECORD_MAX_MM);
     }
 
     // 仅在新的视觉帧上计数，避免 2ms 控制周期重复统计同一帧。
