@@ -471,8 +471,10 @@ void NavReplay_Process(void)
                 s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
                 if (s_bumpy_exit_pending)
                 {
-                    BumpyRoad_SetExitAnchor(nav_ram_data.points[g_target_idx + 1U].x,
-                                             nav_ram_data.points[g_target_idx + 1U].y);
+                    BumpyRoad_SetRouteAnchors(nav_ram_data.points[g_target_idx].x,
+                                              nav_ram_data.points[g_target_idx].y,
+                                              nav_ram_data.points[g_target_idx + 1U].x,
+                                              nav_ram_data.points[g_target_idx + 1U].y);
                 }
                 BumpyRoad_Trigger();
             }

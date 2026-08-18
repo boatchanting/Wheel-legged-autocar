@@ -52,6 +52,16 @@ void BumpyRoad_Trigger(void);
 void BumpyRoad_SetExitAnchor(float x_mm, float y_mm);
 
 /**
+ * @brief 设置 CSV 路表中的颠簸入口和出口锚点
+ * @note 入口到出口连线用于定义横向修正的法向；状态机触发时锁定
+ *       小车相对该连线的行驶方向，避免脱出时左右翻转。
+ */
+void BumpyRoad_SetRouteAnchors(float entry_x_mm,
+                               float entry_y_mm,
+                               float exit_x_mm,
+                               float exit_y_mm);
+
+/**
  * @brief 颠簸路段状态机周期更新（1ms节拍）
  *
  * @note 建议放在 `pit0_ch0_isr` 中每 1ms 调用一次

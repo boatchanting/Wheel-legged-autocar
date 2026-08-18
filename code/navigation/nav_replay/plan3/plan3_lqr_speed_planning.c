@@ -364,8 +364,10 @@ static void Plan3_StartSpecial(uint16 entry_idx)
     {
         if (s_active_exit_idx < nav_ram_data.point_count)
         {
-            BumpyRoad_SetExitAnchor(nav_ram_data.points[s_active_exit_idx].x,
-                                    nav_ram_data.points[s_active_exit_idx].y);
+            BumpyRoad_SetRouteAnchors(nav_ram_data.points[entry_idx].x,
+                                      nav_ram_data.points[entry_idx].y,
+                                      nav_ram_data.points[s_active_exit_idx].x,
+                                      nav_ram_data.points[s_active_exit_idx].y);
         }
         BumpyRoad_Trigger();
     }
