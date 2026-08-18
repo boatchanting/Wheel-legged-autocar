@@ -32,7 +32,6 @@ from datetime import datetime
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_HEADER = PROJECT_ROOT / "code" / "navigation" / "nav_replay_route_table.h"
-STRAIGHT_LENGTH_MM = 600.0
 SAMPLE_STEP_MM = 50.0
 # 先以更密的几何点生成路径，再统一按弧长重采样，避免最终路表点距影响曲率估计。
 DENSE_SAMPLE_STEP_MM = 5.0
@@ -42,15 +41,9 @@ START_POINT_X_MM = 0.0
 START_POINT_Y_MM = 0.0
 
 # 与 tools/webview_nav_marker速度规划/caculate_path.py 保持一致的离线路径速度约束。
-PATH_SPEED_MAX_MM_S = 8000.0
-SPRINT_SPEED_MM_S = 8000.0
-ENABLE_FINISH_SPRINT = True
-MAX_ACCEL_MM_S2 = 10500.0  #3500室内
-MAX_DECEL_MM_S2 = 10500.0  #2500室内
-MAX_LATERAL_ACCEL_MM_S2 = 4000.0  #2000室内
-MAX_PATH_YAW_RATE_RAD_S = 2.8 # 2.2室内
+# 状态机的固定速度仍使用这一条底盘标定换算。普通轨迹段可在自己的
+# SpeedPlanningProfile 中使用不同的换算值，最终会逐点转换为 target_speed。
 SPEED_TO_MM_S = 4.79
-CURVATURE_EPS = 1e-6
 
 # Advance deceleration commands by the measured chassis response delay.
 # Keep acceleration unshifted so a future higher speed never violates the
@@ -126,6 +119,7 @@ class Node:
     tangent: Optional[np.ndarray] = None
     name: str = ""
     corner_handle_mm: Optional[float] = None
+    marker_order: Optional[int] = None
 
 
 @dataclass
@@ -135,6 +129,7 @@ class PathSample:
     point_type: int
     forced_straight: bool
     segment: str
+    marker_order: Optional[int] = None
 
 
 class TransitionPreset(str, Enum):
@@ -160,16 +155,38 @@ class TaskSpeedProfile:
     entry_speed_command: float
     state_speed_command: float
     exit_speed_command: float
+    entry_corridor_mm: float
+    exit_corridor_mm: float
 
 
 # 每种有配对出口的状态机都使用一个独立速度档案。现有任务的进入、运行、
 # 退出速度保持一致，以完全保留原来的控制行为；后续可以按任务单独拆开。
 TASK_SPEED_PROFILES = {
-    3: TaskSpeedProfile(4000.0, 320.0, 320.0, 320.0),  # 三级跳
-    4: TaskSpeedProfile(500.0, 300.0, 300.0, 300.0),    # 单边桥
-    5: TaskSpeedProfile(500.0, 500.0, 500.0, 500.0),    # 颠簸路
-    2: TaskSpeedProfile(500.0, 500.0, 500.0, 500.0),    # 坡道
+    # 参数依次为：进场恒速距离、入口速度、状态机速度、出口速度、入口前直线、出口后直线。
+    3: TaskSpeedProfile(4000.0, 320.0, 320.0, 320.0, 600.0, 600.0),  # 三级跳
+    4: TaskSpeedProfile(500.0, 300.0, 300.0, 300.0, 600.0, 600.0),    # 单边桥
+    5: TaskSpeedProfile(500.0, 500.0, 500.0, 500.0, 600.0, 600.0),    # 颠簸路
+    2: TaskSpeedProfile(500.0, 500.0, 500.0, 500.0, 600.0, 600.0),    # 坡道
 }
+
+
+@dataclass(frozen=True)
+class SpeedPlanningProfile:
+    """一段普通轨迹的完整速度规划参数，单位与旧全局常量保持一致。"""
+
+    path_speed_max_mm_s: float = 8000.0
+    sprint_speed_mm_s: float = 8000.0
+    enable_finish_sprint: bool = True
+    max_accel_mm_s2: float = 10500.0
+    max_decel_mm_s2: float = 10500.0
+    max_lateral_accel_mm_s2: float = 4000.0
+    max_path_yaw_rate_rad_s: float = 2.8
+    speed_to_mm_s: float = SPEED_TO_MM_S
+    curvature_eps: float = 1e-6
+
+
+# 未被某个 TrajectorySegment 覆盖的样本（状态机内部、路线首尾）使用原来的默认值。
+DEFAULT_TRAJECTORY_SPEED_PROFILE = SpeedPlanningProfile()
 
 
 @dataclass(frozen=True)
@@ -186,13 +203,14 @@ class StateMachineSegment:
 
 @dataclass(frozen=True)
 class TrajectorySegment:
-    """两个状态机之间的普通轨迹段及其人工选择的连接预设。"""
+    """普通轨迹段：包括路线首段、状态机间段和路线末段。"""
 
-    source_exit_order: int
-    target_entry_order: int
+    source_exit_order: Optional[int]
+    target_entry_order: Optional[int]
     preset: TransitionPreset
     source_exit_speed_command: Optional[float]
     target_entry_speed_command: Optional[float]
+    speed_profile: SpeedPlanningProfile = DEFAULT_TRAJECTORY_SPEED_PROFILE
 
 
 @dataclass(frozen=True)
@@ -321,7 +339,7 @@ def apply_special_exit_corrections(markers: list[Marker], pairs: dict[int, int])
 
 
 def build_state_machine_segments(
-    markers: list[Marker], pairs: dict[int, int]
+    markers: list[Marker], pairs: dict[int, int], task_profiles: dict[int, TaskSpeedProfile]
 ) -> list[StateMachineSegment]:
     """按点表顺序提取状态机段，供交互选择和速度规划共同使用。
 
@@ -372,6 +390,14 @@ def choose_trajectory_segments(
         "3": TransitionPreset.PURE_LINE,
     }
 
+    # 起点到第一状态机入口同样是一段可调速度的普通轨迹，只是不需要选择
+    # 状态机间连接预设，所以固定为插值型且不生成 TransitionPlan。
+    if state_segments:
+        first = state_segments[0]
+        trajectories.append(
+            TrajectorySegment(None, first.entry_order, TransitionPreset.INTERPOLATED, None, first.entry_speed_command)
+        )
+
     for position, (source, target) in enumerate(zip(state_segments, state_segments[1:]), start=1):
         source_name = TYPE_LABEL[source.exit_type]
         target_name = TYPE_LABEL[target.entry_type]
@@ -410,7 +436,97 @@ def choose_trajectory_segments(
             trajectory.target_entry_order,
             preset,
         )
+    if state_segments:
+        last = state_segments[-1]
+        trajectories.append(
+            TrajectorySegment(last.exit_order, None, TransitionPreset.INTERPOLATED, last.exit_speed_command, None)
+        )
     return trajectories, plans
+
+
+def configure_segment_parameters(
+    state_segments: list[StateMachineSegment],
+    trajectories: list[TrajectorySegment],
+    task_profiles: dict[int, TaskSpeedProfile],
+) -> tuple[dict[int, TaskSpeedProfile], list[TrajectorySegment]]:
+    """可选的终端配置入口；直接回车保留每段的默认参数。
+
+    速度参数以一行 CSV 输入，字段顺序与 SpeedPlanningProfile 完全对应。
+    这种形式既支持逐段设置，也方便复制既有调参数据，避免为每段弹出九个问题。
+    """
+    configured_tasks = dict(task_profiles)
+    seen_types: set[int] = set()
+    print("\n状态机进出直线长度（直接回车保留默认值）：")
+    for state in state_segments:
+        if state.entry_type not in configured_tasks or state.entry_type in seen_types:
+            continue
+        seen_types.add(state.entry_type)
+        profile = configured_tasks[state.entry_type]
+        raw = input(
+            f"  {TYPE_LABEL[state.entry_type]} 入口前/出口后 mm "
+            f"[{profile.entry_corridor_mm:.0f},{profile.exit_corridor_mm:.0f}]: "
+        ).strip()
+        if not raw:
+            continue
+        try:
+            entry_length, exit_length = (float(value.strip()) for value in raw.split(","))
+        except ValueError as exc:
+            raise ValueError("直线长度格式应为：入口前mm,出口后mm") from exc
+        if entry_length < 0.0 or exit_length < 0.0:
+            raise ValueError("状态机前后的直线长度不能为负数。")
+        configured_tasks[state.entry_type] = replace(
+            profile, entry_corridor_mm=entry_length, exit_corridor_mm=exit_length
+        )
+
+    print("\n轨迹段速度参数（直接回车保留默认值）：")
+    print("  顺序：最高速度,冲刺速度,启用冲刺(0/1),最大加速,最大减速,最大横向加速度,最大航向角速度,速度换算,曲率阈值")
+    configured_trajectories: list[TrajectorySegment] = []
+    for trajectory in trajectories:
+        profile = trajectory.speed_profile
+        source_name = "轨迹起点" if trajectory.source_exit_order is None else str(trajectory.source_exit_order)
+        target_name = "轨迹终点" if trajectory.target_entry_order is None else str(trajectory.target_entry_order)
+        raw = input(
+            f"  {source_name} -> {target_name} "
+            f"[{profile.path_speed_max_mm_s:.0f},{profile.sprint_speed_mm_s:.0f},"
+            f"{int(profile.enable_finish_sprint)},{profile.max_accel_mm_s2:.0f},"
+            f"{profile.max_decel_mm_s2:.0f},{profile.max_lateral_accel_mm_s2:.0f},"
+            f"{profile.max_path_yaw_rate_rad_s:g},{profile.speed_to_mm_s:g},{profile.curvature_eps:g}]: "
+        ).strip()
+        if not raw:
+            configured_trajectories.append(trajectory)
+            continue
+        values = [value.strip() for value in raw.split(",")]
+        if len(values) != 9:
+            raise ValueError("轨迹速度参数必须恰好包含 9 个逗号分隔值。")
+        if values[2] not in {"0", "1"}:
+            raise ValueError("启用冲刺只能输入 0 或 1。")
+        try:
+            configured = SpeedPlanningProfile(
+                path_speed_max_mm_s=float(values[0]),
+                sprint_speed_mm_s=float(values[1]),
+                enable_finish_sprint=bool(int(values[2])),
+                max_accel_mm_s2=float(values[3]),
+                max_decel_mm_s2=float(values[4]),
+                max_lateral_accel_mm_s2=float(values[5]),
+                max_path_yaw_rate_rad_s=float(values[6]),
+                speed_to_mm_s=float(values[7]),
+                curvature_eps=float(values[8]),
+            )
+        except ValueError as exc:
+            raise ValueError("轨迹速度参数格式无效；冲刺开关只能输入 0 或 1。") from exc
+        if (
+            configured.path_speed_max_mm_s <= 0.0
+            or configured.sprint_speed_mm_s <= 0.0
+            or configured.max_accel_mm_s2 <= 0.0
+            or configured.max_decel_mm_s2 <= 0.0
+            or configured.max_lateral_accel_mm_s2 <= 0.0
+            or configured.max_path_yaw_rate_rad_s <= 0.0
+            or configured.speed_to_mm_s <= 0.0
+            or configured.curvature_eps <= 0.0
+        ):
+            raise ValueError("轨迹速度参数中的数值必须为正数。")
+        configured_trajectories.append(replace(trajectory, speed_profile=configured))
+    return configured_tasks, configured_trajectories
 
 
 def print_segment_plan(
@@ -422,6 +538,9 @@ def print_segment_plan(
     trajectory_by_source = {segment.source_exit_order: segment for segment in trajectories}
     print("\n最终分段规划：")
     print("  轨迹起点")
+    start_trajectory = trajectory_by_source.get(None)
+    if start_trajectory is not None:
+        print(f"  -> 轨迹段[{TRANSITION_PRESET_LABEL[start_trajectory.preset]}]")
     for state in state_segments:
         print(
             f"  -> {TYPE_LABEL[state.entry_type]}(v={describe_speed(state.entry_speed_command)})"
@@ -449,7 +568,11 @@ def apply_trajectory_marker_policy(
     index_by_order = {marker.order: index for index, marker in enumerate(markers)}
     remove_indices: set[int] = set()
     for trajectory in trajectories:
-        if trajectory.preset == TransitionPreset.INTERPOLATED:
+        if (
+            trajectory.preset == TransitionPreset.INTERPOLATED
+            or trajectory.source_exit_order is None
+            or trajectory.target_entry_order is None
+        ):
             continue
         source_index = index_by_order[trajectory.source_exit_order]
         target_index = index_by_order[trajectory.target_entry_order]
@@ -464,14 +587,18 @@ def apply_trajectory_marker_policy(
     return [marker for index, marker in enumerate(markers) if index not in remove_indices], len(remove_indices)
 
 
-def add_sample(samples: list[PathSample], point: np.ndarray, point_type: int, forced: bool, segment: str) -> None:
+def add_sample(
+    samples: list[PathSample], point: np.ndarray, point_type: int, forced: bool,
+    segment: str, marker_order: Optional[int] = None,
+) -> None:
     if samples and math.hypot(samples[-1].x - point[0], samples[-1].y - point[1]) < 0.01:
         # 若事件点与前一个几何点重合，保留事件标签。
         if point_type != 0:
             samples[-1].point_type = point_type
+            samples[-1].marker_order = marker_order
         samples[-1].forced_straight |= forced
         return
-    samples.append(PathSample(float(point[0]), float(point[1]), point_type, forced, segment))
+    samples.append(PathSample(float(point[0]), float(point[1]), point_type, forced, segment, marker_order))
 
 
 def append_line(samples: list[PathSample], start: Node, end: Node, segment: str, forced: bool, sample_step_mm: float) -> None:
@@ -481,8 +608,11 @@ def append_line(samples: list[PathSample], start: Node, end: Node, segment: str,
     count = max(1, int(math.ceil(length / sample_step_mm)))
     for i in range(count + 1):
         ratio = i / count
-        event_type = start.point_type if i == 0 else (end.point_type if i == count else 0)
-        add_sample(samples, start_vec + ratio * (end_vec - start_vec), event_type, forced, segment)
+        is_start = i == 0
+        is_end = i == count
+        event_type = start.point_type if is_start else (end.point_type if is_end else 0)
+        marker_order = start.marker_order if is_start else (end.marker_order if is_end else None)
+        add_sample(samples, start_vec + ratio * (end_vec - start_vec), event_type, forced, segment, marker_order)
 
 
 def bezier_quintic(control: np.ndarray, t: np.ndarray) -> np.ndarray:
@@ -504,7 +634,7 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
     chord = end_vec - start_vec
     chord_length = float(np.linalg.norm(chord))
     if chord_length < MIN_LINK_LENGTH_MM:
-        add_sample(samples, end_vec, end.point_type, False, segment)
+        add_sample(samples, end_vec, end.point_type, False, segment, end.marker_order)
         return
 
     tangent_start = unit(start.tangent if start.tangent is not None else chord)
@@ -536,13 +666,18 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
     x = np.interp(sample_s, arclength, dense[:, 0])
     y = np.interp(sample_s, arclength, dense[:, 1])
     for index, (px, py) in enumerate(zip(x, y)):
-        add_sample(samples, np.array([px, py]), start.point_type if index == 0 else (end.point_type if index == len(x) - 1 else 0), False, segment)
+        is_start = index == 0
+        is_end = index == len(x) - 1
+        point_type = start.point_type if is_start else (end.point_type if is_end else 0)
+        marker_order = start.marker_order if is_start else (end.marker_order if is_end else None)
+        add_sample(samples, np.array([px, py]), point_type, False, segment, marker_order)
 
 
 def make_nodes(
     markers: list[Marker],
     pairs: dict[int, int],
     transition_plans: dict[tuple[int, int], TransitionPlan],
+    task_profiles: dict[int, TaskSpeedProfile],
 ) -> tuple[list[Node], dict[tuple[int, int], str]]:
     """展开特殊标记对，并在开头补充未记录的车辆原点。"""
     # 录制是在车辆驶离 (0, 0) 原点之后才开始的。
@@ -566,13 +701,28 @@ def make_nodes(
         if marker_index in pairs:
             exit_index = pairs[marker_index]
             exit_marker = markers[exit_index]
+            profile = task_profiles[marker.point_type]
             axis = unit(np.array([exit_marker.x - marker.x, exit_marker.y - marker.y], dtype=float))
-            pre = Node(marker.x - STRAIGHT_LENGTH_MM * axis[0], marker.y - STRAIGHT_LENGTH_MM * axis[1], 0, axis, f"{TYPE_LABEL[marker.point_type]}前直线起点")
-            entry = Node(marker.x, marker.y, marker.point_type, axis, TYPE_LABEL[marker.point_type])
-            exit_node = Node(exit_marker.x, exit_marker.y, exit_marker.point_type, axis, TYPE_LABEL[exit_marker.point_type])
-            post = Node(exit_marker.x + STRAIGHT_LENGTH_MM * axis[0], exit_marker.y + STRAIGHT_LENGTH_MM * axis[1], 0, axis, f"{TYPE_LABEL[exit_marker.point_type]}后直线终点")
+            pre = Node(
+                marker.x - profile.entry_corridor_mm * axis[0],
+                marker.y - profile.entry_corridor_mm * axis[1],
+                0, axis, f"{TYPE_LABEL[marker.point_type]}前直线起点",
+            )
+            entry = Node(
+                marker.x, marker.y, marker.point_type, axis, TYPE_LABEL[marker.point_type],
+                marker_order=marker.order,
+            )
+            exit_node = Node(
+                exit_marker.x, exit_marker.y, exit_marker.point_type, axis, TYPE_LABEL[exit_marker.point_type],
+                marker_order=exit_marker.order,
+            )
+            post = Node(
+                exit_marker.x + profile.exit_corridor_mm * axis[0],
+                exit_marker.y + profile.exit_corridor_mm * axis[1],
+                0, axis, f"{TYPE_LABEL[exit_marker.point_type]}后直线终点",
+            )
             if nodes and distance(nodes[-1], pre) < MIN_LINK_LENGTH_MM:
-                raise ValueError(f"{entry.name} 前 0.5m 直线与上一锚点重叠，无法构造平滑连接。")
+                raise ValueError(f"{entry.name} 前直线与上一锚点重叠，无法构造平滑连接。")
             nodes.extend((pre, entry, exit_node, post))
             base = len(nodes) - 4
             link_modes[(base, base + 1)] = "forced_line"
@@ -585,7 +735,9 @@ def make_nodes(
         if marker_index in entry_by_exit:
             marker_index += 1
             continue
-        nodes.append(Node(marker.x, marker.y, marker.point_type, None, TYPE_LABEL[marker.point_type]))
+        nodes.append(
+            Node(marker.x, marker.y, marker.point_type, None, TYPE_LABEL[marker.point_type], marker_order=marker.order)
+        )
         # 雷区/圆环只有一个入口事件点。该点同时充当连接段两端的锚点，
         # 使“雷区 -> 雷区”的纯直线预设能够复用同一套分段机制。
         if marker.point_type == 1:
@@ -682,13 +834,15 @@ def resample_path_by_arclength(dense_samples: list[PathSample], sample_step_mm: 
             source = dense_samples[exact]
             point = points[exact]
             point_type = source.point_type
+            marker_order = source.marker_order
         else:
             source_index = int(np.searchsorted(s_dense, arc, side="right") - 1)
             source_index = max(0, min(source_index, len(dense_samples) - 1))
             source = dense_samples[source_index]
             point = np.array([x[target_index], y[target_index]], dtype=float)
             point_type = 0
-        add_sample(output, point, point_type, source.forced_straight, source.segment)
+            marker_order = None
+        add_sample(output, point, point_type, source.forced_straight, source.segment, marker_order)
     return output
 
 
@@ -718,41 +872,48 @@ def calculate_yaw_and_curvature(samples: list[PathSample]) -> tuple[np.ndarray, 
     return s, yaw, curvature
 
 
-def apply_longitudinal_speed_envelope(speed_limit: np.ndarray, s: np.ndarray) -> np.ndarray:
-    """Make a speed ceiling physically reachable in both travel directions."""
+def apply_longitudinal_speed_envelope(
+    speed_limit: np.ndarray,
+    s: np.ndarray,
+    max_accel_mm_s2: np.ndarray,
+    max_decel_mm_s2: np.ndarray,
+) -> np.ndarray:
+    """以每个采样点所属轨迹段的加减速能力生成可达速度包络。"""
     planned_speed = np.array(speed_limit, copy=True)
     for index in range(len(planned_speed) - 2, -1, -1):
         ds = s[index + 1] - s[index]
+        decel = min(max_decel_mm_s2[index], max_decel_mm_s2[index + 1])
         planned_speed[index] = min(
             planned_speed[index],
-            math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds)),
+            math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * decel * ds)),
         )
     for index in range(1, len(planned_speed)):
         ds = s[index] - s[index - 1]
+        accel = min(max_accel_mm_s2[index - 1], max_accel_mm_s2[index])
         planned_speed[index] = min(
             planned_speed[index],
-            math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds)),
+            math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * accel * ds)),
         )
     return planned_speed
 
 
 def apply_response_delay_compensation(
-    target_speed: np.ndarray,
+    physical_speed: np.ndarray,
     s: np.ndarray,
     response_delay_s: float,
     preserve_mask: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Advance only deceleration commands by the chassis response delay.
 
-    The input is the physically safe desired-speed profile.  A future lower
+    The input is the physically safe speed profile in mm/s. A future lower
     speed is issued now when the vehicle will travel to it during the measured
     response delay.  Future acceleration is intentionally not advanced.
     """
-    if len(target_speed) == 0 or response_delay_s <= 0.0:
-        return np.array(target_speed, copy=True)
+    if len(physical_speed) == 0 or response_delay_s <= 0.0:
+        return np.array(physical_speed, copy=True)
 
-    desired_speed = np.abs(target_speed) * SPEED_TO_MM_S
-    command_speed = np.array(desired_speed, copy=True)
+    desired_speed = np.array(physical_speed, copy=True)
+    command_speed = np.array(physical_speed, copy=True)
     path_end_s = float(s[-1])
 
     for index, current_speed in enumerate(desired_speed):
@@ -761,13 +922,15 @@ def apply_response_delay_compensation(
         if preserve_mask is None or not preserve_mask[index]:
             command_speed[index] = min(current_speed, future_speed)
 
-    return -command_speed / SPEED_TO_MM_S
+    return command_speed
 
 
 def apply_fixed_speed_envelope(
     speed_limit: np.ndarray,
     s: np.ndarray,
     fixed_mask: np.ndarray,
+    max_accel_mm_s2: np.ndarray,
+    max_decel_mm_s2: np.ndarray,
 ) -> np.ndarray:
     """Apply longitudinal reachability while preserving hard task speeds.
 
@@ -782,52 +945,104 @@ def apply_fixed_speed_envelope(
             if fixed_mask[index]:
                 continue
             ds = s[index + 1] - s[index]
+            decel = min(max_decel_mm_s2[index], max_decel_mm_s2[index + 1])
             planned_speed[index] = min(
                 planned_speed[index],
-                math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * MAX_DECEL_MM_S2 * ds)),
+                math.sqrt(max(0.0, planned_speed[index + 1] ** 2 + 2.0 * decel * ds)),
             )
         for index in range(1, len(planned_speed)):
             if fixed_mask[index]:
                 continue
             ds = s[index] - s[index - 1]
+            accel = min(max_accel_mm_s2[index - 1], max_accel_mm_s2[index])
             planned_speed[index] = min(
                 planned_speed[index],
-                math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * MAX_ACCEL_MM_S2 * ds)),
+                math.sqrt(max(0.0, planned_speed[index - 1] ** 2 + 2.0 * accel * ds)),
             )
     return planned_speed
+
+
+def build_sample_speed_profiles(
+    samples: list[PathSample], trajectories: Iterable[TrajectorySegment]
+) -> list[SpeedPlanningProfile]:
+    """把每个状态机间的轨迹档案映射到精确的点表事件锚点之间。
+
+    marker_order 由稠密生成和弧长重采样共同保留，故此处不依赖相同
+    point_type 的出现次数；连续两个雷区入口也能得到各自独立的速度参数。
+    """
+    profiles = [DEFAULT_TRAJECTORY_SPEED_PROFILE for _ in samples]
+    index_by_order = {
+        sample.marker_order: index
+        for index, sample in enumerate(samples)
+        if sample.marker_order is not None
+    }
+    for trajectory in trajectories:
+        try:
+            start = 0 if trajectory.source_exit_order is None else index_by_order[trajectory.source_exit_order]
+            end = len(samples) - 1 if trajectory.target_entry_order is None else index_by_order[trajectory.target_entry_order]
+        except KeyError as exc:
+            raise ValueError("轨迹段缺少对应的点表事件锚点，无法应用速度参数。") from exc
+        if end < start:
+            raise ValueError("轨迹段速度参数的目标入口位于源出口之前。")
+        for index in range(start, end + 1):
+            profiles[index] = trajectory.speed_profile
+    return profiles
 
 
 def calculate_target_speed(
     samples: list[PathSample],
     s: np.ndarray,
     curvature: np.ndarray,
+    sample_profiles: list[SpeedPlanningProfile],
 ) -> np.ndarray:
-    """曲率包络限速，再执行与 caculate_path.py 相同的前后向加减速扫描。"""
+    """按所属轨迹段的速度参数生成物理速度（mm/s）包络。"""
     count = len(samples)
     if count == 0:
         return np.empty(0, dtype=float)
+    if len(sample_profiles) != count:
+        raise ValueError("速度档案数量与路径采样点数量不一致。")
 
-    speed_limit = np.full(count, PATH_SPEED_MAX_MM_S, dtype=float)
+    speed_limit = np.empty(count, dtype=float)
+    max_accel = np.empty(count, dtype=float)
+    max_decel = np.empty(count, dtype=float)
     for index, kappa in enumerate(curvature):
+        profile = sample_profiles[index]
         abs_kappa = abs(float(kappa))
-        curve_limit = PATH_SPEED_MAX_MM_S
-        yaw_rate_limit = PATH_SPEED_MAX_MM_S
-        if abs_kappa > CURVATURE_EPS:
-            curve_limit = math.sqrt(MAX_LATERAL_ACCEL_MM_S2 / abs_kappa)
-            yaw_rate_limit = MAX_PATH_YAW_RATE_RAD_S / abs_kappa
-        speed_limit[index] = min(PATH_SPEED_MAX_MM_S, curve_limit, yaw_rate_limit)
+        curve_limit = profile.path_speed_max_mm_s
+        yaw_rate_limit = profile.path_speed_max_mm_s
+        if abs_kappa > profile.curvature_eps:
+            curve_limit = math.sqrt(profile.max_lateral_accel_mm_s2 / abs_kappa)
+            yaw_rate_limit = profile.max_path_yaw_rate_rad_s / abs_kappa
+        speed_limit[index] = min(profile.path_speed_max_mm_s, curve_limit, yaw_rate_limit)
+        max_accel[index] = profile.max_accel_mm_s2
+        max_decel[index] = profile.max_decel_mm_s2
+
+    # "冲刺"的作用域是每一段普通轨迹的末端，而非整条路线；这样一段的
+    # 参数不会意外修改下一段的入场限速。相邻同配置段仍按各自边界处理。
+    segment_start = 0
+    while segment_start < count:
+        profile = sample_profiles[segment_start]
+        segment_end = segment_start + 1
+        while segment_end < count and sample_profiles[segment_end] == profile:
+            segment_end += 1
+        if profile.enable_finish_sprint:
+            local_curvature = curvature[segment_start:segment_end]
+            curved = np.flatnonzero(np.abs(local_curvature) > profile.curvature_eps)
+            if len(curved):
+                sprint_start = segment_start + int(curved[-1]) + 5
+                if sprint_start < segment_end:
+                    speed_limit[sprint_start:segment_end] = np.minimum(
+                        speed_limit[sprint_start:segment_end], profile.sprint_speed_mm_s
+                    )
+            speed_limit[segment_end - 1] = min(speed_limit[segment_end - 1], profile.sprint_speed_mm_s)
+        segment_start = segment_end
 
     # 普通点和普通结束点都连续通过，不制造零速障碍；圆环动作仍允许明确停车。
-    if ENABLE_FINISH_SPRINT:
-        last_curve_index = max((i for i, value in enumerate(curvature) if abs(value) > 0.0005), default=-1)
-        if 0 <= last_curve_index < count - 5:
-            speed_limit[last_curve_index + 5:] = np.minimum(speed_limit[last_curve_index + 5:], SPRINT_SPEED_MM_S)
-        speed_limit[-1] = min(speed_limit[-1], SPRINT_SPEED_MM_S)
     for index, sample in enumerate(samples):
         if sample.point_type == 1:  # NAV_POINT_CIRCLE 可能要求原地旋转。
             speed_limit[index] = 0.0
 
-    return -apply_longitudinal_speed_envelope(speed_limit, s) / SPEED_TO_MM_S
+    return apply_longitudinal_speed_envelope(speed_limit, s, max_accel, max_decel)
 
 
 def _task_speed_ranges(
@@ -857,11 +1072,12 @@ def _task_speed_ranges(
 def apply_constant_task_speeds(
     samples: list[PathSample],
     s: np.ndarray,
-    target_speed: np.ndarray,
+    physical_speed: np.ndarray,
     task_ranges: Iterable[tuple[float, float, float]],
+    sample_profiles: list[SpeedPlanningProfile],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Plan normal route sections around hard constant-speed task sections."""
-    speed_limit = np.abs(target_speed) * SPEED_TO_MM_S
+    """在轨迹物理速度上叠加状态机的硬速度，并保留逐段加减速约束。"""
+    speed_limit = np.array(physical_speed, copy=True)
     fixed_mask = np.zeros(len(samples), dtype=bool)
     fixed_values = np.zeros(len(samples), dtype=float)
     for start_s, end_s, physical_speed in sorted(task_ranges, key=lambda item: item[0]):
@@ -872,9 +1088,11 @@ def apply_constant_task_speeds(
         fixed_mask[mask] = True
         fixed_values[mask] = physical_speed
     speed_limit[fixed_mask] = fixed_values[fixed_mask]
-    planned_speed = apply_fixed_speed_envelope(speed_limit, s, fixed_mask)
+    max_accel = np.array([profile.max_accel_mm_s2 for profile in sample_profiles], dtype=float)
+    max_decel = np.array([profile.max_decel_mm_s2 for profile in sample_profiles], dtype=float)
+    planned_speed = apply_fixed_speed_envelope(speed_limit, s, fixed_mask, max_accel, max_decel)
     planned_speed[fixed_mask] = fixed_values[fixed_mask]
-    return -planned_speed / SPEED_TO_MM_S, fixed_mask
+    return planned_speed, fixed_mask
 
 
 def build_task_speed_ranges(
@@ -907,9 +1125,10 @@ def build_task_speed_ranges(
 def generate_path(
     markers: list[Marker], sample_step_mm: float,
     transition_plans: dict[tuple[int, int], TransitionPlan],
+    task_profiles: dict[int, TaskSpeedProfile],
 ) -> list[PathSample]:
     pairs = find_event_pairs(markers)
-    nodes, link_modes = make_nodes(markers, pairs, transition_plans)
+    nodes, link_modes = make_nodes(markers, pairs, transition_plans, task_profiles)
     dense_samples: list[PathSample] = []
     for index in range(len(nodes) - 1):
         mode = link_modes.get((index, index + 1), "g2")
@@ -940,12 +1159,14 @@ def generate_path(
 
 
 def generate_path_with_point_cap(
-    markers: list[Marker], transition_plans: dict[tuple[int, int], TransitionPlan]
+    markers: list[Marker],
+    transition_plans: dict[tuple[int, int], TransitionPlan],
+    task_profiles: dict[int, TaskSpeedProfile],
 ) -> tuple[list[PathSample], float]:
     """Prefer 50 mm samples, while never generating a route that RAM truncates."""
     sample_step_mm = SAMPLE_STEP_MM
     for _ in range(8):
-        samples = generate_path(markers, sample_step_mm, transition_plans)
+        samples = generate_path(markers, sample_step_mm, transition_plans, task_profiles)
         if len(samples) <= NAV_ROUTE_MAX_POINTS:
             return samples, sample_step_mm
         # 预留少量余量，避免各段 ceil() 后仍需再次调整采样间距。
@@ -1089,7 +1310,7 @@ def render_speed_heatmap(output: Path, samples: list[PathSample], target_speed: 
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="生成带 0.6m 进出直线约束的 Plan4 分段平滑路径。")
+    parser = argparse.ArgumentParser(description="生成带可配置状态机进出直线和分段速度参数的 Plan4 平滑路径。")
     parser.add_argument("--input", type=Path, help="输入标记 CSV（默认自动选择本目录最新原始 CSV）")
     parser.add_argument("--output-csv", type=Path, help="输出路径 CSV，默认与输入同目录并追加 _planned")
     parser.add_argument("--render", type=Path, help="输出 PNG，默认与输入同目录并追加 _planned")
@@ -1106,10 +1327,15 @@ def parse_args() -> argparse.Namespace:
         help="不在终端询问连接预设；所有状态机间轨迹统一采用预设1（轨迹插值型）",
     )
     parser.add_argument(
+        "--configure-segment-parameters",
+        action="store_true",
+        help="在选择连接预设后，逐段编辑状态机进出直线长度和轨迹速度参数",
+    )
+    parser.add_argument(
         "--speed-response-delay-s",
         type=float,
         default=SPEED_RESPONSE_DELAY_S,
-        help="chassis response delay used to advance deceleration commands (default: 0.8)",
+        help="chassis response delay used to advance deceleration commands (default: 0.0)",
     )
     return parser.parse_args()
 
@@ -1126,40 +1352,58 @@ def main() -> int:
     csv_output = args.output_csv or source.with_name(f"{source.stem}_planned.csv")
     render_output = args.render or source.with_name(f"{source.stem}_planned.png")
 
-    markers, start_heading = read_markers(source)
-    pairs = find_event_pairs(markers)
-    markers = apply_special_exit_corrections(markers, pairs)
-    # 先从原始点表建立交替的“状态机段 / 轨迹段”计划，再按人工选择决定
-    # 哪些普通点参与几何生成。Marker.order 在过滤后保持不变，可作为稳定键。
-    state_segments = build_state_machine_segments(markers, pairs)
-    trajectory_segments, transition_plans = choose_trajectory_segments(
-        state_segments, interactive=not args.non_interactive_transitions
-    )
-    print_segment_plan(state_segments, trajectory_segments)
-    markers, removed_marker_count = apply_trajectory_marker_policy(markers, trajectory_segments)
-    samples, effective_sample_step_mm = generate_path_with_point_cap(markers, transition_plans)
-    s, yaw, curvature = calculate_yaw_and_curvature(samples)
-    target_speed = calculate_target_speed(samples, s, curvature)
+    # 每次运行从默认档案复制，交互调参只影响本次生成，不会修改脚本源码。
     task_speed_profiles = dict(TASK_SPEED_PROFILES)
     # 兼容旧命令行参数，同时使三级跳进场距离真正属于它的状态机速度档案。
     task_speed_profiles[3] = replace(
         task_speed_profiles[3], approach_distance_mm=args.stairs_approach_distance_mm
     )
-    task_ranges = build_task_speed_ranges(samples, s, task_speed_profiles)
-    output_target_speed, task_speed_mask = apply_constant_task_speeds(
-        samples, s, target_speed, task_ranges
+
+    markers, start_heading = read_markers(source)
+    pairs = find_event_pairs(markers)
+    markers = apply_special_exit_corrections(markers, pairs)
+    # 先从原始点表建立交替的“状态机段 / 轨迹段”计划，再按人工选择决定
+    # 哪些普通点参与几何生成。Marker.order 在过滤后保持不变，可作为稳定键。
+    state_segments = build_state_machine_segments(markers, pairs, task_speed_profiles)
+    trajectory_segments, transition_plans = choose_trajectory_segments(
+        state_segments, interactive=not args.non_interactive_transitions
     )
-    output_target_speed = apply_response_delay_compensation(
-        output_target_speed,
+    if args.configure_segment_parameters:
+        task_speed_profiles, trajectory_segments = configure_segment_parameters(
+            state_segments, trajectory_segments, task_speed_profiles
+        )
+        # 状态机段也持有入口/出口速度与几何档案，配置后重新建立以保持显示一致。
+        state_segments = build_state_machine_segments(markers, pairs, task_speed_profiles)
+    print_segment_plan(state_segments, trajectory_segments)
+    markers, removed_marker_count = apply_trajectory_marker_policy(markers, trajectory_segments)
+    samples, effective_sample_step_mm = generate_path_with_point_cap(
+        markers, transition_plans, task_speed_profiles
+    )
+    s, yaw, curvature = calculate_yaw_and_curvature(samples)
+    sample_profiles = build_sample_speed_profiles(samples, trajectory_segments)
+    physical_speed = calculate_target_speed(samples, s, curvature, sample_profiles)
+    task_ranges = build_task_speed_ranges(samples, s, task_speed_profiles)
+    physical_speed, task_speed_mask = apply_constant_task_speeds(
+        samples, s, physical_speed, task_ranges, sample_profiles
+    )
+    physical_speed = apply_response_delay_compensation(
+        physical_speed,
         s,
         args.speed_response_delay_s,
         preserve_mask=task_speed_mask,
     )
     # 延时补偿只提前减速命令；补偿后的边界仍重新检查可达性，避免在
     # 状态机恒速段出口产生不可实现的速度跳变。
-    compensated_speed = np.abs(output_target_speed) * SPEED_TO_MM_S
-    compensated_speed = apply_fixed_speed_envelope(compensated_speed, s, task_speed_mask)
-    output_target_speed = -compensated_speed / SPEED_TO_MM_S
+    max_accel = np.array([profile.max_accel_mm_s2 for profile in sample_profiles], dtype=float)
+    max_decel = np.array([profile.max_decel_mm_s2 for profile in sample_profiles], dtype=float)
+    physical_speed = apply_fixed_speed_envelope(
+        physical_speed, s, task_speed_mask, max_accel, max_decel
+    )
+    # 状态机固定区必须保留原始 target_speed 指令单位；普通轨迹段则按它自己的
+    # speed_to_mm_s 逐点换算，满足不同轨迹段使用不同底盘标定的需求。
+    speed_to_mm_s = np.array([profile.speed_to_mm_s for profile in sample_profiles], dtype=float)
+    speed_to_mm_s[task_speed_mask] = SPEED_TO_MM_S
+    output_target_speed = -physical_speed / speed_to_mm_s
     speed_heatmap_output = render_output.with_name(f"{render_output.stem}_speed_heatmap{render_output.suffix}")
     # 如需导出路径 CSV，取消下一行注释。
     # write_csv(csv_output, samples, yaw, curvature, output_target_speed)
@@ -1169,7 +1413,12 @@ def main() -> int:
     print(f"速度热力图: {speed_heatmap_output}")
 
     # 即使 50 mm 采样点恰好落在边界上，几何长度仍按任务锚点精确计算，不从可视标签估算。
-    forced_length = len(pairs) * 2.0 * STRAIGHT_LENGTH_MM
+    final_pairs = find_event_pairs(markers)
+    forced_length = sum(
+        task_speed_profiles[markers[entry_index].point_type].entry_corridor_mm
+        + task_speed_profiles[markers[entry_index].point_type].exit_corridor_mm
+        for entry_index in final_pairs
+    )
     print(f"输入: {source}")
     print(f"输出路径: {csv_output} ({len(samples)} 点, 总长 {s[-1]:.1f} mm)")
     print(f"采样间距: {effective_sample_step_mm:.1f} mm（上限 {NAV_ROUTE_MAX_POINTS} 点）")
