@@ -532,7 +532,7 @@ static void vision_bridge_apply_high_posture(void)
     vision_bridge_save_servo_limits_once();
     acc_limit = bridge_params.servo_acc_bridge;
     dec_limit = bridge_params.servo_dec_bridge;
-    roll_balance_enable = 0U;
+    roll_balance_enable = 1U; /* 开启滚转平衡 */
     /* 抬高底盘，并且规定抬高的速度（步长） */
     Bridge_Apply_Height_Control(bridge_params.height_bridge,
                                 bridge_params.height_step_rise * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
@@ -740,6 +740,7 @@ static void vision_bridge_enter_task(void)
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
     
+    vision_bridge_apply_high_posture(); /* 准备上桥阶段即开启高姿态与 Rolling 平衡 */
     VisionIpc_Core0_SetBridgeEnable(1U);
 }
 

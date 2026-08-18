@@ -313,9 +313,12 @@ void Bridge_Update(void) {
             // 开始平滑抬升车身，并动态更新 PID 防止发抖
             Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
 
-            // 当距离逼近桥头，进入上桥爬坡状态
+            // 当距离逼近桥头，进入上桥爬坡状态，提前开启 Rolling
             if (remaining_dist < bridge_params.trigger_ready_dist) {
                 target_speed_set = bridge_params.speed_ready;
+                acc_limit = bridge_params.servo_acc_bridge;
+                dec_limit = bridge_params.servo_dec_bridge;
+                roll_balance_enable = 1; // 提前介入横滚平衡
                 current_bridge_state = BRIDGE_STATE_CLIMB;
             }
             break;
