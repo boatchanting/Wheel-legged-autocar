@@ -66,7 +66,10 @@ SPECIAL_EXIT_DISTANCE_OFFSETS_MM = {30: 0.0, 40: 750.0, 50: 1350.0}
 
 
 # 雷区（1）只有驶入点，不记录/匹配驶出点；其余视觉任务仍为入口/出口成对点。
-ENTRY_TYPES = {1, 2, 3, 4, 5}
+ENTRY_TYPES = {1, 2, 3, 4, 5, 11}
+# These points are navigated by the Plan4 point-to-point controller. Type 1
+# starts the minefield state machine; type 11 is a pass-through target only.
+POINT_TO_POINT_TYPES = {1, 11}
 PAIRED_ENTRY_TYPES = {2, 3, 4, 5}
 EXIT_TO_ENTRY = {20: 2, 30: 3, 40: 4, 50: 5}
 TYPE_LABEL = {
@@ -76,6 +79,7 @@ TYPE_LABEL = {
     3: "三级跳进入",
     4: "单边桥进入",
     5: "颠簸路进入",
+    11: "雷区不停点",
     7: "掉头桩",
     10: "圆环退出",
     20: "坡道退出",
@@ -86,7 +90,7 @@ TYPE_LABEL = {
 TYPE_COLOR = {
     0: "#3b82f6", 1: "#db2777",
     # 坡道绿色、三级跳红色、单边桥紫色、颠簸路黄色；进入/退出保持同色。
-    2: "#16a34a", 3: "#dc2626", 4: "#9333ea", 5: "#eab308",
+    2: "#16a34a", 3: "#dc2626", 4: "#9333ea", 5: "#eab308", 11: "#f97316",
     7: "#475569",
     10: "#db2777", 20: "#16a34a", 30: "#dc2626", 40: "#9333ea", 50: "#eab308",
 }

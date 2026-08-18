@@ -15,6 +15,7 @@ from .plan4_models import (
     ENTRY_TYPES,
     EXIT_TO_ENTRY,
     PAIRED_ENTRY_TYPES,
+    POINT_TO_POINT_TYPES,
     SPECIAL_EXIT_DISTANCE_OFFSETS_MM,
     TASK_SPEED_PROFILES,
     TYPE_LABEL,
@@ -106,8 +107,9 @@ def find_event_pairs(markers: list[Marker]) -> dict[int, int]:
     pairs: dict[int, int] = {}
     pending: dict[int, int] = {}
     for index, marker in enumerate(markers):
-        if marker.point_type == 1:
-            # 雷区只在驶入时触发状态机，入口点本身保留在路径上，不能要求 type=10 出口。
+        if marker.point_type in POINT_TO_POINT_TYPES:
+            # type=1 只在驶入时触发雷区状态机；type=11 是不停点。
+            # 两者都没有配对出口，入口点本身必须保留在路径上。
             continue
         if marker.point_type in PAIRED_ENTRY_TYPES:
             if marker.point_type in pending:

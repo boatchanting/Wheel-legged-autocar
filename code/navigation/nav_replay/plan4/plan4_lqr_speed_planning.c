@@ -119,10 +119,17 @@ static float Plan4_Ramp(float current, float target, float step)
 static uint8 Plan4_IsEntryType(uint8 point_type)
 {
     return (uint8)((point_type == NAV_POINT_CIRCLE) ||
+                   (point_type == NAV_POINT_MINEFIELD_FLYBY) ||
                    (point_type == NAV_POINT_SLOPE) ||
                    (point_type == NAV_POINT_JUMP) ||
                    (point_type == NAV_POINT_BRIDGE) ||
                    (point_type == NAV_POINT_BUMP));
+}
+
+static uint8 Plan4_IsPointToPointType(uint8 point_type)
+{
+    return (uint8)((point_type == NAV_POINT_CIRCLE) ||
+                   (point_type == NAV_POINT_MINEFIELD_FLYBY));
 }
 
 static uint8 Plan4_ExitTypeForEntry(uint8 point_type)
@@ -207,6 +214,18 @@ static uint16 Plan4_FindForwardIndex(uint16 first_idx, float distance_mm)
         if (distance >= distance_mm) return (uint16)(i + 1U);
     }
     return (uint16)(nav_ram_data.point_count - 1U);
+}
+
+/* 雷区转圈结束时，出口航向优先瞄准下一个雷区入口/不停点的实际坐标。
+ * 这样 11 -> 1、1 -> 1、1 -> 11 不会被轨迹表紧邻的 50 mm 采样切线主导。 */
+static uint16 Plan4_FindNextMinefieldLikePoint(uint16 entry_idx)
+{
+    uint16 i;
+    for (i = (uint16)(entry_idx + 1U); i < nav_ram_data.point_count; i++)
+    {
+        if (Plan4_IsPointToPointType(nav_ram_data.points[i].point_type)) return i;
+    }
+    return (uint16)(entry_idx + 1U);
 }
 
 /* 沿路径向前查找指定距离处的速度，用于雷区转圈后的起步恢复。 */
@@ -528,7 +547,7 @@ static void Plan4_StartSpecial(uint16 entry_idx)
 
     if (point_type == NAV_POINT_CIRCLE)
     {
-        uint16 next_idx = (uint16)(entry_idx + 1U);
+        uint16 next_idx = Plan4_FindNextMinefieldLikePoint(entry_idx);
         float exit_yaw;
         float current_yaw = inertial_nav.relative_yaw;
         float delta_cw;
@@ -539,8 +558,9 @@ static void Plan4_StartSpecial(uint16 entry_idx)
 
         if (next_idx < nav_ram_data.point_count)
         {
-            exit_yaw = Plan4_CalcBearingDeg(nav_ram_data.points[entry_idx].x,
-                                            nav_ram_data.points[entry_idx].y,
+            /* 点到点出口航向使用当前融合坐标，不使用入口后面的轨迹采样点。 */
+            exit_yaw = Plan4_CalcBearingDeg(nav_vision_fusion_x,
+                                            nav_vision_fusion_y,
                                             nav_ram_data.points[next_idx].x,
                                             nav_ram_data.points[next_idx].y);
         }
@@ -590,11 +610,13 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     }
 }
 
-/* 仅有入口标记的雷区采用 Plan2 风格在线接近。不同于普通 Plan4 特殊任务，
- * 此处直接点对点指向 type=1 标记，按实测车速刹车，并蠕行进入执行圆后才启动转圈。 */
+/* 仅有入口标记的雷区及不停点采用 Plan2 风格在线接近。不同于普通 Plan4
+ * 特殊任务，此处直接点对点指向 type=1/type=11 标记；type=1 按实测车速刹车
+ * 后进入执行圆启动转圈，type=11 则在到达半径内直接切换到下一个目标。 */
 static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
 {
     const NavRamPoint_t *entry = &nav_ram_data.points[entry_idx];
+    uint8 is_flyby = (uint8)(entry->point_type == NAV_POINT_MINEFIELD_FLYBY);
     float dx = entry->x - nav_vision_fusion_x;
     float dy = entry->y - nav_vision_fusion_y;
     float dist_mm = sqrtf(dx * dx + dy * dy);
@@ -606,8 +628,36 @@ static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
     float actual_speed_mm_s = fabsf(inertial_nav.vx_body);
     float speed_mag;
 
-    g_current_point_type = NAV_POINT_CIRCLE;
+    g_current_point_type = entry->point_type;
     err_degree = yaw_err_deg;
+
+    /* type=11 只借用雷区的点到点寻迹，不进入刹车锁存和旋转状态机。 */
+    if (is_flyby != 0U)
+    {
+        if (dist_mm <= PLAN4_MINEFIELD_FLYBY_ARRIVE_RADIUS_MM)
+        {
+            g_target_idx = (uint16)(entry_idx + 1U);
+            s_minefield_zero_brake_issued = 0U;
+            return;
+        }
+
+        speed_mag = sqrtf(2.0f * PLAN4_MINEFIELD_SPEED_DECEL_CMD2_PER_MM *
+                          (dist_mm - PLAN4_MINEFIELD_FLYBY_ARRIVE_RADIUS_MM));
+        speed_mag = Plan4_Clamp(speed_mag, 0.0f, fabsf(PLAN4_MINEFIELD_SPEED_FAST));
+        if (fabsf(yaw_err_deg) > PLAN4_MINEFIELD_YAW_SLOW_TOLERANCE_DEG)
+        {
+            speed_mag = 0.0f;
+        }
+        else if (fabsf(yaw_err_deg) > PLAN4_MINEFIELD_YAW_STOP_TOLERANCE_DEG)
+        {
+            speed_mag *= 0.35f;
+        }
+        target_speed_set = Plan4_Ramp(s_prev_speed_cmd, -speed_mag,
+                                      (speed_mag > fabsf(s_prev_speed_cmd)) ?
+                                      PLAN4_SPEED_ACCEL_STEP : PLAN4_SPEED_DECEL_STEP);
+        s_prev_speed_cmd = target_speed_set;
+        return;
+    }
 
     if (s_minefield_zero_brake_issued == 0U)
     {
@@ -865,10 +915,10 @@ void NavReplay_Process(void)
     }
 
     if ((next_special != 0xFFFFU) &&
-        (nav_ram_data.points[next_special].point_type == NAV_POINT_CIRCLE))
+        Plan4_IsPointToPointType(nav_ram_data.points[next_special].point_type))
     {
-        /* 从前一特殊任务/普通路点经 type=0 接近 type=1 时，使用完整的
-         * Plan2 风格在线点对点接近；转圈结束后从后续 type=0 恢复普通 LQR。 */
+        /* 从前一特殊任务/普通路点接近 type=1/type=11 时，使用完整的
+         * Plan2 风格在线点对点接近；type=11 到达后直接飞越，不启动状态机。 */
         Plan4_ProcessMinefieldApproach(next_special);
         return;
     }

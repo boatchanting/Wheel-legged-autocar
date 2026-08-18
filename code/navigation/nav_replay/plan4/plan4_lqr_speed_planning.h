@@ -43,8 +43,8 @@
 #define PLAN4_TRACK_CROSS_TRACK_HARD_MM             650.0f  // 横向偏差降速达到最大程度的阈值（mm）
 #define PLAN4_TRACK_YAW_SOFT_DEG                     35.0f  // 开始按航向偏差降速的阈值（度）
 #define PLAN4_TRACK_YAW_HARD_DEG                     80.0f  // 航向偏差降速达到最大程度的阈值（度）
-#define PLAN4_SPEED_ACCEL_STEP                       35.0f  // 每周期加速时速度指令的最大变化量
-#define PLAN4_SPEED_DECEL_STEP                      110.0f  // 每周期减速时速度指令的最大变化量
+#define PLAN4_SPEED_ACCEL_STEP                       110.0f  // 每周期加速时速度指令的最大变化量
+#define PLAN4_SPEED_DECEL_STEP                      200.0f  // 每周期减速时速度指令的最大变化量
 #define PLAN4_FINISH_SPEED_DECEL_STEP                20.0f  // 通过末点后每周期速度指令的减速量
 #define PLAN4_FINISH_STOP_SPEED_MM_S                150.0f  // 末点减速完成后锁定转向的实测速度阈值（mm/s）
 
@@ -81,6 +81,10 @@
  * 以下数值从 plan2_point_speed_planning_lite 迁移而来。Plan4 唯一的适配是：
  * 距离和航向使用 nav_vision_fusion_x/y 计算，以继承前一视觉任务的位置校正；
  * 实际速度仍使用 inertial_nav.vx_body。 */
+
+/* NAV_POINT_MINEFIELD_FLYBY（type=11）是雷区不停点：采用同一套点到点
+ * 航向/距离速度曲线，但到达半径后只推进路表索引，不停车、不触发旋转状态机。 */
+#define PLAN4_MINEFIELD_FLYBY_ARRIVE_RADIUS_MM       350.0f
 
 /* type=1 标记周围允许触发旋转的最终执行圆半径。
  * 调大：更早触发、较不易冲过点，但转圈中心可能偏离标记；
