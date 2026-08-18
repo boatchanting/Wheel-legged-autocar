@@ -23,6 +23,7 @@ typedef enum
     NAV_POINT_JUMP = 3,     // 跳跃点
     NAV_POINT_BRIDGE = 4,   // 单边桥点
     NAV_POINT_BUMP = 5,     // 颠簸路段点
+    NAV_POINT_MINEFIELD_FLYBY = 11, // 雷区不停点：点到点飞越，不触发状态机
 
     // 特殊元素的退出锚点：进入标签末尾追加 0。
     // 退出点不触发特殊状态机，仅供视觉任务完成后修正融合坐标并跳过。

@@ -111,7 +111,7 @@ typedef struct
 #define VISION_BRIDGE_TURN_ANG_KP_REF     (TURN_ANG_KP)
 
 /* --- 5. 各阶段速度与姿态设置 --- */
-#define VISION_BRIDGE_TASK_ALIGN_SPEED_SET           (0.0f)      /* 对齐时：速度为 0（边停边对） */
+#define VISION_BRIDGE_TASK_ALIGN_SPEED_SET           (-200.0f)   /* 对齐时仍向前爬行；静止会无法满足 900 mm 里程门 */
 #define VISION_BRIDGE_TASK_RUN_SPEED_SET             (-200.0f)   /* 桥上正常跑：速度 150 (负数表示前进) */
 #define VISION_BRIDGE_TASK_BRIDGE_SPEED_SET          (-200.0f)   /* 看见黑块时：速度 110 */
 #define VISION_BRIDGE_TASK_BLIND_SPEED_SET           (-200.0f)    /* 盲跑（看不清线和桥时）：速度 90，慢慢开 */
