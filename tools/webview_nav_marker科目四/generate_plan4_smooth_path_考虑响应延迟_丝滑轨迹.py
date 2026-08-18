@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import math
 import sys
 import tomllib
@@ -34,6 +35,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_HEADER = PROJECT_ROOT / "code" / "navigation" / "nav_replay_route_table.h"
 DEFAULT_PLANNING_CONFIG = SCRIPT_DIR / "速度规划config" / "plan4_speed_planning.toml"
+NAV_TOML_DIR = DEFAULT_PLANNING_CONFIG.parent / "nav_toml"
 SAMPLE_STEP_MM = 50.0
 # 先以更密的几何点生成路径，再统一按弧长重采样，避免最终路表点距影响曲率估计。
 DENSE_SAMPLE_STEP_MM = 5.0
@@ -370,6 +372,184 @@ def apply_configuration_to_trajectories(
         )
         for trajectory in trajectories
     ]
+
+
+def suggest_initial_trajectory_presets(
+    trajectories: list[TrajectorySegment], markers: list[Marker]
+) -> list[TrajectorySegment]:
+    """为首次专属模板提供安全默认值，不覆盖用户已保存的路线配置。
+
+    唯一可无歧义自动识别的情形是：两个状态机之间恰有一个 type=7 掉头桩。
+    此时普通插值会忽略桩桶并可能切入禁区，所以模板默认写入预设 4；
+    其他所有连接仍保持 interpolated，等待用户根据现场路线选择。
+    """
+    suggested: list[TrajectorySegment] = []
+    for trajectory in trajectories:
+        if trajectory.source_exit_order is None or trajectory.target_entry_order is None:
+            suggested.append(trajectory)
+            continue
+        stake_count = sum(
+            marker.point_type == 7
+            and trajectory.source_exit_order < marker.order < trajectory.target_entry_order
+            for marker in markers
+        )
+        preset = (
+            TransitionPreset.TURNAROUND_STAKE_FASTEST
+            if stake_count == 1
+            else trajectory.preset
+        )
+        suggested.append(replace(trajectory, preset=preset))
+    return suggested
+
+
+def nav_toml_path_for_source(source: Path) -> Path:
+    """每个原始点表拥有独立的专属 TOML，避免不同赛道相互污染。"""
+    return NAV_TOML_DIR / f"{source.stem}.toml"
+
+
+def state_machine_identifiers(state_segments: list[StateMachineSegment]) -> list[str]:
+    """给同类型状态机附加出现次数，例如 4#1、1#2。"""
+    counts: dict[int, int] = {}
+    identifiers: list[str] = []
+    for state in state_segments:
+        counts[state.entry_type] = counts.get(state.entry_type, 0) + 1
+        identifiers.append(f"{state.entry_type}#{counts[state.entry_type]}")
+    return identifiers
+
+
+def route_state_signature(state_segments: list[StateMachineSegment]) -> str:
+    """仅由状态机拓扑构造签名，用于阻止旧专属配置套用到新点表顺序。"""
+    payload = "|".join(
+        f"{state.entry_order}:{state.entry_type}>{state.exit_order}:{state.exit_type}"
+        for state in state_segments
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def toml_speed_profile_lines(profile: SpeedPlanningProfile) -> list[str]:
+    """生成完整段级速度参数；专属 TOML 使用户无需回查通用配置。"""
+    return [
+        f"path_speed_max_mm_s = {profile.path_speed_max_mm_s:.6g}",
+        f"sprint_speed_mm_s = {profile.sprint_speed_mm_s:.6g}",
+        f"enable_finish_sprint = {'true' if profile.enable_finish_sprint else 'false'}",
+        f"max_accel_mm_s2 = {profile.max_accel_mm_s2:.6g}",
+        f"max_decel_mm_s2 = {profile.max_decel_mm_s2:.6g}",
+        f"max_lateral_accel_mm_s2 = {profile.max_lateral_accel_mm_s2:.6g}",
+        f"max_path_yaw_rate_rad_s = {profile.max_path_yaw_rate_rad_s:.6g}",
+        f"speed_to_mm_s = {profile.speed_to_mm_s:.6g}",
+        f"curvature_eps = {profile.curvature_eps:.6g}",
+    ]
+
+
+def write_nav_toml_template(
+    output: Path,
+    source: Path,
+    state_segments: list[StateMachineSegment],
+    trajectories: list[TrajectorySegment],
+) -> None:
+    """首次发现点表时写入可直接编辑的路线专属 TOML 模板。"""
+    identifiers = state_machine_identifiers(state_segments)
+    lines = [
+        "# Plan4 路线专属轨迹规划配置（自动生成）",
+        "#",
+        "# 本文件只描述本点表的状态机顺序、轨迹连接预设和逐段速度参数。",
+        "# 状态机进出直线长度、状态机固定速度、掉头桩半径与安全裕量继承上级",
+        "# ../plan4_speed_planning.toml；请在通用文件中修改这些共享参数。",
+        "# 修改本文件后重新运行脚本，脚本会自动读取并生成轨迹和渲染图。",
+        "# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest。",
+        "# 预设 turnaround_stake_fastest 要求该段点表中有且仅有一个 point_type=7 掉头桩。",
+        "",
+        "[route]",
+        f"source_csv = \"{source.name}\"",
+        f"state_signature = \"{route_state_signature(state_segments)}\"",
+        "",
+        "# 以下状态机段由点表自动识别，仅用于人工核对；其中参数继承通用 TOML。",
+    ]
+    for identifier, state in zip(identifiers, state_segments):
+        lines.extend([
+            "",
+            f"[state_machine.\"{identifier}\"]",
+            f"entry_order = {state.entry_order}",
+            f"entry_type = {state.entry_type}",
+            f"exit_order = {state.exit_order}",
+            f"exit_type = {state.exit_type}",
+        ])
+
+    lines.extend([
+        "",
+        "# 每个普通轨迹段的详细参数。键采用点表事件序号，首尾以 start/end 标识。",
+        "# 这些参数会覆盖通用 TOML 的 trajectory.default；可逐项修改。",
+    ])
+    for trajectory in trajectories:
+        key = trajectory_config_key(trajectory)
+        lines.extend([
+            "",
+            f"[trajectory.\"{key}\"]",
+            f"preset = \"{trajectory.preset.value}\"",
+            *toml_speed_profile_lines(trajectory.speed_profile),
+        ])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def load_nav_toml_configuration(
+    config_path: Path,
+    source: Path,
+    state_segments: list[StateMachineSegment],
+    trajectories: list[TrajectorySegment],
+) -> list[TrajectorySegment]:
+    """读取专属 TOML，将连接预设与完整速度参数应用到当前路线。"""
+    try:
+        with config_path.open("rb") as config_file:
+            raw = tomllib.load(config_file)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"路线专属 TOML 格式错误: {exc}") from exc
+    route = raw.get("route")
+    if not isinstance(route, dict):
+        raise ValueError("专属 TOML 缺少 [route]。")
+    if route.get("source_csv") != source.name:
+        raise ValueError("专属 TOML 对应的 source_csv 与当前点表不一致。")
+    if route.get("state_signature") != route_state_signature(state_segments):
+        raise ValueError(
+            "当前点表的状态机数量或顺序与专属 TOML 不一致。请删除该专属 TOML 后重新运行以生成新模板。"
+        )
+    raw_trajectory = raw.get("trajectory")
+    if not isinstance(raw_trajectory, dict):
+        raise ValueError("专属 TOML 缺少 [trajectory]。")
+    expected = {trajectory_config_key(trajectory) for trajectory in trajectories}
+    supplied = set(raw_trajectory)
+    missing = expected - supplied
+    extra = supplied - expected
+    if missing or extra:
+        details = []
+        if missing:
+            details.append(f"缺少: {', '.join(sorted(missing))}")
+        if extra:
+            details.append(f"多余: {', '.join(sorted(extra))}")
+        raise ValueError("专属 TOML 的轨迹段与当前点表不一致（" + "；".join(details) + "）。")
+
+    updated: list[TrajectorySegment] = []
+    allowed = set(SpeedPlanningProfile.__dataclass_fields__) | {"preset"}
+    for trajectory in trajectories:
+        key = trajectory_config_key(trajectory)
+        values = raw_trajectory[key]
+        if not isinstance(values, dict):
+            raise ValueError(f"[trajectory.{key}] 必须是 TOML 表。")
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"[trajectory.{key}] 包含不支持的参数: {', '.join(sorted(unknown))}")
+        preset_value = values.get("preset")
+        if not isinstance(preset_value, str):
+            raise ValueError(f"[trajectory.{key}].preset 必须是字符串。")
+        try:
+            preset = TransitionPreset(preset_value)
+        except ValueError as exc:
+            valid = ", ".join(item.value for item in TransitionPreset)
+            raise ValueError(f"[trajectory.{key}].preset 不支持 '{preset_value}'，可用值: {valid}") from exc
+        speed_values = {name: value for name, value in values.items() if name != "preset"}
+        speed_profile = overlay_speed_profile(trajectory.speed_profile, speed_values, f"[trajectory.{key}]")
+        updated.append(replace(trajectory, preset=preset, speed_profile=speed_profile))
+    return updated
 
 
 def normalize_key(value: str) -> str:
@@ -1686,7 +1866,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--non-interactive-transitions",
         action="store_true",
-        help="不在终端询问连接预设；所有状态机间轨迹统一采用预设1（轨迹插值型）",
+        help="兼容旧命令行参数；连接预设现由路线专属 TOML 决定",
     )
     parser.add_argument(
         "--configure-segment-parameters",
@@ -1752,13 +1932,27 @@ def main() -> int:
     markers, start_heading = read_markers(source)
     pairs = find_event_pairs(markers)
     markers = apply_special_exit_corrections(markers, pairs)
-    # 先从原始点表建立交替的“状态机段 / 轨迹段”计划，再按人工选择决定
-    # 哪些普通点参与几何生成。Marker.order 在过滤后保持不变，可作为稳定键。
+    # 先从原始点表建立交替的“状态机段 / 轨迹段”计划。首次运行时所有段
+    # 暂用插值型默认值，只为生成可编辑的路线专属 TOML，不输出任何路表。
     state_segments = build_state_machine_segments(markers, pairs, task_speed_profiles)
-    trajectory_segments, _ = choose_trajectory_segments(
-        state_segments, interactive=not args.non_interactive_transitions
-    )
+    trajectory_segments, _ = choose_trajectory_segments(state_segments, interactive=False)
     trajectory_segments = apply_configuration_to_trajectories(trajectory_segments, configuration)
+    nav_configuration_path = nav_toml_path_for_source(source)
+    if not nav_configuration_path.is_file():
+        trajectory_segments = suggest_initial_trajectory_presets(trajectory_segments, markers)
+        write_nav_toml_template(
+            nav_configuration_path, source, state_segments, trajectory_segments
+        )
+        print(f"已生成路线专属配置: {nav_configuration_path}")
+        print("请修改其中每段 [trajectory.*] 的 preset 和速度参数，然后重新运行本脚本生成轨迹与渲染图。")
+        print("状态机进出长度、固定速度、掉头桩半径等共享参数请修改通用配置:")
+        print(f"  {configuration_path}")
+        return 0
+    # 专属配置控制该点表的连接预设和逐段速度；拓扑签名不匹配时会停止，
+    # 防止状态机数目或顺序改变后意外套用旧路线参数。
+    trajectory_segments = load_nav_toml_configuration(
+        nav_configuration_path, source, state_segments, trajectory_segments
+    )
     if args.configure_segment_parameters:
         task_speed_profiles, trajectory_segments = configure_segment_parameters(
             state_segments, trajectory_segments, task_speed_profiles
@@ -1817,6 +2011,7 @@ def main() -> int:
     )
     print(f"输入: {source}")
     print(f"速度规划配置: {configuration_path}")
+    print(f"路线专属配置: {nav_configuration_path}")
     print(f"输出路径: {csv_output} ({len(samples)} 点, 总长 {s[-1]:.1f} mm)")
     print(f"采样间距: {effective_sample_step_mm:.1f} mm（上限 {NAV_ROUTE_MAX_POINTS} 点）")
     print(f"目标速度范围: {output_target_speed.min():.1f} ~ {output_target_speed.max():.1f}（负数为前进指令）")
