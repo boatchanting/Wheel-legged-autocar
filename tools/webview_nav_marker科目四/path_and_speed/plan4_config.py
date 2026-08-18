@@ -295,6 +295,14 @@ def write_nav_toml_template(
             f"preset = \"{trajectory.preset.value}\"",
             *toml_speed_profile_lines(trajectory.speed_profile),
         ])
+        if trajectory.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
+            lines.extend([
+                "# 必经普通点的点表 index。绕桩曲线会以 G2 连续方式精确经过这些点。",
+                "# 例如单边桥出口 8 到颠簸路入口 20 可设为 [9, 10]。",
+                f"must_pass_marker_orders = {list(trajectory.must_pass_marker_orders)}",
+                "# 必经点几何校验容差（mm）；当前实现精确过点，实际误差通常为 0。",
+                f"must_pass_tolerance_mm = {trajectory.must_pass_tolerance_mm:.6g}",
+            ])
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
@@ -376,7 +384,11 @@ def load_nav_toml_configuration(
         raise ValueError("专属 TOML 的轨迹段与当前点表不一致（" + "；".join(details) + "）。")
 
     updated: list[TrajectorySegment] = []
-    allowed = set(SpeedPlanningProfile.__dataclass_fields__) | {"preset"}
+    allowed = set(SpeedPlanningProfile.__dataclass_fields__) | {
+        "preset",
+        "must_pass_marker_orders",
+        "must_pass_tolerance_mm",
+    }
     for trajectory in trajectories:
         key = trajectory_config_key(trajectory)
         values = raw_trajectory[key]
@@ -393,9 +405,36 @@ def load_nav_toml_configuration(
         except ValueError as exc:
             valid = ", ".join(item.value for item in TransitionPreset)
             raise ValueError(f"[trajectory.{key}].preset 不支持 '{preset_value}'，可用值: {valid}") from exc
-        speed_values = {name: value for name, value in values.items() if name != "preset"}
+        raw_must_pass_orders = values.get("must_pass_marker_orders", [])
+        if not isinstance(raw_must_pass_orders, list) or any(
+            isinstance(order, bool) or not isinstance(order, int)
+            for order in raw_must_pass_orders
+        ):
+            raise ValueError(
+                f"[trajectory.{key}].must_pass_marker_orders 必须是整数点表 index 数组。"
+            )
+        must_pass_orders = tuple(raw_must_pass_orders)
+        if len(set(must_pass_orders)) != len(must_pass_orders):
+            raise ValueError(f"[trajectory.{key}].must_pass_marker_orders 不能重复。")
+        tolerance = float(values.get("must_pass_tolerance_mm", 20.0))
+        if tolerance <= 0.0:
+            raise ValueError(f"[trajectory.{key}].must_pass_tolerance_mm 必须为正数。")
+        if preset != TransitionPreset.TURNAROUND_STAKE_FASTEST and must_pass_orders:
+            raise ValueError(
+                f"[trajectory.{key}] 只有 preset=turnaround_stake_fastest 可以配置必经点。"
+            )
+        speed_values = {
+            name: value for name, value in values.items()
+            if name not in {"preset", "must_pass_marker_orders", "must_pass_tolerance_mm"}
+        }
         speed_profile = overlay_speed_profile(trajectory.speed_profile, speed_values, f"[trajectory.{key}]")
-        updated.append(replace(trajectory, preset=preset, speed_profile=speed_profile))
+        updated.append(replace(
+            trajectory,
+            preset=preset,
+            speed_profile=speed_profile,
+            must_pass_marker_orders=must_pass_orders,
+            must_pass_tolerance_mm=tolerance,
+        ))
     return route_configuration, updated
 
 

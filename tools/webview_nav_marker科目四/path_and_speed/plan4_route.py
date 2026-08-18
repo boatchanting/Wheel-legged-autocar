@@ -269,6 +269,7 @@ def build_transition_plans(
         if trajectory.source_exit_order is None or trajectory.target_entry_order is None:
             continue
         stake: Optional[Marker] = None
+        must_pass_markers: tuple[Marker, ...] = ()
         if trajectory.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
             stakes = [
                 marker for marker in markers
@@ -280,6 +281,20 @@ def build_transition_plans(
                     "带掉头桩丝滑型要求两个状态机之间恰好有一个 point_type=7 掉头桩。"
                 )
             stake = stakes[0]
+            marker_by_order = {marker.order: marker for marker in markers}
+            if tuple(sorted(trajectory.must_pass_marker_orders)) != trajectory.must_pass_marker_orders:
+                raise ValueError("掉头桩必经点必须按点表 index 的行驶顺序升序填写。")
+            must_pass_markers = tuple(
+                marker_by_order.get(order) for order in trajectory.must_pass_marker_orders
+            )
+            if any(marker is None for marker in must_pass_markers):
+                raise ValueError("掉头桩必经点包含当前点表中不存在的 index。")
+            if any(
+                marker.point_type != 0
+                or not trajectory.source_exit_order < marker.order < trajectory.target_entry_order
+                for marker in must_pass_markers
+            ):
+                raise ValueError("掉头桩必经点必须是该连接段内的 point_type=0 普通点。")
         plans[(trajectory.source_exit_order, trajectory.target_entry_order)] = TransitionPlan(
             trajectory.source_exit_order,
             trajectory.target_entry_order,
@@ -288,6 +303,8 @@ def build_transition_plans(
             target_entry_speed_command=trajectory.target_entry_speed_command,
             stake=stake,
             speed_profile=trajectory.speed_profile,
+            must_pass_markers=must_pass_markers,
+            must_pass_tolerance_mm=trajectory.must_pass_tolerance_mm,
         )
     return plans
 

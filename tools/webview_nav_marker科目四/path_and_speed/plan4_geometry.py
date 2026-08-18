@@ -131,9 +131,18 @@ def append_turnaround_candidate(
     sweep_angle_rad: float,
     direction: int,
     segment_prefix: str,
+    must_pass_markers: tuple[Marker, ...] = (),
+    must_pass_tolerance_mm: float = 20.0,
     sample_step_mm: float = DENSE_SAMPLE_STEP_MM,
 ) -> None:
-    """用两个沿安全圆切向的中间锚点生成一条可检验的绕桩 G2 候选曲线。"""
+    """生成一条可检验的绕桩 G2 候选曲线，并精确经过指定普通点。
+
+    必经点仍然是普通路径点（point_type=0），不会向 C 路表发出任务指令。
+    它们只作为几何锚点参与曲线构造；每个锚点的切线取前后锚点的连线方向，
+    因此相邻五次 Bezier 段在此处保持切线连续和零端点曲率。
+    """
+    if must_pass_tolerance_mm <= 0.0:
+        raise ValueError("掉头桩必经点容差必须为正数。")
     center = np.array([stake.x, stake.y], dtype=float)
 
     def circular_node(angle: float, suffix: str) -> Node:
@@ -145,7 +154,26 @@ def append_turnaround_candidate(
 
     first = circular_node(start_angle_rad, "起点")
     second = circular_node(start_angle_rad + direction * sweep_angle_rad, "终点")
-    append_g2_link(samples, start, first, f"{segment_prefix}: 进入绕桩", sample_step_mm)
+    before_stake: list[Node] = [start]
+    must_positions = [np.array([marker.x, marker.y], dtype=float) for marker in must_pass_markers]
+    # 必经点可能位于桩前或桩后。每个点依相邻锚点动态计算切线，使不同的
+    # 绕桩候选角度仍能在这些点处平滑连接，而不是把路径折成折线。
+    reference_positions = [np.array([start.x, start.y], dtype=float), *must_positions, np.array([first.x, first.y], dtype=float)]
+    for index, marker in enumerate(must_pass_markers, start=1):
+        tangent = unit(reference_positions[index + 1] - reference_positions[index - 1])
+        before_stake.append(Node(
+            marker.x,
+            marker.y,
+            0,
+            tangent,
+            f"掉头桩必经点 {marker.order}",
+            marker_order=marker.order,
+        ))
+    before_stake.append(first)
+
+    for index, (left, right) in enumerate(zip(before_stake, before_stake[1:])):
+        label = "进入绕桩" if index == len(before_stake) - 2 else f"经过必经点 {must_pass_markers[index].order}"
+        append_g2_link(samples, left, right, f"{segment_prefix}: {label}", sample_step_mm)
     append_g2_link(samples, first, second, f"{segment_prefix}: 绕桩", sample_step_mm)
     append_g2_link(samples, second, end, f"{segment_prefix}: 离开绕桩", sample_step_mm)
 
@@ -159,6 +187,8 @@ def choose_fastest_turnaround_curve(
     clearance_mm: float,
     source_exit_speed_command: Optional[float],
     target_entry_speed_command: Optional[float],
+    must_pass_markers: tuple[Marker, ...] = (),
+    must_pass_tolerance_mm: float = 20.0,
 ) -> tuple[float, float, int, float]:
     """搜索不碰桩且预计通过时间最短的 G2 绕桩曲线。
 
@@ -183,13 +213,30 @@ def choose_fastest_turnaround_curve(
                 for sweep in sweep_candidates:
                     candidate: list[PathSample] = []
                     append_turnaround_candidate(
-                        candidate, start, end, stake, radius, float(start_angle), float(sweep), direction, "候选", 20.0
+                        candidate,
+                        start,
+                        end,
+                        stake,
+                        radius,
+                        float(start_angle),
+                        float(sweep),
+                        direction,
+                        "候选",
+                        must_pass_markers,
+                        must_pass_tolerance_mm,
+                        20.0,
                     )
                     points = np.array([(sample.x, sample.y) for sample in candidate], dtype=float)
                     if len(points) < 3:
                         continue
                     minimum_distance = float(np.min(np.linalg.norm(points - center, axis=1)))
                     if minimum_distance + 1e-6 < safety_radius:
+                        continue
+                    if any(
+                        np.min(np.linalg.norm(points - np.array([marker.x, marker.y]), axis=1))
+                        > must_pass_tolerance_mm + 1e-6
+                        for marker in must_pass_markers
+                    ):
                         continue
                     candidate_s, _, candidate_curvature = calculate_yaw_and_curvature(candidate)
                     candidate_profiles = [speed_profile] * len(candidate)
@@ -245,10 +292,12 @@ def append_fastest_turnaround_curve(
         clearance_mm,
         plan.source_exit_speed_command,
         plan.target_entry_speed_command,
+        plan.must_pass_markers,
+        plan.must_pass_tolerance_mm,
     )
     append_turnaround_candidate(
         samples, start, end, plan.stake, radius, start_angle, sweep, direction,
-        "掉头桩最速 G2",
+        "掉头桩最速 G2", plan.must_pass_markers, plan.must_pass_tolerance_mm,
     )
 
 
@@ -398,7 +447,9 @@ def resample_path_by_arclength(dense_samples: list[PathSample], sample_step_mm: 
 
     mandatory_indices = {0, len(dense_samples) - 1}
     for index, sample in enumerate(dense_samples):
-        if sample.point_type != 0:
+        # 普通 type=0 的必经点也需要原样进入最终路表；否则 50 mm 重采样会
+        # 使它偏离配置的 20 mm 容差。普通插值路径中的原始打点同样受益于此。
+        if sample.point_type != 0 or sample.marker_order is not None:
             mandatory_indices.add(index)
         if index > 0 and sample.forced_straight != dense_samples[index - 1].forced_straight:
             mandatory_indices.add(index)

@@ -204,6 +204,10 @@ class TrajectorySegment:
     source_exit_speed_command: Optional[float]
     target_entry_speed_command: Optional[float]
     speed_profile: SpeedPlanningProfile = DEFAULT_TRAJECTORY_SPEED_PROFILE
+    # 仅预设 4 使用：在绕桩前/后必须平滑通过的普通点表序号。
+    must_pass_marker_orders: tuple[int, ...] = ()
+    # 必经点允许的最大几何偏差；当前锚点实现会精确经过，因此是更严格的约束。
+    must_pass_tolerance_mm: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -217,6 +221,8 @@ class TransitionPlan:
     target_entry_speed_command: Optional[float] = None
     stake: Optional[Marker] = None
     speed_profile: SpeedPlanningProfile = DEFAULT_TRAJECTORY_SPEED_PROFILE
+    must_pass_markers: tuple[Marker, ...] = ()
+    must_pass_tolerance_mm: float = 20.0
 
 
 @dataclass(frozen=True)
