@@ -57,6 +57,10 @@ LOCAL_CORNER_HANDLE_MAX_MM = 600.0
 # 近似平行型过渡使用独立的控制柄。它比普通局部圆角更长，适合两条
 # 方向接近、但存在明显横向错位的状态机通道（例如三级跳 -> 单边桥）。
 PARALLEL_TRANSITION_HANDLE_MM = 900.0
+# 掉头桩的安全圆半径 = 桩桶半径 + 车辆通过时额外预留的安全裕量。
+# 两个值可通过命令行覆盖，单位均为 mm。
+TURNAROUND_STAKE_RADIUS_MM = 400.0
+TURNAROUND_STAKE_CLEARANCE_MM = 250.0
 
 # 以下任务速度使用写入 NavRamPoint_t 的 target_speed 指令单位。每个状态机
 # 显式区分“进入速度 / 状态机运行速度 / 退出速度”，即使当前默认三者相同。
@@ -87,6 +91,7 @@ TYPE_LABEL = {
     3: "三级跳进入",
     4: "单边桥进入",
     5: "颠簸路进入",
+    7: "掉头桩",
     10: "圆环退出",
     20: "坡道退出",
     30: "三级跳退出",
@@ -97,6 +102,7 @@ TYPE_COLOR = {
     0: "#3b82f6", 1: "#db2777",
     # 坡道绿色、三级跳红色、单边桥紫色、颠簸路黄色；进入/退出保持同色。
     2: "#16a34a", 3: "#dc2626", 4: "#9333ea", 5: "#eab308",
+    7: "#475569",
     10: "#db2777", 20: "#16a34a", 30: "#dc2626", 40: "#9333ea", 50: "#eab308",
 }
 
@@ -138,12 +144,14 @@ class TransitionPreset(str, Enum):
     INTERPOLATED = "interpolated"
     NEAR_PARALLEL = "near_parallel"
     PURE_LINE = "pure_line"
+    TURNAROUND_STAKE_FASTEST = "turnaround_stake_fastest"
 
 
 TRANSITION_PRESET_LABEL = {
     TransitionPreset.INTERPOLATED: "轨迹插值型",
     TransitionPreset.NEAR_PARALLEL: "近似平行型",
     TransitionPreset.PURE_LINE: "纯直线型",
+    TransitionPreset.TURNAROUND_STAKE_FASTEST: "带掉头桩丝滑型",
 }
 
 
@@ -220,6 +228,10 @@ class TransitionPlan:
     source_exit_order: int
     target_entry_order: int
     preset: TransitionPreset
+    source_exit_speed_command: Optional[float] = None
+    target_entry_speed_command: Optional[float] = None
+    stake: Optional[Marker] = None
+    speed_profile: SpeedPlanningProfile = DEFAULT_TRAJECTORY_SPEED_PROFILE
 
 
 def normalize_key(value: str) -> str:
@@ -388,6 +400,7 @@ def choose_trajectory_segments(
         "1": TransitionPreset.INTERPOLATED,
         "2": TransitionPreset.NEAR_PARALLEL,
         "3": TransitionPreset.PURE_LINE,
+        "4": TransitionPreset.TURNAROUND_STAKE_FASTEST,
     }
 
     # 起点到第一状态机入口同样是一段可调速度的普通轨迹，只是不需要选择
@@ -409,6 +422,7 @@ def choose_trajectory_segments(
             print("  1. 轨迹插值型：保留普通打点，按原有 G2 曲线逐段平滑连接")
             print("  2. 近似平行型：删除中间普通打点，用两端平行走廊之间的 G2 换道连接")
             print("  3. 纯直线型：删除中间普通打点，两个锚点之间直接连直线（常用于雷区到雷区）")
+            print("  4. 带掉头桩丝滑型：忽略中间点与掉头桩标签，绕桩搜索最快的平滑曲线")
             while True:
                 try:
                     choice = input("  选择预设 [1]: ").strip() or "1"
@@ -418,7 +432,7 @@ def choose_trajectory_segments(
                     print("1（未检测到终端输入，使用轨迹插值型）")
                 if choice in preset_by_choice:
                     break
-                print("  输入无效，请输入 1、2 或 3。")
+                print("  输入无效，请输入 1、2、3 或 4。")
         else:
             choice = "1"
 
@@ -442,6 +456,42 @@ def choose_trajectory_segments(
             TrajectorySegment(last.exit_order, None, TransitionPreset.INTERPOLATED, last.exit_speed_command, None)
         )
     return trajectories, plans
+
+
+def build_transition_plans(
+    trajectories: Iterable[TrajectorySegment], markers: list[Marker]
+) -> dict[tuple[int, int], TransitionPlan]:
+    """把轨迹段变为几何计划，并为预设 4 绑定唯一的 type=7 掉头桩。
+
+    type=7 不是状态机，不能参与 find_event_pairs；仅当人工选择预设 4 时，
+    它才必须位于该段两个状态机锚点之间且数量恰为一个。
+    """
+    plans: dict[tuple[int, int], TransitionPlan] = {}
+    for trajectory in trajectories:
+        if trajectory.source_exit_order is None or trajectory.target_entry_order is None:
+            continue
+        stake: Optional[Marker] = None
+        if trajectory.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
+            stakes = [
+                marker for marker in markers
+                if trajectory.source_exit_order < marker.order < trajectory.target_entry_order
+                and marker.point_type == 7
+            ]
+            if len(stakes) != 1:
+                raise ValueError(
+                    "带掉头桩丝滑型要求两个状态机之间恰好有一个 point_type=7 掉头桩。"
+                )
+            stake = stakes[0]
+        plans[(trajectory.source_exit_order, trajectory.target_entry_order)] = TransitionPlan(
+            trajectory.source_exit_order,
+            trajectory.target_entry_order,
+            trajectory.preset,
+            source_exit_speed_command=trajectory.source_exit_speed_command,
+            target_entry_speed_command=trajectory.target_entry_speed_command,
+            stake=stake,
+            speed_profile=trajectory.speed_profile,
+        )
+    return plans
 
 
 def configure_segment_parameters(
@@ -566,7 +616,11 @@ def apply_trajectory_marker_policy(
     删除，防止人工选择破坏点表中的任务触发顺序。
     """
     index_by_order = {marker.order: index for index, marker in enumerate(markers)}
-    remove_indices: set[int] = set()
+    # 掉头桩只描述障碍物位置，绝不是导航事件；无论选用何种预设都不能
+    # 出现在生成的 path sample / C 路表中。预设 4 已在 TransitionPlan 中保留它。
+    remove_indices: set[int] = {
+        index for index, marker in enumerate(markers) if marker.point_type == 7
+    }
     for trajectory in trajectories:
         if (
             trajectory.preset == TransitionPreset.INTERPOLATED
@@ -579,7 +633,10 @@ def apply_trajectory_marker_policy(
         if target_index <= source_index:
             raise ValueError("状态机连接顺序无效：目标入口必须位于源出口之后。")
         between = range(source_index + 1, target_index)
-        non_ordinary = [markers[index] for index in between if markers[index].point_type != 0]
+        allowed_types = {0}
+        if trajectory.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
+            allowed_types.add(7)
+        non_ordinary = [markers[index] for index in between if markers[index].point_type not in allowed_types]
         if non_ordinary:
             labels = ", ".join(TYPE_LABEL[marker.point_type] for marker in non_ordinary)
             raise ValueError(f"{TRANSITION_PRESET_LABEL[trajectory.preset]} 不能跨越其他状态机标记: {labels}")
@@ -673,12 +730,143 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
         add_sample(samples, np.array([px, py]), point_type, False, segment, marker_order)
 
 
+def append_turnaround_candidate(
+    samples: list[PathSample],
+    start: Node,
+    end: Node,
+    stake: Marker,
+    safety_radius_mm: float,
+    start_angle_rad: float,
+    sweep_angle_rad: float,
+    direction: int,
+    segment_prefix: str,
+    sample_step_mm: float = DENSE_SAMPLE_STEP_MM,
+) -> None:
+    """用两个沿安全圆切向的中间锚点生成一条可检验的绕桩 G2 候选曲线。"""
+    center = np.array([stake.x, stake.y], dtype=float)
+
+    def circular_node(angle: float, suffix: str) -> Node:
+        radial = np.array([math.cos(angle), math.sin(angle)], dtype=float)
+        # direction=1 为逆时针，-1 为顺时针；圆切线保证两段曲线的中间拼接平滑。
+        tangent = direction * np.array([-radial[1], radial[0]], dtype=float)
+        point = center + safety_radius_mm * radial
+        return Node(float(point[0]), float(point[1]), 0, tangent, f"掉头桩绕行{suffix}")
+
+    first = circular_node(start_angle_rad, "起点")
+    second = circular_node(start_angle_rad + direction * sweep_angle_rad, "终点")
+    append_g2_link(samples, start, first, f"{segment_prefix}: 进入绕桩", sample_step_mm)
+    append_g2_link(samples, first, second, f"{segment_prefix}: 绕桩", sample_step_mm)
+    append_g2_link(samples, second, end, f"{segment_prefix}: 离开绕桩", sample_step_mm)
+
+
+def choose_fastest_turnaround_curve(
+    start: Node,
+    end: Node,
+    stake: Marker,
+    speed_profile: SpeedPlanningProfile,
+    stake_radius_mm: float,
+    clearance_mm: float,
+    source_exit_speed_command: Optional[float],
+    target_entry_speed_command: Optional[float],
+) -> tuple[float, float, int, float]:
+    """搜索不碰桩且预计通过时间最短的 G2 绕桩曲线。
+
+    最短几何曲线在掉头时往往产生极大曲率，实际反而更慢。这里对每个候选
+    曲线计算曲率限速、纵向加减速包络与预计通过时间，以时间最小值作为目标。
+    """
+    safety_radius = stake_radius_mm + clearance_mm
+    if stake_radius_mm <= 0.0 or clearance_mm < 0.0:
+        raise ValueError("掉头桩半径必须为正，安全裕量不能为负。")
+
+    # (安全圆半径, 进入角, 绕行方向, 绕行跨度, 预计通过时间)
+    best: Optional[tuple[float, float, int, float, float]] = None
+    center = np.array([stake.x, stake.y], dtype=float)
+    # 半径、进入角和绕行跨度共同决定曲率和总路程。搜索两种绕行方向，
+    # 而不是根据最短弦长直接连线，才能在“更长但可更快通过”的情况中取优。
+    radius_candidates = [safety_radius + offset for offset in (0.0, 200.0, 400.0, 700.0)]
+    angle_candidates = np.deg2rad(np.arange(0.0, 360.0, 30.0))
+    sweep_candidates = np.deg2rad(np.arange(90.0, 301.0, 30.0))
+    for radius in radius_candidates:
+        for direction in (-1, 1):
+            for start_angle in angle_candidates:
+                for sweep in sweep_candidates:
+                    candidate: list[PathSample] = []
+                    append_turnaround_candidate(
+                        candidate, start, end, stake, radius, float(start_angle), float(sweep), direction, "候选", 20.0
+                    )
+                    points = np.array([(sample.x, sample.y) for sample in candidate], dtype=float)
+                    if len(points) < 3:
+                        continue
+                    minimum_distance = float(np.min(np.linalg.norm(points - center, axis=1)))
+                    if minimum_distance + 1e-6 < safety_radius:
+                        continue
+                    candidate_s, _, candidate_curvature = calculate_yaw_and_curvature(candidate)
+                    candidate_profiles = [speed_profile] * len(candidate)
+                    candidate_speed = calculate_target_speed(
+                        candidate, candidate_s, candidate_curvature, candidate_profiles
+                    )
+                    # 两端分别受前一状态机出口 v1、后一状态机入口 v2 约束；
+                    # 重新做一次纵向扫描，让候选耗时反映真实可达的加减速过程。
+                    if source_exit_speed_command is not None:
+                        candidate_speed[0] = min(
+                            candidate_speed[0], source_exit_speed_command * SPEED_TO_MM_S
+                        )
+                    if target_entry_speed_command is not None:
+                        candidate_speed[-1] = min(
+                            candidate_speed[-1], target_entry_speed_command * SPEED_TO_MM_S
+                        )
+                    candidate_speed = apply_longitudinal_speed_envelope(
+                        candidate_speed,
+                        candidate_s,
+                        np.full(len(candidate), speed_profile.max_accel_mm_s2),
+                        np.full(len(candidate), speed_profile.max_decel_mm_s2),
+                    )
+                    ds = np.diff(candidate_s)
+                    average_speed = 0.5 * (candidate_speed[:-1] + candidate_speed[1:])
+                    # 极低速度意味着候选无法可靠通过；它不应因数值除零而被误选。
+                    if np.any(average_speed <= 1.0):
+                        continue
+                    travel_time = float(np.sum(ds / average_speed))
+                    if best is None or travel_time < best[4]:
+                        best = (radius, float(start_angle), direction, float(sweep), travel_time)
+    if best is None:
+        raise ValueError("没有找到满足掉头桩安全半径的平滑绕行曲线，请增大可用空间或减小安全裕量。")
+    # 返回最佳半径、进入角、方向、跨度；通过时间只用于搜索比较，不写入路表。
+    return best[0], best[1], best[2], best[3]
+
+
+def append_fastest_turnaround_curve(
+    samples: list[PathSample],
+    start: Node,
+    end: Node,
+    plan: TransitionPlan,
+    stake_radius_mm: float,
+    clearance_mm: float,
+) -> None:
+    if plan.stake is None:
+        raise ValueError("带掉头桩丝滑型缺少 point_type=7 掉头桩。")
+    radius, start_angle, direction, sweep = choose_fastest_turnaround_curve(
+        start,
+        end,
+        plan.stake,
+        plan.speed_profile,
+        stake_radius_mm,
+        clearance_mm,
+        plan.source_exit_speed_command,
+        plan.target_entry_speed_command,
+    )
+    append_turnaround_candidate(
+        samples, start, end, plan.stake, radius, start_angle, sweep, direction,
+        "掉头桩最速 G2",
+    )
+
+
 def make_nodes(
     markers: list[Marker],
     pairs: dict[int, int],
     transition_plans: dict[tuple[int, int], TransitionPlan],
     task_profiles: dict[int, TaskSpeedProfile],
-) -> tuple[list[Node], dict[tuple[int, int], str]]:
+) -> tuple[list[Node], dict[tuple[int, int], str], dict[tuple[int, int], TransitionPlan]]:
     """展开特殊标记对，并在开头补充未记录的车辆原点。"""
     # 录制是在车辆驶离 (0, 0) 原点之后才开始的。
     # 包含这个虚拟节点可以使得表中的第一条记录成为真正的路线起点。
@@ -691,6 +879,7 @@ def make_nodes(
     # 只有状态机内部和进出走廊天生是直线；状态机之间的连接类型由
     # transition_plans 决定，未显式标记的普通路段一律走 G2 插值。
     link_modes: dict[tuple[int, int], str] = {}
+    turnaround_links: dict[tuple[int, int], TransitionPlan] = {}
     entry_by_exit = {exit_index: entry_index for entry_index, exit_index in pairs.items()}
     exit_anchor_nodes: dict[int, int] = {}
     entry_anchor_nodes: dict[int, int] = {}
@@ -767,6 +956,9 @@ def make_nodes(
             link_modes[(source_node_index, target_node_index)] = "near_parallel_g2"
         elif plan.preset == TransitionPreset.PURE_LINE:
             link_modes[(source_node_index, target_node_index)] = "pure_line"
+        elif plan.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
+            link_modes[(source_node_index, target_node_index)] = "turnaround_stake_fastest"
+            turnaround_links[(source_node_index, target_node_index)] = plan
 
     # 无标签路点使用角平分线切向量，使相邻 G2 曲线满足 C1 连续；同时根据相邻边长计算局部控制柄。
     for index, node in enumerate(nodes):
@@ -790,7 +982,7 @@ def make_nodes(
                     LOCAL_CORNER_HANDLE_MAX_MM,
                     LOCAL_CORNER_NEIGHBOR_RATIO * min(incoming_length, outgoing_length),
                 )
-    return nodes, link_modes
+    return nodes, link_modes, turnaround_links
 
 
 def resample_path_by_arclength(dense_samples: list[PathSample], sample_step_mm: float) -> list[PathSample]:
@@ -1126,13 +1318,24 @@ def generate_path(
     markers: list[Marker], sample_step_mm: float,
     transition_plans: dict[tuple[int, int], TransitionPlan],
     task_profiles: dict[int, TaskSpeedProfile],
+    turnaround_stake_radius_mm: float,
+    turnaround_stake_clearance_mm: float,
 ) -> list[PathSample]:
     pairs = find_event_pairs(markers)
-    nodes, link_modes = make_nodes(markers, pairs, transition_plans, task_profiles)
+    nodes, link_modes, turnaround_links = make_nodes(markers, pairs, transition_plans, task_profiles)
     dense_samples: list[PathSample] = []
     for index in range(len(nodes) - 1):
         mode = link_modes.get((index, index + 1), "g2")
-        if mode in {"forced_line", "task_internal", "pure_line"}:
+        if mode == "turnaround_stake_fastest":
+            append_fastest_turnaround_curve(
+                dense_samples,
+                nodes[index],
+                nodes[index + 1],
+                turnaround_links[(index, index + 1)],
+                turnaround_stake_radius_mm,
+                turnaround_stake_clearance_mm,
+            )
+        elif mode in {"forced_line", "task_internal", "pure_line"}:
             label = {
                 "forced_line": "强制直线",
                 "task_internal": "任务区直连",
@@ -1162,11 +1365,20 @@ def generate_path_with_point_cap(
     markers: list[Marker],
     transition_plans: dict[tuple[int, int], TransitionPlan],
     task_profiles: dict[int, TaskSpeedProfile],
+    turnaround_stake_radius_mm: float,
+    turnaround_stake_clearance_mm: float,
 ) -> tuple[list[PathSample], float]:
     """Prefer 50 mm samples, while never generating a route that RAM truncates."""
     sample_step_mm = SAMPLE_STEP_MM
     for _ in range(8):
-        samples = generate_path(markers, sample_step_mm, transition_plans, task_profiles)
+        samples = generate_path(
+            markers,
+            sample_step_mm,
+            transition_plans,
+            task_profiles,
+            turnaround_stake_radius_mm,
+            turnaround_stake_clearance_mm,
+        )
         if len(samples) <= NAV_ROUTE_MAX_POINTS:
             return samples, sample_step_mm
         # 预留少量余量，避免各段 ceil() 后仍需再次调整采样间距。
@@ -1332,6 +1544,18 @@ def parse_args() -> argparse.Namespace:
         help="在选择连接预设后，逐段编辑状态机进出直线长度和轨迹速度参数",
     )
     parser.add_argument(
+        "--turnaround-stake-radius-mm",
+        type=float,
+        default=TURNAROUND_STAKE_RADIUS_MM,
+        help="预设4的掉头桩桶半径，单位 mm（默认 500）",
+    )
+    parser.add_argument(
+        "--turnaround-stake-clearance-mm",
+        type=float,
+        default=TURNAROUND_STAKE_CLEARANCE_MM,
+        help="预设4在桩桶半径外额外保留的安全裕量，单位 mm（默认 250）",
+    )
+    parser.add_argument(
         "--speed-response-delay-s",
         type=float,
         default=SPEED_RESPONSE_DELAY_S,
@@ -1346,6 +1570,10 @@ def main() -> int:
         raise ValueError("Three-step approach distance must not be negative.")
     if args.speed_response_delay_s < 0.0:
         raise ValueError("Speed response delay must not be negative.")
+    if args.turnaround_stake_radius_mm <= 0.0:
+        raise ValueError("掉头桩半径必须为正数。")
+    if args.turnaround_stake_clearance_mm < 0.0:
+        raise ValueError("掉头桩安全裕量不能为负数。")
     source = args.input.resolve() if args.input else find_latest_marker_csv(SCRIPT_DIR)
     if not source.is_file():
         raise FileNotFoundError(f"找不到默认输入 CSV: {source}。请导出该文件或使用 --input 指定 CSV。")
@@ -1365,7 +1593,7 @@ def main() -> int:
     # 先从原始点表建立交替的“状态机段 / 轨迹段”计划，再按人工选择决定
     # 哪些普通点参与几何生成。Marker.order 在过滤后保持不变，可作为稳定键。
     state_segments = build_state_machine_segments(markers, pairs, task_speed_profiles)
-    trajectory_segments, transition_plans = choose_trajectory_segments(
+    trajectory_segments, _ = choose_trajectory_segments(
         state_segments, interactive=not args.non_interactive_transitions
     )
     if args.configure_segment_parameters:
@@ -1375,9 +1603,14 @@ def main() -> int:
         # 状态机段也持有入口/出口速度与几何档案，配置后重新建立以保持显示一致。
         state_segments = build_state_machine_segments(markers, pairs, task_speed_profiles)
     print_segment_plan(state_segments, trajectory_segments)
+    transition_plans = build_transition_plans(trajectory_segments, markers)
     markers, removed_marker_count = apply_trajectory_marker_policy(markers, trajectory_segments)
     samples, effective_sample_step_mm = generate_path_with_point_cap(
-        markers, transition_plans, task_speed_profiles
+        markers,
+        transition_plans,
+        task_speed_profiles,
+        args.turnaround_stake_radius_mm,
+        args.turnaround_stake_clearance_mm,
     )
     s, yaw, curvature = calculate_yaw_and_curvature(samples)
     sample_profiles = build_sample_speed_profiles(samples, trajectory_segments)
