@@ -71,7 +71,7 @@ void servo_executor_set_profile(float acc_limit_cfg,
 static void servo_executor_get_runtime_limits(int32 *runtime_acc_limit, int32 *runtime_dec_limit)
 {
     float speed_error_abs = fabsf(target_speed_set - current_actual_speed);
-    float boost = fabsf((float)g_target_pwm_speed_adj) * servo_exec_boost_from_speed +
+    float boost = (fabsf((float)g_target_pwm_speed_adj) + fabsf((float)g_target_pwm_roll_adj)) * servo_exec_boost_from_speed +
                   speed_error_abs * servo_exec_boost_from_error;
     int32 acc_runtime = acc_limit;
     int32 dec_runtime = dec_limit;
@@ -148,29 +148,31 @@ void servo_executor_update(void)
     target_final_duty_lr += SERVO_MOTOR_PWM4_DIR * g_target_pwm_turn_roll_lr;
 
     // ==========================================================
-    // 3.5 叠加 Rolling 补偿 (一边不动一边伸长)
+    // 3.5 叠加 Rolling 补偿 (低侧伸腿同时高侧收腿，向上收腿量最大为 1000 duty)
     // 约定：g_target_pwm_roll_adj
-    //      > 0 : 左高右低 (error > 0)，策略为左侧不动，右侧伸长
-    //      < 0 : 右高左低 (error < 0)，策略为右侧不动，左侧伸长
+    //      > 0 : 左高右低 (error > 0)，策略为右侧伸长，左侧收缩 (收缩最大 1000 duty)
+    //      < 0 : 右高左低 (error < 0)，策略为左侧伸长，右侧收缩 (收缩最大 1000 duty)
     //      (加 SERVO_MOTOR_PWMx_DIR 为伸长，减 SERVO_MOTOR_PWMx_DIR 为收缩)
     // ==========================================================
     int16 adj = g_target_pwm_roll_adj;
     
     if (adj > 0) {
         // --- 情况 B: 左高右低 (adj > 0) ---
-        // 策略：左侧保持基准高度不动，右侧伸长以垫平车身
-        // adj 为正数，伸长直接加上 SERVO_MOTOR_PWMx_DIR * adj
-        target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj; // 右前伸
-        target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj; // 右后伸
-        // 左侧 lf, lr 保持不动
+        // 策略：低侧(右侧)伸长以垫平车身，高侧(左侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (1000 duty)
+        int16 retract = (adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : adj;
+        target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj;     // 右前伸
+        target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj;     // 右后伸
+        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * retract; // 左前收
+        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * retract; // 左后收
     } 
     else if (adj < 0) {
         // --- 情况 A: 右高左低 (adj < 0) ---
-        // 策略：右侧保持基准高度不动，左侧伸长以垫平车身
-        // adj 为负数，伸长量为 -adj (>0)，故加上 SERVO_MOTOR_PWMx_DIR * (-adj) 即减去 SERVO_MOTOR_PWMx_DIR * adj
-        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj; // 左前伸
-        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj; // 左后伸
-        // 右侧 rf, rr 保持不动
+        // 策略：低侧(左侧)伸长以垫平车身，高侧(右侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (1000 duty)
+        int16 retract = (-adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : (int16)(-adj);
+        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj;     // 左前伸 (-adj > 0)
+        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj;     // 左后伸 (-adj > 0)
+        target_final_duty_rf -= SERVO_MOTOR_PWM2_DIR * retract; // 右前收
+        target_final_duty_rr -= SERVO_MOTOR_PWM3_DIR * retract; // 右后收
     }
 
     // 4. 【核心】使用斜率限制，平滑地趋近目标值

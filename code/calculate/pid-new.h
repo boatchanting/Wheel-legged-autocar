@@ -108,14 +108,15 @@ extern float current_actual_speed;
 // ----------------------------------------------------------------------------
 // 7. 单边桥 Rolling (横滚) 自适应平衡环参数
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
-//    策略：一边不动，一边伸长 (Extend-Leg Strategy)
+//    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      44.0f   // 44[响应力度] 决定对抗倾斜的猛烈程度
+#define ROLL_KP      6.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      7.0f    // 7[阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      12.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
-#define ROLL_MAX_O   1000.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
+#define ROLL_MAX_O   1200.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
+#define ROLL_MAX_RETRACT_DUTY 1000 // [收腿限幅] 高侧向上收腿最大占空比
 
 // *************************** 【2026/03/24 最后的舵机v腿】pid参数定义结束***************************
 #endif
@@ -205,16 +206,21 @@ extern float current_actual_speed;
 // ----------------------------------------------------------------------------
 // 7. 单边桥 Rolling (横滚) 自适应平衡环参数
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
-//    策略：一边不动，一边伸长 (Extend-Leg Strategy)
+//    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      44.0f   // 44[响应力度] 决定对抗倾斜的猛烈程度
+#define ROLL_KP      6.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      7.0f    // 7[阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      12.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
-#define ROLL_MAX_O   1000.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
+#define ROLL_MAX_O   1200.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
+#define ROLL_MAX_RETRACT_DUTY 1000 // [收腿限幅] 高侧向上收腿最大占空比
 
 // *************************** 【小车4】PID参数定义结束 ***************************
+#endif
+
+#ifndef ROLL_MAX_RETRACT_DUTY
+#define ROLL_MAX_RETRACT_DUTY 1000
 #endif
 
 // ============================================================================
@@ -525,8 +531,13 @@ void Servo_Speed_Control_Reset(void);//重置速度环运行态（不重置参�
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
+void PID_Roll_Update_Kp(float kp);
+void PID_Roll_Update_Kd(float kd);
+void PID_Roll_Update_MaxOutput(float max_output);
+void PID_Roll_Update_Compensation(float compensation);
 float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear);//转向主动侧倾目标计算
 void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear);//转向主动侧倾查表舵机差动
+void Turn_Active_Roll_Duty_Clear(void); // 清除转向主动侧倾差动并归零相关变量
 
 /**
  * @brief 刹车前馈更新：根据目标/实际速度差输出轻刹、中刹或重刹 PWM

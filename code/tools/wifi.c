@@ -233,11 +233,11 @@ void wifi_update_pid_params(void)
             {
                 //【调节Rolling平衡环】
                 // 参数 0: Rolling 比例刚度 Kp (pid_roll.kp)
-                case 0: pid_roll.kp = seekfree_assistant_parameter[i]; break;
+                case 0: PID_Roll_Update_Kp(seekfree_assistant_parameter[i]); break;
                 // 参数 1: Rolling 微分阻尼 Kd (pid_roll.kd)
-                case 1: pid_roll.kd = seekfree_assistant_parameter[i]; break;
+                case 1: PID_Roll_Update_Kd(seekfree_assistant_parameter[i]); break;
                 // 参数 2: Rolling 舵机最大调整 PWM 限幅 (pid_roll.max_output)
-                case 2: pid_roll.max_output = seekfree_assistant_parameter[i]; break;
+                case 2: PID_Roll_Update_MaxOutput(seekfree_assistant_parameter[i]); break;
                 // 参数 3: 期望目标横滚角 (roll_degree，可用于给定倾斜测试)
                 case 3: roll_degree = seekfree_assistant_parameter[i]; break;
                 // 参数 4: Rolling 平衡环使能开关 (1.0f为使能, 0.0f为失能)
@@ -245,7 +245,7 @@ void wifi_update_pid_params(void)
                 // 参数 5: 基础车身高度 (servo_height，因伸长策略需配合基础高度留出余量)
                 case 5: servo_height = seekfree_assistant_parameter[i]; break;
                 // 参数 6: Rolling 机械零点偏置补偿 (pid_roll.compensation)
-                case 6: pid_roll.compensation = seekfree_assistant_parameter[i]; break;
+                case 6: PID_Roll_Update_Compensation(seekfree_assistant_parameter[i]); break;
                 // 参数 7: 电机使能总开关 (g_motor_enable，1.0f为使能, 0.0f为失能)
                 case 7: g_motor_enable = (seekfree_assistant_parameter[i] > 0.5f) ? 1 : 0; break;
                 default: break;
