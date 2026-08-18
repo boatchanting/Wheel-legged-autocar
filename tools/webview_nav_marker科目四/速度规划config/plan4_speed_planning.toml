@@ -1,0 +1,114 @@
+# Plan4 分段轨迹与速度规划配置
+#
+# 本文件由 generate_plan4_smooth_path_考虑响应延迟_丝滑轨迹.py 默认读取。
+# 修改后直接重新运行脚本即可生效，不需要改 Python 代码。
+# 数值单位：距离 mm，速度 mm/s，加速度 mm/s^2，航向角速度 rad/s。
+# TOML 中 # 后面的文字都是注释，可自由保留或删除。
+
+[turnaround_stake]
+# 预设 4 使用的桩桶物理半径。实际禁入半径 = radius_mm + clearance_mm。
+radius_mm = 400.0
+# 车辆外廓、定位误差和安全余量。
+clearance_mm = 250.0
+
+# 每类配对状态机的参数。入口类型与点表 point_type 对应：
+# 3=三级跳，4=单边桥，5=颠簸路，2=坡道。
+# entry_corridor_mm / exit_corridor_mm 是状态机入口前和出口后的强制直线长度。
+[task."3"]
+approach_distance_mm = 4000.0
+entry_speed_command = 320.0
+state_speed_command = 320.0
+exit_speed_command = 320.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+[task."4"]
+approach_distance_mm = 500.0
+entry_speed_command = 300.0
+state_speed_command = 300.0
+exit_speed_command = 300.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+[task."5"]
+approach_distance_mm = 500.0
+entry_speed_command = 500.0
+state_speed_command = 500.0
+exit_speed_command = 500.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+[task."2"]
+approach_distance_mm = 500.0
+entry_speed_command = 500.0
+state_speed_command = 500.0
+exit_speed_command = 500.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+# 不同连接预设使用各自独立的速度参数段。首次运行某份点表时，脚本会根据
+# 每段选择的 preset，将对应段完整复制到路线专属 TOML；之后只需改专属文件，
+# 不会影响本通用文件或其他点表。
+#
+# 参数含义（四个预设段完全相同）：
+# path_speed_max_mm_s：路径允许的绝对最高物理速度。
+# sprint_speed_mm_s / enable_finish_sprint：末段冲刺速度及是否允许冲刺。
+# max_accel_mm_s2 / max_decel_mm_s2：前后向速度包络的纵向能力。
+# max_lateral_accel_mm_s2：曲率产生的横向加速度限速。
+# max_path_yaw_rate_rad_s：曲率产生的航向角速度限速。
+# speed_to_mm_s：target_speed 指令换算为物理速度的系数。
+# curvature_eps：低于该曲率时按直线处理，避免数值噪声造成无意义限速。
+
+# 预设 1：普通平滑插值连接，是最常用的状态机间连接方式。
+[trajectory.interpolated]
+path_speed_max_mm_s = 8000.0
+sprint_speed_mm_s = 8000.0
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500.0
+max_decel_mm_s2 = 10500.0
+max_lateral_accel_mm_s2 = 4000.0
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 0.000001
+
+# 预设 2：近似平行的状态机通道连接，例如三级跳出口到单边桥入口。
+# 可独立设为更保守的横向限速，或保留与插值型相同的初始标定。
+[trajectory.near_parallel]
+path_speed_max_mm_s = 8000.0
+sprint_speed_mm_s = 8000.0
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500.0
+max_decel_mm_s2 = 10500.0
+max_lateral_accel_mm_s2 = 4000.0
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 0.000001
+
+# 预设 3：纯直线连接，通常用于雷区到雷区等无须曲线过渡的区段。
+[trajectory.pure_line]
+path_speed_max_mm_s = 8000.0
+sprint_speed_mm_s = 8000.0
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500.0
+max_decel_mm_s2 = 10500.0
+max_lateral_accel_mm_s2 = 4000.0
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 0.000001
+
+# 预设 4：绕掉头桩的最速丝滑连接，通常用于单边桥或草地到颠簸路。
+# 建议依据实车绕桩稳定性单独调低横向加速度或航向角速度上限。
+[trajectory.turnaround_stake_fastest]
+path_speed_max_mm_s = 8000.0
+sprint_speed_mm_s = 8000.0
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500.0
+max_decel_mm_s2 = 10500.0
+max_lateral_accel_mm_s2 = 4000.0
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 0.000001
+
+# 每份点表的状态机、掉头桩、连接预设、逐段速度和路径几何选择由脚本首次运行时自动写入：
+#   速度规划config/nav_toml/<点表文件名>.toml
+# 专属文件被 .gitignore 忽略，允许针对不同赛道独立调参，且不会反向修改本文件。
