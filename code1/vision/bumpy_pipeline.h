@@ -62,6 +62,7 @@ unsigned int bp_stage_cyc(void);
 #define BP_MIN_STABLE     3       /* 时间验证: 连续帧数 */
 #define BP_MAX_ANG_JMP    8.0f    /* 时间验证: 角度跳变上限 */
 #define BP_MAX_POS_JMP    5.0f    /* 时间验证: 中心位移上限 */
+#define BP_MIN_HDG_LINES  3       /* 帧航向角(hdg_valid)有效最少横向条纹数：检出少于 N 条即视为"无颠簸条纹"（2026-08-18 新增，可调） */
 
 /* ---- 单线结果 ---- */
 typedef struct {
@@ -74,7 +75,8 @@ typedef struct {
 /* ---- 单帧结果 ---- */
 typedef struct {
     bumpy_line_t L, R;
-    int    hdg_valid;  /* 帧航向角(条纹倾斜角)有效：有横向线性连通域即 1，与边线成败无关 */
+    bumpy_line_t raw_L, raw_R;  /* 单帧 RANSAC 拟合原始边线（未时间验证；渲染/横向观测用，2026-08-18） */
+    int    hdg_valid;  /* 帧航向角(条纹倾斜角)有效：检出 ≥BP_MIN_HDG_LINES 条横向线性连通域即 1，与边线成败无关 */
     float  hdg;        /* 帧航向角 [deg]，frame_heading 加权圆均值直出（2026-08-17 引出） */
 } bumpy_frame_result_t;
 

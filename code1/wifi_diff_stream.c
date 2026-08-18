@@ -3,8 +3,12 @@
 #define WIFI_DIFF_SYNC0              (0xA5U)
 #define WIFI_DIFF_SYNC1              (0x5AU)
 #define WIFI_DIFF_VERSION            (1U)
-#define WIFI_DIFF_MAX_W              (188U)
-#define WIFI_DIFF_MAX_H              (120U)
+/* 缓冲按实际图传尺寸 94×60（压缩图）预留，省 ~33.8KB SRAM（2026-08-18）
+   尺寸必须与 wifi_diff_stream_init() 入参一致（WIFI_CAMERA_SEND_W/H = PVC_IMAGE 94×60）；
+   上位机从 24B 帧头读 stream_w/h 自动适配，无需改上位机。
+   若切 WIFI_CAMERA_SEND_MODE_RAW（188×120），需同步改回 188/120，否则 init 会静默回退 94×60。 */
+#define WIFI_DIFF_MAX_W              (94U)
+#define WIFI_DIFF_MAX_H              (60U)
 #define WIFI_DIFF_HEADER_SIZE        (24U)
 #define WIFI_DIFF_MAX_PAYLOAD        (WIFI_DIFF_MAX_W * WIFI_DIFF_MAX_H)
 #define WIFI_DIFF_MAX_PACKET         (WIFI_DIFF_HEADER_SIZE + WIFI_DIFF_MAX_PAYLOAD + 1U)

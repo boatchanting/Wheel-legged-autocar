@@ -14,6 +14,13 @@
 #include <string.h>
 
 /* ==========================================================================
+ * 旧管线 (188×120 输入) — 仅 BUMPY_USE_NEW_PIPELINE=0 时编译
+ * 新管线开启时整段裁掉：常量 / DTCM 环形缓冲 / 旧检测函数全部不编译
+ * (2026-08-18)
+ * ========================================================================== */
+#if !BUMPY_USE_NEW_PIPELINE
+
+/* ==========================================================================
  * 内部常量 (模块自包含, 不暴露到头文件)
  * ========================================================================== */
 
@@ -285,6 +292,8 @@ static void bumpy_edge_detect_process(const uint8_t *gray,
     out->max_gradient_mag = max_gradient_mag;
 }
 
+#endif /* !BUMPY_USE_NEW_PIPELINE: 旧管线 */
+
 volatile runtime_profiler_t g_bumpy_vision_cost_profiler = {0};
 volatile runtime_profiler_t g_bumpy_vision_frame_profiler = {0};
 volatile bumpy_vision_output_t g_bumpy_vision_output = {0};
@@ -299,34 +308,32 @@ static uint32 g_bumpy_last_frame_time_us = 0U;
 /* —— 新管线实例与辅助（2026-08-17 落地）—— */
 static bumpy_pipeline_t s_bumpy_pipeline;   /* 新管线状态（gx/gy/mag2/labels 等，~121KB） */
 
-/* —— lateral 稳定滤波（2026-08-18 方案 v5 §3，docs/任务规划/颠簸视觉角度响应整形与横向偏差稳定滤波方案.md）——
-   3 帧满窗中值（替代旧"连续3帧"时序门控）+ 门控（观测存在/野值剔除） + LOCK/HOLD 状态机：
-     LOCK  : 满 3 个可检测帧 → 中值 → EMA 更新（miss 清零）
-     HOLD  : 无观测/野值 → 保持 s_lat_stable 不更新（丢失 5 帧内不扣可信度）
-   可信度（2026-08-18 起替代硬 FREEZE）：
-     - 检测到且稳定（入窗）→ 线性累加（每帧 +STEP，封顶 255=uint8 上限，不卡 100）
-     - 丢失/野值 → 5 帧免扣；超过 5 帧后按递增步长非线性扣减（第 1 帧扣 1、第 2 帧扣 2…，
-       仅每帧步长 +1 再减，无需计算）；可信度耗尽（=0）才 FREEZE 剥离 meas_valid，不再直接清零
-   0 值帧（无线/间距自检失败）不入窗，从源头消除 0 值污染偏置（见方案 §3.3.2e）。 */
-#define BUMPY_LAT_FILTER_N         (3U)    /* 中值窗长：必须满 3 个可检测帧（lateral_raw≠0 且非野值）才输出 */
-#define BUMPY_LAT_JERK_MM          (80.0f) /* 单帧野值门限：|Δx| > J 视为野值，不入窗直接进 HOLD */
-#define BUMPY_LAT_EMA_BETA         (0.30f) /* LOCK 态 EMA 系数（0~1，越小越平滑） */
-#define BUMPY_LAT_CONF_MAX         (255U)  /* 横向可信度上限（0~255，uint8 上限，不卡 100） */
+/* —— lateral 中线滤波（2026-08-18：左右边线直接合成中线 → 3 帧满窗中值 + 可信度）——
+   结构：raw_L/raw_R（原始单帧边线，不单独滤波）→ lateral_raw（左右直接合成中线/单侧逆推）
+         → 本滤波器。
+   ① 每来一个有效中线数据（lateral_raw≠0 且非野值 |Δx|≤JERK）→ 推进 3 帧中值窗；
+   ② 3 帧满窗后：中值直接输出（LOCK），可信度线性累加（封顶）；
+   ③ 无输入/野值 → 中值窗不推进、lat_stable 保持（HOLD），可信度按递增步长扣减；
+      可信度耗尽（=0）→ freeze=1 剥离 meas_valid（值仍保持，不污染）。
+   0 值帧（无线/间距自检失败）不入窗，从源头消除 0 值污染偏置。 */
+#define BUMPY_LAT_FILTER_N         (3U)    /* 中值窗长：满 3 个有效帧才输出（滑动窗，每帧推进） */
+#define BUMPY_LAT_JERK_MM          (80.0f) /* 单帧野值门限：|Δx| > J 视为野值，不入窗 */
+#define BUMPY_LAT_CONF_MAX         (255U)  /* 横向可信度上限（0~255） */
 #define BUMPY_LAT_CONF_STEP        (10U)   /* 有效稳定帧线性累加步长（26 帧满置信） */
 #define BUMPY_LAT_CONF_GRACE       (5U)    /* 丢失免扣帧数（5 帧内不扣可信度） */
 #define BUMPY_LAT_CONF_PENALTY_INC (1U)    /* 免扣期后每帧递增扣分步长：第 1 帧扣 1、第 2 帧扣 2… */
 static float   s_lat_win[BUMPY_LAT_FILTER_N];
 static uint8_t s_lat_win_cnt;             /* 窗口内有效样本数（≤N） */
 static uint8_t s_lat_miss;                /* 连续无观测/野值帧计数 */
-static uint8_t s_lat_conf;                /* 横向可信度（0~255，uint8 上限）：有效稳定帧线性累加，丢失非线性扣减 */
-static uint8_t s_lat_penalty;             /* 非线性扣分步长：超过免扣期后每帧 +1（无需计算） */
+static uint8_t s_lat_conf;                /* 横向可信度（0~255）：有效稳定帧线性累加，丢失非线性扣减 */
+static uint8_t s_lat_penalty;             /* 非线性扣分步长：超过免扣期后每帧 +1 */
 static float   s_lat_stable;              /* 稳定输出 lat_stable */
 
 /**
- * @brief lateral 稳定滤波（方案 v5 §3.2）
- * @param lateral_raw 本帧原始横向偏差（0=无横向观测）
- * @param freeze      出参：1=FREEZE（长期丢失，需剥离 meas_valid）
- * @return 稳定滤波值 lat_stable（LOCK 更新 / HOLD 保持 / FREEZE 冻结）
+ * @brief lateral 中线滤波（3 帧满窗中值 + 可信度）
+ * @param lateral_raw 本帧由左右边线直接合成的中线偏差（0=无横向观测）
+ * @param freeze      出参：1=可信度耗尽（剥离 meas_valid，值保持）
+ * @return 稳定输出 lat_stable
  */
 static float bumpy_vision_lateral_filter(float lateral_raw, uint8_t *freeze)
 {
@@ -334,11 +341,11 @@ static float bumpy_vision_lateral_filter(float lateral_raw, uint8_t *freeze)
 
     *freeze = 0U;
 
-    /* C1 观测存在且非野值（|Δx| 相对当前稳定值）→ 有效稳定帧：入窗 + 线性累加可信度 */
+    /* 观测存在且非野值（|Δx| 相对当前稳定值）→ 有效稳定帧：推进中值窗 + 累加可信度 */
     if ((lateral_raw != 0.0f) &&
         (fabsf(lateral_raw - s_lat_stable) <= BUMPY_LAT_JERK_MM))
     {
-        /* 检测到且稳定：可信度线性累加（封顶），重置丢失计数与扣分步长 */
+        /* 可信度线性累加（封顶），重置丢失计数与扣分步长 */
         s_lat_conf += BUMPY_LAT_CONF_STEP;
         if (s_lat_conf > BUMPY_LAT_CONF_MAX)
         {
@@ -347,6 +354,7 @@ static float bumpy_vision_lateral_filter(float lateral_raw, uint8_t *freeze)
         s_lat_miss = 0U;
         s_lat_penalty = 0U;
 
+        /* 每来一个中线数据推进一次中值窗 */
         if (s_lat_win_cnt < BUMPY_LAT_FILTER_N)
         {
             s_lat_win_cnt++;
@@ -359,21 +367,20 @@ static float bumpy_vision_lateral_filter(float lateral_raw, uint8_t *freeze)
 
         if (s_lat_win_cnt >= BUMPY_LAT_FILTER_N)
         {
-            /* 满 3 窗：三值排序求中值 → EMA 更新（LOCK） */
+            /* 满 3 窗：三值排序求中值 → 直接输出（不再 EMA） */
             float a = s_lat_win[0], b = s_lat_win[1], c = s_lat_win[2];
             float x_mid, t;
             if (a > b) { t = a; a = b; b = t; }
             if (b > c) { t = b; b = c; c = t; }
             if (a > b) { t = a; a = b; b = t; }
             x_mid = b;
-            s_lat_stable += (x_mid - s_lat_stable) * BUMPY_LAT_EMA_BETA;
+            s_lat_stable = x_mid;
         }
     }
     else
     {
         /* 无观测/野值：丢失计数；免扣期（GRACE=5 帧）内不扣可信度；
-           超过后按递增步长非线性扣减（第 1 帧扣 1、第 2 帧扣 2…，仅步长 +1 再减，无需计算）；
-           可信度耗尽（=0）才 FREEZE 剥离 meas_valid——不再直接清零 */
+           超过后按递增步长扣减；可信度耗尽（=0）才 FREEZE 剥离 meas_valid */
         if (s_lat_miss < 0xFFU)
         {
             s_lat_miss++;
@@ -475,10 +482,10 @@ void bumpy_vision_reset_filter(void)
 
 #if BUMPY_USE_NEW_PIPELINE
     bumpy_pipeline_init(&s_bumpy_pipeline);   /* 时间验证历史按路段/视频隔离 */
-    /* lateral 稳定滤波状态按路段/视频隔离（与管线历史同生命周期，2026-08-18 v5 §5.4） */
+    /* lateral 滤波状态按路段/视频隔离 */
     s_lat_win_cnt = 0U;
     s_lat_miss = 0U;
-    s_lat_conf = 0U;      /* 可信度随路段复位 */
+    s_lat_conf = 0U;
     s_lat_penalty = 0U;
     s_lat_stable = 0.0f;
     s_yaw_shaped_deg = 0.0f;  /* 角度整形 EMA 状态随路段复位 */
@@ -536,7 +543,12 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     bumpy_pipeline_frame(&s_bumpy_pipeline, gray, &res);
 
     next.frame_id        = g_bumpy_vision_output_shadow.frame_id + 1U;
-    next.bumpy_detected  = (uint8)((res.L.valid || res.R.valid) ? 1U : 0U);
+    /* bumpy_detected = 条纹存在性（hdg_valid：检出 ≥BP_MIN_HDG_LINES 条横向条纹即 1，
+       与边线成败无关）。0 核入口/出口判定（连续 3 帧 1/0）依赖该位，语义应为
+       "是否在颠簸路段"；若绑到 L/R 边线时间验证（hist_update 需连续 3 帧角度/位置稳定），
+       颠簸振动会让边线频繁失效 → bumpy_detected 在段内反复变 0 → 0 核误判"脱出"
+       提前结束任务（2026-08-18 修复：改用 hdg_valid，且要求最少 N 条横向线）。 */
+    next.bumpy_detected  = (uint8)(res.hdg_valid ? 1U : 0U);
     next.coherence_r     = 0.0f;   /* 新管线无 R² 概念，保留字段置 0 */
     next.strong_count    = 0U;
     next.total_pixels    = 0U;
@@ -569,8 +581,8 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
         float xl = 0.0f, xr = 0.0f;
         float lateral_raw = 0.0f;
         uint8_t lat_freeze = 0U;
-        const int ok_l = (res.L.valid && bumpy_vision_edge_x_at_base_row(&res.L, &xl));
-        const int ok_r = (res.R.valid && bumpy_vision_edge_x_at_base_row(&res.R, &xr));
+        const int ok_l = (res.raw_L.valid && bumpy_vision_edge_x_at_base_row(&res.raw_L, &xl));
+        const int ok_r = (res.raw_R.valid && bumpy_vision_edge_x_at_base_row(&res.raw_R, &xr));
 
         if (ok_l && ok_r)
         {
@@ -591,10 +603,14 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
         }
 
         next.lateral_mm = (int16)bumpy_vision_lateral_filter(lateral_raw, &lat_freeze);
-        /* valid 只服务横向/边线（0 核出口修正门）：纯置信度驱动，与角度(hdg)解耦。
+        /* valid 只服务横向/边线（0 核出口修正门）：纯置信度驱动，与角度(hdg)解耦；
            lat_stable 值本身与置信度无关（HOLD 保持、不随 conf 清零）；conf 耗尽才 valid=0。 */
         next.meas_valid = (s_lat_conf > 0U) ? 1U : 0U;
     }
+
+    /* 原始边线透出（仅渲染用，不进 IPC；raw 为单帧拟合，未时间验证） */
+    next.line_l = res.raw_L;
+    next.line_r = res.raw_R;
 
     g_bumpy_vision_output_write_busy = 1U;
     g_bumpy_vision_output = next;

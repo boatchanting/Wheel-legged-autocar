@@ -433,19 +433,23 @@ static int fit_outer(const int16_t *xs, const int16_t *ys, int n, bumpy_line_t *
     return 1;
 }
 
-/* 帧航向角: 线性 CC 方向角加权圆均值 (权重=像素数), 返回 0 无线性域 */
+/* 帧航向角: 线性 CC 方向角加权圆均值 (权重=像素数),
+   返回 0 = 线性域不足 BP_MIN_HDG_LINES 条 或 无有效方向（2026-08-18 增加最少条数判定） */
 static int frame_heading(int ncc, float *hdg_out)
 {
     float ys = 0, xs = 0;
-    int ci;
+    int ci, n_line = 0;
     for (ci = 1; ci <= ncc; ci++) {
         if (!cclin[ci]) continue;
+        n_line++;
         {
             float a2 = 2.0f * ccang[ci] * 0.01745329251f;
             ys += ccn[ci] * sinf(a2);
             xs += ccn[ci] * cosf(a2);
         }
     }
+    /* 至少检出 BP_MIN_HDG_LINES 条横向线才算"有颠簸条纹"，防单条噪声误判 */
+    if (n_line < (int)BP_MIN_HDG_LINES) return 0;
     if (fabsf(xs) < 1e-9f && fabsf(ys) < 1e-9f) return 0;
     *hdg_out = 0.5f * atan2f(ys, xs) * 57.295779513f;
     return 1;
@@ -580,6 +584,10 @@ void bumpy_pipeline_frame(bumpy_pipeline_t *s, const uint8_t *img, bumpy_frame_r
         STAGE_ACC(st_fit, s0);
 #endif
     }
+
+    /* ④.5 原始单帧边线透出（未时间验证，渲染与横向观测用，2026-08-18） */
+    if (lptr) { out->raw_L = *lptr; out->raw_L.valid = 1; }
+    if (rptr) { out->raw_R = *rptr; out->raw_R.valid = 1; }
 
     /* ⑤ 帧航向角 + 夹角门控 (hdg 直出到 out: 条纹倾斜角与边线成败无关, 2026-08-17 引出) */
     if (!frame_heading(ncc, &hdg)) { lptr = NULL; rptr = NULL; }

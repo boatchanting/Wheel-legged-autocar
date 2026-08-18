@@ -837,6 +837,33 @@ static void draw_bumpy_r_value(int x, int y, uint16 value, uint8 color)
 }
 #endif
 
+#if BUMPY_USE_NEW_PIPELINE
+/* 将 bumpy_line_t（ang/cx/cy）画成贯穿压缩图(94×60)的直线（原始边线渲染用，2026-08-18） */
+static void draw_bumpy_line_full(const volatile bumpy_line_t *line, uint8 color)
+{
+    const float arad = line->ang * 0.01745329251f;
+    const float ux = cosf(arad);
+    const float uy = sinf(arad);
+
+    if (fabsf(uy) > 0.0872f)      /* 非近水平：以 y 为自变量，贯穿全高 */
+    {
+        const float y0 = 0.0f;
+        const float y1 = (float)(BUMPY_H - 1);
+        const int x0 = (int)(line->cx + (y0 - line->cy) * ux / uy + 0.5f);
+        const int x1 = (int)(line->cx + (y1 - line->cy) * ux / uy + 0.5f);
+        draw_line_on_image(x0, (int)y0, x1, (int)y1, color);
+    }
+    else                            /* 近水平：以 x 为自变量，贯穿全宽 */
+    {
+        const float x0 = 0.0f;
+        const float x1 = (float)(BUMPY_W - 1);
+        const int y0 = (int)(line->cy + (x0 - line->cx) * uy / ux + 0.5f);
+        const int y1 = (int)(line->cy + (x1 - line->cx) * uy / ux + 0.5f);
+        draw_line_on_image((int)x0, y0, (int)x1, y1, color);
+    }
+}
+#endif
+
 void render_bumpy_vision_to_image(void)
 {
     const volatile bumpy_vision_output_t *bumpy_out = &g_bumpy_vision_output;
@@ -856,26 +883,77 @@ void render_bumpy_vision_to_image(void)
     }
 #endif
 
-    if (bumpy_out->bumpy_detected != 0U)
+#if BUMPY_USE_NEW_PIPELINE
+    /* 原始单帧边线渲染（不增稳，纯显示 L/R 拟合线，2026-08-18） */
+    if (bumpy_out->line_l.valid != 0)
     {
-        const int center_x = PVC_IMAGE_W / 2;
-        const int center_y = PVC_IMAGE_H / 2;
-        const int line_length = (PVC_IMAGE_H * 46) / 100;
-        const int x0 = clamp_int_to_range(center_x - (int)(bumpy_out->direction_x * line_length),
-                                          0,
-                                          PVC_IMAGE_W - 1);
-        const int y0 = clamp_int_to_range(center_y - (int)(bumpy_out->direction_y * line_length),
-                                          0,
-                                          PVC_IMAGE_H - 1);
-        const int x1 = clamp_int_to_range(center_x + (int)(bumpy_out->direction_x * line_length),
-                                          0,
-                                          PVC_IMAGE_W - 1);
-        const int y1 = clamp_int_to_range(center_y + (int)(bumpy_out->direction_y * line_length),
-                                          0,
-                                          PVC_IMAGE_H - 1);
-
-        draw_line_on_image(x0, y0, x1, y1, 0U);
+        draw_bumpy_line_full(&bumpy_out->line_l, 0U);
     }
+    if (bumpy_out->line_r.valid != 0)
+    {
+        draw_bumpy_line_full(&bumpy_out->line_r, 0U);
+    }
+
+    /* 中线渲染（增稳接口 lateral_mm）：y=40 反查 IPM 得 mid_x，沿法向画线
+       位置 = lateral_mm 在基准行 y=40 反查 IPM 得到中线像素 mid_x；
+       朝向 = 条纹法向（垂直于横线，(−sin hdg, cos hdg)），即车应前进的方向 */
+    {
+        const int row = BUMPY_IPM_BASE_ROW;      /* 40 */
+        const int16_t lat_mm = bumpy_out->lateral_mm;
+        const int16_t target_x_mm = (int16_t)(-lat_mm);  /* 车身偏右为正 → 中线在左=负物理 x */
+        int mid_x = PVC_IMAGE_W / 2;
+        int best_diff = 0x7FFFFFFF;
+        int x;
+
+        /* 在基准行反查 IPM：物理 x 最接近目标（车身中心+中线偏差）的像素 */
+        for (x = 0; x < IPM_IMG_WIDTH; x++)
+        {
+            const IPM_Point_t p = IPM_GetPhysicalCoord((uint8_t)x, (uint8_t)row);
+            int diff;
+            if (!p.is_valid)
+            {
+                continue;
+            }
+            diff = (int)p.x_mm - (int)target_x_mm;
+            if (diff < 0)
+            {
+                diff = -diff;
+            }
+            if (diff < best_diff)
+            {
+                best_diff = diff;
+                mid_x = x;
+            }
+        }
+
+        /* 法向 = 垂直于条纹的方向 (−sin hdg, cos hdg) = (−direction_y, direction_x)：
+           沿"朝向前进"的朝向角过 (mid_x,row) 画线（黑，2026-08-18） */
+        {
+            const float nx = -bumpy_out->direction_y;
+            const float ny =  bumpy_out->direction_x;
+            if (fabsf(ny) > 0.0872f)             /* 以 y 贯穿全高 */
+            {
+                const int y0 = 0;
+                const int y1 = BUMPY_H - 1;
+                const int x0 = (int)(mid_x + (float)(y0 - row) * nx / ny + 0.5f);
+                const int x1 = (int)(mid_x + (float)(y1 - row) * nx / ny + 0.5f);
+                draw_line_on_image(x0, y0, x1, y1, 0U);
+            }
+            else                                /* 近垂直退化：以 x 贯穿全宽 */
+            {
+                const int x0 = 0;
+                const int x1 = BUMPY_W - 1;
+                const int y0 = (int)(row + (float)(x0 - mid_x) * ny / nx + 0.5f);
+                const int y1 = (int)(row + (float)(x1 - mid_x) * ny / nx + 0.5f);
+                draw_line_on_image(x0, y0, x1, y1, 0U);
+            }
+        }
+
+        /* 基准行 y=40 处画横杠 + 十字，标注中线锚点 */
+        draw_hline_on_image(mid_x - 4, mid_x + 4, row, 0U);
+        draw_cross_on_image(mid_x, row, 2, 0U);
+    }
+#endif
 
     return;
 

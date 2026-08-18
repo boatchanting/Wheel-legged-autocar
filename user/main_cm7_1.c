@@ -302,7 +302,8 @@ int main(void)
                 }
                 #endif
             }
-            if(VisionIpc_Core1_ShouldRunBumpy()) //  ，测试时用 1 0
+            //if(VisionIpc_Core1_ShouldRunBumpy()) //  ，测试时用 1 0
+            if(1) // 颠簸路段视觉检测 (测试新管线, 2026-08-17)
             {
 #if BUMPY_USE_NEW_PIPELINE
                 bumpy_vision_process_camera_frame(compressed_image_copy[0]);   /* 新管线：94×60 压缩图 */
