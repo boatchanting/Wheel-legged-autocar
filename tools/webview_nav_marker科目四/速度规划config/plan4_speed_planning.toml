@@ -1,0 +1,97 @@
+# Plan4 分段轨迹与速度规划配置
+#
+# 本文件由 generate_plan4_smooth_path_考虑响应延迟_丝滑轨迹.py 默认读取。
+# 修改后直接重新运行脚本即可生效，不需要改 Python 代码。
+# 数值单位：距离 mm，速度 mm/s，加速度 mm/s^2，航向角速度 rad/s。
+# TOML 中 # 后面的文字都是注释，可自由保留或删除。
+
+[turnaround_stake]
+# 预设 4 使用的桩桶物理半径。实际禁入半径 = radius_mm + clearance_mm。
+radius_mm = 400.0
+# 车辆外廓、定位误差和安全余量。
+clearance_mm = 250.0
+
+# 每类配对状态机的参数。入口类型与点表 point_type 对应：
+# 3=三级跳，4=单边桥，5=颠簸路，2=坡道。
+# entry_corridor_mm / exit_corridor_mm 是状态机入口前和出口后的强制直线长度。
+[task."3"]
+approach_distance_mm = 4000.0
+entry_speed_command = 320.0
+state_speed_command = 320.0
+exit_speed_command = 320.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+[task."4"]
+approach_distance_mm = 500.0
+entry_speed_command = 300.0
+state_speed_command = 300.0
+exit_speed_command = 300.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+[task."5"]
+approach_distance_mm = 500.0
+entry_speed_command = 500.0
+state_speed_command = 500.0
+exit_speed_command = 500.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+[task."2"]
+approach_distance_mm = 500.0
+entry_speed_command = 500.0
+state_speed_command = 500.0
+exit_speed_command = 500.0
+entry_corridor_mm = 600.0
+exit_corridor_mm = 600.0
+
+# 所有未单独列出的普通轨迹段继承本节。每段的速度包络都会分别使用这些值。
+[trajectory.default]
+# 路径允许的绝对最高物理速度。
+path_speed_max_mm_s = 8000.0
+# enable_finish_sprint=true 时，当前轨迹段最后一个显著弯道之后允许使用的速度。
+sprint_speed_mm_s = 8000.0
+enable_finish_sprint = true
+# 前后向速度包络的纵向能力；相邻轨迹段交界处自动取较保守的一侧。
+max_accel_mm_s2 = 10500.0
+max_decel_mm_s2 = 10500.0
+# 由曲率产生的横向加速度限速。
+max_lateral_accel_mm_s2 = 4000.0
+# 由曲率产生的航向角速度限速。
+max_path_yaw_rate_rad_s = 2.8
+# 将 target_speed 指令换算为物理速度的系数；通常整车保持同一个标定值。
+speed_to_mm_s = 4.79
+# 曲率绝对值低于该值时按直线处理，避免数值噪声造成无意义限速。
+curvature_eps = 0.000001
+
+# 以下键对应 nav_mark_points_20260818_122526.csv 的轨迹段边界。
+# 键格式为“前一状态机退出点序号->后一状态机入口点序号”。
+# start 表示路线起点，end 表示路线终点。只填写需要区别于 default 的字段即可。
+
+[trajectory."start->0"]
+# 示例：路线起点到三级跳入口。此段目前继承 default，以下字段可直接取消注释并修改。
+# path_speed_max_mm_s = 3000.0
+
+[trajectory."1->7"]
+# 三级跳退出(1) -> 单边桥进入(7)
+
+[trajectory."8->20"]
+# 单边桥退出(8) -> 颠簸路进入(20)。选择预设 4 时，此段同时用于绕掉头桩的最速曲线搜索。
+# 若想让绕桩更稳，可降低 max_lateral_accel_mm_s2 或 max_path_yaw_rate_rad_s。
+# 取消下一行的注释即可只降低本段最高速度；未写出的字段仍继承 trajectory.default。
+# path_speed_max_mm_s = 3500.0
+# max_lateral_accel_mm_s2 = 2500.0
+# max_path_yaw_rate_rad_s = 1.8
+
+[trajectory."21->22"]
+# 颠簸路退出(21) -> 第一个圆环入口(22)
+
+[trajectory."22->23"]
+# 第一个圆环入口(22) -> 第二个圆环入口(23)
+
+[trajectory."23->25"]
+# 第二个圆环入口(23) -> 坡道入口(25)
+
+[trajectory."26->end"]
+# 坡道退出(26) -> 路线终点

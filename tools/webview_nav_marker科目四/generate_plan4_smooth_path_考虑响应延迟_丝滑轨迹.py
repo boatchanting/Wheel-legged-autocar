@@ -20,6 +20,7 @@ import argparse
 import csv
 import math
 import sys
+import tomllib
 from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
@@ -32,6 +33,7 @@ from datetime import datetime
 SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_HEADER = PROJECT_ROOT / "code" / "navigation" / "nav_replay_route_table.h"
+DEFAULT_PLANNING_CONFIG = SCRIPT_DIR / "速度规划config" / "plan4_speed_planning.toml"
 SAMPLE_STEP_MM = 50.0
 # 先以更密的几何点生成路径，再统一按弧长重采样，避免最终路表点距影响曲率估计。
 DENSE_SAMPLE_STEP_MM = 5.0
@@ -232,6 +234,142 @@ class TransitionPlan:
     target_entry_speed_command: Optional[float] = None
     stake: Optional[Marker] = None
     speed_profile: SpeedPlanningProfile = DEFAULT_TRAJECTORY_SPEED_PROFILE
+
+
+@dataclass(frozen=True)
+class PlanningConfiguration:
+    """从 TOML 文件读取的、仅作用于本次生成的完整规划配置。"""
+
+    task_profiles: dict[int, TaskSpeedProfile]
+    default_trajectory_profile: SpeedPlanningProfile
+    trajectory_overrides: dict[str, SpeedPlanningProfile]
+    turnaround_stake_radius_mm: float
+    turnaround_stake_clearance_mm: float
+
+
+def trajectory_config_key(trajectory: TrajectorySegment) -> str:
+    """生成 TOML 中稳定、易读的轨迹段键，例如 ``8->20`` 或 ``start->0``。"""
+    source = "start" if trajectory.source_exit_order is None else str(trajectory.source_exit_order)
+    target = "end" if trajectory.target_entry_order is None else str(trajectory.target_entry_order)
+    return f"{source}->{target}"
+
+
+def validate_speed_profile(profile: SpeedPlanningProfile, context: str) -> None:
+    if (
+        profile.path_speed_max_mm_s <= 0.0
+        or profile.sprint_speed_mm_s <= 0.0
+        or profile.max_accel_mm_s2 <= 0.0
+        or profile.max_decel_mm_s2 <= 0.0
+        or profile.max_lateral_accel_mm_s2 <= 0.0
+        or profile.max_path_yaw_rate_rad_s <= 0.0
+        or profile.speed_to_mm_s <= 0.0
+        or profile.curvature_eps <= 0.0
+    ):
+        raise ValueError(f"{context} 中的速度规划数值必须为正数。")
+
+
+def overlay_speed_profile(
+    base: SpeedPlanningProfile, values: dict[str, object], context: str
+) -> SpeedPlanningProfile:
+    allowed = set(SpeedPlanningProfile.__dataclass_fields__)
+    unknown = set(values) - allowed
+    if unknown:
+        raise ValueError(f"{context} 包含不支持的速度参数: {', '.join(sorted(unknown))}")
+    try:
+        profile = replace(base, **values)
+    except TypeError as exc:
+        raise ValueError(f"{context} 的速度参数类型无效。") from exc
+    if not isinstance(profile.enable_finish_sprint, bool):
+        raise ValueError(f"{context}.enable_finish_sprint 必须为 true 或 false。")
+    validate_speed_profile(profile, context)
+    return profile
+
+
+def overlay_task_profile(
+    base: TaskSpeedProfile, values: dict[str, object], context: str
+) -> TaskSpeedProfile:
+    allowed = set(TaskSpeedProfile.__dataclass_fields__)
+    unknown = set(values) - allowed
+    if unknown:
+        raise ValueError(f"{context} 包含不支持的状态机参数: {', '.join(sorted(unknown))}")
+    try:
+        profile = replace(base, **values)
+    except TypeError as exc:
+        raise ValueError(f"{context} 的状态机参数类型无效。") from exc
+    if any(float(getattr(profile, name)) <= 0.0 for name in TaskSpeedProfile.__dataclass_fields__):
+        raise ValueError(f"{context} 中的状态机参数必须为正数。")
+    return profile
+
+
+def load_planning_configuration(config_path: Path) -> PlanningConfiguration:
+    """读取带注释 TOML，并将缺省项回退到代码内的默认档案。"""
+    if not config_path.is_file():
+        raise FileNotFoundError(f"找不到速度规划配置文件: {config_path}")
+    try:
+        with config_path.open("rb") as config_file:
+            raw = tomllib.load(config_file)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"速度规划配置 TOML 格式错误: {exc}") from exc
+
+    task_profiles = dict(TASK_SPEED_PROFILES)
+    raw_tasks = raw.get("task", {})
+    if not isinstance(raw_tasks, dict):
+        raise ValueError("[task] 必须是 TOML 表。")
+    for key, values in raw_tasks.items():
+        try:
+            point_type = int(key)
+        except ValueError as exc:
+            raise ValueError(f"[task] 的键必须是状态机入口类型，例如 '3'。") from exc
+        if point_type not in task_profiles or not isinstance(values, dict):
+            raise ValueError(f"[task.{key}] 不是可配置的配对状态机。")
+        task_profiles[point_type] = overlay_task_profile(
+            task_profiles[point_type], values, f"[task.{key}]"
+        )
+
+    raw_trajectory = raw.get("trajectory", {})
+    if not isinstance(raw_trajectory, dict):
+        raise ValueError("[trajectory] 必须是 TOML 表。")
+    raw_default = raw_trajectory.get("default", {})
+    if not isinstance(raw_default, dict):
+        raise ValueError("[trajectory.default] 必须是 TOML 表。")
+    default_profile = overlay_speed_profile(
+        DEFAULT_TRAJECTORY_SPEED_PROFILE, raw_default, "[trajectory.default]"
+    )
+    overrides: dict[str, SpeedPlanningProfile] = {}
+    for key, values in raw_trajectory.items():
+        if key == "default":
+            continue
+        if not isinstance(values, dict):
+            raise ValueError(f"[trajectory.{key}] 必须是 TOML 表。")
+        overrides[key] = overlay_speed_profile(default_profile, values, f"[trajectory.{key}]")
+
+    raw_turnaround = raw.get("turnaround_stake", {})
+    if not isinstance(raw_turnaround, dict):
+        raise ValueError("[turnaround_stake] 必须是 TOML 表。")
+    allowed_turnaround = {"radius_mm", "clearance_mm"}
+    unknown_turnaround = set(raw_turnaround) - allowed_turnaround
+    if unknown_turnaround:
+        raise ValueError(f"[turnaround_stake] 包含不支持的参数: {', '.join(sorted(unknown_turnaround))}")
+    radius = float(raw_turnaround.get("radius_mm", TURNAROUND_STAKE_RADIUS_MM))
+    clearance = float(raw_turnaround.get("clearance_mm", TURNAROUND_STAKE_CLEARANCE_MM))
+    if radius <= 0.0 or clearance < 0.0:
+        raise ValueError("[turnaround_stake] radius_mm 必须为正，clearance_mm 不能为负。")
+    return PlanningConfiguration(task_profiles, default_profile, overrides, radius, clearance)
+
+
+def apply_configuration_to_trajectories(
+    trajectories: list[TrajectorySegment], configuration: PlanningConfiguration
+) -> list[TrajectorySegment]:
+    """用 ``trajectory.<起点->终点>`` 覆盖对应轨迹段，未匹配项继承 default。"""
+    return [
+        replace(
+            trajectory,
+            speed_profile=configuration.trajectory_overrides.get(
+                trajectory_config_key(trajectory), configuration.default_trajectory_profile
+            ),
+        )
+        for trajectory in trajectories
+    ]
 
 
 def normalize_key(value: str) -> str:
@@ -590,7 +728,11 @@ def print_segment_plan(
     print("  轨迹起点")
     start_trajectory = trajectory_by_source.get(None)
     if start_trajectory is not None:
-        print(f"  -> 轨迹段[{TRANSITION_PRESET_LABEL[start_trajectory.preset]}]")
+        print(
+            f"  -> 轨迹段[{trajectory_config_key(start_trajectory)} | "
+            f"{TRANSITION_PRESET_LABEL[start_trajectory.preset]} | "
+            f"最高速度={start_trajectory.speed_profile.path_speed_max_mm_s:.0f}]"
+        )
     for state in state_segments:
         print(
             f"  -> {TYPE_LABEL[state.entry_type]}(v={describe_speed(state.entry_speed_command)})"
@@ -599,7 +741,9 @@ def print_segment_plan(
         trajectory = trajectory_by_source.get(state.exit_order)
         if trajectory is not None:
             print(
-                f"  -> 轨迹段[{TRANSITION_PRESET_LABEL[trajectory.preset]}]"
+                f"  -> 轨迹段[{trajectory_config_key(trajectory)} | "
+                f"{TRANSITION_PRESET_LABEL[trajectory.preset]} | "
+                f"最高速度={trajectory.speed_profile.path_speed_max_mm_s:.0f}]"
                 f" (v={describe_speed(trajectory.source_exit_speed_command)}"
                 f" -> v={describe_speed(trajectory.target_entry_speed_command)})"
             )
@@ -1528,10 +1672,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render", type=Path, help="输出 PNG，默认与输入同目录并追加 _planned")
     parser.add_argument("--header", type=Path, default=DEFAULT_HEADER, help="C 路表输出位置（默认 code/navigation/nav_replay_route_table.h）")
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_PLANNING_CONFIG,
+        help="速度规划 TOML 配置文件（默认 tools/webview_nav_marker科目四/速度规划config/plan4_speed_planning.toml）",
+    )
+    parser.add_argument(
         "--stairs-approach-distance-mm",
         type=float,
-        default=TASK_SPEED_PROFILES[3].approach_distance_mm,
-        help="three-step approach speed-cap distance in mm (default: 4000)",
+        default=None,
+        help="可选：覆盖配置文件中 task.3.approach_distance_mm",
     )
     parser.add_argument(
         "--non-interactive-transitions",
@@ -1546,14 +1696,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--turnaround-stake-radius-mm",
         type=float,
-        default=TURNAROUND_STAKE_RADIUS_MM,
-        help="预设4的掉头桩桶半径，单位 mm（默认 500）",
+        default=None,
+        help="可选：覆盖配置文件中 turnaround_stake.radius_mm",
     )
     parser.add_argument(
         "--turnaround-stake-clearance-mm",
         type=float,
-        default=TURNAROUND_STAKE_CLEARANCE_MM,
-        help="预设4在桩桶半径外额外保留的安全裕量，单位 mm（默认 250）",
+        default=None,
+        help="可选：覆盖配置文件中 turnaround_stake.clearance_mm",
     )
     parser.add_argument(
         "--speed-response-delay-s",
@@ -1566,13 +1716,13 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    if args.stairs_approach_distance_mm < 0.0:
+    if args.stairs_approach_distance_mm is not None and args.stairs_approach_distance_mm < 0.0:
         raise ValueError("Three-step approach distance must not be negative.")
     if args.speed_response_delay_s < 0.0:
         raise ValueError("Speed response delay must not be negative.")
-    if args.turnaround_stake_radius_mm <= 0.0:
+    if args.turnaround_stake_radius_mm is not None and args.turnaround_stake_radius_mm <= 0.0:
         raise ValueError("掉头桩半径必须为正数。")
-    if args.turnaround_stake_clearance_mm < 0.0:
+    if args.turnaround_stake_clearance_mm is not None and args.turnaround_stake_clearance_mm < 0.0:
         raise ValueError("掉头桩安全裕量不能为负数。")
     source = args.input.resolve() if args.input else find_latest_marker_csv(SCRIPT_DIR)
     if not source.is_file():
@@ -1580,11 +1730,23 @@ def main() -> int:
     csv_output = args.output_csv or source.with_name(f"{source.stem}_planned.csv")
     render_output = args.render or source.with_name(f"{source.stem}_planned.png")
 
-    # 每次运行从默认档案复制，交互调参只影响本次生成，不会修改脚本源码。
-    task_speed_profiles = dict(TASK_SPEED_PROFILES)
-    # 兼容旧命令行参数，同时使三级跳进场距离真正属于它的状态机速度档案。
-    task_speed_profiles[3] = replace(
-        task_speed_profiles[3], approach_distance_mm=args.stairs_approach_distance_mm
+    configuration_path = args.config.resolve()
+    configuration = load_planning_configuration(configuration_path)
+    # 配置文件是默认来源；命令行参数仅在用户显式提供时覆盖相应配置。
+    task_speed_profiles = dict(configuration.task_profiles)
+    if args.stairs_approach_distance_mm is not None:
+        task_speed_profiles[3] = replace(
+            task_speed_profiles[3], approach_distance_mm=args.stairs_approach_distance_mm
+        )
+    turnaround_stake_radius_mm = (
+        args.turnaround_stake_radius_mm
+        if args.turnaround_stake_radius_mm is not None
+        else configuration.turnaround_stake_radius_mm
+    )
+    turnaround_stake_clearance_mm = (
+        args.turnaround_stake_clearance_mm
+        if args.turnaround_stake_clearance_mm is not None
+        else configuration.turnaround_stake_clearance_mm
     )
 
     markers, start_heading = read_markers(source)
@@ -1596,6 +1758,7 @@ def main() -> int:
     trajectory_segments, _ = choose_trajectory_segments(
         state_segments, interactive=not args.non_interactive_transitions
     )
+    trajectory_segments = apply_configuration_to_trajectories(trajectory_segments, configuration)
     if args.configure_segment_parameters:
         task_speed_profiles, trajectory_segments = configure_segment_parameters(
             state_segments, trajectory_segments, task_speed_profiles
@@ -1609,8 +1772,8 @@ def main() -> int:
         markers,
         transition_plans,
         task_speed_profiles,
-        args.turnaround_stake_radius_mm,
-        args.turnaround_stake_clearance_mm,
+        turnaround_stake_radius_mm,
+        turnaround_stake_clearance_mm,
     )
     s, yaw, curvature = calculate_yaw_and_curvature(samples)
     sample_profiles = build_sample_speed_profiles(samples, trajectory_segments)
@@ -1653,6 +1816,7 @@ def main() -> int:
         for entry_index in final_pairs
     )
     print(f"输入: {source}")
+    print(f"速度规划配置: {configuration_path}")
     print(f"输出路径: {csv_output} ({len(samples)} 点, 总长 {s[-1]:.1f} mm)")
     print(f"采样间距: {effective_sample_step_mm:.1f} mm（上限 {NAV_ROUTE_MAX_POINTS} 点）")
     print(f"目标速度范围: {output_target_speed.min():.1f} ~ {output_target_speed.max():.1f}（负数为前进指令）")
