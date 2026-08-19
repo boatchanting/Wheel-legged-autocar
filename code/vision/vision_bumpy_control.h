@@ -31,8 +31,8 @@ extern "C" {
 #define VISION_BUMPY_PID_KI                    (0.03f)
 #define VISION_BUMPY_PID_KD                    (0.05f)
 #define VISION_BUMPY_PID_I_LIMIT               (12.0f)
-#define VISION_BUMPY_ENTRY_DETECT_FRAMES        (3U)     // 连续 5 个新视觉帧检测到颠簸，确认进入路段
-#define VISION_BUMPY_EXIT_MISS_FRAMES          (3U)     // 连续 5 个新视觉帧未检测到颠簸，确认视觉出口
+#define VISION_BUMPY_ENTRY_DETECT_FRAMES        (5U)     // 连续 5 个新视觉帧检测到颠簸，确认进入路段
+#define VISION_BUMPY_EXIT_MISS_FRAMES          (5U)     // 连续 5 个新视觉帧未检测到颠簸，确认视觉出口
 
 /* 枚举类型定义区 */
 /**

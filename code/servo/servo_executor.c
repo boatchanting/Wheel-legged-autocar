@@ -103,8 +103,9 @@ static void servo_executor_get_runtime_limits(int32 *runtime_acc_limit, int32 *r
         if (dec_runtime < bridge_params.servo_dec_bridge) dec_runtime = bridge_params.servo_dec_bridge;
     }
 
-    // 【颠簸路段防振荡保障】：颠簸期间限制单步最大变化量不超过 20 duty/ms
-    if (BumpyRoad_Is_Active() != 0U)
+    // 【颠簸路段防振荡保障】：仅在物理确认上坎(on_bump == 1)后，限制单步最大变化量不超过 20 duty/ms
+    // 入口减速阶段保持正常刹车动作限幅以快速降速
+    if (BumpyRoad_IsOnBump() != 0U)
     {
         if (acc_runtime > 20) acc_runtime = 20;
         if (dec_runtime > 20) dec_runtime = 20;
