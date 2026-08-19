@@ -29,9 +29,9 @@
 extern "C" {
 #endif
 
-/* img: BUMPY_W*BUMPY_H uint8 行优先; gx/gy: BUMPY_PIX int32 行优先输出;
-   scratch: 2*BUMPY_PIX int32 工作区 (水平 pass 全帧中间结果 gxh/gyh) */
-void bumpy_conv7(const uint8_t *img, int32_t *gx, int32_t *gy, int32_t *scratch);
+/* img: BUMPY_W*BUMPY_H uint8 行优先; gy: BUMPY_PIX int32 行优先输出 (仅垂直梯度, v3 gy-only);
+   scratch: 1*BUMPY_PIX int32 工作区 (水平 pass 全帧中间结果 gyh) */
+void bumpy_conv7_gy(const uint8_t *img, int32_t *gy, int32_t *scratch);
 
 #ifdef __cplusplus
 }

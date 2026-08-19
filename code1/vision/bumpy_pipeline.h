@@ -43,28 +43,26 @@ extern "C" {
 unsigned int bp_stage_cyc(void);
 #endif
 
-/* ---- 阈值宏 (与 Python 参考一致) ---- */
-#define BP_MAG_PCT        85.0f   /* 强梯度分位 */
-#define BP_VERT_RELAX     0.88f   /* 垂直方向阈值放松系数 (平面区域) */
-#define BP_HORIZ_CAP      0.60f   /* 水平(切向)分量上限系数 */
-#define BP_DIR_TOL        20.0f   /* 横向条纹角度容差 (°) */
+/* ---- 阈值宏 (v3, 2026-08-19) ---- */
+/* 阶段② 阈值 (亮度归一双阈值带符号, 数据依据: lat_study/卷积核评估与阈值锚定证明报告.md):
+   T = BP_NORM_K·mean(gray), k∈[2500,3300] 免调参窗口 (曝光严格消去);
+   判定: gy ≥ +T → horiz=1 (正沿); gy ≤ −T → horiz=2 (负沿); 其余 0.
+   取消绝对值: 两个阈值正好对应两种符号连通域, 天然拆符号 (ccl8 等值邻接). */
+#ifndef BP_NORM_K
+#define BP_NORM_K 2500
+#endif
+#ifndef BP_HDG_STD_MAX
+#define BP_HDG_STD_MAX    2.0f    /* 帧内条纹倾角散布门限 (°): 超过则本帧 hdg 不可信 */
+#endif
 #define BP_MIN_CC_PIX     30      /* 连通域最小像素 */
 #define BP_MIN_CC_W       30      /* 连通域最小宽度 */
 #define BP_EDGE_M         3       /* 外点硬边界剔除 */
 #define BP_LINEAR_SIGMA   1.5f    /* 域线性度门槛 (rms) */
 #define BP_ALONG_GAP      40.0f   /* 跨域剔除: 沿条带方向断裂间隙容差 */
 #define BP_CROSS_TOL      2.0f    /* 跨域剔除: 垂直条带方向同带容差 */
-#define BP_RANSAC_TOL     3.0f    /* RANSAC 绝对容差 (px) */
-#define BP_RANSAC_ITERS   300     /* RANSAC 迭代数 */
-#define BP_MIN_OUT_N      5       /* 显著性: 内点至少 5 */
-#define BP_MIN_OUT_SPAN   8.0f    /* 显著性: 内点 x 或 y 跨度至少 8px */
-#define BP_MAX_HDG_DIFF   70.0f   /* 夹角门控: 边线与航向角差上限 */
-#define BP_MIN_STABLE     3       /* 时间验证: 连续帧数 */
-#define BP_MAX_ANG_JMP    8.0f    /* 时间验证: 角度跳变上限 */
-#define BP_MAX_POS_JMP    5.0f    /* 时间验证: 中心位移上限 */
-#define BP_MIN_HDG_LINES  3       /* 帧航向角(hdg_valid)有效最少横向条纹数：检出少于 N 条即视为"无颠簸条纹"（2026-08-18 新增，可调） */
+#define BP_MIN_HDG_LINES  2       /* 帧航向角(hdg_valid)有效最少横向条纹数：拒绝单线（方差+个数双门限，2026-08-19 v3） */
 
-/* ---- 单线结果 ---- */
+/* ---- 单线结果 (保留类型定义, v3 边线不再用: 边线=IPM 后物理 x 主带均值) ---- */
 typedef struct {
     int    valid;
     float  ang;      /* [0,180) 条纹方向角 */
@@ -73,28 +71,32 @@ typedef struct {
 } bumpy_line_t;
 
 /* ---- 单帧结果 ---- */
+#define BP_LIN_MAX 16   /* 导出的横向线性连通域数上限 (渲染用, 2026-08-19) */
+#define BP_OUT_MAX 48   /* 每侧导出的外点(像素)数上限 (v3: 供 bumpy_vision 逐点 IPM → 物理 x 主带提取, 2026-08-19) */
 typedef struct {
-    bumpy_line_t L, R;
-    bumpy_line_t raw_L, raw_R;  /* 单帧 RANSAC 拟合原始边线（未时间验证；渲染/横向观测用，2026-08-18） */
-    int    hdg_valid;  /* 帧航向角(条纹倾斜角)有效：检出 ≥BP_MIN_HDG_LINES 条横向线性连通域即 1，与边线成败无关 */
-    float  hdg;        /* 帧航向角 [deg]，frame_heading 加权圆均值直出（2026-08-17 引出） */
+    int    hdg_valid;  /* 帧航向角(条纹倾斜角)有效：合规条纹 ≥BP_MIN_HDG_LINES(2) 且 方差≤BP_HDG_STD_MAX */
+    float  hdg;        /* 帧航向角 [deg]，frame_heading 加权圆均值直出 */
+    /* 左右外点像素集 (v3, 2026-08-19): 每合规线性 CC 的 x 极值 3 点 + 同符号跨域剔除;
+       由 bumpy_vision 逐点 IPM → 物理 x 主带 → 主带内点均值 = 边线物理 x (替代 RANSAC 拟合+基准行) */
+    uint8_t lp_n, rp_n;
+    int16_t lp_x[BP_OUT_MAX], lp_y[BP_OUT_MAX];
+    int16_t rp_x[BP_OUT_MAX], rp_y[BP_OUT_MAX];
+    /* 横向线性连通域列表 (条纹, 渲染用, 2026-08-19): 质心 + PCA 方向角 + 像素数 */
+    uint8_t lin_n;
+    float   lin_cx[BP_LIN_MAX], lin_cy[BP_LIN_MAX], lin_ang[BP_LIN_MAX];
+    int16_t lin_pix[BP_LIN_MAX];
 } bumpy_frame_result_t;
 
-/* ---- 跨帧状态 (按视频隔离; SRAM 精简版) ---- */
+/* ---- 跨帧状态 (按视频隔离; SRAM 精简版, v3 无时间验证历史) ---- */
 typedef struct {
-    /* 时间验证历史 */
-    int    hL_n;  float hL_a[BP_MIN_STABLE]; float hL_x[BP_MIN_STABLE]; float hL_y[BP_MIN_STABLE];
-    int    hR_n;  float hR_a[BP_MIN_STABLE]; float hR_x[BP_MIN_STABLE]; float hR_y[BP_MIN_STABLE];
-    /* 工作缓冲 (单帧, 阶段间时分复用, 互不重迭, 详见 bumpy_pipeline.c 顶部):
-       gx   : ①② Gx            → ③④ CCL 标号 labels (int32 别名)
-       gy   : ①② Gy            → ③ 并查集 uf (int32 别名, 用量 ≤ PIX/2+1 << PIX)
-       mag2 : ① 卷积水平中间结果 gxh/gyh (bumpy_conv7 scratch, 2×PIX int32)
-              → ② |G|² (就地 quickselect 分位, 之后不再需要)
-              → ③ CCL relab 根→新域映射 (int32 别名, 用前清零) */
-    int32_t gx[BUMPY_PIX];      /* Gx (卷积输出, 行优先) */
-    int32_t gy[BUMPY_PIX];      /* Gy */
-    uint64_t mag2[BUMPY_PIX];   /* |G|² + 复用区 (见上) */
-    uint8_t horiz[BUMPY_PIX];   /* 横向条纹掩膜 (CCL 输入; strong 为同循环局部量, 不落 RAM) */
+    /* 工作缓冲 (单帧, 阶段间时分复用, 互不重迭, 详见 bumpy_pipeline.c 顶部, v3 gy-only):
+       gy   : ① Gy (垂直 D 核输出)  → ② 双阈值判定 → ③④ 并查集 uf (int32 别名, 用量 ≤ PIX/2+1)
+       gyh  : ① 卷积水平中间结果 (bumpy_conv7_gy scratch, 1×PIX int32)
+              → ③④ 拆为 labels(uint16[PIX]) + relab(uint16[PIX]) (两段别名, 用前清零)
+       horiz: ② 双阈值带符号输出 (0/1/2) → ③ CCL 输入 (全程只读) */
+    int32_t gy[BUMPY_PIX];      /* Gy (卷积输出, 行优先) */
+    int32_t gyh[BUMPY_PIX];     /* 水平中间 gyh + ③④ labels/relab 复用区 (见上) */
+    uint8_t horiz[BUMPY_PIX];   /* 横向条纹掩膜 0/1/2 (CCL 输入; 无 strong 落 RAM) */
 } bumpy_pipeline_t;
 
 void bumpy_pipeline_init(bumpy_pipeline_t *s);

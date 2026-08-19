@@ -19,6 +19,10 @@ extern "C" {
 void conv7_horiz_row(const int16_t *p_row_pad, int32_t *p_gx_h, int32_t *p_gy_h,
                      uint32_t out_width);
 
+/* 水平 pass (gy-only, v3 2026-08-19): 只算 P 核 → Gy_h[94] int32
+   省一半 MAC; 与 conv7_horiz_row 的 Gy 遍逐位一致 */
+void conv7_horiz_row_gy(const int16_t *p_row_pad, int32_t *p_gy_h, uint32_t out_width);
+
 /* 垂直 pass: col_pad[66] int32 (已 reflect pad) → out[60] int32
  * use_d: 0 → P 核 (Gx_h 列 → Gx); 非0 → D 核 (Gy_h 列 → Gy) */
 void conv7_vert_col(const int32_t *p_col_pad, int32_t *p_out,

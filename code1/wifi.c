@@ -896,7 +896,10 @@ void render_bumpy_vision_to_image(void)
 
     /* 中线渲染（增稳接口 lateral_mm）：y=40 反查 IPM 得 mid_x，沿法向画线
        位置 = lateral_mm 在基准行 y=40 反查 IPM 得到中线像素 mid_x；
-       朝向 = 条纹法向（垂直于横线，(−sin hdg, cos hdg)），即车应前进的方向 */
+       朝向 = 条纹法向（垂直于横线，(−sin hdg, cos hdg)），即车应前进的方向。
+       v3 门控 (2026-08-19)：lateral_mm=0 = 本帧无横向观测（无线/间距自检失败），
+       不画中线/法向线/锚点，避免无观测时中心线乱跳。 */
+    if (bumpy_out->lateral_mm != 0)
     {
         const int row = BUMPY_IPM_BASE_ROW;      /* 40 */
         const int16_t lat_mm = bumpy_out->lateral_mm;

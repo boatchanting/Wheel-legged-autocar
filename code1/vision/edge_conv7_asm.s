@@ -45,6 +45,7 @@
     THUMB
 
     PUBLIC  conv7_horiz_row
+    PUBLIC  conv7_horiz_row_gy
     PUBLIC  conv7_vert_col
 
 
@@ -131,6 +132,55 @@ hgy_loop:
     SUB     r0, r0, #14
     SUBS    r12, r12, #1
     BNE     hgy_loop
+
+    ADD     sp, sp, #8
+    POP     {r4-r11, pc}
+
+
+; ============================================================================
+; conv7_horiz_row_gy  ——  水平 1D 卷积, 仅 Gy_h (P 核单遍, v3 gy-only)
+; ============================================================================
+; AAPCS:
+;   r0 = p_row_pad (const int16_t*, 100 个, 必须 4 字节对齐)
+;   r1 = p_gy_h    (int32_t*, 94 个输出)
+;   r2 = out_width (94)
+; 与 conv7_horiz_row 中的 Gy 遍 (P 核) 完全一致 → 逐位等价;
+; 仅省去 Gx 遍 (D 核) 的取指/乘加.
+; ============================================================================
+    ALIGNROM 3
+conv7_horiz_row_gy:
+    PUSH    {r4-r11, lr}        ; sp -= 36
+    STR     r2, [sp, #-4]!      ; 存 count → [sp+4]
+    STR     r0, [sp, #-4]!      ; 存 row_pad 起始 → [sp] = row_pad, [sp+4] = count
+
+    LDR     r0, [sp]            ; row_pad
+    LDR     r12, [sp, #4]       ; count
+    MOVW    r3,  #0x0002
+    MOVT    r3,  #0x000D        ; r3 = {13, 2}
+    MOVW    r4,  #0x0031
+    MOVT    r4,  #0x004B        ; r4 = {75, 49}
+    MOVW    r5,  #0x0031
+    MOVT    r5,  #0x000D        ; r5 = {13, 49}
+    MOVW    r6,  #0x0002
+    MOVT    r6,  #0x0000        ; r6 = {0, 2}
+
+    ALIGNROM 3
+hgy2_loop:
+    LDR     r7, [r0], #4        ; r7  = {p[i+1], p[i]}
+    LDR     r8, [r0], #4        ; r8  = {p[i+3], p[i+2]}
+    LDR     r9, [r0], #4        ; r9  = {p[i+5], p[i+4]}
+    LDR     r10, [r0], #4       ; r10 = {p[i+7], p[i+6]}
+
+    MOVS    r11, #0
+    SMLAD   r11, r7,  r3, r11   ; Gy += p[i]·2 + p[i+1]·13
+    SMLAD   r11, r8,  r4, r11   ; Gy += p[i+2]·49 + p[i+3]·75
+    SMLAD   r11, r9,  r5, r11   ; Gy += p[i+4]·49 + p[i+5]·13
+    SMLAD   r11, r10, r6, r11   ; Gy += p[i+6]·2 + p[i+7]·0
+
+    STR     r11, [r1], #4       ; 存 Gy_h[i]
+    SUB     r0, r0, #14         ; 回退 14 字节 (净前进 1 int16 = 2 字节)
+    SUBS    r12, r12, #1
+    BNE     hgy2_loop
 
     ADD     sp, sp, #8
     POP     {r4-r11, pc}
