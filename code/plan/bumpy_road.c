@@ -11,9 +11,9 @@ extern volatile uint8 exit_beep_request;
 /* ========================= 参数区 ========================= */
 #define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (1500.0f)
 
-#define BUMPY_ROAD_INIT_SPEED_SET        (-400.0f)      // 接近时的初始速度  //7段颠簸给-400.0f // 4段给-800.0f
+#define BUMPY_ROAD_INIT_SPEED_SET        (-600.0f)      // 接近时的初始速度  //7段颠簸给-400.0f // 4段给-800.0f
 #define BUMPY_ROAD_LOCK_SPEED_SET        (-800.0f)      // 颠簸段目标速度
-#define BUMPY_ROAD_SPEED_INC_STEP        (1.0f)         // 每1ms速度增量 (斜率加速)
+#define BUMPY_ROAD_SPEED_INC_STEP        (1.5f)         // 每1ms速度增量 (斜率加速)
 
 #define BUMPY_ROAD_VISUAL_EXIT_MIN_DISTANCE_MM (1000.0f) // 累计满 1m 后才允许由视觉确认出口
 #define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务 // 
