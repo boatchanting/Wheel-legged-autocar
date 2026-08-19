@@ -549,16 +549,10 @@ static float vision_bridge_restore_height_target(void)
 
 /**
  * @brief 切换回“正常姿态”
- * @note  恢复加速度限制、关掉滚转平衡、把底盘降回进入任务时的高度。
+ * @note  把底盘降回进入任务时的高度（不在此处关 Rolling，由脱出时刻统一管理）。
  */
 static void vision_bridge_apply_normal_posture(void)
 {
-    roll_balance_enable = 0U;
-    if (s_bridge_task.saved_limits_valid)
-    {
-        acc_limit = s_bridge_task.saved_acc_limit;
-        dec_limit = s_bridge_task.saved_dec_limit;
-    }
     /* 降下底盘 (恢复到进入时的腿高, 不写死 3.0f) */
     Bridge_Apply_Height_Control(vision_bridge_restore_height_target(),
                                 bridge_params.height_step_drop * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
@@ -660,7 +654,15 @@ static void vision_bridge_cleanup(uint8 stop_car)
     /* 告诉 1 核停止单边桥检测。 */
     VisionIpc_Core0_SetBridgeEnable(0U);
     
-    /* 恢复正常姿态 */
+    /* 任务彻底退出，确保关闭 Rolling 平衡并恢复巡航加速度限制 */
+    roll_balance_enable = 0U;
+    if (s_bridge_task.saved_limits_valid)
+    {
+        acc_limit = s_bridge_task.saved_acc_limit;
+        dec_limit = s_bridge_task.saved_dec_limit;
+    }
+
+    /* 恢复正常姿态 (底盘降至进入时高度) */
     vision_bridge_apply_normal_posture();
 
     if (stop_car)
@@ -851,21 +853,42 @@ void VisionBridgeTask_Update_2ms(void)
 
         /* --- 阶段 3：在桥上跑 --- */
         case VISION_BRIDGE_TASK_RUN:
+            /* 桥面证据 (沿用旧逻辑 ON_BRIDGE 语义): b2_gate 锁存表示桥面曾到底部,
+               b2_valid 每帧表示控制线仍在; 两者同时在场才刷新防抖倒计时。
+               (0809 只看 b2_gate 锁存量 → 一旦锁存全程刷新 → 全程高腿, 2026-08-14 修复) */
+            if ((packet->b2_valid != 0U) && (packet->b2_gate != 0U))
+            {
+                s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
+            }
+            else if (s_bridge_task.bridge_hold_ticks > 0U)
+            {
+                s_bridge_task.bridge_hold_ticks--; /* 没看到，倒计时减 1 */
+            }
+
             vision_bridge_exit_line_measure_y(packet); /* 每 tick 刷新退出线行坐标 (调试可观测) */
             /* 方案B: 每 tick 更新远场基准/累计 (traveled 未到里程门前也要学远场基准) */
             exit_fire = vision_bridge_exit_update_gate(packet);
 
-            /* 桥上全程保持高动态斜率与 Rolling 平衡使能 */
-            vision_bridge_apply_high_posture();
-
-            /* 速度选择：可见中心线用正常过桥速，否则用盲跑速 */
-            if (s_bridge_task.center_filter_valid)
+            /* 如果倒计时没归零，说明现在车还在桥上 */
+            if (s_bridge_task.bridge_hold_ticks > 0U)
             {
-                speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
+                vision_bridge_apply_high_posture(); /* 保持高底盘 */
+                speed_cmd = VISION_BRIDGE_TASK_BRIDGE_SPEED_SET; /* 桥上速度 */
             }
             else
             {
-                speed_cmd = VISION_BRIDGE_TASK_BLIND_SPEED_SET;
+                /* 如果归零了，说明可能快下桥了或者在桥的平缓段 */
+                vision_bridge_apply_normal_posture(); /* 降下底盘 (已移除内部误关 rolling 的 bug) */
+                /* 如果能看到地上的线，就跟着线跑 */
+                if (s_bridge_task.center_filter_valid)
+                {
+                    speed_cmd = VISION_BRIDGE_TASK_RUN_SPEED_SET;
+                }
+                else
+                {
+                    /* 线也看不见，只能盲跑了 */
+                    speed_cmd = VISION_BRIDGE_TASK_BLIND_SPEED_SET;
+                }
             }
 
             if (vision_bridge_packet_in_exit_stage(packet))
@@ -931,17 +954,17 @@ void VisionBridgeTask_Update_2ms(void)
 
         /* --- 阶段 4：下桥缓冲 --- */
         case VISION_BRIDGE_TASK_EXIT:
-            /* 下坡冲出阶段仍保持 Rolling 闭环使能以完成泄漏回平与防歪斜 */
-            vision_bridge_apply_high_posture();
+            vision_bridge_apply_normal_posture(); /* 确保底盘降下来 */
             err_cmd = vision_bridge_apply_err_ramp(vision_bridge_calc_yaw_hold_err_degree(), 1U); /* 锁死方向冲出桥区 */
             speed_cmd = VISION_BRIDGE_TASK_EXIT_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 缓冲一定时间或平稳后交还导航 */
+            /* 底盘恢复后即可交还导航；此时下桥完成（包含视觉脱出与惯导脱出），正式关闭 Rolling 环并切入 FINISH */
             if ((vision_bridge_abs_f(servo_height - vision_bridge_restore_height_target()) < 0.2f) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS))
             {
+                roll_balance_enable = 0U; /* 下桥脱出完成，正式关闭 Rolling 环 */
 #if VISION_BRIDGE_TASK_NAV_CORRECT_ENABLE
                 vision_bridge_apply_nav_correction(); /* 修正惯导 */
 #endif

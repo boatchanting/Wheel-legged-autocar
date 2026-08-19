@@ -1678,7 +1678,7 @@ float Gyro_Loop_Control(float angle_loop_output, float actual_gyro)
     return pid_gyro.output;
 }
 
-#define ROLL_DEADBAND_DEG            0.25f   // 横滚角度死区 1 度（消除零点传感器噪点）
+#define ROLL_DEADBAND_DEG            1.0f   // 横滚角度死区 1 度（消除零点传感器噪点）
 #define ROLL_MIN_OUTPUT_DEADBAND_PWM 6.0f    // 舵机微动死区（<6 duty 时直接归零，杜绝微步死区振荡）
 
 /**
@@ -1727,24 +1727,27 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
     // 1. 输入低通滤波（2.0m/s 高速单边桥：降低滞后，测量响应 < 5ms）
     s_roll_filtered = 0.35f * s_roll_filtered + 0.65f * actual_roll;
 
-    // 2. 计算误差并加入动态零点死区（防止零位微抖引起左右腿高频倒换）
-    float error = target_roll - s_roll_filtered;
-    if (fabsf(error) < ROLL_DEADBAND_DEG) {
-        error = 0.0f;
+    // 2. 计算原始误差 (提取原始误差用于微分)
+    float raw_error = target_roll - s_roll_filtered;
+    float error_p = raw_error;
+    
+    // 3. 动态零点死区仅作用于比例项，防止微小抖动引发左右腿抽动
+    if (fabsf(error_p) < ROLL_DEADBAND_DEG) {
+        error_p = 0.0f;
     }
 
-    // 3. 计算微分并低通滤波（提升微分首拍推力）
-    float raw_diff = error - pid_roll.last_error;
-    pid_roll.last_error = error;
+    // 4. 计算微分并低通滤波（关键修复：使用无死区的原始误差，防止死区边缘跳变引发巨大微分冲击）
+    float raw_diff = raw_error - pid_roll.last_error;
+    pid_roll.last_error = raw_error;
     s_diff_filtered = 0.40f * s_diff_filtered + 0.60f * raw_diff;
 
-    // 4. [方案2] 计算增量并累加 (把 Roll 环变成纯积分器，并加入离桥自适应泄漏与快速回零)
-    float p_inc = pid_roll.kp * error;
+    // 5. [方案2] 计算增量并累加 (把 Roll 环变成纯积分器，并加入离桥自适应泄漏与快速回零)
+    float p_inc = pid_roll.kp * error_p;
     float d_inc = pid_roll.kd * s_diff_filtered;
     float inc_total = p_inc + d_inc;
 
     // 【自适应离桥快速姿态还原】：当倾角误差方向与当前长短腿累加器方向相反时（下坡/回平过程）
-    if ((s_incremental_total * error) < -0.01f)
+    if ((s_incremental_total * raw_error) < -0.01f)
     {
         // 1. 指数主动泄漏，打破纯积分器记忆死锁
         s_incremental_total *= ROLL_LEAKY_DECAY_RATE;
@@ -1781,7 +1784,7 @@ float Roll_Balance_Control(float actual_roll,float target_roll)
     // < 0 : 表示右高左低，需要左侧伸长、右侧收缩
     // = 0 : 大家都不动
     
-    pid_roll.error = error;
+    pid_roll.error = raw_error;
     pid_roll.output = total_out;
     g_target_pwm_roll_adj = (int16)total_out;
     

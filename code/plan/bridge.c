@@ -275,8 +275,8 @@ void Bridge_Init(void) {
     bridge_params.height_step_rise = 0.5f;   
     bridge_params.height_step_drop = 0.8f;   
 
-    // 舵机斜率限制：每 1ms 周期限幅 20 duty/ms
-    bridge_params.servo_acc_bridge = 80;  
+    // 舵机斜率限制：每 1ms 周期限幅，单独定义的 duty/ms
+    bridge_params.servo_acc_bridge = 130;  
     bridge_params.servo_dec_bridge = 150;
 }
 

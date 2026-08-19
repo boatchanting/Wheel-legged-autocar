@@ -156,17 +156,17 @@ void servo_executor_update(void)
     target_final_duty_lr += SERVO_MOTOR_PWM4_DIR * g_target_pwm_turn_roll_lr;
 
     // ==========================================================
-    // 3.5 叠加 Rolling 补偿 (低侧伸腿同时高侧收腿，向上收腿量最大为 400 duty)
+    // 3.5 叠加 Rolling 补偿 (低侧伸腿同时高侧收腿，向上收腿量最大为 600 duty)
     // 约定：g_target_pwm_roll_adj
-    //      > 0 : 左高右低 (error > 0)，策略为右侧伸长，左侧收缩 (收缩最大 400 duty)
-    //      < 0 : 右高左低 (error < 0)，策略为左侧伸长，右侧收缩 (收缩最大 400 duty)
+    //      > 0 : 左高右低 (error > 0)，策略为右侧伸长，左侧收缩 (收缩最大 600 duty)
+    //      < 0 : 右高左低 (error < 0)，策略为左侧伸长，右侧收缩 (收缩最大 600 duty)
     //      (加 SERVO_MOTOR_PWMx_DIR 为伸长，减 SERVO_MOTOR_PWMx_DIR 为收缩)
     // ==========================================================
     int16 adj = g_target_pwm_roll_adj;
     
     if (adj > 0) {
         // --- 情况 B: 左高右低 (adj > 0) ---
-        // 策略：低侧(右侧)伸长以垫平车身，高侧(左侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (400 duty)
+        // 策略：低侧(右侧)伸长以垫平车身，高侧(左侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (600 duty)
         int16 retract = (adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : adj;
         target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj;     // 右前伸
         target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj;     // 右后伸
@@ -175,7 +175,7 @@ void servo_executor_update(void)
     } 
     else if (adj < 0) {
         // --- 情况 A: 右高左低 (adj < 0) ---
-        // 策略：低侧(左侧)伸长以垫平车身，高侧(右侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (400 duty)
+        // 策略：低侧(左侧)伸长以垫平车身，高侧(右侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (600 duty)
         int16 retract = (-adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : (int16)(-adj);
         target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj;     // 左前伸 (-adj > 0)
         target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj;     // 左后伸 (-adj > 0)
