@@ -1,6 +1,7 @@
 #include "servo_executor.h"
 #include "../calculate/pid-new.h"
 #include "plan/bridge.h"
+#include "plan/bumpy_road.h"
 // --- 目标值定义 ---
 volatile int16 g_target_pwm_high = 0;
 volatile int16 g_target_pwm_speed_adj = 0;
@@ -100,6 +101,13 @@ static void servo_executor_get_runtime_limits(int32 *runtime_acc_limit, int32 *r
     {
         if (acc_runtime < bridge_params.servo_acc_bridge) acc_runtime = bridge_params.servo_acc_bridge;
         if (dec_runtime < bridge_params.servo_dec_bridge) dec_runtime = bridge_params.servo_dec_bridge;
+    }
+
+    // 【颠簸路段防振荡保障】：颠簸期间限制单步最大变化量不超过 20 duty/ms
+    if (BumpyRoad_Is_Active() != 0U)
+    {
+        if (acc_runtime > 20) acc_runtime = 20;
+        if (dec_runtime > 20) dec_runtime = 20;
     }
 
     if (acc_runtime < 1) acc_runtime = 1;

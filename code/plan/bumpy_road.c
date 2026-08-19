@@ -11,19 +11,20 @@ extern volatile uint8 exit_beep_request;
 /* ========================= 参数区 ========================= */
 #define BUMPY_ROAD_POST_CORRECTION_DISTANCE_MM (1500.0f)
 
-#define BUMPY_ROAD_INIT_SPEED_SET        (-600.0f)      // 接近时的初始速度  //7段颠簸给-400.0f // 4段给-800.0f
-#define BUMPY_ROAD_LOCK_SPEED_SET        (-800.0f)      // 颠簸段目标速度
+#define BUMPY_ROAD_RAMP_TIME_MS          (200U)         // 初始提速饱和曲线过渡时间 (200ms)
+#define BUMPY_ROAD_INIT_SPEED_SET        (-250.0f)      // 接近时的初始速度
+#define BUMPY_ROAD_LOCK_SPEED_SET        (-500.0f)      // 颠簸段目标速度 起飞参数这两个速度全都给700一声
 #define BUMPY_ROAD_SPEED_INC_STEP        (1.5f)         // 每1ms速度增量 (斜率加速)
 
-#define BUMPY_ROAD_VISUAL_EXIT_MIN_DISTANCE_MM (1000.0f) // 累计满 1m 后才允许由视觉确认出口
-#define BUMPY_ROAD_TARGET_DISTANCE_MM    (4000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务 // 
+#define BUMPY_ROAD_VISUAL_EXIT_MIN_DISTANCE_MM (600.0f) // 累计满 0.6m 后才允许由视觉确认出口
+#define BUMPY_ROAD_TARGET_DISTANCE_MM    (8000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务 // 这个非常离谱需要标定一下
 #define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms更新一次距离
 
 #define BUMPY_ROAD_STEER_FILTER_ALPHA    (0.05f)        // 方向偏差轻度低通滤波系数 (0~1，越小越平滑)
 
-#define BUMPY_ROAD_GYRO_WIN_SIZE         (200U)         // (改小窗口) 1000Hz下200ms的帧数，减小延迟
-#define BUMPY_ROAD_ENTRY_STD_TH          (0.3f)         // (降低阈值) 进入特征标准差阈值 (rad/s)
-#define BUMPY_ROAD_ENTRY_CONFIRM_FRAMES  (50U)          // (减少确认时间) 连续满足进入条件的帧数(50ms)
+#define BUMPY_ROAD_GYRO_WIN_SIZE         (200U)         // 1000Hz下200ms的帧数
+#define BUMPY_ROAD_ENTRY_STD_TH          (1.0f)         // 进入特征标准差阈值 (rad/s)
+#define BUMPY_ROAD_ENTRY_CONFIRM_FRAMES  (50U)          // 连续满足进入条件的帧数(50ms)
 
 typedef struct
 {
@@ -58,6 +59,8 @@ typedef struct
     uint16_t bump_entry_cnt;
     uint8_t on_bump;
     float current_speed_set;
+    float ramp_start_speed;
+    uint16_t ramp_elapsed_ms;
     float filtered_err_degree;
 
 } BumpyRoadContext_t;
@@ -174,6 +177,8 @@ void BumpyRoad_Init(void)
     s_bumpy_ctx.bump_entry_cnt = 0;
     s_bumpy_ctx.on_bump = 0;
     s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+    s_bumpy_ctx.ramp_start_speed = BUMPY_ROAD_INIT_SPEED_SET;
+    s_bumpy_ctx.ramp_elapsed_ms = BUMPY_ROAD_RAMP_TIME_MS;
     s_bumpy_ctx.filtered_err_degree = 0.0f;
 
     if (was_active != 0U)
@@ -222,7 +227,9 @@ void BumpyRoad_Trigger(void)
 
     s_bumpy_ctx.bump_entry_cnt = 0;
     s_bumpy_ctx.on_bump = 0;
-    s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+    s_bumpy_ctx.ramp_start_speed = target_speed_set;
+    s_bumpy_ctx.ramp_elapsed_ms = 0U;
+    s_bumpy_ctx.current_speed_set = target_speed_set;
     s_bumpy_ctx.filtered_err_degree = 0.0f;
 
     /* 进入任务时独占控制权：开启1核颠簸视觉，并启用0核方向控制器。 */
@@ -292,7 +299,23 @@ void BumpyRoad_Update_1ms(void)
         // 2. 状态判断与速度控制
         if (s_bumpy_ctx.on_bump == 0)
         {
-            s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+            if (s_bumpy_ctx.ramp_elapsed_ms < BUMPY_ROAD_RAMP_TIME_MS)
+            {
+                s_bumpy_ctx.ramp_elapsed_ms++;
+                float t = (float)s_bumpy_ctx.ramp_elapsed_ms / (float)BUMPY_ROAD_RAMP_TIME_MS;
+                if (t > 1.0f)
+                {
+                    t = 1.0f;
+                }
+                // 饱和S曲线 (Smoothstep: 3t^2 - 2t^3)
+                float s = t * t * (3.0f - 2.0f * t);
+                s_bumpy_ctx.current_speed_set = s_bumpy_ctx.ramp_start_speed +
+                                               (BUMPY_ROAD_INIT_SPEED_SET - s_bumpy_ctx.ramp_start_speed) * s;
+            }
+            else
+            {
+                s_bumpy_ctx.current_speed_set = BUMPY_ROAD_INIT_SPEED_SET;
+            }
             
             if (s_bumpy_ctx.gyro_buffer_full && stddev > BUMPY_ROAD_ENTRY_STD_TH) {
                 s_bumpy_ctx.bump_entry_cnt++;
