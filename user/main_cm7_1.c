@@ -251,7 +251,7 @@ int main(void)
                 // 4. 将 PVC 检测框直接画在 compressed_image_copy[0] 上，供 WIFI 发送显示
                 render_pvc_vision_to_image();//算法执行完毕后，将 PVC 检测框画在 image_copy 上,必须放在这！如果放在算法前面，画的黑线会破坏算法寻找白色的逻辑
             }
-            if(VisionIpc_Core1_ShouldRunBridge()) // 正式比赛逻辑: 0核 enable 门控 (2026-08-14 融合迁移时恢复; 调试可临时改 if(1))
+            if(1) // 正式比赛逻辑: 0核 enable 门控 (2026-08-14 融合迁移时恢复; 调试可临时改 if(1))
             {
                 /* 单边桥远近融合管线 (v13门控定版): 融合检测 (每帧只跑 ref/v8 一个引擎)
                    → 桥上阶段走 arbiter (与现状一致) / ref 阶段 ref 中线直供
