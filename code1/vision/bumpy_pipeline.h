@@ -52,7 +52,8 @@ unsigned int bp_stage_cyc(void);
 #define BP_NORM_K 2500
 #endif
 #ifndef BP_HDG_STD_MAX
-#define BP_HDG_STD_MAX    2.0f    /* 帧内条纹倾角散布门限 (°): 超过则本帧 hdg 不可信 */
+#define BP_HDG_STD_MAX    3.0f    /* 帧内条纹倾角散布门限 (°, 2026-08-19 放宽 2→3): 超过则本帧 hdg 不可信
+                                     数据依据: 2° 拒绝 37.5% 帧(条纹方向天然散布), 3° 救回 ~150 帧 */
 #endif
 #define BP_MIN_CC_PIX     30      /* 连通域最小像素 */
 #define BP_MIN_CC_W       30      /* 连通域最小宽度 */

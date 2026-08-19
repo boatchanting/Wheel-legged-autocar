@@ -930,7 +930,10 @@ void render_bumpy_vision_to_image(void)
         }
 
         /* 法向 = 垂直于条纹的方向 (−sin hdg, cos hdg) = (−direction_y, direction_x)：
-           沿"朝向前进"的朝向角过 (mid_x,row) 画线（黑，2026-08-18） */
+           沿"朝向前进"的朝向角过 (mid_x,row) 画线（黑，2026-08-18）。
+           v3 门控 (2026-08-19)：仅角度有效(bumpy_detected=hdg_valid)时画；
+           没测出来不显示 —— 避免 hdg_valid=0 时占位 direction=(0,1) 被画成水平法向线闪烁 */
+        if (bumpy_out->bumpy_detected != 0)
         {
             const float nx = -bumpy_out->direction_y;
             const float ny =  bumpy_out->direction_x;

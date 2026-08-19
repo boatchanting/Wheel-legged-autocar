@@ -308,32 +308,25 @@ static uint32 g_bumpy_last_frame_time_us = 0U;
 /* —— 新管线实例与辅助（2026-08-17 落地）—— */
 static bumpy_pipeline_t s_bumpy_pipeline;   /* 新管线状态（gx/gy/mag2/labels 等，~121KB） */
 
-/* —— lateral 中线滤波 v3（2026-08-19：IPM 后点簇直方图 + 采信窗，边线-中线链条极简）——
+/* —— lateral 中线 v4（2026-08-19：IPM 后点簇直方图，边线-中线链条极简；中线严禁任何时间滤波）——
    实测依据（12 视频 2365 帧人工标注 + 5m/s 等效隔帧仿真，见 trials/bumpy-road-new/pc_tools/lat_study）：
-   检出高度离散且几乎永远单边；5m/s 等效全段仅 0~6 个有效观测（中位≈2），旧 3 帧中值窗
-   +26 帧 conf 累加在该场景永不 valid。
-   结构：边线域瞬时质量门（IPM 后物理 x 主带提取，兼作位置解算）→ 中线域时间滤波（采信窗+门控 EMA 限速）。
+   检出高度离散且几乎永远单边；5m/s 等效全段仅 0~6 个有效观测（中位≈2）。
+   设计（2026-08-19 用户指示）：中线不做任何滤波 —— 边线侧主带提取（离散性处理）已足够；
+   中线配合 0 核锁存、只在起飞/脱出时刻一次性取用（BumpyRoad_ApplyExitCorrection 读 IPC 直通值），
+   时间平滑（采信窗/EMA/限速）只会污染"起飞一刻"的读数，故彻底删除。
+   链路：边线域瞬时质量门（IPM 后物理 x 主带提取，兼作位置解算）→ 本帧瞬时合成中线，直出。
    ① 边线提取（v3）：pipeline 输出的左右外点(像素)逐点 IPM → 物理 x 主带（中值 ±100mm、
-      占比 ≥0.78 且 ≥4 点，参数沿用 v2 点簇门）→ 主带内点物理 x 均值 = 边线物理 x。
+      占比 ≥0.78 且 ≥7 点）→ 主带内点物理 x 均值 = 边线物理 x。
       质量门=主带提取本身，无直线拟合/无基准行外推（替代 RANSAC+基准行）。
-   ② 采信：候选窗存最近 4 个非零观测，新观测与任一候选 |Δ|≤AGREE 即锁定（valid=1）；
-      永不互认则永不 valid（宁可弃权）；单野值夹在正确观测中间不影响锁定。
-   ③ 更新：锁定后 |Δ|>GATE 丢弃，否则 EMA α=0.6 + 单帧限速 SLEW；无观测保持，valid 不掉。
-   ④ 间距自检失败不再整帧丢弃：一侧与当前估计 |Δ|≤RESCUE 采信该侧单边逆推。
+   ② 合成（v3）：双侧间距自检(1000±150mm) → 中点；单侧 ±500mm 逆推；全无 → 0（无观测）。
+   ③ 输出：lateral_mm = 本帧瞬时合成值（无滤波）；meas_valid = 本帧有横向观测。
+   ④ 双侧间距不符(非 1000±150mm, 含同一物理边被拆成两条)一律扔掉, 无观测 (抢救已删除, 2026-08-19)。
    状态按路段经 bumpy_vision_reset_filter 隔离。 */
-#define BUMPY_CLS_MIN_PTS      (4U)     /* 物理 x 主带：有效 IPM 点下限 */
+#define BUMPY_CLS_MIN_PTS      (7U)     /* 物理 x 主带：有效 IPM 点/主带点数下限 (2026-08-19 4→7):
+                                           断裂点/幻影(条纹局部右端) 主带点数 4~6, GT 真边线 98% ≥7
+                                           (全库 diag 统计: L 50/58 + R 92/97 ≥7), 提取时即过滤 */
 #define BUMPY_CLS_TOL_X_MM     (100.0f) /* 物理 x 主带：中值容差(±) */
 #define BUMPY_CLS_MIN_RATIO    (0.78f)  /* 物理 x 主带：主带点数占比下限 */
-#define BUMPY_LAT_AGREE_MM     (60.0f)  /* 采信：新观测与候选互认门限 */
-#define BUMPY_LAT_CAND_N       (4U)     /* 采信候选窗长度 */
-#define BUMPY_LAT_GATE_MM      (100.0f) /* 锁定后接收门（长空窗后允许多漂移） */
-#define BUMPY_LAT_ALPHA        (0.6f)   /* 锁定后 EMA 增益 */
-#define BUMPY_LAT_SLEW_MM      (50.0f)  /* 单帧输出限速 */
-#define BUMPY_LAT_RESCUE_MM    (60.0f)  /* 间距失败抢救：与当前估计一致门限 */
-static float   s_lat_cands[BUMPY_LAT_CAND_N];
-static uint8_t s_lat_cand_n;             /* 候选窗内观测数（≤N） */
-static float   s_lat_est;                /* 中线估计（未锁定时为最近候选，供抢救参考） */
-static uint8_t s_lat_locked;             /* 锁定标志 = meas_valid 源 */
 
 /**
  * @brief 边线提取 (v3, 2026-08-19): 外点逐点 IPM → 物理 x 主带 → 主带内点均值 = 边线物理 x
@@ -398,70 +391,6 @@ static int bumpy_vision_edge_x_mm(const int16_t *px, const int16_t *py, uint8_t 
     return 0;
 }
 
-/**
- * @brief lateral 中线滤波 v2（采信窗 + 门控 EMA 限速）
- * @param lateral_raw 本帧由过门边线合成的中线偏差（0=无横向观测）
- * @return 中线估计 s_lat_est；是否可信读 s_lat_locked（= meas_valid）
- */
-static float bumpy_vision_lateral_filter(float lateral_raw)
-{
-    if (lateral_raw != 0.0f)
-    {
-        if (s_lat_locked == 0U)
-        {
-            /* 采信：与候选窗任一观测互认（|Δ|≤AGREE，不要求时间连续）即锁定 */
-            uint8_t i;
-            for (i = 0U; i < s_lat_cand_n; i++)
-            {
-                if (fabsf(lateral_raw - s_lat_cands[i]) <= BUMPY_LAT_AGREE_MM)
-                {
-                    break;
-                }
-            }
-            if (i < s_lat_cand_n)
-            {
-                s_lat_est = BUMPY_LAT_ALPHA * lateral_raw +
-                            (1.0f - BUMPY_LAT_ALPHA) * s_lat_cands[i];
-                s_lat_locked = 1U;
-            }
-            else
-            {
-                /* 互认不上：入候选窗（满则挤掉最旧），估计暂取该观测 */
-                if (s_lat_cand_n < BUMPY_LAT_CAND_N)
-                {
-                    s_lat_cand_n++;
-                }
-                else
-                {
-                    for (i = BUMPY_LAT_CAND_N - 1U; i > 0U; i--)
-                    {
-                        s_lat_cands[i] = s_lat_cands[i - 1U];
-                    }
-                }
-                s_lat_cands[0] = lateral_raw;
-                s_lat_est = lateral_raw;
-            }
-        }
-        else if (fabsf(lateral_raw - s_lat_est) <= BUMPY_LAT_GATE_MM)
-        {
-            /* 锁定后：宽门接收，EMA + 单帧限速 */
-            float d = BUMPY_LAT_ALPHA * (lateral_raw - s_lat_est);
-            if (d > BUMPY_LAT_SLEW_MM)
-            {
-                d = BUMPY_LAT_SLEW_MM;
-            }
-            else if (d < -BUMPY_LAT_SLEW_MM)
-            {
-                d = -BUMPY_LAT_SLEW_MM;
-            }
-            s_lat_est += d;
-        }
-        /* 超门观测：丢弃，估计保持 */
-    }
-    /* 无观测：估计与锁定状态保持（颠簸段短，valid 不因空窗衰减） */
-    return s_lat_est;
-}
-
 /* —— 角度响应整形（2026-08-18 由 0 核 vision_bumpy_control.c 上移，与 valid/横向完全无关）——
    按角度大小修改响应：小偏差迅速修正、大偏差慢速修正。
    ① 静态整形 S(e)=e/(1+B·|e|)：|e| 大 → 增益小 → 阻尼；|e|→0 → 增益→1 → 灵敏
@@ -515,14 +444,10 @@ void bumpy_vision_reset_filter(void)
 
 #if BUMPY_USE_NEW_PIPELINE
     bumpy_pipeline_init(&s_bumpy_pipeline);   /* 时间验证历史按路段/视频隔离 */
-    /* lateral 滤波状态按路段/视频隔离 */
-    s_lat_cand_n = 0U;
-    s_lat_est = 0.0f;
-    s_lat_locked = 0U;
+    /* 角度/倾角 EMA 状态随路段复位（中线无滤波状态，无复位项） */
     s_yaw_shaped_deg = 0.0f;  /* 角度整形 EMA 状态随路段复位 */
     s_hdg_ex = 0.0f;          /* 倾角圆域 EMA 状态随路段复位 */
     s_hdg_ey = 0.0f;
-    memset(s_lat_cands, 0, sizeof(s_lat_cands));
 #endif
 
     memset(&empty, 0, sizeof(empty));
@@ -612,18 +537,19 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
     }
     /* hdg 无效（无条纹）：yaw_error_deg_x100 保持 0 上报，EMA 状态保持不更新 */
 
-    /* 横向偏差 (v3, 2026-08-19): 外点逐点 IPM → 物理 x 主带 → 主带内点均值 = 边线物理 x
-       (链条极简; 无直线拟合/无基准行)。双侧: 间距自检(1m±150mm) → 中点; 失败 → 抢救
-       (与当前估计一致侧单边逆推); 单侧: ±500mm 逆解算; 两侧都没有: 0 (无观测)
-       → 采信窗 + 门控 EMA 限速滤波后输出; meas_valid = 锁定标志. */
+    /* 横向偏差 (v4, 2026-08-19): 外点逐点 IPM → 物理 x 主带 → 主带内点均值 = 边线物理 x
+       (链条极简; 无直线拟合/无基准行)。双侧: 间距自检(1m±150mm) → 中点;
+       单侧: ±500mm 逆解算; 两侧都没有: 0 (无观测)。
+       中线严禁任何时间滤波(用户指示): lateral_mm 直出本帧瞬时合成值 —— 边线主带提取
+       (离散性处理)已足够; 中线配合 0 核锁存只在起飞/脱出时刻一次性取用, 平滑无必要. */
     {
         float xl = 0.0f, xr = 0.0f;
         float lcx = 0.0f, lcy = 0.0f, rcx = 0.0f, rcy = 0.0f;
         float lateral_raw = 0.0f;
-        const int ok_l = bumpy_vision_edge_x_mm(res.lp_x, res.lp_y, res.lp_n, &xl, &lcx, &lcy);
-        const int ok_r = bumpy_vision_edge_x_mm(res.rp_x, res.rp_y, res.rp_n, &xr, &rcx, &rcy);
+        int ok_l = bumpy_vision_edge_x_mm(res.lp_x, res.lp_y, res.lp_n, &xl, &lcx, &lcy);
+        int ok_r = bumpy_vision_edge_x_mm(res.rp_x, res.rp_y, res.rp_n, &xr, &rcx, &rcy);
 
-        /* 过门边线物理 x + 像素表示透出 (诊断/图传渲染用, 不进 IPC, v3) */
+        /* (2026-08-19 简化) 过门边线物理 x + 像素表示透出 (诊断/图传渲染用, 不进 IPC, v3) */
         next.edge_l_xmm = ok_l ? (int16)xl : 0;
         next.edge_r_xmm = ok_r ? (int16)xr : 0;
         next.line_l.valid = ok_l ? 1 : 0;
@@ -637,31 +563,16 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
         next.line_r.cy = rcy;
         next.line_r.n = 0;
 
-        if (ok_l && ok_r)
+        /* 双侧合成 (2026-08-19 简化): 仅"标准 1m 间距(1000±150mm)"认作有效双边 → 中点;
+           间距不符(过近 = 同一物理边被拆成两条/断裂点幻影, 或过远)一律扔掉, 无观测 ——
+           抢救分支已删除(用户指示): 不再"信当前估计选边", 避免锁死延续 */
+        if ((ok_l != 0) && (ok_r != 0))
         {
-            /* 物理 x 向右为正，右边线 x 应比左边线大约 BUMPY_EDGE_SPACING_MM */
             if (fabsf((xr - xl) - (float)BUMPY_EDGE_SPACING_MM) <= (float)BUMPY_WIDTH_TOL_MM)
             {
                 lateral_raw = -(xl + xr) * 0.5f;   /* 车身偏右为正 */
             }
-            else if ((s_lat_locked != 0U) || (s_lat_cand_n > 0U))
-            {
-                /* 间距自检失败（实测均为一真边线 + 一带中幻影）：抢救——
-                   采信与当前估计一致的一侧做单侧逆推 */
-                const float cl = -(xl + (float)BUMPY_HALF_SPACING_MM);
-                const float cr = -(xr - (float)BUMPY_HALF_SPACING_MM);
-                const float dl = fabsf(cl - s_lat_est);
-                const float dr = fabsf(cr - s_lat_est);
-                if (dl <= dr)
-                {
-                    if (dl <= BUMPY_LAT_RESCUE_MM) lateral_raw = cl;
-                }
-                else
-                {
-                    if (dr <= BUMPY_LAT_RESCUE_MM) lateral_raw = cr;
-                }
-            }
-            /* 无估计可参考时：lateral_raw 保持 0（无横向观测） */
+            /* 间距不符: 无观测 (lateral_raw 保持 0) */
         }
         else if (ok_l)
         {
@@ -672,10 +583,10 @@ void bumpy_vision_process_camera_frame(const uint8 *gray)
             lateral_raw = -(xr - (float)BUMPY_HALF_SPACING_MM);
         }
 
-        next.lateral_mm = (int16)bumpy_vision_lateral_filter(lateral_raw);
-        /* valid 只服务横向/边线（0 核出口修正门）：= 中线锁定标志，与角度(hdg)解耦；
-           两个互认观测才锁定，锁定后全段保持（段短，空窗不掉 valid）。 */
-        next.meas_valid = s_lat_locked;
+        next.lateral_mm = (int16)lateral_raw;   /* 瞬时合成值，无任何时间滤波 */
+        /* valid 只服务横向/边线（0 核出口修正门）：= 本帧有横向观测（合成成功），
+           与角度(hdg)解耦；无观测帧 lateral_mm=0 且 valid=0（观测存在性，非历史锁定）。 */
+        next.meas_valid = (lateral_raw != 0.0f) ? 1U : 0U;
     }
 
     /* 横向条纹连通域透出（仅渲染用，不进 IPC） */

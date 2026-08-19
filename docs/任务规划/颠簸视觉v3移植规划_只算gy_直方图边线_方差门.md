@@ -294,4 +294,6 @@ edge_x_mm(px[], py[], n) -> float 边线物理 x，失败返回无效：
 | 阶段 3：IPM 后点簇直方图边线 + 链条简化（测试工程） | ✅ GT 标注对拍：bumpy-1 R 78/78、bumpy-2 R 19/22（与 v2 完全一致）、bumpy-3 L 56/58；锁定率提升（bumpy-1 0.992 vs 0.885、bumpy-11 0.667 vs 0.268）；5m/s 等效正常 |
 | 同步回发布工程 `code1` | ✅ 8 文件已同步（`bumpy_pipeline/.h/.c`、`bumpy_vision/.h/.c`、`bumpy_conv/.h/.c`、`edge_conv7_asm/.h/.s`）；`wifi.c` 图传渲染用的 `line_l/line_r` 保留（v3 填充主带像素均值+竖直近似） |
 | 阶段 4：IAR 构建 + map 核对 | ✅ `cyt4bb7_cm_7_1` 构建 **Errors: none**；`s_bumpy_pipeline` = **50,760B**（省 45,200B）；CM7_1 rw data **221,834B**，余量 **39.4KB**（原 6.5KB） |
+| v7（2026-08-19）：主带点数门 4→7 断裂点过滤 | ✅ 测试工程 + host 全库：GT bumpy-1 78/78、bumpy-2 19/22、bumpy-3 55/58；误检 L 2→0、R 3→2；bumpy-11 断裂点区（f90-120）全弃权无锁死；锁定率除 bumpy-11 外全库不变；已同步发布工程 + IAR 构建 0 错误 |
+| v8（2026-08-19）：**中线严禁任何时间滤波** | ✅ 删除采信窗 + EMA + 限速（`bumpy_vision_lateral_filter` / `s_lat_*` / `BUMPY_LAT_*` 全删）；`lateral_mm` 直出**本帧瞬时合成值**，`meas_valid` = 本帧有横向观测。依据：0 核 `BumpyRoad_ApplyExitCorrection` 仅在起飞/脱出时刻**一次性取用 IPC 直通值**（`bumpy_road.c:124`），时间平滑只会污染该读数；边线侧主带提取（离散性处理）已足够。host 全库验证：GT 回归不变（边线提取未动），v8 非零 lat 帧数 = valid 帧数（观测存在性语义），bumpy-11 断裂点区仍全弃权，bumpy-1 瞬时 lat≈+176~257mm 与真边线 x≈+310 单边右逆推一致；已同步发布工程 + IAR 构建 0 错误 |
 | 待办 | 板端烧录 + 串口位精确对拍（需硬件）；实车 5m/s 验证；`BP_NORM_K` 2500/3000 最终确认 |
