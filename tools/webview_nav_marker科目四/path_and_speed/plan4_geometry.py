@@ -301,6 +301,190 @@ def append_fastest_turnaround_curve(
     )
 
 
+def append_low_curvature_turnaround_candidate(
+    samples: list[PathSample],
+    start: Node,
+    end: Node,
+    stake: Marker,
+    safety_radius_mm: float,
+    guard_angle_rad: float,
+    direction: int,
+    segment_prefix: str,
+    must_pass_markers: tuple[Marker, ...] = (),
+    must_pass_tolerance_mm: float = 20.0,
+    sample_step_mm: float = DENSE_SAMPLE_STEP_MM,
+) -> None:
+    """通过一个安全圆切向守卫点生成低曲率 G2 绕桩连接。
+
+    与预设 4 的两个圆周控制点不同，预设 5 只使用一个守卫点约束整条
+    曲线的外扩方向。这样两端状态机切线直接参与同一条宽弧连接，避免
+    最速搜索中为缩短路程出现的多段急弯。
+    """
+    if must_pass_tolerance_mm <= 0.0:
+        raise ValueError("掉头桩必经点容差必须为正数。")
+    center = np.array([stake.x, stake.y], dtype=float)
+    radial = np.array([math.cos(guard_angle_rad), math.sin(guard_angle_rad)], dtype=float)
+    guard_tangent = direction * np.array([-radial[1], radial[0]], dtype=float)
+    guard_position = center + safety_radius_mm * radial
+    guard = Node(
+        float(guard_position[0]),
+        float(guard_position[1]),
+        0,
+        guard_tangent,
+        "掉头桩低曲率守卫点",
+    )
+
+    before_guard: list[Node] = [start]
+    must_positions = [np.array([marker.x, marker.y], dtype=float) for marker in must_pass_markers]
+    reference_positions = [
+        np.array([start.x, start.y], dtype=float),
+        *must_positions,
+        np.array([guard.x, guard.y], dtype=float),
+    ]
+    for index, marker in enumerate(must_pass_markers, start=1):
+        tangent = unit(reference_positions[index + 1] - reference_positions[index - 1])
+        before_guard.append(Node(
+            marker.x,
+            marker.y,
+            0,
+            tangent,
+            f"掉头桩必经点 {marker.order}",
+            marker_order=marker.order,
+        ))
+    before_guard.append(guard)
+    for index, (left, right) in enumerate(zip(before_guard, before_guard[1:])):
+        label = "进入低曲率绕桩" if index == len(before_guard) - 2 else f"经过必经点 {must_pass_markers[index].order}"
+        append_g2_link(samples, left, right, f"{segment_prefix}: {label}", sample_step_mm)
+    append_g2_link(samples, guard, end, f"{segment_prefix}: 离开低曲率绕桩", sample_step_mm)
+
+
+def choose_smooth_turnaround_curve(
+    start: Node,
+    end: Node,
+    stake: Marker,
+    speed_profile: SpeedPlanningProfile,
+    stake_radius_mm: float,
+    clearance_mm: float,
+    source_exit_speed_command: Optional[float],
+    target_entry_speed_command: Optional[float],
+    must_pass_markers: tuple[Marker, ...] = (),
+    must_pass_tolerance_mm: float = 20.0,
+) -> tuple[float, float, int]:
+    """搜索低曲率的 G2 绕桩曲线，并用预计通过时间打破平局。
+
+    预设 4 以通过时间最短为目标，可能为少量距离收益接受较大的峰值曲率。
+    本预设复用完全相同的候选模型和输入，只改为优先降低峰值曲率、曲率
+    能量和曲率变化量；最终速度仍由选中的实际轨迹统一规划。
+    """
+    safety_radius = stake_radius_mm + clearance_mm
+    if stake_radius_mm <= 0.0 or clearance_mm < 0.0:
+        raise ValueError("掉头桩半径必须为正，安全裕量不能为负。")
+    # 搜索阶段额外预留一个稠密采样步长的余量，避免最终重采样后贴着安全圆。
+    candidate_clearance_mm = safety_radius + 25.0
+
+    # (峰值曲率, 曲率能量, 曲率变化量, 预计通过时间, 半径, 守卫点角度, 方向)
+    best: Optional[tuple[float, float, float, float, float, float, int]] = None
+    center = np.array([stake.x, stake.y], dtype=float)
+    radius_candidates = [safety_radius + offset for offset in (0.0, 200.0, 400.0, 700.0)]
+    angle_candidates = np.deg2rad(np.arange(0.0, 360.0, 15.0))
+    for radius in radius_candidates:
+        for direction in (-1, 1):
+            for guard_angle in angle_candidates:
+                candidate: list[PathSample] = []
+                append_low_curvature_turnaround_candidate(
+                    candidate,
+                    start,
+                    end,
+                    stake,
+                    radius,
+                    float(guard_angle),
+                    direction,
+                    "候选",
+                    must_pass_markers,
+                    must_pass_tolerance_mm,
+                    20.0,
+                )
+                points = np.array([(sample.x, sample.y) for sample in candidate], dtype=float)
+                if len(points) < 3:
+                    continue
+                if float(np.min(np.linalg.norm(points - center, axis=1))) + 1e-6 < candidate_clearance_mm:
+                    continue
+                if any(
+                    np.min(np.linalg.norm(points - np.array([marker.x, marker.y]), axis=1))
+                    > must_pass_tolerance_mm + 1e-6
+                    for marker in must_pass_markers
+                ):
+                    continue
+
+                candidate_s, _, candidate_curvature = calculate_yaw_and_curvature(candidate)
+                ds = np.diff(candidate_s)
+                if not len(ds) or np.any(ds <= 0.0):
+                    continue
+                abs_curvature = np.abs(candidate_curvature)
+                peak_curvature = float(np.max(abs_curvature))
+                curvature_energy = float(
+                    np.sum(0.5 * (candidate_curvature[:-1] ** 2 + candidate_curvature[1:] ** 2) * ds)
+                )
+                curvature_variation = float(np.sum(np.abs(np.diff(candidate_curvature))))
+
+                candidate_profiles = [speed_profile] * len(candidate)
+                candidate_speed = calculate_target_speed(
+                    candidate, candidate_s, candidate_curvature, candidate_profiles
+                )
+                if source_exit_speed_command is not None:
+                    candidate_speed[0] = min(
+                        candidate_speed[0], source_exit_speed_command * SPEED_TO_MM_S
+                    )
+                if target_entry_speed_command is not None:
+                    candidate_speed[-1] = min(
+                        candidate_speed[-1], target_entry_speed_command * SPEED_TO_MM_S
+                    )
+                candidate_speed = apply_longitudinal_speed_envelope(
+                    candidate_speed,
+                    candidate_s,
+                    np.full(len(candidate), speed_profile.max_accel_mm_s2),
+                    np.full(len(candidate), speed_profile.max_decel_mm_s2),
+                )
+                average_speed = 0.5 * (candidate_speed[:-1] + candidate_speed[1:])
+                if np.any(average_speed <= 1.0):
+                    continue
+                travel_time = float(np.sum(ds / average_speed))
+                score = (peak_curvature, curvature_energy, curvature_variation, travel_time)
+                if best is None or score < best[:4]:
+                    best = (*score, radius, float(guard_angle), direction)
+    if best is None:
+        raise ValueError("没有找到满足掉头桩安全半径的低曲率绕行曲线，请增大可用空间或减小安全裕量。")
+    return best[4], best[5], best[6]
+
+
+def append_smooth_turnaround_curve(
+    samples: list[PathSample],
+    start: Node,
+    end: Node,
+    plan: TransitionPlan,
+    stake_radius_mm: float,
+    clearance_mm: float,
+) -> None:
+    if plan.stake is None:
+        raise ValueError("带掉头桩低曲率丝滑型缺少 point_type=7 掉头桩。")
+    radius, guard_angle, direction = choose_smooth_turnaround_curve(
+        start,
+        end,
+        plan.stake,
+        plan.speed_profile,
+        stake_radius_mm,
+        clearance_mm,
+        plan.source_exit_speed_command,
+        plan.target_entry_speed_command,
+        plan.must_pass_markers,
+        plan.must_pass_tolerance_mm,
+    )
+    append_low_curvature_turnaround_candidate(
+        samples, start, end, plan.stake, radius, guard_angle, direction,
+        "掉头桩低曲率 G2", plan.must_pass_markers, plan.must_pass_tolerance_mm,
+    )
+
+
 def make_nodes(
     markers: list[Marker],
     pairs: dict[int, int],
@@ -399,6 +583,9 @@ def make_nodes(
         elif plan.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
             link_modes[(source_node_index, target_node_index)] = "turnaround_stake_fastest"
             turnaround_links[(source_node_index, target_node_index)] = plan
+        elif plan.preset == TransitionPreset.TURNAROUND_STAKE_SMOOTH:
+            link_modes[(source_node_index, target_node_index)] = "turnaround_stake_smooth"
+            turnaround_links[(source_node_index, target_node_index)] = plan
 
     # 无标签路点使用角平分线切向量，使相邻 G2 曲线满足 C1 连续；同时根据相邻边长计算局部控制柄。
     for index, node in enumerate(nodes):
@@ -495,6 +682,15 @@ def generate_path(
         mode = link_modes.get((index, index + 1), "g2")
         if mode == "turnaround_stake_fastest":
             append_fastest_turnaround_curve(
+                dense_samples,
+                nodes[index],
+                nodes[index + 1],
+                turnaround_links[(index, index + 1)],
+                turnaround_stake_radius_mm,
+                turnaround_stake_clearance_mm,
+            )
+        elif mode == "turnaround_stake_smooth":
+            append_smooth_turnaround_curve(
                 dense_samples,
                 nodes[index],
                 nodes[index + 1],

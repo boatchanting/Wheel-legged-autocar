@@ -133,6 +133,7 @@ class TransitionPreset(str, Enum):
     NEAR_PARALLEL = "near_parallel"
     PURE_LINE = "pure_line"
     TURNAROUND_STAKE_FASTEST = "turnaround_stake_fastest"
+    TURNAROUND_STAKE_SMOOTH = "turnaround_stake_smooth"
 
 
 TRANSITION_PRESET_LABEL = {
@@ -140,6 +141,7 @@ TRANSITION_PRESET_LABEL = {
     TransitionPreset.NEAR_PARALLEL: "近似平行型",
     TransitionPreset.PURE_LINE: "纯直线型",
     TransitionPreset.TURNAROUND_STAKE_FASTEST: "带掉头桩丝滑型",
+    TransitionPreset.TURNAROUND_STAKE_SMOOTH: "带掉头桩低曲率丝滑型",
 }
 
 

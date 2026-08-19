@@ -247,14 +247,14 @@ def write_nav_toml_template(
         "# 本文件是生成时对通用配置的完整复制，仅作用于当前点表。",
         "# 修改本文件的状态机、掉头桩或逐段速度参数，不会改动 ../plan4_speed_planning.toml。",
         "# 修改本文件后重新运行脚本，脚本会自动读取并生成轨迹和渲染图。",
-        "# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest。",
-        "# 预设 turnaround_stake_fastest 要求该段点表中有且仅有一个 point_type=7 掉头桩。",
+        "# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest、turnaround_stake_smooth。",
+        "# 两种 turnaround_stake 预设都要求该段点表中有且仅有一个 point_type=7 掉头桩。",
         "",
         "[route]",
         f"source_csv = \"{source.name}\"",
         f"state_signature = \"{route_state_signature(state_segments)}\"",
         "",
-        "# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅预设 4 使用此参数。",
+        "# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅预设 4/5 使用此参数。",
         "[turnaround_stake]",
         f"radius_mm = {configuration.turnaround_stake_radius_mm:.6g}",
         f"clearance_mm = {configuration.turnaround_stake_clearance_mm:.6g}",
@@ -298,7 +298,10 @@ def write_nav_toml_template(
             f"preset = \"{trajectory.preset.value}\"",
             *toml_speed_profile_lines(trajectory.speed_profile),
         ])
-        if trajectory.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
+        if trajectory.preset in {
+            TransitionPreset.TURNAROUND_STAKE_FASTEST,
+            TransitionPreset.TURNAROUND_STAKE_SMOOTH,
+        }:
             lines.extend([
                 "# 必经普通点的点表 index。绕桩曲线会以 G2 连续方式精确经过这些点。",
                 "# 例如单边桥出口 8 到颠簸路入口 20 可设为 [9, 10]。",
@@ -422,9 +425,12 @@ def load_nav_toml_configuration(
         tolerance = float(values.get("must_pass_tolerance_mm", 20.0))
         if tolerance <= 0.0:
             raise ValueError(f"[trajectory.{key}].must_pass_tolerance_mm 必须为正数。")
-        if preset != TransitionPreset.TURNAROUND_STAKE_FASTEST and must_pass_orders:
+        if preset not in {
+            TransitionPreset.TURNAROUND_STAKE_FASTEST,
+            TransitionPreset.TURNAROUND_STAKE_SMOOTH,
+        } and must_pass_orders:
             raise ValueError(
-                f"[trajectory.{key}] 只有 preset=turnaround_stake_fastest 可以配置必经点。"
+                f"[trajectory.{key}] 只有 turnaround_stake 预设可以配置必经点。"
             )
         speed_values = {
             name: value for name, value in values.items()

@@ -4,14 +4,14 @@
 # 本文件是生成时对通用配置的完整复制，仅作用于当前点表。
 # 修改本文件的状态机、掉头桩或逐段速度参数，不会改动 ../plan4_speed_planning.toml。
 # 修改本文件后重新运行脚本，脚本会自动读取并生成轨迹和渲染图。
-# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest。
-# 预设 turnaround_stake_fastest 要求该段点表中有且仅有一个 point_type=7 掉头桩。
+# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest、turnaround_stake_smooth。
+# 两种 turnaround_stake 预设都要求该段点表中有且仅有一个 point_type=7 掉头桩。
 
 [route]
 source_csv = "nav_mark_points_20260818_224540.csv"
 state_signature = "e9cbff114e1f51e8"
 
-# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅预设 4 使用此参数。
+# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅预设 4/5 使用此参数。
 [turnaround_stake]
 radius_mm = 400
 clearance_mm = 250
@@ -120,7 +120,7 @@ curvature_eps = 1e-06
 response_delay_s = 0.0
 
 [trajectory."8->20"]
-preset = "turnaround_stake_fastest"
+preset = "turnaround_stake_smooth"
 path_speed_max_mm_s = 5000
 sprint_speed_mm_s = 5000
 enable_finish_sprint = true
