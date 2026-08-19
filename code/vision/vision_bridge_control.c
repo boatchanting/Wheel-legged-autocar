@@ -888,34 +888,15 @@ void VisionBridgeTask_Update_2ms(void)
                 }
             }
 
-            if (vision_bridge_packet_in_exit_stage(packet))
+            /* 视觉优先对中 (2026-08-19, main): 只要中心线可信就用视觉 PID 对中,
+               无效回锁角兜底; 不再按 traveled/脱出阶段分流, 不再 ×2 冲速。 */
+            if (s_bridge_task.center_filter_valid)
             {
-                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向; 目标改回进入时刻 yaw (2026-08-15) */
-                if (s_bridge_task.run_yaw_locked == 0U)
-                {
-                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
-                    s_bridge_task.run_yaw_locked = 1U;
-                }
-                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-                s_bridge_task.err_source = 1U;
-            }
-            else if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
-            {
-                /* 前 1.2m：有可靠中心线用横向乘性 PID, 否则锁角 */
-                if (s_bridge_task.center_filter_valid)
-                {
-                    err_cmd = vision_bridge_calc_visual_err_degree();
-                    s_bridge_task.err_source = 0U;
-                }
-                else
-                {
-                    err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-                    s_bridge_task.err_source = 1U;
-                }
+                err_cmd = vision_bridge_calc_visual_err_degree();
+                s_bridge_task.err_source = 0U;
             }
             else
             {
-                /* 超过 1.2m：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 (2026-08-15)。 */
                 if (s_bridge_task.run_yaw_locked == 0U)
                 {
                     s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
@@ -923,7 +904,6 @@ void VisionBridgeTask_Update_2ms(void)
                 }
                 err_cmd = vision_bridge_calc_yaw_hold_err_degree();
                 s_bridge_task.err_source = 1U;
-                speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;
             }
 
             err_cmd = vision_bridge_apply_err_ramp(err_cmd, s_bridge_task.err_source);
