@@ -30,9 +30,8 @@ START_POINT_Y_MM = 0.0
 # SpeedPlanningProfile 中使用不同的换算值，最终会逐点转换为 target_speed。
 SPEED_TO_MM_S = 4.79
 
-# Advance deceleration commands by the measured chassis response delay.
-# Keep acceleration unshifted so a future higher speed never violates the
-# current curve or special-task speed ceiling.
+# 每个普通轨迹段的响应延迟默认值。延迟补偿只提前该段内的减速指令，
+# 不会读取或改写相邻轨迹段的速度规划结果。
 SPEED_RESPONSE_DELAY_S = 0.0
 
 # 局部圆角控制柄同时受相邻边长限制，避免稀疏或急转标记使 Bezier 曲线偏离局部走廊。
@@ -180,6 +179,7 @@ class SpeedPlanningProfile:
     max_path_yaw_rate_rad_s: float = 2.8
     speed_to_mm_s: float = SPEED_TO_MM_S
     curvature_eps: float = 1e-6
+    response_delay_s: float = SPEED_RESPONSE_DELAY_S
 
 
 # 未被某个 TrajectorySegment 覆盖的样本（状态机内部、路线首尾）使用原来的默认值。

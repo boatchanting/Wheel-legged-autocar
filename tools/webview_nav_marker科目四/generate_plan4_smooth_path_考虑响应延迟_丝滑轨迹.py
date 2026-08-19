@@ -23,7 +23,6 @@ from path_and_speed.plan4_models import (
     DEFAULT_PLANNING_CONFIG,
     NAV_ROUTE_MAX_POINTS,
     SCRIPT_DIR,
-    SPEED_RESPONSE_DELAY_S,
     SPEED_TO_MM_S,
 )
 from path_and_speed.plan4_output import render, render_speed_heatmap, write_c_header
@@ -42,7 +41,7 @@ from path_and_speed.plan4_route import (
 from path_and_speed.plan4_speed import (
     apply_constant_task_speeds,
     apply_fixed_speed_envelope,
-    apply_response_delay_compensation,
+    apply_segment_response_delay_compensation,
     build_sample_speed_profiles,
     build_task_speed_ranges,
     calculate_target_speed,
@@ -89,12 +88,6 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="可选：覆盖配置文件中 turnaround_stake.clearance_mm",
     )
-    parser.add_argument(
-        "--speed-response-delay-s",
-        type=float,
-        default=SPEED_RESPONSE_DELAY_S,
-        help="chassis response delay used to advance deceleration commands (default: 0.0)",
-    )
     return parser.parse_args()
 
 
@@ -102,8 +95,6 @@ def main() -> int:
     args = parse_args()
     if args.stairs_approach_distance_mm is not None and args.stairs_approach_distance_mm < 0.0:
         raise ValueError("Three-step approach distance must not be negative.")
-    if args.speed_response_delay_s < 0.0:
-        raise ValueError("Speed response delay must not be negative.")
     if args.turnaround_stake_radius_mm is not None and args.turnaround_stake_radius_mm <= 0.0:
         raise ValueError("掉头桩半径必须为正数。")
     if args.turnaround_stake_clearance_mm is not None and args.turnaround_stake_clearance_mm < 0.0:
@@ -202,14 +193,15 @@ def main() -> int:
     physical_speed, task_speed_mask = apply_constant_task_speeds(
         samples, s, physical_speed, task_ranges, sample_profiles
     )
-    physical_speed = apply_response_delay_compensation(
+    physical_speed = apply_segment_response_delay_compensation(
         physical_speed,
         s,
-        args.speed_response_delay_s,
+        samples,
+        trajectory_segments,
         preserve_mask=task_speed_mask,
     )
-    # 延时补偿只提前减速命令；补偿后的边界仍重新检查可达性，避免在
-    # 状态机恒速段出口产生不可实现的速度跳变。
+    # 每段延时补偿只提前该段内的减速命令；补偿后的边界仍重新检查可达性，
+    # 避免在状态机恒速段出口产生不可实现的速度跳变。
     max_accel = np.array([profile.max_accel_mm_s2 for profile in sample_profiles], dtype=float)
     max_decel = np.array([profile.max_decel_mm_s2 for profile in sample_profiles], dtype=float)
     physical_speed = apply_fixed_speed_envelope(

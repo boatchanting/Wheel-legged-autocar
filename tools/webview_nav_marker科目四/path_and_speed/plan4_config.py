@@ -38,8 +38,9 @@ def validate_speed_profile(profile: SpeedPlanningProfile, context: str) -> None:
         or profile.max_path_yaw_rate_rad_s <= 0.0
         or profile.speed_to_mm_s <= 0.0
         or profile.curvature_eps <= 0.0
+        or profile.response_delay_s < 0.0
     ):
-        raise ValueError(f"{context} 中的速度规划数值必须为正数。")
+        raise ValueError(f"{context} 中的速度规划数值必须为正数，response_delay_s 不能为负数。")
 
 
 def overlay_speed_profile(
@@ -215,6 +216,7 @@ def toml_speed_profile_lines(profile: SpeedPlanningProfile) -> list[str]:
         f"max_path_yaw_rate_rad_s = {profile.max_path_yaw_rate_rad_s:.6g}",
         f"speed_to_mm_s = {profile.speed_to_mm_s:.6g}",
         f"curvature_eps = {profile.curvature_eps:.6g}",
+        f"response_delay_s = {profile.response_delay_s:.6g}",
     ]
 
 
@@ -286,6 +288,7 @@ def write_nav_toml_template(
         "# 每个普通轨迹段的详细参数。键采用点表事件序号，首尾以 start/end 标识。",
         "# 速度参数已从该段 preset 对应的通用默认段完整复制；在这里可逐项修改。",
         "# 修改 preset 后请同步检查下面的速度参数，它们不会再随通用 TOML 自动改变。",
+        "# response_delay_s 只提前当前轨迹段内的减速指令，不会跨越该段的起止锚点。",
     ])
     for trajectory in trajectories:
         key = trajectory_config_key(trajectory)

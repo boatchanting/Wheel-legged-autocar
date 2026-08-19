@@ -14,6 +14,7 @@ clearance_mm = 250.0
 # 每类配对状态机的参数。入口类型与点表 point_type 对应：
 # 3=三级跳，4=单边桥，5=颠簸路，2=坡道。
 # entry_corridor_mm / exit_corridor_mm 是状态机入口前和出口后的强制直线长度。
+# 三级跳参数
 [task."3"]
 approach_distance_mm = 4000.0
 entry_speed_command = 320.0
@@ -36,7 +37,7 @@ entry_speed_command = 500.0
 state_speed_command = 500.0
 exit_speed_command = 500.0
 entry_corridor_mm = 600.0
-exit_corridor_mm = 600.0
+exit_corridor_mm = 2000.0
 
 [task."2"]
 approach_distance_mm = 500.0
@@ -58,6 +59,7 @@ exit_corridor_mm = 600.0
 # max_path_yaw_rate_rad_s：曲率产生的航向角速度限速。
 # speed_to_mm_s：target_speed 指令换算为物理速度的系数。
 # curvature_eps：低于该曲率时按直线处理，避免数值噪声造成无意义限速。
+# response_delay_s：底盘对减速指令的响应延迟（秒）；仅在各自轨迹段内提前减速。
 
 # 预设 1：普通平滑插值连接，是最常用的状态机间连接方式。
 [trajectory.interpolated]
@@ -70,6 +72,7 @@ max_lateral_accel_mm_s2 = 4000.0
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 0.000001
+response_delay_s = 0.0
 
 # 预设 2：近似平行的状态机通道连接，例如三级跳出口到单边桥入口。
 # 可独立设为更保守的横向限速，或保留与插值型相同的初始标定。
@@ -83,6 +86,7 @@ max_lateral_accel_mm_s2 = 4000.0
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 0.000001
+response_delay_s = 0.0
 
 # 预设 3：纯直线连接，通常用于雷区到雷区等无须曲线过渡的区段。
 [trajectory.pure_line]
@@ -95,6 +99,7 @@ max_lateral_accel_mm_s2 = 4000.0
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 0.000001
+response_delay_s = 0.0
 
 # 预设 4：绕掉头桩的最速丝滑连接，通常用于单边桥或草地到颠簸路。
 # 建议依据实车绕桩稳定性单独调低横向加速度或航向角速度上限。
@@ -108,6 +113,7 @@ max_lateral_accel_mm_s2 = 4000.0
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 0.000001
+response_delay_s = 0.0
 
 # 每份点表的状态机、掉头桩、连接预设、逐段速度和路径几何选择由脚本首次运行时自动写入：
 #   速度规划config/nav_toml/<点表文件名>.toml

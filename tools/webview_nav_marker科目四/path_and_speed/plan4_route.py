@@ -346,7 +346,7 @@ def configure_segment_parameters(
         )
 
     print("\n轨迹段速度参数（直接回车保留默认值）：")
-    print("  顺序：最高速度,冲刺速度,启用冲刺(0/1),最大加速,最大减速,最大横向加速度,最大航向角速度,速度换算,曲率阈值")
+    print("  顺序：最高速度,冲刺速度,启用冲刺(0/1),最大加速,最大减速,最大横向加速度,最大航向角速度,速度换算,曲率阈值,响应延迟秒")
     configured_trajectories: list[TrajectorySegment] = []
     for trajectory in trajectories:
         profile = trajectory.speed_profile
@@ -357,14 +357,15 @@ def configure_segment_parameters(
             f"[{profile.path_speed_max_mm_s:.0f},{profile.sprint_speed_mm_s:.0f},"
             f"{int(profile.enable_finish_sprint)},{profile.max_accel_mm_s2:.0f},"
             f"{profile.max_decel_mm_s2:.0f},{profile.max_lateral_accel_mm_s2:.0f},"
-            f"{profile.max_path_yaw_rate_rad_s:g},{profile.speed_to_mm_s:g},{profile.curvature_eps:g}]: "
+            f"{profile.max_path_yaw_rate_rad_s:g},{profile.speed_to_mm_s:g},{profile.curvature_eps:g},"
+            f"{profile.response_delay_s:g}]: "
         ).strip()
         if not raw:
             configured_trajectories.append(trajectory)
             continue
         values = [value.strip() for value in raw.split(",")]
-        if len(values) != 9:
-            raise ValueError("轨迹速度参数必须恰好包含 9 个逗号分隔值。")
+        if len(values) != 10:
+            raise ValueError("轨迹速度参数必须恰好包含 10 个逗号分隔值。")
         if values[2] not in {"0", "1"}:
             raise ValueError("启用冲刺只能输入 0 或 1。")
         try:
@@ -378,6 +379,7 @@ def configure_segment_parameters(
                 max_path_yaw_rate_rad_s=float(values[6]),
                 speed_to_mm_s=float(values[7]),
                 curvature_eps=float(values[8]),
+                response_delay_s=float(values[9]),
             )
         except ValueError as exc:
             raise ValueError("轨迹速度参数格式无效；冲刺开关只能输入 0 或 1。") from exc
@@ -390,8 +392,9 @@ def configure_segment_parameters(
             or configured.max_path_yaw_rate_rad_s <= 0.0
             or configured.speed_to_mm_s <= 0.0
             or configured.curvature_eps <= 0.0
+            or configured.response_delay_s < 0.0
         ):
-            raise ValueError("轨迹速度参数中的数值必须为正数。")
+            raise ValueError("轨迹速度参数中的数值必须为正数，响应延迟不能为负数。")
         configured_trajectories.append(replace(trajectory, speed_profile=configured))
     return configured_tasks, configured_trajectories
 

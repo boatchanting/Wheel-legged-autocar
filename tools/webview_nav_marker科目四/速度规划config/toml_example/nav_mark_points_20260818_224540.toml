@@ -104,6 +104,7 @@ max_lateral_accel_mm_s2 = 4000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 1e-06
+response_delay_s = 0.0
 
 [trajectory."1->7"]
 preset = "near_parallel"
@@ -116,6 +117,7 @@ max_lateral_accel_mm_s2 = 3000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 1e-06
+response_delay_s = 0.0
 
 [trajectory."8->20"]
 preset = "turnaround_stake_fastest"
@@ -128,6 +130,7 @@ max_lateral_accel_mm_s2 = 4000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 1e-06
+response_delay_s = 1.0
 # 必经普通点的点表 index。绕桩曲线会以 G2 连续方式精确经过这些点。
 # 例如单边桥出口 8 到颠簸路入口 20 可设为 [9, 10]。
 must_pass_marker_orders = [9, 10]
@@ -145,6 +148,7 @@ max_lateral_accel_mm_s2 = 4000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 1e-06
+response_delay_s = 0.0
 
 [trajectory."23->24"]
 preset = "pure_line"
@@ -157,6 +161,7 @@ max_lateral_accel_mm_s2 = 4000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 1e-06
+response_delay_s = 0.0
 
 [trajectory."24->26"]
 preset = "interpolated"
@@ -169,6 +174,7 @@ max_lateral_accel_mm_s2 = 4000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 1e-06
+response_delay_s = 0.0
 
 [trajectory."27->end"]
 preset = "interpolated"
@@ -181,3 +187,4 @@ max_lateral_accel_mm_s2 = 4000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 1e-06
+response_delay_s = 0.0

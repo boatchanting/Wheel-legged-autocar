@@ -95,6 +95,43 @@ def apply_response_delay_compensation(
     return command_speed
 
 
+def apply_segment_response_delay_compensation(
+    physical_speed: np.ndarray,
+    s: np.ndarray,
+    samples: list[PathSample],
+    trajectories: Iterable[TrajectorySegment],
+    preserve_mask: Optional[np.ndarray] = None,
+) -> np.ndarray:
+    """按轨迹段独立提前减速指令，不跨越相邻段的事件锚点。
+
+    每一段只在 ``source_exit_order -> target_entry_order`` 的样本范围内
+    前瞻，因此本段的响应延迟和末端减速不会改变下一段的指令。
+    """
+    command_speed = np.array(physical_speed, copy=True)
+    index_by_order = {
+        sample.marker_order: index
+        for index, sample in enumerate(samples)
+        if sample.marker_order is not None
+    }
+    for trajectory in trajectories:
+        delay_s = trajectory.speed_profile.response_delay_s
+        if delay_s <= 0.0:
+            continue
+        try:
+            start = 0 if trajectory.source_exit_order is None else index_by_order[trajectory.source_exit_order]
+            end = len(samples) - 1 if trajectory.target_entry_order is None else index_by_order[trajectory.target_entry_order]
+        except KeyError as exc:
+            raise ValueError("轨迹段缺少对应的点表事件锚点，无法应用响应延迟补偿。") from exc
+        if end < start:
+            raise ValueError("轨迹段响应延迟补偿的目标入口位于源出口之前。")
+        segment_slice = slice(start, end + 1)
+        segment_mask = None if preserve_mask is None else preserve_mask[segment_slice]
+        command_speed[segment_slice] = apply_response_delay_compensation(
+            physical_speed[segment_slice], s[segment_slice], delay_s, segment_mask
+        )
+    return command_speed
+
+
 def apply_fixed_speed_envelope(
     speed_limit: np.ndarray,
     s: np.ndarray,
