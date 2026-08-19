@@ -607,7 +607,7 @@ float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear)
     return desired;
 }
 
-static void Turn_Active_Roll_Duty_Clear(void)
+void Turn_Active_Roll_Duty_Clear(void)
 {
     g_target_pwm_turn_roll_lf = 0;
     g_target_pwm_turn_roll_rf = 0;
@@ -980,11 +980,23 @@ static void Control_Profile_ApplyToControllers(const ControlProfile_t *profile)
     pid_roll.max_integral = profile->roll_max_integral;
     pid_roll.compensation = profile->roll_compensation;
 
-    servo_executor_set_profile(profile->servo_exec_acc_limit,
-                               profile->servo_exec_dec_limit,
-                               profile->servo_exec_boost_from_speed,
-                               profile->servo_exec_boost_from_error,
-                               profile->servo_exec_boost_max);
+    if (roll_balance_enable == 0U)
+    {
+        servo_executor_set_profile(profile->servo_exec_acc_limit,
+                                   profile->servo_exec_dec_limit,
+                                   profile->servo_exec_boost_from_speed,
+                                   profile->servo_exec_boost_from_error,
+                                   profile->servo_exec_boost_max);
+    }
+    else
+    {
+        /* Rolling 开启时（如单边桥阶段），保留桥梁状态机设置的高响应斜率，避免被平地巡航低值(10)覆盖 */
+        servo_executor_set_profile(acc_limit,
+                                   dec_limit,
+                                   profile->servo_exec_boost_from_speed,
+                                   profile->servo_exec_boost_from_error,
+                                   profile->servo_exec_boost_max);
+    }
 }
 
 void Control_Profile_RequestMode(ControlMode_e mode)
@@ -1330,21 +1342,22 @@ void PID_Data_Clean_All(void) {
     pid_turn_gyro.error_integral = 0;
     pid_turn_gyro.output = 0;
 
-    //初始化横滚环PID参数
-    pid_roll.kp = 0;
-    pid_roll.ki = 0;
-    pid_roll.kd = 0;
-    pid_roll.max_output = ROLL_MAX_O;
-    pid_roll.max_integral = ROLL_MAX_I;
-    pid_roll.compensation = ROLL_MECH_ZERO;
-
-    // 重置横滚环状态变量
-    pid_roll.error = 0;
-    pid_roll.last_error = 0;
-    pid_roll.prev_error = 0;
-    pid_roll.error_integral = 0;
-    pid_roll.output = 0;
-    g_target_pwm_roll_adj = 0;
+    // 初始化横滚环PID参数（若使能了Rolling环，则保留调参参数，便于关电机手持调试）
+    if (roll_balance_enable == 0U)
+    {
+        pid_roll.kp = 0;
+        pid_roll.ki = 0;
+        pid_roll.kd = 0;
+        pid_roll.max_output = ROLL_MAX_O;
+        pid_roll.max_integral = ROLL_MAX_I;
+        pid_roll.compensation = ROLL_MECH_ZERO;
+        pid_roll.error = 0;
+        pid_roll.last_error = 0;
+        pid_roll.prev_error = 0;
+        pid_roll.error_integral = 0;
+        pid_roll.output = 0;
+        g_target_pwm_roll_adj = 0;
+    }
     Turn_Active_Roll_Duty_Clear();
 
     // 重置目标速度
@@ -1665,60 +1678,143 @@ float Gyro_Loop_Control(float angle_loop_output, float actual_gyro)
     return pid_gyro.output;
 }
 
+#define ROLL_DEADBAND_DEG            1.0f   // 横滚角度死区 1 度（消除零点传感器噪点）
+#define ROLL_MIN_OUTPUT_DEADBAND_PWM 6.0f    // 舵机微动死区（<6 duty 时直接归零，杜绝微步死区振荡）
+
+/**
+ * @brief 将车身坐标系下的 roll 转换为相对于车身前进方向水平转轴的真实水平横滚角
+ * @param roll_deg 车身 roll 欧拉角 (度)
+ * @param pitch_deg 车身 pitch 欧拉角 (度)
+ * @return float 水平前进转轴下的实际旋转角 (度)
+ * @note 当车身俯仰时，车身 X 轴与地面存在夹角，通过坐标系转换消除俯仰角带来的横滚投影畸变
+ */
+float Calculate_Horizontal_Roll_Degree(float roll_deg, float pitch_deg)
+{
+    const float deg_to_rad = 0.0174532925f;
+    const float rad_to_deg = 57.2957795f;
+
+    float roll_rad = roll_deg * deg_to_rad;
+    float pitch_rad = pitch_deg * deg_to_rad;
+
+    /* 水平转轴投影转换：tan(roll_horizontal) = tan(roll) * cos(pitch) */
+    float roll_horizontal = atan2f(cosf(pitch_rad) * sinf(roll_rad), cosf(roll_rad)) * rad_to_deg;
+
+    return roll_horizontal;
+}
+
 /**
  * @brief Rolling 自适应平衡控制，主要用于单边桥
  * @param actual_roll 当前横滚角 (单位: 度, 右高左低为正)
- * @return float 计算出的单侧缩短量 (PWM值, 总是 >= 0)
+ * @return float 计算出的单侧调整量 (PWM值)
  * @note 此函数应在 5ms 定时器中调用
  */
 float Roll_Balance_Control(float actual_roll,float target_roll)
 {
+    static float s_roll_filtered = 0.0f;
+    static float s_diff_filtered = 0.0f;
+    static float s_incremental_total = 0.0f; // [方案2] 增量式累计器
+
     // 0. 安全检查
     if (roll_balance_enable == 0U) {
-        g_target_pwm_roll_adj = 0; // 这里的含义稍后解释
+        g_target_pwm_roll_adj = 0;
+        s_diff_filtered = 0.0f;
+        s_roll_filtered = actual_roll;
+        s_incremental_total = 0.0f; // 出状态机时，重置累加器，收回所有长短腿
         Turn_Active_Roll_Duty_Clear();
         return 0.0f;
     }
 
-    // 1. 计算误差 (目标 - 实际)
-    // 目标是 0 度
-    float error = target_roll - actual_roll;
+    // 1. 输入低通滤波（2.0m/s 高速单边桥：降低滞后，测量响应 < 5ms）
+    s_roll_filtered = 0.35f * s_roll_filtered + 0.65f * actual_roll;
 
-    // 2. 计算 PD 输出 (标准 PID 公式)
-    // 注意：这里计算的是一个“总矫正力”，正负代表方向
-    float p_out = pid_roll.kp * error;
-    float d_out = pid_roll.kd * (error - pid_roll.last_error);
+    // 2. 计算原始误差 (提取原始误差用于微分)
+    float raw_error = target_roll - s_roll_filtered;
+    float error_p = raw_error;
     
-    pid_roll.last_error = error; // 更新历史误差
-    
-    float total_out = p_out + d_out;
-    
-    // 限幅
-    total_out = Float_Constrain(total_out, -pid_roll.max_output, pid_roll.max_output);
+    // 3. 动态零点死区仅作用于比例项，防止微小抖动引发左右腿抽动
+    if (fabsf(error_p) < ROLL_DEADBAND_DEG) {
+        error_p = 0.0f;
+    }
 
-    // 普通转向主动侧倾已经通过查表差动给左右腿前馈高度差。
-    // 此时 Rolling 环只保留小幅反馈修正，避免和前馈动作互相抢腿导致抖动。
-    if ((g_target_pwm_turn_roll_lf != 0) || (g_target_pwm_turn_roll_rf != 0) ||
-        (g_target_pwm_turn_roll_rr != 0) || (g_target_pwm_turn_roll_lr != 0))
+    // 4. 计算微分并低通滤波（关键修复：使用无死区的原始误差，防止死区边缘跳变引发巨大微分冲击）
+    float raw_diff = raw_error - pid_roll.last_error;
+    pid_roll.last_error = raw_error;
+    s_diff_filtered = 0.40f * s_diff_filtered + 0.60f * raw_diff;
+
+    // 5. [方案2] 计算增量并累加 (把 Roll 环变成纯积分器，并加入离桥自适应泄漏与快速回零)
+    float p_inc = pid_roll.kp * error_p;
+    float d_inc = pid_roll.kd * s_diff_filtered;
+    float inc_total = p_inc + d_inc;
+
+    // 【自适应离桥快速姿态还原】：当倾角误差方向与当前长短腿累加器方向相反时（下坡/回平过程）
+    if ((s_incremental_total * raw_error) < -0.01f)
     {
-        total_out *= TURN_ACTIVE_ROLL_FB_KEEP_RATIO;
-        total_out = Float_Constrain(total_out,
-                                    -TURN_ACTIVE_ROLL_FB_MAX_PWM,
-                                    TURN_ACTIVE_ROLL_FB_MAX_PWM);
+        // 1. 指数主动泄漏，打破纯积分器记忆死锁
+        s_incremental_total *= ROLL_LEAKY_DECAY_RATE;
+        // 2. 放大反向抽取推力，加速长短腿拉平
+        s_incremental_total += (inc_total * ROLL_REVERSAL_BOOST_MULT);
+        // 3. 过零硬截断与死区归零保护
+        if (fabsf(s_incremental_total) < ROLL_RESET_SNAP_DUTY_TH)
+        {
+            s_incremental_total = 0.0f;
+        }
+    }
+    else
+    {
+        // 正常单边冲坡/保持阶段：常规增量累加
+        s_incremental_total += inc_total;
     }
     
-    // 3. 将总输出转换为 "一边不动，一边缩短" 的逻辑
+    // 限幅
+    s_incremental_total = Float_Constrain(s_incremental_total, -pid_roll.max_output, pid_roll.max_output);
+    float total_out = s_incremental_total;
+
+    // 5. 舵机微动死区消除（低于死区阈值时归零，杜绝细碎微步引发的死区振荡）
+    if (fabsf(total_out) < ROLL_MIN_OUTPUT_DEADBAND_PWM)
+    {
+        total_out = 0.0f;
+    }
+
+    // 7. 将总输出转换为 "低侧伸腿同时高侧收腿" 的逻辑
     // total_out 的物理含义：
-    // 如果 roll > 0 (右高)，error < 0，total_out < 0。我们需要缩短右腿。
-    // 如果 roll < 0 (左高)，error > 0，total_out > 0。我们需要缩短左腿。
-    
+    // 如果 roll > 0 (右高)，error < 0，total_out < 0。左低右高 -> 左侧伸腿，右侧收腿 (高侧收腿最大1000duty)
+    // 如果 roll < 0 (左高)，error > 0，total_out > 0。左高右低 -> 右侧伸腿，左侧收腿 (高侧收腿最大1000duty)
     // 我们约定 g_target_pwm_roll_adj 的含义：
-    // 这个变量不再直接加减，而是作为一个“带符号的缩短量”传递给 servo_executor。
-    // > 0 : 表示左侧需要缩短 (值越大缩得越多)
-    // < 0 : 表示右侧需要缩短 (绝对值越大缩得越多)
+    // > 0 : 表示左高右低，需要右侧伸长、左侧收缩
+    // < 0 : 表示右高左低，需要左侧伸长、右侧收缩
     // = 0 : 大家都不动
     
+    pid_roll.error = raw_error;
+    pid_roll.output = total_out;
     g_target_pwm_roll_adj = (int16)total_out;
     
     return total_out;
+}
+
+void PID_Roll_Update_Kp(float kp)
+{
+    pid_roll.kp = kp;
+    g_control_profile_active.roll_kp = kp;
+    g_control_profile_target.roll_kp = kp;
+}
+
+void PID_Roll_Update_Kd(float kd)
+{
+    pid_roll.kd = kd;
+    g_control_profile_active.roll_kd = kd;
+    g_control_profile_target.roll_kd = kd;
+}
+
+void PID_Roll_Update_MaxOutput(float max_output)
+{
+    pid_roll.max_output = max_output;
+    g_control_profile_active.roll_max_output = max_output;
+    g_control_profile_target.roll_max_output = max_output;
+}
+
+void PID_Roll_Update_Compensation(float compensation)
+{
+    pid_roll.compensation = compensation;
+    g_control_profile_active.roll_compensation = compensation;
+    g_control_profile_target.roll_compensation = compensation;
 }

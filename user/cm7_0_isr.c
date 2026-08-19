@@ -765,68 +765,22 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 
     // 6.rolling平衡环(5ms一次)
     if (loop_counter % 5 == 3){
-        // 单边桥/桥梁任务接管时不改写 roll_degree，保留原有 Rolling 流程。
-        uint8 turn_roll_task_takeover = (uint8)((VisionBridgeTask_IsActive() != 0U) ||
-                                                (Bridge_Test_Triple_SingleSide_Is_Active() != 0U));
-        float brake_pwm_roll = Brake_Feedforward_GetPwm();
-        // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；强刹时清侧倾，避免刹车叠加压低单侧车身。
-        uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
-                                            (g_motor_enable == 0U) ||
-                                            (g_fallen) ||
-                                            (jump_flag != 0U) ||
-                                            ((now_angle - ANG_MECH_ZERO) > 70.0f) ||
-                                            ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
-                                            (g_is_push_mode != 0U) ||
-                                            (Minefield_Is_Active() != 0U) ||
-                                            (BumpyRoad_Is_Active() != 0U) ||
-                                            (VisionThreeStageControl_IsActive() != 0U) ||
-                                            (turn_roll_task_takeover != 0U) ||
-                                            (g_pvc_control_enable != 0U) ||
-                                            (fabsf(brake_pwm_roll) >= BRAKE_TURN_ROLL_CLEAR_PWM_TH) ||
-                                            ((fabsf(target_speed_set) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
-                                             (fabsf(current_actual_speed) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND))
-                                            #if GNSS_NAV == 1
-                                            || (g_gps_special_action_trigger != 0U)
-                                            #endif
-                                           );
-        if (turn_roll_task_takeover == 0U)
+        // 彻底清空并屏蔽历史转向主动侧倾差动，防止干扰纯净的单边桥横滚平衡
+        Turn_Active_Roll_Duty_Clear();
+
+        // 坐标系转换：计算相对于车身前进方向水平转轴的旋转角 (消除车身俯仰时车身 roll 轴倾斜引起的投影误差)
+        float actual_horizontal_roll = Calculate_Horizontal_Roll_Degree(euler_angle.roll, euler_angle.pitch);
+
+        if (roll_balance_enable != 0U)
         {
-            if (roll_balance_enable == 0U)
-            {
-                roll_degree = 0.0f;
-                Turn_Active_Roll_Duty_Update(0.0f, 1U);
-            }
-            else
-            {
-                // 根据期望/实际 yaw 角速度中更强的一项预判压弯，避免复刻调头时车已经开始甩而腿还没伸开。
-                float turn_roll_yaw_rate = filtered_gyro_z;
-                if (fabsf(turn_angle_loop_out) > fabsf(turn_roll_yaw_rate))
-                {
-                    turn_roll_yaw_rate = turn_angle_loop_out;
-                }
-                float turn_roll_target = Turn_Active_Roll_Target_Update(turn_roll_yaw_rate, turn_roll_hard_clear);
-                float turn_roll_ramp = (fabsf(turn_roll_target) > fabsf(roll_degree)) ? TURN_ACTIVE_ROLL_RAMP_UP : TURN_ACTIVE_ROLL_RAMP_DOWN;
-                roll_degree += Float_Constrain(turn_roll_target - roll_degree, -turn_roll_ramp, turn_roll_ramp);
-                if (fabsf(roll_degree) < 0.01f)
-                {
-                    roll_degree = 0.0f;
-                }
-                Turn_Active_Roll_Duty_Update(roll_degree, turn_roll_hard_clear);
-            }
+            // 开启了 Rolling 环使能时，执行纯净的横滚平衡闭环 (以 roll_degree 为目标，默认 0.0f)
+            Roll_Balance_Control(actual_horizontal_roll, roll_degree);
         }
         else
         {
-            Turn_Active_Roll_Duty_Update(0.0f, 1U);
-        }
-        if (turn_roll_task_takeover != 0U)
-        {
-            // 单边桥/桥梁任务保持原有被动 Rolling 流程。
-            Roll_Balance_Control(euler_angle.roll, roll_degree);
-        }
-        else
-        {
-            // 普通转向只保留主动压弯查表差动，关闭被动 Rolling 收腿干扰。
-            Roll_Balance_Control(euler_angle.roll, euler_angle.roll);
+            // 普通未开启 Rolling 时，关闭被动 Rolling
+            roll_degree = 0.0f;
+            Roll_Balance_Control(actual_horizontal_roll, actual_horizontal_roll);
             g_target_pwm_roll_adj = 0;
         }
     }
