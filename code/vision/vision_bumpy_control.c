@@ -16,11 +16,6 @@ volatile uint8 g_bumpy_control_enable = VISION_BUMPY_CONTROL_DEFAULT_ACTIVE; ///
 static vision_bumpy_control_status_t g_bumpy_ctrl_shadow;  ///< 凹凸路面控制状态影子变量(内部使用)
 
 /**
- * @brief   计算浮点数的绝对值
- * @param   value 输入值
- * @return  输入值的绝对值
- */
-/**
  * @brief   将浮点数限制在指定范围内
  * @param   value 输入值
  * @param   min_value 最小值
@@ -39,8 +34,6 @@ static float vision_bumpy_constrain_f(float value, float min_value, float max_va
     }
     return value;
 }
-/* 角度响应整形（vision_bumpy_calc_err_degree）已于 2026-08-18 上移至 1 核
-   code1/vision/bumpy_vision.c（bumpy_vision_shape_yaw_error），0 核不再整形/EMA/锁角。 */
 
 /**
  * @brief   应用空闲输出状态
@@ -50,8 +43,7 @@ static void vision_bumpy_apply_idle_outputs(void)
 {
     g_bumpy_ctrl_shadow.state = VISION_BUMPY_CTRL_IDLE;  // 设置状态为空闲
     g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;           // 清零误差指令（1 核整形状态不受影响）
-    /* 新视觉测量（2026-08-17 规划 §4）：禁用/停机时清零 */
-    g_bumpy_ctrl_shadow.recorded_lateral_mm = 0.0f;
+    g_bumpy_ctrl_shadow.recorded_lateral_mm = 0.0f;      // 横向记录复位（惰性禁用，恒 0）
     g_bumpy_ctrl_shadow.meas_valid = 0U;
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow; // 更新全局状态
 }
@@ -114,8 +106,7 @@ void VisionBumpyControl_SetEnable(uint8 enable)
 void VisionBumpyControl_ResetExitDetection(void)
 {
     vision_bumpy_reset_all_detection();
-    /* 新视觉测量重置（2026-08-17 规划 §4.4）：进入新颠簸任务时清空 */
-    g_bumpy_ctrl_shadow.recorded_lateral_mm = 0.0f;
+    g_bumpy_ctrl_shadow.recorded_lateral_mm = 0.0f;      // 横向记录复位（惰性禁用，恒 0）
     g_bumpy_ctrl_shadow.meas_valid = 0U;
     g_vision_bumpy_control_status = g_bumpy_ctrl_shadow;
 }
@@ -198,11 +189,10 @@ void VisionBumpyControl_Update_2ms(void)
         g_bumpy_ctrl_shadow.direction_x = 0.0f;
         g_bumpy_ctrl_shadow.direction_y = 0.0f;
         g_bumpy_ctrl_shadow.err_degree_cmd = 0.0f;                  // 过旧不接：角度报 0（1 核整形状态不受影响）
-        /* 新视觉测量（2026-08-17 规划 §4）：过旧仅控制侧不消费（快照清零），
-         * 1 核 lat_stable/置信度独立维护、绝不被 0 核清零；recorded_lateral_mm 保持冻结。 */
+        /* 横向观测（2026-08-19 起惰性禁用）：对正变量 lateral_mm 绝不写入（恒 0）；
+           meas_valid 仅遥测，1 核独立维护、绝不被 0 核清零 */
         g_bumpy_ctrl_shadow.meas_valid = 0U;
         g_bumpy_ctrl_shadow.yaw_error_deg_x100 = 0;
-        g_bumpy_ctrl_shadow.lateral_mm = 0;
         // 视觉数据暂时无效不抹除已确认的”进入”事实，但出口统计必须重新开始。
         vision_bumpy_reset_exit_detection();
         g_bumpy_ctrl_shadow.detect_frame_count = 0U;
@@ -218,9 +208,12 @@ void VisionBumpyControl_Update_2ms(void)
     g_bumpy_ctrl_shadow.direction_x = packet->bumpy_direction_x;
     g_bumpy_ctrl_shadow.direction_y = packet->bumpy_direction_y;
 
-    /* 新视觉测量（2026-08-17 规划 §3/§4）：偏差角度 + 水平方向偏差 + 可信位 */
+    /* 新视觉测量（2026-08-17 规划 §3/§4）：偏差角度 + 可信位。
+       注意：对正变量 lateral_mm【故意不写入】——0 核保持恒 0、绝不被赋值，
+       使中线对正逻辑（bumpy_road.ApplyExitCorrection 等）整体惰性禁用、不干扰控制；
+       后续移植时恢复下面一行即可整体生效：
+       g_bumpy_ctrl_shadow.lateral_mm = packet->lateral_mm; */
     g_bumpy_ctrl_shadow.yaw_error_deg_x100 = packet->yaw_error_deg_x100;
-    g_bumpy_ctrl_shadow.lateral_mm = packet->lateral_mm;
     g_bumpy_ctrl_shadow.meas_valid =
         (uint8)((packet->valid_mask & VISION_VALID_BUMPY_MEAS) != 0U);
 
@@ -234,13 +227,12 @@ void VisionBumpyControl_Update_2ms(void)
        （后续转向角度环/角速度环的 PID 是控制层通用，与此无关） */
     g_bumpy_ctrl_shadow.err_degree_cmd = (float)packet->yaw_error_deg_x100 * 0.01f;
 
-    /* 横向记录：EMA 滤波，只记录不修正（遥测用）。
-       仅在横向可信（meas_valid=置信度未耗尽）时更新；
-       非零门控（审批方案 §3.2）：lateral_mm=0 表示本帧无横向观测（无线/间距自检失败），
-       不参与更新，避免这些帧把记录值向 0 污染。 */
-    if ((g_bumpy_ctrl_shadow.meas_valid != 0U) && (packet->lateral_mm != 0))
+    /* 横向记录（2026-08-19 恢复供移植，惰性禁用）：EMA 滤波，只记录不修正（遥测用）。
+       门控用对正变量 g_bumpy_ctrl_shadow.lateral_mm（恒 0、从不写入）→ 记录恒为 0，
+       绝不产生非零中线数据；后续移植恢复写入 lateral_mm 后本记录自动生效。 */
+    if ((g_bumpy_ctrl_shadow.meas_valid != 0U) && (g_bumpy_ctrl_shadow.lateral_mm != 0))
     {
-        const float lat = (float)packet->lateral_mm;
+        const float lat = (float)g_bumpy_ctrl_shadow.lateral_mm;
         g_bumpy_ctrl_shadow.recorded_lateral_mm +=
             (lat - g_bumpy_ctrl_shadow.recorded_lateral_mm) * VISION_BUMPY_LATERAL_RECORD_ALPHA;
         g_bumpy_ctrl_shadow.recorded_lateral_mm =
@@ -307,5 +299,6 @@ uint8 VisionBumpyControl_IsMeasurementValid(void)
 
 float VisionBumpyControl_GetRecordedLateralMm(void)
 {
+    /* 横向记录（2026-08-19 惰性禁用：对正变量 lateral_mm 恒 0 → 恒返回 0） */
     return g_vision_bumpy_control_status.recorded_lateral_mm;
 }

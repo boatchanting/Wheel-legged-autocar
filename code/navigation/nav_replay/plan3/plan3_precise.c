@@ -471,6 +471,7 @@ void NavReplay_Process(void)
                 s_bumpy_exit_pending = NavReplay_IsBumpyExitPoint(g_target_idx + 1U);
                 if (s_bumpy_exit_pending)
                 {
+                    /* 中线对正（2026-08-19 恢复供移植，惰性禁用：lateral_mm 恒 0，仅记录锚点不影响控制） */
                     BumpyRoad_SetExitAnchor(nav_ram_data.points[g_target_idx + 1U].x,
                                              nav_ram_data.points[g_target_idx + 1U].y);
                 }

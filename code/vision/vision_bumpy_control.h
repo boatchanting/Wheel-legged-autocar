@@ -28,13 +28,7 @@ extern "C" {
 /* 角度响应整形/符号参数已于 2026-08-18 上移至 1 核 code1/vision/bumpy_vision.h（VISION_BUMPY_*），
    0 核不再做整形/EMA/锁角，仅直通 1 核稳定提案。 */
 
-/* 横向记录（2026-08-17 规划 §4.3；2026-08-18 起正式横向源为 1 核 lat_stable，recorded 保留为遥测） */
-#define VISION_BUMPY_LATERAL_RECORD_ALPHA      (0.50f)  // 记录 EMA 系数：0~1，越小越平滑
-#define VISION_BUMPY_LATERAL_RECORD_MAX_MM     (200.0f) // 记录值限幅，防视觉异常导致出口跳变
-#define VISION_BUMPY_ENTRY_DETECT_FRAMES        (3U)     // 连续 5 个新视觉帧检测到颠簸，确认进入路段
-#define VISION_BUMPY_EXIT_MISS_FRAMES          (3U)     // 连续 5 个新视觉帧未检测到颠簸，确认视觉出口
-
-/* 横向记录（2026-08-17 规划 §4.3） */
+/* 横向记录（2026-08-19 恢复供移植，惰性禁用：对正变量 lateral_mm 恒 0 → 记录恒 0） */
 #define VISION_BUMPY_LATERAL_RECORD_ALPHA      (0.50f)  // 记录 EMA 系数：0~1，越小越平滑
 #define VISION_BUMPY_LATERAL_RECORD_MAX_MM     (200.0f) // 记录值限幅，防视觉异常导致出口跳变
 #define VISION_BUMPY_ENTRY_DETECT_FRAMES        (3U)     // 连续 5 个新视觉帧检测到颠簸，确认进入路段
@@ -76,9 +70,11 @@ typedef struct
        yaw_error_deg_x100 已是 1 核稳定提案（无条纹报 0）；err_degree_cmd 直通送 err_degree —— */
     int16 yaw_error_deg_x100;              // 1 核整形后偏差角度×100（遥测用）
     float err_degree_cmd;                  // 转向误差角度指令(度)：1 核 yaw_error 直通
-    /* 横向记录（lateral_mm → recorded，只记录不修正；正式消费源为 1 核 lat_stable） */
-    int16 lateral_mm;                      // 最近一帧可信横向偏差（原始观测，遥测用）
-    float recorded_lateral_mm;             // 记录的横向偏差（EMA 滤波，失稳时冻结，遥测用）
+    /* 横向（2026-08-19 恢复供移植，惰性禁用）：
+       lateral_mm = 对正变量，0 核【从不写入、恒 0】——所有中线对正逻辑以它 !=0 为总闸，
+       因此整体惰性禁用、不干扰控制；recorded_lateral_mm 以 lateral_mm 为门 → 恒 0（遥测）。 */
+    int16 lateral_mm;                      // 对正变量：0 核绝不写入，恒为 0（原始观测来自 IPC packet->lateral_mm）
+    float recorded_lateral_mm;             // 记录的横向偏差（EMA 滤波；惰性禁用 → 恒 0，遥测用）
     uint8 meas_valid;                      // 最近一帧是否可信（VISION_VALID_BUMPY_MEAS）
 } vision_bumpy_control_status_t;
 
@@ -125,13 +121,13 @@ void VisionBumpyControl_Update_2ms(void);
 float VisionBumpyControl_GetErrDegreeCmd(void);
 
 /**
- * @brief   查询最近一帧角度测量是否可信（VISION_VALID_BUMPY_MEAS 直通，含横向 HOLD 透传）
- * @return  1: 本帧角度可信；0: 严重丢失（无条纹），锁当前角度
+ * @brief   查询最近一帧角度测量是否可信（VISION_VALID_BUMPY_MEAS 直通）
+ * @return  1: 本帧角度可信；0: 严重丢失（无条纹）
  */
 uint8 VisionBumpyControl_IsMeasurementValid(void);
 
 /**
- * @brief   获取冻结后的横向偏差记录值（新视觉接口 2026-08-17 规划 §4.3；遥测用）
+ * @brief   获取横向偏差记录值（2026-08-19 恢复供移植，惰性禁用：对正变量恒 0 → 恒返回 0）
  * @return  记录的横向偏差（mm，正值=车身偏右）
  */
 float VisionBumpyControl_GetRecordedLateralMm(void);

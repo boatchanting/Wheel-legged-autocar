@@ -489,6 +489,7 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     {
         if (s_active_exit_idx < nav_ram_data.point_count)
         {
+            /* 中线对正（2026-08-19 恢复供移植，惰性禁用：lateral_mm 恒 0，仅记录锚点不影响控制） */
             BumpyRoad_SetExitAnchor(nav_ram_data.points[s_active_exit_idx].x,
                                     nav_ram_data.points[s_active_exit_idx].y);
         }

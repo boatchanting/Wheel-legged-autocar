@@ -17,7 +17,8 @@ typedef enum
     BUMPY_ROAD_STATE_FINISH       // 收尾态
 } BumpyRoadState_e;
 
-/* 中线修正（一次性位置修正）的执行时刻 */
+/* 中线修正（一次性位置修正）的执行时刻（2026-08-19 恢复供移植，惰性禁用：
+   对正变量 lateral_mm 恒 0 → 修正整体不执行） */
 typedef enum
 {
     BUMPY_ROAD_CORRECTION_MOMENT_TAKEOFF = 0,  // 起飞时刻（默认）：垂直加速度超阈值瞬间修正
@@ -27,8 +28,9 @@ typedef enum
 typedef enum
 {
     BUMPY_ROAD_EXIT_NONE = 0,
-    BUMPY_ROAD_EXIT_POST_CORRECTION_COMPLETE,
-    BUMPY_ROAD_EXIT_AUTO_DISTANCE
+    BUMPY_ROAD_EXIT_POST_CORRECTION_COMPLETE,   /* 中线修正后行驶修正距离结束（惰性，当前不触发） */
+    BUMPY_ROAD_EXIT_VISUAL_CONFIRMED,           /* 视觉确认出口后行驶缓冲距离结束（当前生效） */
+    BUMPY_ROAD_EXIT_AUTO_DISTANCE               /* 视觉始终未确认出口，满目标距离兜底结束 */
 } BumpyRoadExitReason_e;
 
 typedef enum
@@ -54,7 +56,8 @@ void BumpyRoad_Init(void);
 void BumpyRoad_Trigger(void);
 
 /**
- * @brief 设置视觉出口锚点；视觉确认出口时将融合坐标修正到该位置
+ * @brief 设置视觉出口锚点（中线对正，2026-08-19 恢复供移植、惰性禁用：
+ *        对正变量 lateral_mm 恒 0 → 修正不执行，锚点仅记录不影响任何内容）
  */
 void BumpyRoad_SetExitAnchor(float x_mm, float y_mm);
 
@@ -92,29 +95,32 @@ BumpyRoadEvent_e BumpyRoad_GetLastEvent(void);
 uint32_t BumpyRoad_GetEventSequence(void);
 
 /**
- * @brief 外部显式解除“起飞”锁存（当前锁存不自动释放）
+ * @brief 外部显式清除起飞/落地检测（复位滞回比较器与冲击计数，检测重新武装）
  *
- * @note 垂直加速度超过阈值（BUMPY_ROAD_VERT_ACC_TAKEOFF_TH_G，默认 5g）后锁存
- *       “起飞”标志并锁住转向控制量（err_degree 归零，视觉不再接入转向）；
- *       视觉数据管线（左右偏差/出入口检测）照常更新，出口确认仍依赖视觉。
- *       需要恢复视觉转向时由外部调用本函数显式解除锁存。
+ * @note 起飞/落地由垂直冲击滞回比较器检测（g_vert_acc_world_g >5g 置位、<2g 复位，
+ *       2~5g 保持），第 1 次冲击上升沿=起飞，第 2 次=落地。需要重新检测时调用。
  */
 void BumpyRoad_ClearTakeoffLatch(void);
 
 /**
- * @brief 查询是否处于“起飞”锁存状态（调试/遥测用）
+ * @brief 查询是否已检测到起飞（第 1 次高冲击上升沿，调试/遥测用）
  *
- * @return 1: 起飞锁存中, 0: 未锁存
+ * @return 1: 已检测到起飞, 0: 未检测到
  */
 uint8_t BumpyRoad_IsTakeoff(void);
 
 /**
- * @brief 设置中线修正执行时刻
+ * @brief 查询是否已检测到落地（第 2 次高冲击上升沿，调试/遥测用）
+ *
+ * @return 1: 已检测到落地, 0: 未检测到
+ */
+uint8_t BumpyRoad_IsLanding(void);
+
+/**
+ * @brief 设置中线修正执行时刻（2026-08-19 恢复供移植，惰性禁用：当前不影响任何内容）
  *
  * @param moment BUMPY_ROAD_CORRECTION_MOMENT_TAKEOFF（起飞时刻，默认）或
  *               BUMPY_ROAD_CORRECTION_MOMENT_VISUAL_EXIT（视觉脱出时刻）
- * @note 未调用本函数时默认为起飞时刻；起飞时刻修正后 correction_applied=1，
- *       视觉脱出路径自然跳过，无需专门处理。
  */
 void BumpyRoad_SetCorrectionMoment(BumpyRoadCorrectionMoment_e moment);
 
