@@ -38,12 +38,12 @@ volatile uint8 g_vision_three_stage_jump1_correction_bottom_y = VISION_THREE_STA
 /* 第二跳触发策略：默认固定延时（宏默认值），可在线置 0 回退旧视觉 top_y 阈值策略 */
 volatile uint8 g_vision_three_stage_jump2_delay_enable = VISION_THREE_STAGE_JUMP2_DELAY_ENABLE_DEFAULT;
 
-volatile float g_vision_three_stage_speed_approach = -320.0f; /* 锁定目标靠近时的速度 */
-volatile float g_vision_three_stage_speed_jump1    = -320.0f;/* 第一跳寻找速度 */
-volatile float g_vision_three_stage_speed_jump2    = -320.0f;/* 第二跳寻找速度 */
-volatile float g_vision_three_stage_speed_gap      = -320.0f; /* 短暂丢失过渡阶段速度 */
-volatile float g_vision_three_stage_speed_jump3    = -320.0f;/* 第三跳寻找速度 */
-volatile float g_vision_three_stage_speed_exit     = -320.0f; /* 最后一跳完成后的驶出减速 */
+volatile float g_vision_three_stage_speed_approach = -300.0f; /* 锁定目标靠近时的速度 */
+volatile float g_vision_three_stage_speed_jump1    = -300.0f;/* 第一跳寻找速度 */
+volatile float g_vision_three_stage_speed_jump2    = -300.0f;/* 第二跳寻找速度 */
+volatile float g_vision_three_stage_speed_gap      = -300.0f; /* 短暂丢失过渡阶段速度 */
+volatile float g_vision_three_stage_speed_jump3    = -300.0f;/* 第三跳寻找速度 */
+volatile float g_vision_three_stage_speed_exit     = -300.0f; /* 最后一跳完成后的驶出减速 */
 
 /* 影子变量：先算完，再一次性发布，减少并发读写中间态 */
 static vision_three_stage_control_status_t s_ctrl_shadow;
