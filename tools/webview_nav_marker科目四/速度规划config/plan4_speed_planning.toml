@@ -81,8 +81,8 @@ path_speed_max_mm_s = 8000.0
 sprint_speed_mm_s = 8000.0
 enable_finish_sprint = true
 max_accel_mm_s2 = 10500.0
-max_decel_mm_s2 = 10500.0
-max_lateral_accel_mm_s2 = 4000.0
+max_decel_mm_s2 = 3500.0
+max_lateral_accel_mm_s2 = 3000.0
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
 curvature_eps = 0.000001
@@ -104,15 +104,16 @@ response_delay_s = 0.0
 # 预设 4：绕掉头桩的最速丝滑连接，通常用于单边桥或草地到颠簸路。
 # 建议依据实车绕桩稳定性单独调低横向加速度或航向角速度上限。
 [trajectory.turnaround_stake_fastest]
-path_speed_max_mm_s = 8000.0
-sprint_speed_mm_s = 8000.0
+preset = "turnaround_stake_fastest"
+path_speed_max_mm_s = 5000.0
+sprint_speed_mm_s = 5000.0
 enable_finish_sprint = true
-max_accel_mm_s2 = 10500.0
-max_decel_mm_s2 = 10500.0
+max_accel_mm_s2 = 4500.0
+max_decel_mm_s2 = 2500.0
 max_lateral_accel_mm_s2 = 4000.0
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
-curvature_eps = 0.000001
+curvature_eps = 1e-06
 response_delay_s = 0.0
 
 # 每份点表的状态机、掉头桩、连接预设、逐段速度和路径几何选择由脚本首次运行时自动写入：
