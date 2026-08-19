@@ -1,4 +1,4 @@
-#ifndef CODE__PID_NEW_H__
+﻿#ifndef CODE__PID_NEW_H__
 #define CODE__PID_NEW_H__
 #include "zf_common_headfile.h"
 #include "../config/sys_options.h"//系统配置开关
@@ -143,10 +143,10 @@ extern float current_actual_speed;
 //    这是维持直立最关键的一环。
 // ----------------------------------------------------------------------------
 // 当前Core0调度目标周期：3ms
-#define ANG_KP      -12.0f   //[直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。-12
+#define ANG_KP      -15.0f   //[直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。-12
 #define ANG_KI      0.0f    // [一般不用] 平衡车本身是不稳定系统，加积分容易导致无法直立，除非是完全静态的高精度控制。
 // 周期换算：5ms -> 3ms，ratio=0.6，Kd /= 0.6
-#define ANG_KD      -10.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。-13.3333
+#define ANG_KD      -14.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。-13.3333
 
 #define ANG_MAX_I   0.0f    // 积分限幅
 #define ANG_MAX_O   8000.0f // [最大角速度] 限制期望的旋转速度，防止电机指令过大。
@@ -161,7 +161,7 @@ extern float current_actual_speed;
 //    作用：直接控制电机PWM，让车身角速度迅速跟随角度环的指令。
 //    这一环必须响应最快。
 // ----------------------------------------------------------------------------
-#define GYR_KP      -15.0f    // [响应速度] 决定了电机对旋转的抵抗力。-16
+#define GYR_KP      -16.0f    // [响应速度] 决定了电机对旋转的抵抗力。-16
 #define GYR_KI      0.0f    // [一般不用] 响应太快，积分来不及反应，反而造成滞后。
 #define GYR_KD      0.0f    // [消除抖动] 抑制高频噪声和电机抖动。
 
@@ -182,7 +182,7 @@ extern float current_actual_speed;
 //    特性：无积分项（避免转向累积误差），支持赛道场景自适应增益
 // ----------------------------------------------------------------------------
 // 当前Core0调度目标周期：3ms
-#define TURN_ANG_KP     -8.0f   // -12[转向刚度] 值越大转向越灵敏，但易振荡-8
+#define TURN_ANG_KP     -12.0f   // -12[转向刚度] 值越大转向越灵敏，但易振荡-8
 #define TURN_ANG_KI     0.0f   // [一般不用] 无积分项，避免转向累积误差
 #define TURN_ANG_KD     0.0f   // [转向阻尼] 抑制转向超调，值过大会导致响应迟钝
 #define TURN_ANG_MAX_I  0.0f    // [一般不用] 无积分项，避免转向累积误差
@@ -197,7 +197,7 @@ extern float current_actual_speed;
 #define TURN_GYR_KP     20.0f    // 35[响应速度] 决定转向电机响应刚度20
 #define TURN_GYR_KI     0.0f     // [一般不用] 无积分项，避免转向累积误差
 // 周期换算：2ms -> 1ms，ratio=0.5，Kd /= 0.5
-#define TURN_GYR_KD     16.0f     // 12[抖动抑制] 消除高频抖动16
+#define TURN_GYR_KD     12.0f     // 12[抖动抑制] 消除高频抖动16
 #define TURN_GYR_MAX_I  0.0f     // [一般不用] 无积分项，避免转向累积误差
 #define TURN_GYR_DEAD_ZONE 0.0f  // [死区] 消除低速时的非线性迟滞
 #define TURN_GYR_MAX_O  8000.0f  // [PWM限幅] 普通赛道转向PWM上限
@@ -208,9 +208,9 @@ extern float current_actual_speed;
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
 //    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      9.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
+#define ROLL_KP      2.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      15.0f   // [阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      17.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
 #define ROLL_MAX_O   1600.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
