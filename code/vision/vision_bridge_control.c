@@ -64,6 +64,8 @@ typedef struct
     uint8 err_source;                 /* 当前 err 来源: 0=视觉 1=锁角 (C10 换源 ramp) */
     float last_err_ramp;              /* ramp 输出的上一帧 err (C10) */
     float exit_line_y;                /* 退出线在 x=47 处的图像行 (调试, 无效为 -1) */
+    uint32 exit_last_seq;             /* 脱出确认已处理的最新视觉包 seq */
+    uint8 exit_consec_frames;         /* 连续满足退出线条件的视觉包数 */
     int32 saved_acc_limit;            /* 备份原来的加速度限制，下桥后恢复 */
     int32 saved_dec_limit;            /* 备份原来的减速度限制，下桥后恢复 */
     float saved_servo_height;         /* 备份进入任务时的腿高 (servo_height)，退出后恢复到它而非写死值 (同雷区做法, 2026-08-14) */
@@ -467,6 +469,36 @@ static float vision_bridge_exit_line_measure_y(const volatile vision_ipc_packet_
     return y;
 }
 
+/* 连续 N 个新视觉包的退出线满足阈值才触发，避免同一 IPC 包被 2ms 控制循环重复计数。 */
+static uint8 vision_bridge_exit_update_gate(const volatile vision_ipc_packet_t *packet)
+{
+    const float y = vision_bridge_exit_line_measure_y(packet);
+
+    if (packet == NULL)
+    {
+        return 0U;
+    }
+    if ((packet->seq == 0U) || (packet->seq == s_bridge_task.exit_last_seq))
+    {
+        return (uint8)(s_bridge_task.exit_consec_frames >= VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES);
+    }
+    s_bridge_task.exit_last_seq = packet->seq;
+
+    if ((y >= 0.0f) && (y <= (float)(IPM_IMG_HEIGHT - 1U)) &&
+        (y > VISION_BRIDGE_TASK_EXIT_Y_TH_PX))
+    {
+        if (s_bridge_task.exit_consec_frames < 0xFFU)
+        {
+            s_bridge_task.exit_consec_frames++;
+        }
+    }
+    else
+    {
+        s_bridge_task.exit_consec_frames = 0U;
+    }
+    return (uint8)(s_bridge_task.exit_consec_frames >= VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES);
+}
+
 /**
  * @brief 把上桥前的加减速限制存起来
  * @note  因为上桥可能要慢慢开，需要改限制；下桥后得把这些参数还给系统。
@@ -723,6 +755,7 @@ void VisionBridgeTask_Update_2ms(void)
     float traveled_mm = 0.0f; /* 跑了多远 */
     float err_cmd = 0.0f;     /* 打算给方向盘的指令 */
     float speed_cmd = 0.0f;   /* 打算给电机的指令 */
+    uint8 exit_fire = 0U;
 
     /* 如果没开启任务，且现在是空闲状态，啥也不干 */
     if ((g_bridge_vision_task_enable == 0U) &&
@@ -823,6 +856,7 @@ void VisionBridgeTask_Update_2ms(void)
             }
 
             vision_bridge_exit_line_measure_y(packet); /* 每 tick 刷新退出线行坐标 (调试可观测) */
+            exit_fire = vision_bridge_exit_update_gate(packet);
 
             /* 如果倒计时没归零，说明现在车还在桥上 */
             if (s_bridge_task.bridge_hold_ticks > 0U)
@@ -876,12 +910,9 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 仅融合状态机已进入准备脱出阶段，且 RUN 里程满 2300 mm 后，
-               顶部线到图像顶部才允许退出。 */
+            /* 融合状态机进入准备脱出阶段、连续退出线确认且 RUN 里程满 2300 mm 后退出。 */
             if ((traveled_mm >= VISION_BRIDGE_TASK_RUN_MIN_MM) &&
-                vision_bridge_packet_in_exit_stage(packet) &&
-                (s_bridge_task.exit_line_y >= 0.0f) &&
-                (s_bridge_task.exit_line_y < VISION_BRIDGE_TASK_EXIT_LINE_TOP_Y_PX))
+                (exit_fire != 0U) && vision_bridge_packet_in_exit_stage(packet))
             {
                 g_bridge_vision_task_exit_reason = VISION_BRIDGE_EXIT_VISUAL_CONFIRMED;
                 exit_beep_request = 1U; /* 脱出时刻: 视觉确认响 2 声 (侧键/Plan4 驱动都响) */
@@ -938,7 +969,7 @@ void VisionBridgeTask_Update_2ms(void)
         static uint32 ctrl_dbg_div = 0U;
         if ((ctrl_dbg_div++ % 250U) == 0U)
         {
-            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f e=%.3f ed=%.3f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f\r\n",
+            printf("[BridgeCtrl] st=%d tick=%lu trav=%.0f err=%.1f spd=%.0f e=%.3f ed=%.3f filt=%u/%u/%u b2v=%u src=%u m=%u gate=%u top=%u exit_y=%.1f consec=%u\r\n",
                    (int)s_bridge_task.state,
                    (unsigned long)s_bridge_task.state_ticks,
                    (double)traveled_mm,
@@ -954,7 +985,8 @@ void VisionBridgeTask_Update_2ms(void)
                    (unsigned int)(packet ? packet->b2_mode : 0U),
                    (unsigned int)(packet ? packet->b2_gate : 0U),
                    (unsigned int)(packet ? packet->b2_has_top : 0U),
-                   (double)s_bridge_task.exit_line_y);
+                   (double)s_bridge_task.exit_line_y,
+                   (unsigned int)s_bridge_task.exit_consec_frames);
         }
     }
 #endif

@@ -54,10 +54,11 @@ extern "C" {
 #define VISION_BRIDGE_TASK_VALID_LOST_FRAMES          (3U)      /* b2_valid 失能连续帧数: 达到回锁角 */
 #define VISION_BRIDGE_TASK_VALID_RECOVER_FRAMES       (4U)      /* b2_valid 恢复连续帧数: 达到回视觉 (M, C09) */
 #define VISION_BRIDGE_TASK_ERR_RAMP_STEP_DEG          (0.5f)    /* 视觉↔锁角换源 ramp: 每 2ms 最多变化 (C10) */
-/* --- 3.6 退出线视觉确认 ---
- * 融合检测已经切到准备脱出阶段后，顶部线在图像中心列的行坐标小于此值即出桥。
- * 当前 IPC 传输退出线方程而非端点，该坐标是旧“顶部线端点均值”的协议等价量。 */
-#define VISION_BRIDGE_TASK_EXIT_LINE_TOP_Y_PX         (10.0f)
+/* --- 3.6 退出线视觉确认: 连续 N 帧(真帧) exit_y>阈值 即触发 ---
+ * 按"真帧"(视觉包 seq)计数, 与 2ms tick 无关: 同一视觉包只计一次。
+ * exit_y 未达阈值或无数据会中断连续计数。 */
+#define VISION_BRIDGE_TASK_EXIT_Y_TH_PX               (30.0f)
+#define VISION_BRIDGE_TASK_EXIT_CONSEC_FRAMES         (2U)
 
 /* --- 4. 转向指令参数 --- */
 /* IPM 坐标为 X 向右、Y 向前；底层航向环的正方向与其相反，因此默认取 -1。
