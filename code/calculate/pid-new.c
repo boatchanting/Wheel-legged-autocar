@@ -1497,7 +1497,29 @@ float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
     return pid_turn_gyro.output;
 }
 
+/**
+ * @brief 重置转向环（外环角度 + 内环角速度）运行态（不重置参数）
+ * @note 跳跃/推车等需要冻结转向环的场景调用：
+ *       - 清零 PID 误差/积分/输出，避免跳跃空中污染状态；
+ *       - 清零历史误差，避免落地恢复控制后第一拍出现微分突跳（D 项冲击导致甩尾）。
+ */
+void Turn_Control_Reset(void)
+{
+    pid_turn_angle.error = 0.0f;
+    pid_turn_angle.last_error = 0.0f;
+    pid_turn_angle.prev_error = 0.0f;
+    pid_turn_angle.error_integral = 0.0f;
+    pid_turn_angle.output = 0.0f;
 
+    pid_turn_gyro.error = 0.0f;
+    pid_turn_gyro.last_error = 0.0f;
+    pid_turn_gyro.prev_error = 0.0f;
+    pid_turn_gyro.error_integral = 0.0f;
+    pid_turn_gyro.output = 0.0f;
+
+    turn_angle_loop_out = 0.0f;
+    turn_gyro_loop_out = 0.0f;
+}
 
 //内部静态变量，用于舵机速度环的滤波
 static float servo_speed_last = 0.0f;
