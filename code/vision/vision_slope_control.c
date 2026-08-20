@@ -36,10 +36,16 @@ typedef struct
     float start_x_mm;                     /* 锁角进入斜坡瞬间的惯导 X 坐标 */
     float start_y_mm;                     /* 锁角进入斜坡瞬间的惯导 Y 坐标 */
     float locked_yaw_deg;                 /* PVC 校准完成后锁定的惯导航向 */
+    float entry_yaw_deg;                  /* 进入状态机时刻锁存的航向(进入段PID 基准) */
     uint16 pvc_align_ok_ticks;            /* PVC 入口确认条件连续满足的 2ms tick 数 */
 } vision_slope_task_ctx_t;
 
 static vision_slope_task_ctx_t s_slope_task;
+
+/* 进入段物理域 PID 微分状态（PVC_ALIGN 期间使用） */
+static float s_entry_pid_psi_prev_rad = 0.0f;   /* 上一拍航向误差(rad) */
+static float s_entry_pid_psi_dot_f    = 0.0f;   /* 滤波后航向误差微分(rad/s) */
+static uint8 s_entry_pid_first_valid  = 0U;     /* 首个有效帧标志 */
 
 /* --- 基础数学工具函数 --- */
 
@@ -95,6 +101,69 @@ static float vision_slope_calc_yaw_hold_err(void)
     return vision_slope_constrain_f(yaw_error,
                                     -VISION_SLOPE_TASK_YAW_HOLD_MAX_ERR_DEG,
                                     VISION_SLOPE_TASK_YAW_HOLD_MAX_ERR_DEG);
+}
+
+/**
+ * @brief 进入段物理域 PID 方向：ω = P·ψ_err + D·ψ_err' + K_E·e
+ *        e = D·sin(β−ψ_err)（f87b18b 修复公式，物理域距离归一化）
+ *        输入直接用 IPC 的 pvc_phy_x_mm/pvc_phy_y_mm（1核 fill_pvc 已填充）。
+ * @param packet 1 核最新数据包
+ * @return err_degree（无效帧返回 0，调用方直行回退）
+ */
+static float vision_slope_entry_pid_update(const volatile vision_ipc_packet_t *packet)
+{
+    const float deg2rad = 0.0174532925f;
+    const float fx = (float)packet->pvc_phy_x_mm;
+    const float fy = (float)packet->pvc_phy_y_mm;
+    const float dist_m = sqrtf(fx * fx + fy * fy) / 1000.0f;
+    float beta_rad;
+    float psi_err_rad;
+    float e_m;
+    float omega;
+    float err_deg;
+
+    /* 航向误差只依赖 IMU，每拍都算并发布（诊断） */
+    psi_err_rad = vision_slope_normalize_angle(
+        s_slope_task.entry_yaw_deg - inertial_nav.relative_yaw) * deg2rad;
+    g_slope_vision_task_status.entry_psi_err_deg = psi_err_rad * 57.29578f;
+
+    /* 门控：phy 无效或超出检测距离 → 本拍无视觉，直行回退 */
+    if ((packet->pvc_phy_x_mm == VISION_SLOPE_ENTRY_PID_PHY_INVALID_MM) ||
+        (packet->pvc_phy_y_mm == VISION_SLOPE_ENTRY_PID_PHY_INVALID_MM) ||
+        (dist_m > VISION_SLOPE_ENTRY_PID_DETECT_RANGE_M))
+    {
+        return 0.0f;
+    }
+
+    /* 物理横向偏差（投影到入口基准系：e = D·sin(β − ψ_err)） */
+    beta_rad = atan2f(fx, fy);
+    e_m = dist_m * sinf(beta_rad - psi_err_rad);
+    g_slope_vision_task_status.entry_e_m = e_m;
+
+    /* 航向微分（2ms 差分 + 一阶低通，防 IMU 噪声放大） */
+    if (s_entry_pid_first_valid != 0U)
+    {
+        const float psi_err_dot = (psi_err_rad - s_entry_pid_psi_prev_rad) *
+                                  VISION_SLOPE_ENTRY_PID_CTRL_HZ;
+        const float alpha = (1.0f / VISION_SLOPE_ENTRY_PID_CTRL_HZ) /
+                            (VISION_SLOPE_ENTRY_PID_TAU_S + 1.0f / VISION_SLOPE_ENTRY_PID_CTRL_HZ);
+        s_entry_pid_psi_dot_f += alpha * (psi_err_dot - s_entry_pid_psi_dot_f);
+    }
+    s_entry_pid_psi_prev_rad = psi_err_rad;
+    s_entry_pid_first_valid = 1U;
+
+    /* 控制律：ω = P·ψ_err + D·ψ_err' + K_E·e */
+    omega = VISION_SLOPE_ENTRY_PID_P_PSI * psi_err_rad +
+            VISION_SLOPE_ENTRY_PID_D_PSI * s_entry_pid_psi_dot_f +
+            VISION_SLOPE_ENTRY_PID_K_E * e_m;
+    omega = vision_slope_constrain_f(omega, -VISION_SLOPE_ENTRY_PID_W_MAX_RADPS,
+                                     VISION_SLOPE_ENTRY_PID_W_MAX_RADPS);
+
+    /* ω → err_degree（TURN_ANG_KP 分子分母抵消 → 角度环输出恒 = ω·57.29578） */
+    err_deg = omega * 57.29578f / TURN_ANG_KP;
+    return vision_slope_constrain_f(err_deg,
+                                    -VISION_SLOPE_ENTRY_PID_W_MAX_RADPS * 57.29578f / 8.0f,
+                                    VISION_SLOPE_ENTRY_PID_W_MAX_RADPS * 57.29578f / 8.0f);
 }
 
 /**
@@ -165,8 +234,14 @@ static void vision_slope_enter_task(void)
     memset(&s_slope_task, 0, sizeof(s_slope_task));
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
     s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
+    s_slope_task.entry_yaw_deg = inertial_nav.relative_yaw; /* 进入段PID 航向基准 */
     g_special_action_trigger = 1U;
     entry_beep_request = 1U;
+
+    /* 复位进入段 PID 微分状态，防止上次任务残留 */
+    s_entry_pid_psi_prev_rad = 0.0f;
+    s_entry_pid_psi_dot_f = 0.0f;
+    s_entry_pid_first_valid = 0U;
 
     /* PVC 控制模块会提供方向误差；本状态机在本周期末统一强制入口速度。 */
     VisionIpc_Core0_SetPvcEnable(1U);
@@ -252,8 +327,13 @@ void VisionSlopeTask_Update_2ms(void)
     switch (s_slope_task.state)
     {
         case VISION_SLOPE_TASK_PVC_ALIGN:
-            /* 复用 PVC 控制模块给出的方向修正；搜索/校准期间以低速行驶，给转向收敛留出距离。 */
+#if VISION_SLOPE_ENTRY_PID_ENABLE
+            /* 物理域 PID：消费 IPC 的 pvc_phy_x_mm/y_mm（距离归一化 + 航向保持） */
+            err_cmd = vision_slope_entry_pid_update(packet);
+#else
+            /* 原逻辑：复用 PVC 控制模块给出的像素域方向修正 */
             err_cmd = g_vision_pvc_control_status.err_degree_cmd;
+#endif
             speed_cmd = VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
