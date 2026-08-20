@@ -90,7 +90,7 @@ typedef struct
     float lookahead_m;          /* 1.0    [m] 文档/限幅用; e 由 IPM x 差直接求 */
 
     /* 锁角 (IMU, stage0/丢线/stage2 共用) */
-    float yaw_hold_kp;          /* 1.8    [rad/s per rad] 仿真锁角增益 */
+    float yaw_hold_kp;          /* 12.0   [°/s per °] 锁向目标角速度增益(与遥控器等效) */
     uint8 yaw_hold_src_sel;     /* 0      stage0 锁角目标源: 0=entry_yaw 1=路表当前点target_yaw */
 
     /* 输出与限幅 (err_degree 落地域) */
