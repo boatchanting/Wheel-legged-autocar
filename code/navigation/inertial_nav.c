@@ -32,8 +32,8 @@ volatile float nav_vision_fusion_y = 0.0f;
 void InertialNav_Init(void) {
     inertial_nav.x = 0.0f;//小车向前为负数,向后为x正方向
     inertial_nav.y = 0.0f;//小车向右为正数,向右为y正方向
-    inertial_nav.relative_yaw = 0; // 初始化相对偏航角
-    inertial_nav.init_yaw = 0.0f;
+    inertial_nav.relative_yaw = 0.0f; // 初始化相对偏航角
+    inertial_nav.init_yaw = euler_angle.yaw; // 初始化记录开始导航时的角度
     inertial_nav.vx_body = 0.0f;
     inertial_nav.vy_body = 0.0f;
     inertial_nav.slip_flag = 0;// 初始化打滑标志位
@@ -49,9 +49,6 @@ void InertialNav_Update(float curr_yaw,
                         float acc_lat_left, float acc_lon_forward, 
                         float speed_L, float speed_R, float gyro_z_rad_s) 
 {
-    if (inertial_nav.init_yaw == 0.0f) {
-        inertial_nav.init_yaw = euler_angle.yaw;//初始化记录开始导航时的角度
-    }
 
     // --- 1. 物理单位标准化 ---
     // 参考 Guandao_Plus: 将原始脉冲/数值转换为 mm/s
