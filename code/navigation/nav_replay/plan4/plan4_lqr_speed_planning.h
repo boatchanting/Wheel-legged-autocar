@@ -89,7 +89,7 @@
 /* type=1 标记周围允许触发旋转的最终执行圆半径。
  * 调大：更早触发、较不易冲过点，但转圈中心可能偏离标记；
  * 调小：中心更准确，但刹车误差和 IMU 漂移更容易导致冲过头。 */
-#define PLAN4_MINEFIELD_EXECUTE_RADIUS_MM            250.0f
+#define PLAN4_MINEFIELD_EXECUTE_RADIUS_MM            150.0f
 
 /* 允许触发旋转时的最大实测纵向速度（mm/s）。
  * 调大：更早进入转圈、节省时间，但可能带着滑移旋转；
