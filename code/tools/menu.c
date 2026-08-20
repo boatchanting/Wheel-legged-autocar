@@ -2,6 +2,7 @@
 #include "tools/sbus.h"
 #include "calculate/ekf.h" // For g_initial_yaw
 #include "calculate/matrix.h" // For euler_angle
+#include <math.h>
 
 // ==================== 全局变量定义 ====================
 MenuState_t current_state = MENU_STATE_MAIN; 
@@ -77,6 +78,128 @@ void Menu_TriggerStartAction(void)
     }
 }
 
+#if (LAUNCH_STRATEGY_SELECT == 1)
+// =================================================================================
+// 【直立发车 / 航向校准】状态机实现
+// =================================================================================
+volatile UprightLaunchState_e g_upright_state = UPRIGHT_LAUNCH_IDLE;
+static volatile uint16_t s_upright_timer_ticks = 0; // 10ms 递减计时器
+
+// 2秒航向角采样累加器 (矢量三角均值)
+static uint16_t s_sample_count = 0;
+static float s_sample_sum_sin = 0.0f;
+static float s_sample_sum_cos = 0.0f;
+
+static void UprightLaunch_Update_10ms(void)
+{
+    // 倒地时自动重置回待机，确保安全
+    if (g_fallen && g_upright_state != UPRIGHT_LAUNCH_IDLE && g_upright_state != UPRIGHT_LAUNCH_WAIT_STANDUP)
+    {
+        g_upright_state = UPRIGHT_LAUNCH_IDLE;
+        g_turn_loop_disabled = false;
+        s_upright_timer_ticks = 0;
+    }
+
+    if (s_upright_timer_ticks > 0)
+    {
+        s_upright_timer_ticks--;
+    }
+
+    switch (g_upright_state)
+    {
+        case UPRIGHT_LAUNCH_WAIT_STANDUP:
+            if (s_upright_timer_ticks == 0)
+            {
+                // 1) 延时1秒后触发起立
+                if (g_motor_enable)
+                {
+                    g_fallen = false; // 触发起立自平衡
+                }
+                g_upright_state = UPRIGHT_LAUNCH_WAIT_STABILIZE;
+                s_upright_timer_ticks = 100U; // 2) 再延时1秒 (100 * 10ms = 1000ms) 等待自平衡稳定
+            }
+            break;
+
+        case UPRIGHT_LAUNCH_WAIT_STABILIZE:
+            if (s_upright_timer_ticks == 0)
+            {
+                // 3) 站稳后请求主循环播放长-短-长提示音
+                g_upright_state = UPRIGHT_LAUNCH_PLAY_BEEP_PREP;
+                g_upright_long_short_long_request = 1U;
+            }
+            break;
+
+        case UPRIGHT_LAUNCH_PLAY_BEEP_PREP:
+            if (g_upright_beep_done != 0U)
+            {
+                g_upright_beep_done = 0U;
+                // 4) 响完之后，关闭转向环，供手推校准方向
+                g_turn_loop_disabled = true;
+                g_upright_state = UPRIGHT_LAUNCH_MANUAL_AIMING;
+            }
+            break;
+
+        case UPRIGHT_LAUNCH_WAIT_SAMPLE_DELAY:
+            if (s_upright_timer_ticks == 0)
+            {
+                // 5) 0.5s 撤手延时到，先响一声短鸣，然后开启 2 秒采样
+                g_upright_single_beep_request = 1U;
+                s_sample_count = 0U;
+                s_sample_sum_sin = 0.0f;
+                s_sample_sum_cos = 0.0f;
+                g_upright_state = UPRIGHT_LAUNCH_SAMPLING_2S;
+                s_upright_timer_ticks = 200U; // 200 * 10ms = 2000ms (2秒采样)
+            }
+            break;
+
+        case UPRIGHT_LAUNCH_SAMPLING_2S:
+            {
+                // 在2秒期间持续累加偏航角矢量 (10ms采样一次)
+                float rad = euler_angle.yaw * 0.0174532925f; // DEG2RAD
+                s_sample_sum_sin += sinf(rad);
+                s_sample_sum_cos += cosf(rad);
+                s_sample_count++;
+
+                if (s_upright_timer_ticks == 0)
+                {
+                    // 6) 2秒采样完成，计算矢量三角均值并锁定航向
+                    float mean_yaw;
+                    if ((s_sample_count > 0U) &&
+                        ((fabsf(s_sample_sum_sin) > 1e-6f) || (fabsf(s_sample_sum_cos) > 1e-6f)))
+                    {
+                        mean_yaw = atan2f(s_sample_sum_sin, s_sample_sum_cos) * 57.2957795f; // RAD2DEG
+                    }
+                    else
+                    {
+                        mean_yaw = euler_angle.yaw;
+                    }
+
+                    g_initial_yaw = mean_yaw;
+                    robot_ctrl.target_angle = 0.0f;
+                    err_degree = 0.0f;
+                    PID_Param_Init();             // 清零转向PID积分与历史误差
+                    g_turn_loop_disabled = false; // 重新开启转向环，锁死当前航向
+                    g_upright_single_beep_request = 1U; // 锁定成功，主循环响一声短鸣提示
+                    g_upright_state = UPRIGHT_LAUNCH_HEADING_LOCKED;
+                }
+            }
+            break;
+
+        case UPRIGHT_LAUNCH_WAIT_START_2S:
+            if (s_upright_timer_ticks == 0)
+            {
+                // 7) 延时2秒后发车
+                g_upright_state = UPRIGHT_LAUNCH_IDLE;
+                Menu_TriggerStartAction();
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+#endif
+
 // ==================== 辅助函数 ====================
 static void Menu_RequestLocalStartAction(void)
 {
@@ -136,7 +259,46 @@ static void State_Dynamic_Screen(void)
     ips200_show_float(60,15*4, euler_angle.pitch, 3, 2);
     ips200_show_float(60,15*5, euler_angle.roll, 3, 2);
     ips200_show_float(60,15*6, euler_angle.yaw, 3, 2);
+#if (LAUNCH_STRATEGY_SELECT == 1)
+    if (g_upright_state == UPRIGHT_LAUNCH_WAIT_STANDUP)
+    {
+        ips200_show_string(60, 15*7, "Stand 1s  ");
+    }
+    else if (g_upright_state == UPRIGHT_LAUNCH_WAIT_STABILIZE)
+    {
+        ips200_show_string(60, 15*7, "Stab 1s   ");
+    }
+    else if (g_upright_state == UPRIGHT_LAUNCH_PLAY_BEEP_PREP)
+    {
+        ips200_show_string(60, 15*7, "Beeping   ");
+    }
+    else if (g_upright_state == UPRIGHT_LAUNCH_MANUAL_AIMING)
+    {
+        ips200_show_string(60, 15*7, "AIM YAW   ");
+    }
+    else if (g_upright_state == UPRIGHT_LAUNCH_WAIT_SAMPLE_DELAY)
+    {
+        ips200_show_string(60, 15*7, "Wait 0.5s ");
+    }
+    else if (g_upright_state == UPRIGHT_LAUNCH_SAMPLING_2S)
+    {
+        ips200_show_string(60, 15*7, "SAMP 2.0s ");
+    }
+    else if (g_upright_state == UPRIGHT_LAUNCH_HEADING_LOCKED)
+    {
+        ips200_show_string(60, 15*7, "YAW LCK   ");
+    }
+    else if (g_upright_state == UPRIGHT_LAUNCH_WAIT_START_2S)
+    {
+        ips200_show_string(60, 15*7, "GO IN 2s  ");
+    }
+    else
+    {
+        ips200_show_float(60,15*7, gnss.state, 3, 2);ips200_show_uint(80,15*7,gnss.satellite_used,5);
+    }
+#else
     ips200_show_float(60,15*7, gnss.state, 3, 2);ips200_show_uint(80,15*7,gnss.satellite_used,5);
+#endif
     ips200_show_float(25, 15*8, current_angles[0], 3, 1);
     ips200_show_float(25, 15*9, current_angles[1], 3, 1);
     ips200_show_float(25, 15*10, current_angles[2], 3, 1);
@@ -410,12 +572,61 @@ void Menu_ShowDynamic(void)
 // ==================== 按键处理（状态机重写版） ====================
 void Menu_HandleKey(void)
 {
-    Menu_UpdateLocalStartAction();
-    if (menu_local_start_pending)
+#if (LAUNCH_STRATEGY_SELECT == 1)
+    // 0. 更新直立发车状态机
+    UprightLaunch_Update_10ms();
+
+    // 方案 B：最高优先级拦截并响应 P10_0 (KEY_1) 与 P10_4 (KEY_4)
+    // -------------------------------------------------------------
+    // 按键 1: P10_0 (KEY_1) - 延时起立 / 航向锁定
+    // -------------------------------------------------------------
+    if (key_get_state(KEY_1) == KEY_SHORT_PRESS)
+    {
+        key_clear_state(KEY_1);
+        if (g_upright_state == UPRIGHT_LAUNCH_IDLE)
+        {
+            g_upright_state = UPRIGHT_LAUNCH_WAIT_STANDUP;
+            s_upright_timer_ticks = 100U; // 1000ms (100 * 10ms) 延时准备起立
+            return;
+        }
+        else if (g_upright_state == UPRIGHT_LAUNCH_MANUAL_AIMING)
+        {
+            // 第二次按 10_0：先进入 0.5s 撤手延时 (50 * 10ms = 500ms)
+            g_upright_state = UPRIGHT_LAUNCH_WAIT_SAMPLE_DELAY;
+            s_upright_timer_ticks = 50U;
+            return;
+        }
+    }
+
+    // -------------------------------------------------------------
+    // 按键 4: P10_4 (KEY_4) - 发车
+    // -------------------------------------------------------------
+    #if MENU_HAS_ONE_CLICK_START
+    if (key_get_state(MENU_KEY_ONE_CLICK_START) == KEY_SHORT_PRESS)
+    {
+        key_clear_state(MENU_KEY_ONE_CLICK_START);
+        if (g_upright_state == UPRIGHT_LAUNCH_HEADING_LOCKED)
+        {
+            // 已锁定航向，按下 10_4 进入 2 秒延时发车
+            g_upright_state = UPRIGHT_LAUNCH_WAIT_START_2S;
+            s_upright_timer_ticks = 200U; // 2000ms (200 * 10ms)
+            return;
+        }
+        else if (g_upright_state == UPRIGHT_LAUNCH_IDLE)
+        {
+            // 原有一键倒地发车
+            Menu_RequestLocalStartAction();
+            return;
+        }
+    }
+    #endif
+
+    // 如果处于直立发车流程中，拦截其他按键对菜单的干扰
+    if (g_upright_state != UPRIGHT_LAUNCH_IDLE)
     {
         return;
     }
-
+#else
     #if MENU_HAS_ONE_CLICK_START
     if (key_get_state(MENU_KEY_ONE_CLICK_START) == KEY_SHORT_PRESS)
     {
@@ -424,6 +635,13 @@ void Menu_HandleKey(void)
         return;
     }
     #endif
+#endif
+
+    Menu_UpdateLocalStartAction();
+    if (menu_local_start_pending)
+    {
+        return;
+    }
 
     // 1. 在主界面：任意键进入菜单
     if (current_state == MENU_STATE_MAIN)
