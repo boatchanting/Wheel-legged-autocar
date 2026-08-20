@@ -35,7 +35,7 @@ typedef struct
     uint32 state_ticks;                   /* 当前状态的 2ms 计时 */
     float start_x_mm;                     /* 锁角进入斜坡瞬间的惯导 X 坐标 */
     float start_y_mm;                     /* 锁角进入斜坡瞬间的惯导 Y 坐标 */
-    float locked_yaw_deg;                 /* PVC 校准完成后锁定的惯导航向 */
+    float locked_yaw_deg;                 /* 状态机进入时锁定的惯导航向 */
     uint16 pvc_align_ok_ticks;            /* PVC 入口确认条件连续满足的 2ms tick 数 */
 } vision_slope_task_ctx_t;
 
@@ -105,12 +105,11 @@ static void vision_slope_set_state(vision_slope_task_state_e next_state)
     s_slope_task.state = next_state;
     s_slope_task.state_ticks = 0U;
 
-    /* PVC 入口确认完成的瞬间记录航向和位置，后续里程从这里开始累计。 */
+    /* PVC 入口确认完成的瞬间只记录位置，后续里程从这里开始累计。 */
     if (next_state == VISION_SLOPE_TASK_ENTRY_HOLD)
     {
         s_slope_task.start_x_mm = inertial_nav.x;
         s_slope_task.start_y_mm = inertial_nav.y;
-        s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
     }
 }
 
@@ -164,6 +163,7 @@ static void vision_slope_enter_task(void)
 {
     memset(&s_slope_task, 0, sizeof(s_slope_task));
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
+    /* 目标航向在状态机启动时采样，入口稳定后不再被当前航向覆盖。 */
     s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
     g_special_action_trigger = 1U;
     entry_beep_request = 1U;

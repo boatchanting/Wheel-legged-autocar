@@ -57,7 +57,7 @@ typedef struct
     uint32 state_ticks;                  /* 当前阶段已运行的 2ms tick 数 */
     uint32 last_seq;                     /* 最近一次收到的视觉 IPC 序号 */
     float traveled_mm;                   /* 从进入斜坡并锁角起累计的惯导距离 */
-    float locked_yaw_deg;                /* 由 PVC 校准完成后锁定的惯导航向 */
+    float locked_yaw_deg;                /* 状态机启动时锁定的惯导航向 */
     float err_degree_cmd;                /* 当前下发的方向误差指令 */
     float speed_cmd;                     /* 当前下发的目标速度指令 */
     uint8 pvc_stable_detected;           /* PVC 控制模块是否稳定检测到入口 */
