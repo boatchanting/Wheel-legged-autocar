@@ -28,6 +28,7 @@ extern int32 acc_limit;                     /* 加速度限制 */
 extern int32 dec_limit;                     /* 减速度限制 */
 extern float servo_height;                  /* 舵机高度（比如过桥时可能要抬高底盘） */
 extern volatile uint8 exit_beep_request;    /* 出口蜂鸣请求(视觉确认2声): 脱出判定处置位 (定义于 nav_replay/plan4, 主循环消费) */
+extern EulerAngles euler_angle;             /* 陀螺仪(EKF)欧拉角: 锁向反馈源 (matrix.h 已声明, 此处显式extern) */
 
 /* --- 全局变量 --- */
 volatile uint8 g_bridge_vision_task_enable = 0U; /* 任务总开关，别人可以把它设为 1 来启动任务 */
@@ -59,8 +60,8 @@ typedef struct
     float start_y_mm;                 /* 上桥那一刻的 Y 坐标（惯导） */
     float exit_start_x_mm;            /* 开始下桥那一刻的 X 坐标 */
     float exit_start_y_mm;            /* 开始下桥那一刻的 Y 坐标 */
-    float locked_yaw_deg;             /* 锁角盲跑的目标航向（视觉失效时改回 entry_yaw_deg） */
-    float entry_yaw_deg;              /* 进入任务那一刻的 yaw (视觉失效/锁角盲跑时改回此角, 2026-08-15) */
+    float locked_yaw_deg;             /* 锁角盲跑的目标航向（视觉确认上桥时刻锁存, 视觉失效时改回 entry_yaw_deg） */
+    float entry_yaw_deg;              /* 视觉确认上桥那一刻的陀螺仪航向 (锁角/盲跑回退目标, 2026-08-20 改为视觉确认时锁存) */
     uint8 run_yaw_locked;             /* 跑过视觉控制距离后，是否已锁定航向 */
     uint8 err_source;                 /* 当前 err 来源: 0=视觉 1=锁角 (C10 换源 ramp) */
     float last_err_ramp;              /* ramp 输出的上一帧 err (C10) */
@@ -92,7 +93,7 @@ const vision_bridge_tune_t g_vision_bridge_tune_defaults =
     .edot_clamp_mps       = 3.0f,
     .edot_fps             = 30.0f,
     .lookahead_m          = 1.0f,
-    .yaw_hold_kp          = 1.8f,
+    .yaw_hold_kp          = 12.0f, /* 锁向目标角速度增益(°/s per °): 与遥控器等效(底层 kp=12) */
     .yaw_hold_src_sel     = VISION_BRIDGE_YAWHOLD_SRC_ENTRY,
     .out_max_deg          = 22.9f,
     .ramp_step_deg_per_2ms = 0.5f,
@@ -385,8 +386,8 @@ static float vision_bridge_yaw_hold_target_deg(void)
 static float vision_bridge_calc_yaw_hold_err(void)
 {
     const float target = vision_bridge_yaw_hold_target_deg();
-    /* 误差 = 目标方向 - 当前惯导测出的方向 */
-    const float err = vision_bridge_normalize_angle(target - inertial_nav.relative_yaw);
+    /* 误差 = 目标方向 - 当前陀螺仪(EKF)航向 (1ms 刷新; 不用 10ms 的惯导 relative_yaw 缓冲) */
+    const float err = vision_bridge_normalize_angle(target - euler_angle.yaw);
     /* 限制在盲跑允许的最大范围内 */
     return vision_bridge_constrain_f(err,
                                      -VISION_BRIDGE_TASK_YAW_HOLD_MAX_ERR_DEG,
@@ -397,13 +398,23 @@ static float vision_bridge_calc_yaw_hold_err(void)
  * @brief 锁角纯 P, 输出 err_degree(deg)
  *
  * 落地公式: err_degree = YAWHOLD_SIGN · Kψ_lock · ψ_err,
- *           Kψ_lock = yaw_hold_kp / |TURN_ANG_KP| = 1.8/8 = 0.225
+ *           Kψ_lock = yaw_hold_kp / |pid_turn_angle.kp| (运行时动态换算),
+ *           使底层角度环输出(期望角速度)恒 = yaw_hold_kp × ψ_err,
+ *           与遥控器(1:1 角度误差 × 底层 kp)同数量级。
+ *
+ * @note 用运行时 pid_turn_angle.kp 而非编译期 TURN_ANG_KP:
+ *       桥上 CONTROL_MODE_BRIDGE profile 会把 pid_turn_angle.kp 从
+ *       -12 平滑降到 -8, 旧换算用编译期 12 做除数导致桥上实际纠偏增益
+ *       只有遥控器的 1/10(严重不鲁棒); 动态换算后桥上增益不随 profile 缩水。
  */
 static float vision_bridge_calc_yaw_hold_err_degree(void)
 {
     const vision_bridge_tune_t *t = &g_vision_bridge_tune_defaults;
     const float psi_err = vision_bridge_calc_yaw_hold_err();
-    const float k_lock = t->yaw_hold_kp / vision_bridge_abs_f(VISION_BRIDGE_TURN_ANG_KP_REF);
+    /* 运行时转向角度环 kp: 正常 -12, 桥上 bridge profile 平滑到 -8 (只读, 不改底层) */
+    float kp_actual = pid_turn_angle.kp;
+    if (kp_actual > -0.01f) { kp_actual = -0.01f; } /* 防除零/防反号 */
+    const float k_lock = t->yaw_hold_kp / (-kp_actual);
     const float err = t->yaw_hold_sign * k_lock * psi_err;
     return vision_bridge_constrain_f(err, -t->out_max_deg, t->out_max_deg);
 }
@@ -725,8 +736,9 @@ static void vision_bridge_enter_task(void)
     s_bridge_task.state = VISION_BRIDGE_TASK_ALIGN;
     s_bridge_task.start_x_mm = inertial_nav.x;
     s_bridge_task.start_y_mm = inertial_nav.y;
-    s_bridge_task.locked_yaw_deg = inertial_nav.relative_yaw;
-    s_bridge_task.entry_yaw_deg  = inertial_nav.relative_yaw; /* 进入时刻锁存的 yaw, 视觉失效时改回此角 */
+    /* 切入时刻仅作临时锁存(供 ALIGN 阶段保持方向); 真正定死锁向目标在视觉确认上桥那一刻(见 ALIGN) */
+    s_bridge_task.locked_yaw_deg = euler_angle.yaw;   /* 陀螺仪(EKF)航向, 1ms 刷新 */
+    s_bridge_task.entry_yaw_deg  = euler_angle.yaw;
     s_bridge_task.saved_acc_limit = acc_limit;
     s_bridge_task.saved_dec_limit = dec_limit;
     s_bridge_task.saved_servo_height = servo_height; /* 备份进入时腿高, 退出恢复用 */
@@ -822,6 +834,10 @@ void VisionBridgeTask_Update_2ms(void)
             if ((packet->b2_valid != 0U) && (packet->b2_gate != 0U))
             {
                 s_bridge_task.bridge_hold_ticks = VISION_BRIDGE_TASK_BRIDGE_HOLD_TICKS;
+                /* 【锁存时机】视觉确认上桥这一刻才定死锁向目标(当前陀螺仪航向),
+                   避免切入状态机时车头未对齐导致全程锁歪 */
+                s_bridge_task.locked_yaw_deg = euler_angle.yaw;
+                s_bridge_task.entry_yaw_deg  = euler_angle.yaw;
                 vision_bridge_apply_high_posture();
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
                 break;
@@ -830,7 +846,9 @@ void VisionBridgeTask_Update_2ms(void)
             /* 惯导门: 从交接点起 traveled ≥ 阈值进 RUN (不抬底盘, 与旧逻辑兜底路径一致) */
             if (traveled_mm >= VISION_BRIDGE_TASK_ON_BRIDGE_TRIGGER_MM)
             {
-                s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
+                /* 兜底路径: 同样在进 RUN 前锁存当前陀螺仪航向 */
+                s_bridge_task.locked_yaw_deg = euler_angle.yaw;
+                s_bridge_task.entry_yaw_deg  = euler_angle.yaw;
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN);
                 break;
             }
@@ -839,7 +857,9 @@ void VisionBridgeTask_Update_2ms(void)
             if ((s_bridge_task.align_ok_ticks >= VISION_BRIDGE_TASK_ALIGN_OK_TICKS) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_ALIGN_TIMEOUT_TICKS))
             {
-                s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
+                /* 兜底路径: 同样在进 RUN 前锁存当前陀螺仪航向 */
+                s_bridge_task.locked_yaw_deg = euler_angle.yaw;
+                s_bridge_task.entry_yaw_deg  = euler_angle.yaw;
                 vision_bridge_set_state(VISION_BRIDGE_TASK_RUN); /* 冲！ */
             }
             break;
