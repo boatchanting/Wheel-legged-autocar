@@ -16,7 +16,7 @@ extern volatile uint8 exit_beep_request;
 #define BUMPY_ROAD_LOCK_SPEED_SET        (-500.0f)      // 颠簸段目标速度 起飞参数这两个速度全都给700一声
 #define BUMPY_ROAD_SPEED_INC_STEP        (1.5f)         // 每1ms速度增量 (斜率加速)
 
-#define BUMPY_ROAD_EXIT_MIN_DISTANCE_MM  (600.0f)      // 累计满 0.6m 后才允许确认出口 (无论视觉或 IMU)
+#define BUMPY_ROAD_EXIT_MIN_DISTANCE_MM  (1000.0f)      // 累计满 0.6m 后才允许确认出口 (无论视觉或 IMU) 根据颠簸路段长度进行修正
 #define BUMPY_ROAD_TARGET_DISTANCE_MM    (8000.0f)      // 目标行驶距离(mm)，超过此距离自动结束任务 // 这个非常离谱需要标定一下
 #define BUMPY_ROAD_SAMPLE_DIV_1MS        (10U)          // 距离采样分频系数，每10ms更新一次距离
 
