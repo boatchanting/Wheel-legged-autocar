@@ -263,7 +263,8 @@ typedef struct {
 typedef enum {
     CONTROL_MODE_NORMAL = 0U,
     CONTROL_MODE_ACCEL  = 1U,
-    CONTROL_MODE_BRAKE  = 2U
+    CONTROL_MODE_BRAKE  = 2U,
+    CONTROL_MODE_BRIDGE = 3U
 } ControlMode_e;
 
 typedef struct {

@@ -10,6 +10,7 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_ipc_core0.h"
 #include "../../code1/vision/ipm_transform.h"
+#include "calculate/pid-new.h"
 #include "plan/bridge.h"
 #include "tools/sbus.h"
 #include "../config/sys_options.h"   /* DEBUG_LOG_ENABLE (zf_common_headfile 不含 config) */
@@ -646,6 +647,7 @@ static void vision_bridge_cleanup(uint8 stop_car)
     
     /* 任务彻底退出，确保关闭 Rolling 平衡并恢复巡航加速度限制 */
     roll_balance_enable = 0U;
+    Control_Profile_RequestMode(CONTROL_MODE_NORMAL);
     if (s_bridge_task.saved_limits_valid)
     {
         acc_limit = s_bridge_task.saved_acc_limit;
@@ -731,6 +733,7 @@ static void vision_bridge_enter_task(void)
     s_bridge_task.saved_limits_valid = 1U;
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
+    Control_Profile_RequestMode(CONTROL_MODE_BRIDGE);
     
     vision_bridge_apply_high_posture(); /* 准备上桥阶段即开启高姿态与 Rolling 平衡 */
     VisionIpc_Core0_SetBridgeEnable(1U);

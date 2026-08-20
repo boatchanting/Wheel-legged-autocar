@@ -62,6 +62,21 @@ static const ControlProfile_t g_control_profile_brake = {
     14.0f, 28.0f, 0.018f, 0.015f, 80.0f
 };// 【优化点】这些参数是ai随便写的，需要调整，以及可以扩展更多的场景
 
+/* 单边桥默认沿用正常档，仅提高转向角速度环输出上限。 */
+static const ControlProfile_t g_control_profile_bridge = {
+    -3.5, SERVO_SPEED_KI, -0.17, 2000, SERVO_SPEED_MAX_I, SERVO_SPEED_COMP,
+    -12, ANG_KI, -10, ANG_MAX_O, ANG_MAX_I, ANG_MECH_ZERO,
+    -15, GYR_KI, GYR_KD, GYR_MAX_O, GYR_MAX_I, GYR_DEAD_ZONE,
+    -8, TURN_ANG_KI, TURN_ANG_KD, TURN_ANG_MAX_O, TURN_ANG_MAX_I, TURN_ANG_DEAD_ZONE,
+    TURN_GYR_KP, TURN_GYR_KI, 16, TURN_GYR_MAX_O_BRIDGE, TURN_GYR_MAX_I, TURN_GYR_DEAD_ZONE,
+    ROLL_KP, ROLL_KI, ROLL_KD, ROLL_MAX_O, ROLL_MAX_I, ROLL_MECH_ZERO,
+    BRAKE_GAIN_LIGHT, BRAKE_GAIN_MED, BRAKE_GAIN_HEAVY,
+    BRAKE_MAX_LIGHT, BRAKE_MAX_MED, BRAKE_MAX_HEAVY,
+    BRAKE_RAMP_UP_LIGHT, BRAKE_RAMP_UP_MED, BRAKE_RAMP_UP_HEAVY, BRAKE_RAMP_DOWN,
+    ACCEL_FF_GAIN, ACCEL_FF_MAX, ACCEL_FF_RAMP_UP, ACCEL_FF_RAMP_DOWN,
+    10.0f, 10.0f, 0.020f, 0.010f, 60.0f
+};
+
 volatile uint8 profile_switch_beep_request = 0U; // 复刻模式下PID切换蜂鸣请求
 
 volatile float target_speed_set = 0.0f;
@@ -919,6 +934,10 @@ static const ControlProfile_t *Control_Profile_GetPreset(ControlMode_e mode)
     if (mode == CONTROL_MODE_BRAKE)
     {
         return &g_control_profile_brake;
+    }
+    if (mode == CONTROL_MODE_BRIDGE)
+    {
+        return &g_control_profile_bridge;
     }
     return &g_control_profile_normal;
 }
