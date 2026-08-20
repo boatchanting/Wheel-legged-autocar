@@ -1,5 +1,7 @@
 #include "servo_executor.h"
 #include "../calculate/pid-new.h"
+#include "plan/bridge.h"
+#include "plan/bumpy_road.h"
 // --- 目标值定义 ---
 volatile int16 g_target_pwm_high = 0;
 volatile int16 g_target_pwm_speed_adj = 0;
@@ -71,7 +73,7 @@ void servo_executor_set_profile(float acc_limit_cfg,
 static void servo_executor_get_runtime_limits(int32 *runtime_acc_limit, int32 *runtime_dec_limit)
 {
     float speed_error_abs = fabsf(target_speed_set - current_actual_speed);
-    float boost = fabsf((float)g_target_pwm_speed_adj) * servo_exec_boost_from_speed +
+    float boost = (fabsf((float)g_target_pwm_speed_adj) + fabsf((float)g_target_pwm_roll_adj)) * servo_exec_boost_from_speed +
                   speed_error_abs * servo_exec_boost_from_error;
     int32 acc_runtime = acc_limit;
     int32 dec_runtime = dec_limit;
@@ -92,6 +94,21 @@ static void servo_executor_get_runtime_limits(int32 *runtime_acc_limit, int32 *r
     {
         acc_runtime += (int32)(boost * 0.20f);
         dec_runtime += (int32)(boost * 0.20f);
+    }
+
+    // 【单边桥高动态保障】：当 Rolling 使能时，确保执行器生效斜率不低于桥梁设定值 (如 200 duty/ms)
+    if (roll_balance_enable != 0U)
+    {
+        if (acc_runtime < bridge_params.servo_acc_bridge) acc_runtime = bridge_params.servo_acc_bridge;
+        if (dec_runtime < bridge_params.servo_dec_bridge) dec_runtime = bridge_params.servo_dec_bridge;
+    }
+
+    // 【颠簸路段防振荡保障】：仅在物理确认上坎(on_bump == 1)后，限制单步最大变化量不超过 20 duty/ms
+    // 入口减速阶段保持正常刹车动作限幅以快速降速
+    if (BumpyRoad_IsOnBump() != 0U)
+    {
+        if (acc_runtime > 20) acc_runtime = 20;
+        if (dec_runtime > 20) dec_runtime = 20;
     }
 
     if (acc_runtime < 1) acc_runtime = 1;
@@ -148,34 +165,31 @@ void servo_executor_update(void)
     target_final_duty_lr += SERVO_MOTOR_PWM4_DIR * g_target_pwm_turn_roll_lr;
 
     // ==========================================================
-    // 3.5 叠加 Rolling 补偿 (一边不动一边缩短)
+    // 3.5 叠加 Rolling 补偿 (低侧伸腿同时高侧收腿，向上收腿量最大为 600 duty)
     // 约定：g_target_pwm_roll_adj
-    //      > 0 : 左侧缩短，右侧不动
-    //      < 0 : 右侧缩短，左侧不动
-    //      (假设收缩是 PWM 减小，伸长是 PWM 增加。需确认你的舵机DIR方向！)
+    //      > 0 : 左高右低 (error > 0)，策略为右侧伸长，左侧收缩 (收缩最大 600 duty)
+    //      < 0 : 右高左低 (error < 0)，策略为左侧伸长，右侧收缩 (收缩最大 600 duty)
+    //      (加 SERVO_MOTOR_PWMx_DIR 为伸长，减 SERVO_MOTOR_PWMx_DIR 为收缩)
     // ==========================================================
     int16 adj = g_target_pwm_roll_adj;
-    // 假设 SERVO_MOTOR_PWMx_DIR 为 1 表示增加PWM是伸长，减少PWM是收缩。
-    // 如果你的硬件相反，请反转下面的逻辑。
     
     if (adj > 0) {
         // --- 情况 B: 左高右低 (adj > 0) ---
-        // 策略：左侧缩短，右侧不动
-        // adj 是正数，缩短需要减去它 (假设收缩是减)
-        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj; // 左前缩
-        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj; // 左后缩
-        // 右侧 rf, rr 保持不动
+        // 策略：低侧(右侧)伸长以垫平车身，高侧(左侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (600 duty)
+        int16 retract = (adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : adj;
+        target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj;     // 右前伸
+        target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj;     // 右后伸
+        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * retract; // 左前收
+        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * retract; // 左后收
     } 
     else if (adj < 0) {
         // --- 情况 A: 右高左低 (adj < 0) ---
-        // 策略：右侧缩短，左侧不动
-        // adj 是负数，缩短需要加上它 (负负得正? 不对，缩短是减)
-        // 让我们理一下：我们需要一个正的量去减。
-        // 所以取 -adj (变成正数)，然后减去它。或者直接 += adj (因为adj是负数)
-        
-        target_final_duty_rf += SERVO_MOTOR_PWM2_DIR * adj; // 右前缩 (+=负数 = 减)
-        target_final_duty_rr += SERVO_MOTOR_PWM3_DIR * adj; // 右后缩 (+=负数 = 减)
-        // 左侧 lf, lr 保持不动
+        // 策略：低侧(左侧)伸长以垫平车身，高侧(右侧)收腿，向上收腿量最大为 ROLL_MAX_RETRACT_DUTY (600 duty)
+        int16 retract = (-adj > ROLL_MAX_RETRACT_DUTY) ? ROLL_MAX_RETRACT_DUTY : (int16)(-adj);
+        target_final_duty_lf -= SERVO_MOTOR_PWM1_DIR * adj;     // 左前伸 (-adj > 0)
+        target_final_duty_lr -= SERVO_MOTOR_PWM4_DIR * adj;     // 左后伸 (-adj > 0)
+        target_final_duty_rf -= SERVO_MOTOR_PWM2_DIR * retract; // 右前收
+        target_final_duty_rr -= SERVO_MOTOR_PWM3_DIR * retract; // 右后收
     }
 
     // 4. 【核心】使用斜率限制，平滑地趋近目标值

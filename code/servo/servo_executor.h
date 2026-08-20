@@ -15,6 +15,8 @@ extern volatile int16 g_target_pwm_turn_roll_rf; // 转向主动侧倾右前差�
 extern volatile int16 g_target_pwm_turn_roll_rr; // 转向主动侧倾右后差动分量
 extern volatile int16 g_target_pwm_turn_roll_lr; // 转向主动侧倾左后差动分量
 extern int32 current_duty_lf, current_duty_rf, current_duty_rr, current_duty_lr; // 当前实际占空比 (用于斜率限制计算)
+extern int32 acc_limit;
+extern int32 dec_limit;
 /**
  * @brief 初始化舵机执行器的内部状态
  */

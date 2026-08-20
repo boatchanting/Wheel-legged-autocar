@@ -532,7 +532,7 @@ static void vision_bridge_apply_high_posture(void)
     vision_bridge_save_servo_limits_once();
     acc_limit = bridge_params.servo_acc_bridge;
     dec_limit = bridge_params.servo_dec_bridge;
-    roll_balance_enable = 0U;
+    roll_balance_enable = 1U; /* 开启滚转平衡 */
     /* 抬高底盘，并且规定抬高的速度（步长） */
     Bridge_Apply_Height_Control(bridge_params.height_bridge,
                                 bridge_params.height_step_rise * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
@@ -549,16 +549,10 @@ static float vision_bridge_restore_height_target(void)
 
 /**
  * @brief 切换回“正常姿态”
- * @note  恢复加速度限制、关掉滚转平衡、把底盘降回进入任务时的高度。
+ * @note  把底盘降回进入任务时的高度（不在此处关 Rolling，由脱出时刻统一管理）。
  */
 static void vision_bridge_apply_normal_posture(void)
 {
-    roll_balance_enable = 0U;
-    if (s_bridge_task.saved_limits_valid)
-    {
-        acc_limit = s_bridge_task.saved_acc_limit;
-        dec_limit = s_bridge_task.saved_dec_limit;
-    }
     /* 降下底盘 (恢复到进入时的腿高, 不写死 3.0f) */
     Bridge_Apply_Height_Control(vision_bridge_restore_height_target(),
                                 bridge_params.height_step_drop * VISION_BRIDGE_TASK_HEIGHT_STEP_SCALE);
@@ -660,7 +654,15 @@ static void vision_bridge_cleanup(uint8 stop_car)
     /* 告诉 1 核停止单边桥检测。 */
     VisionIpc_Core0_SetBridgeEnable(0U);
     
-    /* 恢复正常姿态 */
+    /* 任务彻底退出，确保关闭 Rolling 平衡并恢复巡航加速度限制 */
+    roll_balance_enable = 0U;
+    if (s_bridge_task.saved_limits_valid)
+    {
+        acc_limit = s_bridge_task.saved_acc_limit;
+        dec_limit = s_bridge_task.saved_dec_limit;
+    }
+
+    /* 恢复正常姿态 (底盘降至进入时高度) */
     vision_bridge_apply_normal_posture();
 
     if (stop_car)
@@ -740,6 +742,7 @@ static void vision_bridge_enter_task(void)
 
     g_special_action_trigger = 1U; /* 告诉系统我接管车子了 */
     
+    vision_bridge_apply_high_posture(); /* 准备上桥阶段即开启高姿态与 Rolling 平衡 */
     VisionIpc_Core0_SetBridgeEnable(1U);
 }
 
@@ -875,7 +878,7 @@ void VisionBridgeTask_Update_2ms(void)
             else
             {
                 /* 如果归零了，说明可能快下桥了或者在桥的平缓段 */
-                vision_bridge_apply_normal_posture(); /* 降下底盘 */
+                vision_bridge_apply_normal_posture(); /* 降下底盘 (已移除内部误关 rolling 的 bug) */
                 /* 如果能看到地上的线，就跟着线跑 */
                 if (s_bridge_task.center_filter_valid)
                 {
@@ -888,34 +891,15 @@ void VisionBridgeTask_Update_2ms(void)
                 }
             }
 
-            if (vision_bridge_packet_in_exit_stage(packet))
+            /* 视觉优先对中 (2026-08-19, main): 只要中心线可信就用视觉 PID 对中,
+               无效回锁角兜底; 不再按 traveled/脱出阶段分流, 不再 ×2 冲速。 */
+            if (s_bridge_task.center_filter_valid)
             {
-                /* 视觉侧已切到"准备脱出"(寻找脱出线): 锁向, 不再接收视觉转向; 目标改回进入时刻 yaw (2026-08-15) */
-                if (s_bridge_task.run_yaw_locked == 0U)
-                {
-                    s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
-                    s_bridge_task.run_yaw_locked = 1U;
-                }
-                err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-                s_bridge_task.err_source = 1U;
-            }
-            else if (traveled_mm <= VISION_BRIDGE_TASK_VISUAL_CONTROL_DISTANCE_MM)
-            {
-                /* 前 1.2m：有可靠中心线用横向乘性 PID, 否则锁角 */
-                if (s_bridge_task.center_filter_valid)
-                {
-                    err_cmd = vision_bridge_calc_visual_err_degree();
-                    s_bridge_task.err_source = 0U;
-                }
-                else
-                {
-                    err_cmd = vision_bridge_calc_yaw_hold_err_degree();
-                    s_bridge_task.err_source = 1U;
-                }
+                err_cmd = vision_bridge_calc_visual_err_degree();
+                s_bridge_task.err_source = 0U;
             }
             else
             {
-                /* 超过 1.2m：改回进入任务时刻的 yaw 盲跑，视觉不再干预转向 (2026-08-15)。 */
                 if (s_bridge_task.run_yaw_locked == 0U)
                 {
                     s_bridge_task.locked_yaw_deg = s_bridge_task.entry_yaw_deg;
@@ -923,7 +907,6 @@ void VisionBridgeTask_Update_2ms(void)
                 }
                 err_cmd = vision_bridge_calc_yaw_hold_err_degree();
                 s_bridge_task.err_source = 1U;
-                speed_cmd *= VISION_BRIDGE_TASK_LOCKED_SPEED_SCALE;
             }
 
             err_cmd = vision_bridge_apply_err_ramp(err_cmd, s_bridge_task.err_source);
@@ -957,10 +940,11 @@ void VisionBridgeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            /* 底盘恢复后即可交还导航；异常时到达时间上限也继续前进。 */
+            /* 底盘恢复后即可交还导航；此时下桥完成（包含视觉脱出与惯导脱出），正式关闭 Rolling 环并切入 FINISH */
             if ((vision_bridge_abs_f(servo_height - vision_bridge_restore_height_target()) < 0.2f) ||
                 (s_bridge_task.state_ticks >= VISION_BRIDGE_TASK_EXIT_SETTLE_TICKS))
             {
+                roll_balance_enable = 0U; /* 下桥脱出完成，正式关闭 Rolling 环 */
 #if VISION_BRIDGE_TASK_NAV_CORRECT_ENABLE
                 vision_bridge_apply_nav_correction(); /* 修正惯导 */
 #endif
