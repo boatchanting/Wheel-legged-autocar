@@ -14,6 +14,10 @@ from .plan4_models import (
     MIN_LINK_LENGTH_MM,
     NAV_ROUTE_MAX_POINTS,
     PARALLEL_TRANSITION_HANDLE_MM,
+    POINT_TO_LINE_MAX_END_HANDLE_RATIO,
+    POINT_TO_LINE_MAX_START_HANDLE_RATIO,
+    POINT_TO_LINE_MIN_END_HANDLE_RATIO,
+    POINT_TO_LINE_MIN_START_HANDLE_RATIO,
     SAMPLE_STEP_MM,
     SPEED_TO_MM_S,
     START_POINT_X_MM,
@@ -106,6 +110,120 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
     ])
 
     dense = bezier_quintic(control, np.linspace(0.0, 1.0, max(80, int(chord_length / sample_step_mm))))
+    chord_lengths = np.linalg.norm(np.diff(dense, axis=0), axis=1)
+    arclength = np.concatenate(([0.0], np.cumsum(chord_lengths)))
+    sample_s = np.arange(0.0, arclength[-1], sample_step_mm)
+    if not math.isclose(sample_s[-1] if len(sample_s) else 0.0, arclength[-1], abs_tol=0.01):
+        sample_s = np.append(sample_s, arclength[-1])
+    x = np.interp(sample_s, arclength, dense[:, 0])
+    y = np.interp(sample_s, arclength, dense[:, 1])
+    for index, (px, py) in enumerate(zip(x, y)):
+        is_start = index == 0
+        is_end = index == len(x) - 1
+        point_type = start.point_type if is_start else (end.point_type if is_end else 0)
+        marker_order = start.marker_order if is_start else (end.marker_order if is_end else None)
+        add_sample(samples, np.array([px, py]), point_type, False, segment, marker_order)
+
+
+def point_to_line_control(start: Node, end: Node) -> np.ndarray:
+    """Choose a low-curvature quintic link from a free point to a directed line.
+
+    The minefield exit has no valid outgoing heading.  Searching it locally is
+    preferable to inheriting the previous state-machine segment's tangent,
+    while the target task corridor remains an exact terminal heading constraint.
+    """
+    start_vec = np.array([start.x, start.y], dtype=float)
+    end_vec = np.array([end.x, end.y], dtype=float)
+    chord = end_vec - start_vec
+    chord_length = float(np.linalg.norm(chord))
+    if chord_length < MIN_LINK_LENGTH_MM:
+        return np.repeat(end_vec[None, :], 6, axis=0)
+
+    chord_direction = unit(chord)
+    end_direction = unit(end.tangent if end.tangent is not None else chord)
+    chord_angle = math.atan2(chord_direction[1], chord_direction[0])
+    start_handle_ratios = np.linspace(
+        POINT_TO_LINE_MIN_START_HANDLE_RATIO,
+        POINT_TO_LINE_MAX_START_HANDLE_RATIO,
+        5,
+    )
+    end_handle_ratios = np.linspace(
+        POINT_TO_LINE_MIN_END_HANDLE_RATIO,
+        POINT_TO_LINE_MAX_END_HANDLE_RATIO,
+        5,
+    )
+    # 自由离场仍限定在朝向目标的半平面内，排除出点后先反向再折返的曲线。
+    departure_offsets = np.linspace(-0.48 * math.pi, 0.48 * math.pi, 49)
+    sample_t = np.linspace(0.0, 1.0, 121)
+    best_control: np.ndarray | None = None
+    best_score = math.inf
+
+    for offset in departure_offsets:
+        departure_direction = np.array(
+            [math.cos(chord_angle + offset), math.sin(chord_angle + offset)], dtype=float
+        )
+        for start_ratio in start_handle_ratios:
+            for end_ratio in end_handle_ratios:
+                start_handle = start_ratio * chord_length
+                end_handle = end_ratio * chord_length
+                control = np.array([
+                    start_vec,
+                    start_vec + start_handle * departure_direction,
+                    start_vec + 2.0 * start_handle * departure_direction,
+                    end_vec - 2.0 * end_handle * end_direction,
+                    end_vec - end_handle * end_direction,
+                    end_vec,
+                ])
+                curve = bezier_quintic(control, sample_t)
+                progress = curve @ chord_direction
+                # 数值容差保留极小波动；超过 0.5% 弦长的后退必然形成不易跟踪的回环。
+                if np.min(np.diff(progress)) < -0.005 * chord_length:
+                    continue
+                edges = np.diff(curve, axis=0)
+                edge_length = np.linalg.norm(edges, axis=1)
+                if np.any(edge_length < 1e-6):
+                    continue
+                heading = np.unwrap(np.arctan2(edges[:, 1], edges[:, 0]))
+                curvature = np.diff(heading) / ((edge_length[:-1] + edge_length[1:]) * 0.5)
+                normalized_curvature = curvature * chord_length
+                length_ratio = float(np.sum(edge_length) / chord_length)
+                # 峰值曲率优先，曲率能量用于抑制同样峰值下的局部急弯。
+                score = (
+                    float(np.max(np.abs(normalized_curvature)) ** 2)
+                    + 0.35 * float(np.mean(normalized_curvature ** 2))
+                    + 0.04 * (length_ratio - 1.0)
+                )
+                if score < best_score:
+                    best_score = score
+                    best_control = control
+
+    if best_control is not None:
+        return best_control
+    # 极端的终端走廊方向可能与目标方向相背。此时仍返回确定性的退化解，
+    # 后续速度规划会根据曲率限速，而不会留下空路径。
+    fallback_handle = 0.22 * chord_length
+    return np.array([
+        start_vec,
+        start_vec + fallback_handle * chord_direction,
+        start_vec + 2.0 * fallback_handle * chord_direction,
+        end_vec - 2.0 * fallback_handle * end_direction,
+        end_vec - fallback_handle * end_direction,
+        end_vec,
+    ])
+
+
+def append_point_to_line_g2(
+    samples: list[PathSample], start: Node, end: Node, segment: str, sample_step_mm: float
+) -> None:
+    """Append a free-heading point-to-line G2 link without mutating either neighbor."""
+    start_vec = np.array([start.x, start.y], dtype=float)
+    end_vec = np.array([end.x, end.y], dtype=float)
+    chord_length = float(np.linalg.norm(end_vec - start_vec))
+    if chord_length < MIN_LINK_LENGTH_MM:
+        add_sample(samples, end_vec, end.point_type, False, segment, end.marker_order)
+        return
+    control = point_to_line_control(start, end)
+    dense = bezier_quintic(control, np.linspace(0.0, 1.0, max(120, int(chord_length / sample_step_mm))))
     chord_lengths = np.linalg.norm(np.diff(dense, axis=0), axis=1)
     arclength = np.concatenate(([0.0], np.cumsum(chord_lengths)))
     sample_s = np.arange(0.0, arclength[-1], sample_step_mm)
@@ -580,6 +698,8 @@ def make_nodes(
             link_modes[(source_node_index, target_node_index)] = "near_parallel_g2"
         elif plan.preset == TransitionPreset.PURE_LINE:
             link_modes[(source_node_index, target_node_index)] = "pure_line"
+        elif plan.preset == TransitionPreset.POINT_TO_LINE:
+            link_modes[(source_node_index, target_node_index)] = "point_to_line_g2"
         elif plan.preset == TransitionPreset.TURNAROUND_STAKE_FASTEST:
             link_modes[(source_node_index, target_node_index)] = "turnaround_stake_fastest"
             turnaround_links[(source_node_index, target_node_index)] = plan
@@ -697,6 +817,14 @@ def generate_path(
                 turnaround_links[(index, index + 1)],
                 turnaround_stake_radius_mm,
                 turnaround_stake_clearance_mm,
+            )
+        elif mode == "point_to_line_g2":
+            append_point_to_line_g2(
+                dense_samples,
+                nodes[index],
+                nodes[index + 1],
+                f"点到线 G2（自由离场）: {nodes[index].name} -> {nodes[index + 1].name}",
+                DENSE_SAMPLE_STEP_MM,
             )
         elif mode in {"forced_line", "task_internal", "pure_line"}:
             label = {

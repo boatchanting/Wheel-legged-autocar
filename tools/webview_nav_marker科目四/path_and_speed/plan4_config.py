@@ -157,9 +157,9 @@ def suggest_initial_trajectory_presets(
 ) -> list[TrajectorySegment]:
     """为首次专属模板提供安全默认值，不覆盖用户已保存的路线配置。
 
-    唯一可无歧义自动识别的情形是：两个状态机之间恰有一个 type=7 掉头桩。
-    此时普通插值会忽略桩桶并可能切入禁区，所以模板默认写入预设 4；
-    其他所有连接仍保持 interpolated，等待用户根据现场路线选择。
+    可无歧义自动识别的情形有：两个状态机之间恰有一个 type=7 掉头桩，
+    或雷区(point_type=1)直接驶向坡道(point_type=2)。前者默认绕桩，后者
+    默认点到线；其他连接仍保持 interpolated，等待用户根据现场路线选择。
     """
     suggested: list[TrajectorySegment] = []
     for trajectory in trajectories:
@@ -171,9 +171,14 @@ def suggest_initial_trajectory_presets(
             and trajectory.source_exit_order < marker.order < trajectory.target_entry_order
             for marker in markers
         )
+        marker_by_order = {marker.order: marker for marker in markers}
+        source = marker_by_order[trajectory.source_exit_order]
+        target = marker_by_order[trajectory.target_entry_order]
         preset = (
             TransitionPreset.TURNAROUND_STAKE_FASTEST
             if stake_count == 1
+            else TransitionPreset.POINT_TO_LINE
+            if source.point_type == 1 and target.point_type == 2
             else trajectory.preset
         )
         suggested.append(replace(trajectory, preset=preset))
@@ -247,14 +252,14 @@ def write_nav_toml_template(
         "# 本文件是生成时对通用配置的完整复制，仅作用于当前点表。",
         "# 修改本文件的状态机、掉头桩或逐段速度参数，不会改动 ../plan4_speed_planning.toml。",
         "# 修改本文件后重新运行脚本，脚本会自动读取并生成轨迹和渲染图。",
-        "# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest、turnaround_stake_smooth。",
+        "# 可用 preset：interpolated、near_parallel、pure_line、point_to_line、turnaround_stake_fastest、turnaround_stake_smooth。",
         "# 两种 turnaround_stake 预设都要求该段点表中有且仅有一个 point_type=7 掉头桩。",
         "",
         "[route]",
         f"source_csv = \"{source.name}\"",
         f"state_signature = \"{route_state_signature(state_segments)}\"",
         "",
-        "# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅预设 4/5 使用此参数。",
+        "# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅绕桩预设使用此参数。",
         "[turnaround_stake]",
         f"radius_mm = {configuration.turnaround_stake_radius_mm:.6g}",
         f"clearance_mm = {configuration.turnaround_stake_clearance_mm:.6g}",

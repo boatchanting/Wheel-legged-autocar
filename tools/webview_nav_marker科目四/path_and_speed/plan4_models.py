@@ -41,6 +41,12 @@ LOCAL_CORNER_HANDLE_MAX_MM = 600.0
 # 近似平行型过渡使用独立的控制柄。它比普通局部圆角更长，适合两条
 # 方向接近、但存在明显横向错位的状态机通道（例如三级跳 -> 单边桥）。
 PARALLEL_TRANSITION_HANDLE_MM = 900.0
+# 点到线过渡的自由起点控制柄范围。该模型不继承雷区上一段的航向，而是在
+# 朝向目标走廊的半平面内搜索低曲率离场方向。
+POINT_TO_LINE_MIN_START_HANDLE_RATIO = 0.16
+POINT_TO_LINE_MAX_START_HANDLE_RATIO = 0.34
+POINT_TO_LINE_MIN_END_HANDLE_RATIO = 0.16
+POINT_TO_LINE_MAX_END_HANDLE_RATIO = 0.34
 # 掉头桩的安全圆半径 = 桩桶半径 + 车辆通过时额外预留的安全裕量。
 # 两个值可通过命令行覆盖，单位均为 mm。
 TURNAROUND_STAKE_RADIUS_MM = 400.0
@@ -132,6 +138,7 @@ class TransitionPreset(str, Enum):
     INTERPOLATED = "interpolated"
     NEAR_PARALLEL = "near_parallel"
     PURE_LINE = "pure_line"
+    POINT_TO_LINE = "point_to_line"
     TURNAROUND_STAKE_FASTEST = "turnaround_stake_fastest"
     TURNAROUND_STAKE_SMOOTH = "turnaround_stake_smooth"
 
@@ -140,6 +147,7 @@ TRANSITION_PRESET_LABEL = {
     TransitionPreset.INTERPOLATED: "轨迹插值型",
     TransitionPreset.NEAR_PARALLEL: "近似平行型",
     TransitionPreset.PURE_LINE: "纯直线型",
+    TransitionPreset.POINT_TO_LINE: "点到线丝滑型",
     TransitionPreset.TURNAROUND_STAKE_FASTEST: "带掉头桩丝滑型",
     TransitionPreset.TURNAROUND_STAKE_SMOOTH: "带掉头桩低曲率丝滑型",
 }

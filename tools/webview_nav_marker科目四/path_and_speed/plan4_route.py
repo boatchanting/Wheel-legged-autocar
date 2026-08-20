@@ -200,8 +200,9 @@ def choose_trajectory_segments(
         "1": TransitionPreset.INTERPOLATED,
         "2": TransitionPreset.NEAR_PARALLEL,
         "3": TransitionPreset.PURE_LINE,
-        "4": TransitionPreset.TURNAROUND_STAKE_FASTEST,
-        "5": TransitionPreset.TURNAROUND_STAKE_SMOOTH,
+        "4": TransitionPreset.POINT_TO_LINE,
+        "5": TransitionPreset.TURNAROUND_STAKE_FASTEST,
+        "6": TransitionPreset.TURNAROUND_STAKE_SMOOTH,
     }
 
     # 起点到第一状态机入口同样是一段可调速度的普通轨迹，只是不需要选择
@@ -223,8 +224,9 @@ def choose_trajectory_segments(
             print("  1. 轨迹插值型：保留普通打点，按原有 G2 曲线逐段平滑连接")
             print("  2. 近似平行型：删除中间普通打点，用两端平行走廊之间的 G2 换道连接")
             print("  3. 纯直线型：删除中间普通打点，两个锚点之间直接连直线（常用于雷区到雷区）")
-            print("  4. 带掉头桩丝滑型：忽略中间点与掉头桩标签，绕桩搜索最快的平滑曲线")
-            print("  5. 带掉头桩低曲率丝滑型：使用与预设 4 相同输入，选择曲率更平缓的绕桩曲线")
+            print("  4. 点到线丝滑型：雷区自由离场，搜索低曲率方向后贴合下一状态机入口直线")
+            print("  5. 带掉头桩丝滑型：忽略中间点与掉头桩标签，绕桩搜索最快的平滑曲线")
+            print("  6. 带掉头桩低曲率丝滑型：使用与预设 5 相同输入，选择曲率更平缓的绕桩曲线")
             while True:
                 try:
                     choice = input("  选择预设 [1]: ").strip() or "1"
@@ -234,7 +236,7 @@ def choose_trajectory_segments(
                     print("1（未检测到终端输入，使用轨迹插值型）")
                 if choice in preset_by_choice:
                     break
-                print("  输入无效，请输入 1、2、3、4 或 5。")
+                print("  输入无效，请输入 1、2、3、4、5 或 6。")
         else:
             choice = "1"
 
@@ -263,9 +265,9 @@ def choose_trajectory_segments(
 def build_transition_plans(
     trajectories: Iterable[TrajectorySegment], markers: list[Marker]
 ) -> dict[tuple[int, int], TransitionPlan]:
-    """把轨迹段变为几何计划，并为预设 4/5 绑定唯一的 type=7 掉头桩。
+    """把轨迹段变为几何计划，并为绕桩预设绑定唯一的 type=7 掉头桩。
 
-    type=7 不是状态机，不能参与 find_event_pairs；仅当人工选择预设 4/5 时，
+    type=7 不是状态机，不能参与 find_event_pairs；仅当人工选择绕桩预设时，
     它才必须位于该段两个状态机锚点之间且数量恰为一个。
     """
     plans: dict[tuple[int, int], TransitionPlan] = {}
@@ -274,6 +276,14 @@ def build_transition_plans(
             continue
         stake: Optional[Marker] = None
         must_pass_markers: tuple[Marker, ...] = ()
+        marker_by_order = {marker.order: marker for marker in markers}
+        if trajectory.preset == TransitionPreset.POINT_TO_LINE:
+            source = marker_by_order.get(trajectory.source_exit_order)
+            target = marker_by_order.get(trajectory.target_entry_order)
+            if source is None or target is None:
+                raise ValueError("点到线预设缺少对应的状态机锚点。")
+            if source.point_type != 1 or target.point_type not in PAIRED_ENTRY_TYPES:
+                raise ValueError("点到线预设仅支持雷区(point_type=1)出口连接到配对状态机入口。")
         if trajectory.preset in {
             TransitionPreset.TURNAROUND_STAKE_FASTEST,
             TransitionPreset.TURNAROUND_STAKE_SMOOTH,
@@ -288,7 +298,6 @@ def build_transition_plans(
                     "带掉头桩预设要求两个状态机之间恰好有一个 point_type=7 掉头桩。"
                 )
             stake = stakes[0]
-            marker_by_order = {marker.order: marker for marker in markers}
             if tuple(sorted(trajectory.must_pass_marker_orders)) != trajectory.must_pass_marker_orders:
                 raise ValueError("掉头桩必经点必须按点表 index 的行驶顺序升序填写。")
             must_pass_markers = tuple(
@@ -442,13 +451,13 @@ def apply_trajectory_marker_policy(
 ) -> tuple[list[Marker], int]:
     """根据预设决定普通打点是否参与两个状态机之间的几何插值。
 
-    近似平行型和纯直线型都直接从前一状态机的退出锚点连到后一状态机的
+    近似平行型、纯直线型和点到线丝滑型都直接从前一状态机的退出锚点连到后一状态机的
     入口锚点，因此中间只能有 type=0 普通点；遇到其他状态机标记时拒绝
     删除，防止人工选择破坏点表中的任务触发顺序。
     """
     index_by_order = {marker.order: index for index, marker in enumerate(markers)}
     # 掉头桩只描述障碍物位置，绝不是导航事件；无论选用何种预设都不能
-    # 出现在生成的 path sample / C 路表中。预设 4/5 已在 TransitionPlan 中保留它。
+    # 出现在生成的 path sample / C 路表中。绕桩预设已在 TransitionPlan 中保留它。
     remove_indices: set[int] = {
         index for index, marker in enumerate(markers) if marker.point_type == 7
     }
