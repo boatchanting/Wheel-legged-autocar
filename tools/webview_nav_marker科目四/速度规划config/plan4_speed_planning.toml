@@ -6,7 +6,7 @@
 # TOML 中 # 后面的文字都是注释，可自由保留或删除。
 
 [turnaround_stake]
-# 预设 4/5 使用的桩桶物理半径。实际禁入半径 = radius_mm + clearance_mm。
+# 绕桩预设使用的桩桶物理半径。实际禁入半径 = radius_mm + clearance_mm。
 radius_mm = 400.0
 # 车辆外廓、定位误差和安全余量。
 clearance_mm = 250.0
@@ -51,7 +51,7 @@ exit_corridor_mm = 600.0
 # 每段选择的 preset，将对应段完整复制到路线专属 TOML；之后只需改专属文件，
 # 不会影响本通用文件或其他点表。
 #
-# 参数含义（五个预设段完全相同）：
+# 参数含义（六个预设段的字段定义相同）：
 # path_speed_max_mm_s：路径允许的绝对最高物理速度。
 # sprint_speed_mm_s / enable_finish_sprint：末段冲刺速度及是否允许冲刺。
 # max_accel_mm_s2 / max_decel_mm_s2：前后向速度包络的纵向能力。
@@ -101,7 +101,21 @@ speed_to_mm_s = 4.79
 curvature_eps = 0.000001
 response_delay_s = 0.0
 
-# 预设 4：绕掉头桩的最速丝滑连接，通常用于单边桥或草地到颠簸路。
+# 预设 4：点到线丝滑连接。用于雷区这类无出口航向约束的状态机驶向坡道等
+# 有固定入口走廊的任务；算法会搜索低曲率离场方向，并在目标走廊前对齐切线。
+[trajectory.point_to_line]
+path_speed_max_mm_s = 8000.0
+sprint_speed_mm_s = 8000.0
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500.0
+max_decel_mm_s2 = 4500.0
+max_lateral_accel_mm_s2 = 3000.0
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 0.000001
+response_delay_s = 0.0
+
+# 预设 5：绕掉头桩的最速丝滑连接，通常用于单边桥或草地到颠簸路。
 # 建议依据实车绕桩稳定性单独调低横向加速度或航向角速度上限。
 [trajectory.turnaround_stake_fastest]
 path_speed_max_mm_s = 5000.0
@@ -115,7 +129,7 @@ speed_to_mm_s = 4.79
 curvature_eps = 1e-06
 response_delay_s = 0.0
 
-# 预设 5：与预设 4 使用完全相同的掉头桩和必经点输入，但优先选择低峰值曲率、
+# 预设 6：与预设 5 使用完全相同的掉头桩和必经点输入，但优先选择低峰值曲率、
 # 曲率能量和曲率变化量的 G2 曲线。最终限速和纵向速度规划直接使用该实际曲线。
 [trajectory.turnaround_stake_smooth]
 path_speed_max_mm_s = 5000.0
