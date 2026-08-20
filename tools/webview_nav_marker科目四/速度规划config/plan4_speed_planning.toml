@@ -28,7 +28,7 @@ approach_distance_mm = 500.0
 entry_speed_command = 300.0
 state_speed_command = 300.0
 exit_speed_command = 300.0
-entry_corridor_mm = 600.0
+entry_corridor_mm = 200.0
 exit_corridor_mm = 600.0
 
 [task."5"]
