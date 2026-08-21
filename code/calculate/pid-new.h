@@ -108,14 +108,15 @@ extern float current_actual_speed;
 // ----------------------------------------------------------------------------
 // 7. 单边桥 Rolling (横滚) 自适应平衡环参数
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
-//    策略：一边不动，一边缩短 (Drop-Leg Strategy)
+//    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      44.0f   // 44[响应力度] 决定对抗倾斜的猛烈程度
+#define ROLL_KP      10.5f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      7.0f    // 7[阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      20.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
-#define ROLL_MAX_O   1000.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
+#define ROLL_MAX_O   1600.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
+#define ROLL_MAX_RETRACT_DUTY 500  // [收腿限幅] 高侧向上收腿最大占空比
 
 // *************************** 【2026/03/24 最后的舵机v腿】pid参数定义结束***************************
 #endif
@@ -142,10 +143,10 @@ extern float current_actual_speed;
 //    这是维持直立最关键的一环。
 // ----------------------------------------------------------------------------
 // 当前Core0调度目标周期：3ms
-#define ANG_KP      -12.0f   //[直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。-12
+#define ANG_KP      -15.0f   //[直立刚度] 类似于弹簧的硬度。值太小车软绵绵扶不正；值太大车会剧烈低频抖动。-12
 #define ANG_KI      0.0f    // [一般不用] 平衡车本身是不稳定系统，加积分容易导致无法直立，除非是完全静态的高精度控制。
 // 周期换算：5ms -> 3ms，ratio=0.6，Kd /= 0.6
-#define ANG_KD      -6.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。-13.3333
+#define ANG_KD      -14.0f    //[直立阻尼] 极重要！类似于减震器。值太小车会有余震；值太大车反应迟钝且有高频噪音。-13.3333
 
 #define ANG_MAX_I   0.0f    // 积分限幅
 #define ANG_MAX_O   8000.0f // [最大角速度] 限制期望的旋转速度，防止电机指令过大。
@@ -153,14 +154,14 @@ extern float current_actual_speed;
 // [关键补偿] 机械零点 (Mechanical Zero)
 // 理想情况下0度是平衡点。但因电池安装、传感器贴歪等原因，实际平衡点可能是 -1.5度。
 // 调试方法：如果车总是往“前”跑，说明它觉得自己后仰了，需要减小这个值；反之增大。
-#define ANG_MECH_ZERO  1.0f   //机械零点变化后看上面的调试方法微调-3.0
+#define ANG_MECH_ZERO  0.0f   //机械零点变化后看上面的调试方法微调-3.0
 
 // ----------------------------------------------------------------------------
 // 3. 角速度环参数 (最内环 - 周期约 1ms)
 //    作用：直接控制电机PWM，让车身角速度迅速跟随角度环的指令。
 //    这一环必须响应最快。
 // ----------------------------------------------------------------------------
-#define GYR_KP      -15.0f    // [响应速度] 决定了电机对旋转的抵抗力。-16
+#define GYR_KP      -16.0f    // [响应速度] 决定了电机对旋转的抵抗力。-16
 #define GYR_KI      0.0f    // [一般不用] 响应太快，积分来不及反应，反而造成滞后。
 #define GYR_KD      0.0f    // [消除抖动] 抑制高频噪声和电机抖动。
 
@@ -181,7 +182,7 @@ extern float current_actual_speed;
 //    特性：无积分项（避免转向累积误差），支持赛道场景自适应增益
 // ----------------------------------------------------------------------------
 // 当前Core0调度目标周期：3ms
-#define TURN_ANG_KP     -8.0f   // -12[转向刚度] 值越大转向越灵敏，但易振荡-8
+#define TURN_ANG_KP     -12.0f   // -12[转向刚度] 值越大转向越灵敏，但易振荡-8
 #define TURN_ANG_KI     0.0f   // [一般不用] 无积分项，避免转向累积误差
 #define TURN_ANG_KD     0.0f   // [转向阻尼] 抑制转向超调，值过大会导致响应迟钝
 #define TURN_ANG_MAX_I  0.0f    // [一般不用] 无积分项，避免转向累积误差
@@ -196,7 +197,7 @@ extern float current_actual_speed;
 #define TURN_GYR_KP     20.0f    // 35[响应速度] 决定转向电机响应刚度20
 #define TURN_GYR_KI     0.0f     // [一般不用] 无积分项，避免转向累积误差
 // 周期换算：2ms -> 1ms，ratio=0.5，Kd /= 0.5
-#define TURN_GYR_KD     16.0f     // 12[抖动抑制] 消除高频抖动16
+#define TURN_GYR_KD     12.0f     // 12[抖动抑制] 消除高频抖动16
 #define TURN_GYR_MAX_I  0.0f     // [一般不用] 无积分项，避免转向累积误差
 #define TURN_GYR_DEAD_ZONE 0.0f  // [死区] 消除低速时的非线性迟滞
 #define TURN_GYR_MAX_O  8000.0f  // [PWM限幅] 普通赛道转向PWM上限
@@ -205,16 +206,32 @@ extern float current_actual_speed;
 // ----------------------------------------------------------------------------
 // 7. 单边桥 Rolling (横滚) 自适应平衡环参数
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
-//    策略：一边不动，一边缩短 (Drop-Leg Strategy)
+//    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      44.0f   // 44[响应力度] 决定对抗倾斜的猛烈程度
+#define ROLL_KP      2.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      7.0f    // 7[阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      17.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
-#define ROLL_MAX_O   1000.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
+#define ROLL_MAX_O   1600.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
+#define ROLL_MAX_RETRACT_DUTY 500  // [收腿限幅] 高侧向上收腿最大占空比
 
 // *************************** 【小车4】PID参数定义结束 ***************************
+#endif
+
+#ifndef ROLL_MAX_RETRACT_DUTY
+#define ROLL_MAX_RETRACT_DUTY 500
+#endif
+
+// 单边桥离桥快速姿态还原参数
+#ifndef ROLL_LEAKY_DECAY_RATE
+#define ROLL_LEAKY_DECAY_RATE        0.82f   /* 下坡/反向回平时的指数泄漏率(每5ms) */
+#endif
+#ifndef ROLL_REVERSAL_BOOST_MULT
+#define ROLL_REVERSAL_BOOST_MULT     2.50f   /* 反向回零时的增量放大倍率 */
+#endif
+#ifndef ROLL_RESET_SNAP_DUTY_TH
+#define ROLL_RESET_SNAP_DUTY_TH      35.0f   /* 归零截断阈值 */
 #endif
 
 // ============================================================================
@@ -246,7 +263,8 @@ typedef struct {
 typedef enum {
     CONTROL_MODE_NORMAL = 0U,
     CONTROL_MODE_ACCEL  = 1U,
-    CONTROL_MODE_BRAKE  = 2U
+    CONTROL_MODE_BRAKE  = 2U,
+    CONTROL_MODE_BRIDGE = 3U
 } ControlMode_e;
 
 typedef struct {
@@ -353,7 +371,15 @@ extern volatile uint8 g_brake_active;
 extern volatile uint8 g_reverse_brake_active;
 
 // 全局刹车前馈参数
-#define BRAKE_SPEED_DEADBAND     15.0f     /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
+#define NAV_HARD_BRAKE_GAIN      80.0f    /* 导航强停刹增益，仅由科目二雷区刹车准备圆请求，明显强于普通重刹 */
+#define NAV_HARD_BRAKE_MAX_PWM   8200.0f  /* 导航强停刹最大反向 PWM；只提高高速刹车上限，不继续放大中低速刹车比例 */
+#define NAV_HARD_BRAKE_RAMP_UP   2200.0f  /* 导航强停刹建压步长，保证进入雷区准备圆后能快速建立制动力 */
+#define NAV_HARD_BRAKE_RELEASE_SPEED 35.0f /* 当前速度低于该值时释放导航强停刹，避免中心附近低速反抽和原地抽搐 */
+#define NAV_HARD_BRAKE_LIFE_TICKS 4U      /* 导航强停请求保持 tick，桥接导航周期和 9ms 刹车前馈周期 */
+
+#if CAR_SELECT == 3
+// 3车日常刹车前馈参数
+#define BRAKE_SPEED_DEADBAND     15.0f    /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
 #define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
 #define BRAKE_ZERO_TARGET_MAX    10.0f    /* 目标速度绝对值低于该值时，允许进入零速停车迟滞区 */
 #define BRAKE_ZERO_HOLD_ENTER    18.0f    /* 刹停过程中速度低于该值时进入零速迟滞区并清空刹车前馈 */
@@ -374,18 +400,74 @@ extern volatile uint8 g_reverse_brake_active;
 #define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
 #define BRAKE_GAIN_HEAVY         22.0f    /* 重刹前馈增益，主要用于 CH5 急停或速度差很大的情况 */
-#define NAV_HARD_BRAKE_GAIN      80.0f    /* 导航强停刹增益，仅由科目二雷区刹车准备圆请求，明显强于普通重刹 */
 #define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
 #define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
 #define BRAKE_MAX_HEAVY          3500.0f  /* 重刹前馈 PWM 最大幅值，限制急停时的最大反向力矩 */
-#define NAV_HARD_BRAKE_MAX_PWM   8200.0f  /* 导航强停刹最大反向 PWM；只提高高速刹车上限，不继续放大中低速刹车比例 */
 #define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
 #define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
 #define BRAKE_RAMP_UP_HEAVY      700.0f   /* 重刹输出每次更新的最大上升步长，急停时允许更快建立制动力 */
-#define NAV_HARD_BRAKE_RAMP_UP   2200.0f  /* 导航强停刹建压步长，保证进入雷区准备圆后能快速建立制动力 */
 #define BRAKE_RAMP_DOWN          800.0f   /* 刹车前馈退出时每次更新的最大回落步长，数值越大释放越快 */
-#define NAV_HARD_BRAKE_RELEASE_SPEED 35.0f /* 当前速度低于该值时释放导航强停刹，避免中心附近低速反抽和原地抽搐 */
-#define NAV_HARD_BRAKE_LIFE_TICKS 4U      /* 导航强停请求保持 tick，桥接导航周期和 9ms 刹车前馈周期 */
+#elif CAR_SELECT == 4
+// 4车日常刹车前馈参数 【2026-08-14 俯仰抖动调校：重刹三参数改柔，建压慢/增益低/释放慢，姿态跟得上】
+#define BRAKE_SPEED_DEADBAND     15.0f    /* 当前速度绝对值低于该值时不启用刹车前馈，避免低速抖动和符号噪声 */
+#define BRAKE_LOW_SPEED_TH       40.0f    /* 普通速度差触发刹车时的低速保护阈值，低于该速度只允许轻刹 */
+#define BRAKE_ZERO_TARGET_MAX    10.0f    /* 目标速度绝对值低于该值时，允许进入零速停车迟滞区 */
+#define BRAKE_ZERO_HOLD_ENTER    18.0f    /* 刹停过程中速度低于该值时进入零速迟滞区并清空刹车前馈 */
+#define BRAKE_ZERO_HOLD_EXIT     30.0f    /* 零速迟滞区退出阈值；只有速度重新明显离开零区才允许再次建压 */
+#define BRAKE_ERR_MIN            40.0f    /* 启用比例判定前的最小绝对速度差，避免速度很小时比例被放大误判 */
+#define BRAKE_ERR_MED_MIN        80.0f    /* 中刹最小绝对速度差，避免低速小幅速度差仅因比例大而升级 */
+#define BRAKE_ERR_HEAVY_MIN      150.0f   /* 重刹最小绝对速度差，必须有足够大的真实降速需求 */
+#define BRAKE_MED_SPEED_TH       120.0f   /* 普通减速进入中刹的当前速度下限 */
+#define BRAKE_HEAVY_SPEED_TH     220.0f   /* 普通减速进入重刹的当前速度下限 */
+#define BRAKE_TARGET_DECEL_MIN   40.0f    /* 目标速度下降超过该值才认为是主动减速指令；调大可减少弯前误刹，调小会更早介入收速 */
+#define BRAKE_OVERSPEED_ERR_MIN  60.0f    /* 持续超速判定阈值：实际速度绝对值比目标速度绝对值大这么多才算真超速 */
+#define BRAKE_OVERSPEED_HOLD_TICKS 3U     /* 超速持续 tick 数，当前刹车前馈约 9ms 调用一次；3U 约等于 27ms，调大可抑制瞬时噪声误刹 */
+#define BRAKE_CH5_LIGHT_SPEED    80.0f    /* CH5 急停低于该速度只给轻刹，避免低速急停过猛 */
+#define BRAKE_CH5_MED_SPEED      220.0f   /* CH5 急停低于该速度给中刹，高于该速度才给重刹 */
+#define BRAKE_RATIO_LIGHT        0.18f    /* 轻刹触发比例：速度差达到当前速度的 18% 才进入轻刹；调大可减少轻微速度差触发 */
+#define BRAKE_RATIO_MED          0.28f    /* 中刹触发比例：速度差达到当前速度的 28% 才进入中刹；调大可降低弯前中刹概率 */
+#define BRAKE_RATIO_HEAVY        0.55f    /* 重刹触发比例：速度差达到当前速度的 55% 才进入重刹，CH5 急停不受此限制 */
+#define BRAKE_GAIN_LIGHT         4.0f     /* 轻刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_MED           10.0f    /* 中刹前馈增益，输出约为 -gain * 当前速度 */
+#define BRAKE_GAIN_HEAVY         18.0f    /* 重刹前馈增益(原22.0f)，4车调软防俯仰抖动 */
+#define BRAKE_MAX_LIGHT          800.0f   /* 轻刹前馈 PWM 最大幅值，限制轻微减速时的反向力矩 */
+#define BRAKE_MAX_MED            1600.0f  /* 中刹前馈 PWM 最大幅值，限制普通减速时的反向力矩 */
+#define BRAKE_MAX_HEAVY          3000.0f  /* 重刹前馈 PWM 最大幅值(原3500.0f)，限制急停时的最大反向力矩 */
+#define BRAKE_RAMP_UP_LIGHT      120.0f   /* 轻刹输出每次更新的最大上升步长，数值越小刹车介入越柔 */
+#define BRAKE_RAMP_UP_MED        300.0f   /* 中刹输出每次更新的最大上升步长 */
+#define BRAKE_RAMP_UP_HEAVY      500.0f   /* 重刹输出每次更新的最大上升步长(原700.0f)，建压慢姿态跟得上 */
+#define BRAKE_RAMP_DOWN          600.0f   /* 刹车前馈退出时每次更新的最大回落步长(原800.0f)，释放慢避免回弹起振 */
+#else
+// 其他车型暂时沿用4车日常刹车前馈参数
+#define BRAKE_SPEED_DEADBAND     15.0f
+#define BRAKE_LOW_SPEED_TH       40.0f
+#define BRAKE_ZERO_TARGET_MAX    10.0f
+#define BRAKE_ZERO_HOLD_ENTER    18.0f
+#define BRAKE_ZERO_HOLD_EXIT     30.0f
+#define BRAKE_ERR_MIN            40.0f
+#define BRAKE_ERR_MED_MIN        80.0f
+#define BRAKE_ERR_HEAVY_MIN      150.0f
+#define BRAKE_MED_SPEED_TH       120.0f
+#define BRAKE_HEAVY_SPEED_TH     220.0f
+#define BRAKE_TARGET_DECEL_MIN   40.0f
+#define BRAKE_OVERSPEED_ERR_MIN  60.0f
+#define BRAKE_OVERSPEED_HOLD_TICKS 3U
+#define BRAKE_CH5_LIGHT_SPEED    80.0f
+#define BRAKE_CH5_MED_SPEED      220.0f
+#define BRAKE_RATIO_LIGHT        0.18f
+#define BRAKE_RATIO_MED          0.28f
+#define BRAKE_RATIO_HEAVY        0.55f
+#define BRAKE_GAIN_LIGHT         4.0f
+#define BRAKE_GAIN_MED           10.0f
+#define BRAKE_GAIN_HEAVY         22.0f
+#define BRAKE_MAX_LIGHT          800.0f
+#define BRAKE_MAX_MED            1600.0f
+#define BRAKE_MAX_HEAVY          3500.0f
+#define BRAKE_RAMP_UP_LIGHT      120.0f
+#define BRAKE_RAMP_UP_MED        300.0f
+#define BRAKE_RAMP_UP_HEAVY      700.0f
+#define BRAKE_RAMP_DOWN          800.0f
+#endif
 #define BRAKE_SERVO_PROTECT_PWM_TH 2500.0f /* 刹车前馈超过该值时启用舵机刹车姿态保护，限制速度环把车身继续压成后坐 */
 #define BRAKE_SERVO_BACK_SIT_SIGN -1.0f    /* 后坐方向标定：1 表示 speed_adj 为正会后坐；若实车方向相反，改成 -1.0f */
 #define BRAKE_SERVO_BACK_SIT_LIMIT 0.0f   /* 强刹时允许保留的后坐方向 speed_adj，上调会更贴近原速度环，下调更防后坐蹭地 */
@@ -459,13 +541,20 @@ void Turn_Angle_Loop_Reset(void);
 float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro);//转向角速度环控制
 void Turn_Gyro_Loop_Reset(void);
 void Turn_Gyro_Loop_Bumpless_Reset(float target_gyro, float actual_gyro);
+void Turn_Control_Reset(void);//重置转向环(外环+内环)运行态（不重置参数），跳跃/推车冻结时调用
 float Servo_Speed_Control(float target_speed, float actual_speed, float actual_angle);//速度环(舵机)
 void Servo_Speed_Control_Reset(void);//重置速度环运行态（不重置参数），跳跃/推车冻结时调用
 float Angle_Loop_Control(float speed_loop_output, float actual_angle);//角度环(中环)
 float Gyro_Loop_Control(float angle_loop_output, float actual_gyro);//角速度环(内环)
 float Roll_Balance_Control(float actual_roll,float target_roll);//横滚平衡环控制
+float Calculate_Horizontal_Roll_Degree(float roll_deg, float pitch_deg); // 坐标系转换：计算相对于车身前进方向水平转轴的旋转角
+void PID_Roll_Update_Kp(float kp);
+void PID_Roll_Update_Kd(float kd);
+void PID_Roll_Update_MaxOutput(float max_output);
+void PID_Roll_Update_Compensation(float compensation);
 float Turn_Active_Roll_Target_Update(float turn_cmd, uint8 hard_clear);//转向主动侧倾目标计算
 void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear);//转向主动侧倾查表舵机差动
+void Turn_Active_Roll_Duty_Clear(void); // 清除转向主动侧倾差动并归零相关变量
 
 /**
  * @brief 刹车前馈更新：根据目标/实际速度差输出轻刹、中刹或重刹 PWM
@@ -477,6 +566,7 @@ void Turn_Active_Roll_Duty_Update(float target_roll, uint8 hard_clear);//转向�
  */
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
 void Brake_Feedforward_Reset(void);//清空刹车前馈并短暂上锁，避免复位后立即被旧条件重新触发
+void Brake_Feedforward_Unlock(void);//特殊任务停车时解除 Reset 留下的刹车锁，允许当前零目标建立普通刹车前馈
 float Brake_Feedforward_GetPwm(void);//读取当前刹车前馈 PWM，供 ISR 前馈仲裁使用
 void Brake_NavHardStop_Update(uint8 active);//导航强停刹请求，主要用于科目二雷区刹车准备圆
 void Brake_NavHardStop_UpdateStrength(float strength);//导航强停刹强度请求，0.0 释放，1.0 等价旧强停刹

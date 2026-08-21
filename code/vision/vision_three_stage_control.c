@@ -38,12 +38,12 @@ volatile uint8 g_vision_three_stage_jump1_correction_bottom_y = VISION_THREE_STA
 /* 第二跳触发策略：默认固定延时（宏默认值），可在线置 0 回退旧视觉 top_y 阈值策略 */
 volatile uint8 g_vision_three_stage_jump2_delay_enable = VISION_THREE_STAGE_JUMP2_DELAY_ENABLE_DEFAULT;
 
-volatile float g_vision_three_stage_speed_approach = -320.0f; /* 锁定目标靠近时的速度 */
-volatile float g_vision_three_stage_speed_jump1    = -320.0f;/* 第一跳寻找速度 */
-volatile float g_vision_three_stage_speed_jump2    = -320.0f;/* 第二跳寻找速度 */
-volatile float g_vision_three_stage_speed_gap      = -320.0f; /* 短暂丢失过渡阶段速度 */
-volatile float g_vision_three_stage_speed_jump3    = -320.0f;/* 第三跳寻找速度 */
-volatile float g_vision_three_stage_speed_exit     = -320.0f; /* 最后一跳完成后的驶出减速 */
+volatile float g_vision_three_stage_speed_approach = -310.0f; /* 锁定目标靠近时的速度 */
+volatile float g_vision_three_stage_speed_jump1    = -310.0f;/* 第一跳寻找速度 */
+volatile float g_vision_three_stage_speed_jump2    = -310.0f;/* 第二跳寻找速度 */
+volatile float g_vision_three_stage_speed_gap      = -310.0f; /* 短暂丢失过渡阶段速度 */
+volatile float g_vision_three_stage_speed_jump3    = -310.0f;/* 第三跳寻找速度 */
+volatile float g_vision_three_stage_speed_exit     = -310.0f; /* 最后一跳完成后的驶出减速 */
 
 /* 影子变量：先算完，再一次性发布，减少并发读写中间态 */
 static vision_three_stage_control_status_t s_ctrl_shadow;
@@ -515,10 +515,12 @@ void VisionThreeStageControl_Update_2ms(void)
                 {
                     if (s_exit_anchor_valid != 0U)
                     {
+                        /* 视觉确认出口时只重定位导航融合坐标。 */
                         nav_vision_fusion_x = s_exit_anchor_x_mm;
                         nav_vision_fusion_y = s_exit_anchor_y_mm;
                     }
                     exit_beep_request = 1U;
+                    /* 脱出距离从此刻的原始惯导坐标起算，不受上方融合重定位影响。 */
                     s_post_exit_start_x_mm = inertial_nav.x;
                     s_post_exit_start_y_mm = inertial_nav.y;
                     VisionIpc_Core0_SetTask(VISION_TARGET_NONE, 0U);
@@ -537,6 +539,7 @@ void VisionThreeStageControl_Update_2ms(void)
             float dy;
 
             target_speed_set = VISION_THREE_STAGE_POST_EXIT_SPEED_SET;
+            /* 视觉出口重定位完成后，保持使用原始惯导坐标跑满脱出距离。 */
             dx = inertial_nav.x - s_post_exit_start_x_mm;
             dy = inertial_nav.y - s_post_exit_start_y_mm;
             if ((dx * dx + dy * dy) >=

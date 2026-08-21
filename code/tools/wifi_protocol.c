@@ -1,15 +1,27 @@
 #include "wifi_protocol.h"
 #include "menu.h"
-#include "../navigation/gnss_transform.h"
 #include "../calculate/pid-new.h"
+#include "../calculate/ekf.h"
+#include "../calculate/matrix.h"
 #include "../navigation/nav_replay/nav_replay.h"
 #include "../plan/minefield.h"
+#include "../plan/bumpy_road.h"
+#include "../vision/vision_bridge_control.h"
+#include "../vision/vision_slope_control.h"
+#include "../vision/vision_three_stage_control.h"
+#include "../servo/servo.h"
 
 // ------------------------------------------------------------------
 // TX and RX buffers
 // ------------------------------------------------------------------
 static uint8_t tx_buf[WIFI_TX_BUFFER_SIZE];
 static uint16_t tx_idx = 0;
+
+volatile float g_wifi_target_speed_set = 0.0f;
+volatile float g_wifi_speed_l = 0.0f;
+volatile float g_wifi_speed_r = 0.0f;
+volatile float g_wifi_pwm_left = 0.0f;
+volatile float g_wifi_pwm_right = 0.0f;
 
 uint8_t g_manual_log_enabled = 0;
 #define WIFI_RX_READ_CHUNK   128U
@@ -378,38 +390,7 @@ void wifi_protocol_send_data(void)
     write_u32_or_float(&inertial_nav.vx_body);
     write_u32_or_float(&inertial_nav.vy_body);
 
-    // C. GNSS fields
-    write_u16(gnss.time.year);
-    write_u8(gnss.time.month);
-    write_u8(gnss.time.day);
-    write_u8(gnss.time.hour);
-    write_u8(gnss.time.minute);
-    write_u8(gnss.time.second);
-
-    write_u8(gnss.state);
-
-    write_u16(gnss.latitude_degree);
-    write_u16(gnss.latitude_cent);
-    write_u16(gnss.latitude_second);
-    write_u16(gnss.longitude_degree);
-    write_u16(gnss.longitude_cent);
-    write_u16(gnss.longitude_second);
-
-    write_double(&gnss.latitude);
-    write_double(&gnss.longitude);
-
-    write_i8(gnss.ns);
-    write_i8(gnss.ew);
-
-    write_u32_or_float(&gnss.speed);
-    write_u32_or_float(&gnss.direction);
-
-    write_u8(gnss.antenna_direction_state);
-    write_u32_or_float(&gnss.antenna_direction);
-
-    write_u8(gnss.satellite_used);
-    write_u32_or_float(&gnss.height);
-
+    // C. Attitude used by the point editor and trajectory display.
 #if IMU_CATEGORY == 3
     float heading_to_send = heading;
 #else
@@ -424,94 +405,62 @@ void wifi_protocol_send_data(void)
 
     // (GPS and Fusion traces removed as requested)
 
-    // G. PID Control Mode
+    // E. Existing control flags used by the trajectory display.
     write_u8((uint8_t)g_control_mode_applied);
-    
-    // H. Slip Flag
     write_u8((uint8_t)inertial_nav.slip_flag);
-    
-    // H2. Minefield Is Active
+
+    // F. Navigation replay state.  g_current_point_type is the navigation
+    // state-machine point type; it is intentionally separate from
+    // robot_ctrl.point_type above, which belongs to the host point editor.
+    write_u8(g_current_point_type);
+    write_u8((uint8_t)g_replay_state);
+    write_float(&err_degree);
+
+    // G. Special-task state machines.
     write_u8(Minefield_Is_Active());
+    write_u8(g_special_action_trigger);
+    write_u8(BumpyRoad_Is_Active());
+    write_u8(VisionBridgeTask_IsActive());
+    write_u8(VisionSlopeTask_IsActive());
+    write_u8(VisionThreeStageControl_IsActive());
 
-    // I. Base control debug values (20 bytes). Always send these so a replay
-    // that has already stopped can still be diagnosed from its CSV tail.
-    float t_speed = (float)target_speed_set;
-    write_u32_or_float(&t_speed);
-    write_u32_or_float(&inertial_nav.current_speed_L);
-    write_u32_or_float(&inertial_nav.current_speed_R);
-    write_u32_or_float(&inertial_nav.theoretical_yaw_rate);
-    write_u32_or_float(&inertial_nav.actual_yaw_rate);
+    // H. Euler angles and EKF IMU data.
+    write_float(&euler_angle.roll);
+    write_float(&euler_angle.pitch);
+    write_float(&euler_angle.yaw);
+    write_float(&imu_data.acc_x);
+    write_float(&imu_data.acc_y);
+    write_float(&imu_data.acc_z);
+    write_float(&imu_data.gyro_x);
+    write_float(&imu_data.gyro_y);
+    write_float(&imu_data.gyro_z);
+    write_float(&imu_data.grav_x);
+    write_float(&imu_data.grav_y);
+    write_float(&imu_data.grav_z);
 
-    // J. Plan-2 special-point diagnostic block (25 floats, 100 bytes).
-    // Keep this fixed-width and append-only; the host accepts older packets
-    // without it and records these fields only when this block is present.
+    // I. Servo debug angles.  The requested wire order is RF, RR, LF, LR;
+    // servo indexes are LF(0), RF(1), RR(2), LR(3).
     {
-        float nav_replay_state = (float)g_replay_state;
-        float nav_special_action_trigger = (float)g_special_action_trigger;
-        float nav_current_point_type = (float)g_current_point_type;
-        float nav_special_target_idx = 0.0f;
-        float nav_special_target_x = 0.0f;
-        float nav_special_target_y = 0.0f;
-        float nav_special_dist_mm = 0.0f;
-        float nav_special_brake_radius_mm = 0.0f;
-        float nav_special_speed_ref_mm_s = 0.0f;
-        float nav_special_zero_brake_issued = 0.0f;
-        float nav_special_zero_brake_active = 0.0f;
-        float nav_special_crawl_active = 0.0f;
-        float nav_special_prep_zero_latched = 0.0f;
-        float brake_ff_pwm = Brake_Feedforward_GetPwm();
-        float accel_ff_pwm = Accel_Feedforward_GetPwm();
-        float motor_enable = (float)g_motor_enable;
-        float fallen = g_fallen ? 1.0f : 0.0f;
-        float remote_brake_active = (float)g_brake_active;
-        float remote_reverse_brake_active = (float)g_reverse_brake_active;
+        float servo_angle_rf = get_servo_angle(1U);
+        float servo_angle_rr = get_servo_angle(2U);
+        float servo_angle_lf = get_servo_angle(0U);
+        float servo_angle_lr = get_servo_angle(3U);
+        write_float_value(servo_angle_rf);
+        write_float_value(servo_angle_rr);
+        write_float_value(servo_angle_lf);
+        write_float_value(servo_angle_lr);
+    }
 
-#if (CURRENT_NAV_PLAN == 2) && (NAV_PLAN2_METHOD == PLAN2_POINT_SPEED_PLANNING)
-        nav_special_target_idx = (float)g_nav_point_special_debug_target_idx;
-        nav_special_target_x = g_nav_point_special_debug_target_x;
-        nav_special_target_y = g_nav_point_special_debug_target_y;
-        nav_special_dist_mm = g_nav_point_special_debug_dist_mm;
-        nav_special_brake_radius_mm = g_nav_point_special_debug_brake_radius_mm;
-        nav_special_speed_ref_mm_s = g_nav_point_special_debug_speed_ref_mm_s;
-        nav_special_zero_brake_issued = (float)g_nav_point_special_debug_zero_brake_issued;
-        nav_special_zero_brake_active = (float)NavReplay_SpecialPointZeroBrakeActive();
-        nav_special_crawl_active = (float)NavReplay_SpecialPointCrawlActive();
-        nav_special_prep_zero_latched = (float)NavReplay_SpecialPointPrepZeroBrakeLatched();
-#endif
+    // J. Speed-control telemetry snapshot captured by the control ISR.
+    write_float(&g_wifi_target_speed_set);
+    write_float(&g_wifi_speed_l);
+    write_float(&g_wifi_speed_r);
+    write_float(&g_wifi_pwm_left);
+    write_float(&g_wifi_pwm_right);
 
-        write_u32_or_float(&nav_replay_state);
-        write_u32_or_float(&nav_special_action_trigger);
-        write_u32_or_float(&nav_current_point_type);
-        write_u32_or_float(&nav_special_target_idx);
-        write_u32_or_float(&nav_special_target_x);
-        write_u32_or_float(&nav_special_target_y);
-        write_u32_or_float(&nav_special_dist_mm);
-        write_u32_or_float(&nav_special_brake_radius_mm);
-        write_u32_or_float(&nav_special_speed_ref_mm_s);
-        write_u32_or_float(&nav_special_zero_brake_issued);
-        write_u32_or_float(&nav_special_zero_brake_active);
-        write_u32_or_float(&nav_special_crawl_active);
-        write_u32_or_float(&nav_special_prep_zero_latched);
-        write_u32_or_float(&brake_ff_pwm);
-        write_u32_or_float(&accel_ff_pwm);
-        write_u32_or_float(&motor_enable);
-        write_u32_or_float(&fallen);
-        write_u32_or_float(&remote_brake_active);
-        write_u32_or_float(&remote_reverse_brake_active);
-
-        float mf_acc = g_minefield_debug_accumulated_angle;
-        float mf_cmd = g_minefield_debug_angle_cmd;
-        float mf_ff  = g_minefield_debug_feedforward_speed;
-        float mf_cur = g_minefield_debug_current_speed_cmd;
-        float mf_stall = g_minefield_debug_stall_elapsed_s;
-        float mf_abort = (float)g_minefield_spin_abort_reason;
-
-        write_u32_or_float(&mf_acc);
-        write_u32_or_float(&mf_cmd);
-        write_u32_or_float(&mf_ff);
-        write_u32_or_float(&mf_cur);
-        write_u32_or_float(&mf_stall);
-        write_u32_or_float(&mf_abort);
+    if ((uint16_t)(tx_idx - (len_pos + 1U)) != WIFI_TELEMETRY_PAYLOAD_SIZE)
+    {
+        return;
     }
 
     const uint8_t payload_len = (uint8_t)(tx_idx - (len_pos + 1U));

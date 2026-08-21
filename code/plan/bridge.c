@@ -262,17 +262,22 @@ void Bridge_Init(void) {
     bridge_params.speed_normal  = -180.0f; 
 
     // 姿态参数
+#if CAR_SELECT == 4
+    bridge_params.height_normal = 4.5f;   // 平地正常高度
+    bridge_params.height_bridge = 4.5f;  // 桥上保持正常高度，留足单侧大行程伸腿空间
+#else
     bridge_params.height_normal = 3.0f;   // 平地正常高度
-    bridge_params.height_bridge = 6.0f;  // 桥上高度 (留一点余量给一边缩短)
+    bridge_params.height_bridge = 3.0f;  // 桥上保持正常高度，留足单侧大行程伸腿空间
+#endif
     
     // 高度步长：假设 20ms 调用一次此函数
     // 升高13cm需要：13 / 0.5 = 26次 = 0.52秒，时间足够
     bridge_params.height_step_rise = 0.5f;   
     bridge_params.height_step_drop = 0.8f;   
 
-    // 舵机刚度：上桥时放开限制，允许 100 满斜率响应 PID
-    bridge_params.servo_acc_bridge = 100;  
-    bridge_params.servo_dec_bridge = 100;
+    // 舵机斜率限制：每 1ms 周期限幅，单独定义的 duty/ms
+    bridge_params.servo_acc_bridge = 15;  //原200hz为80
+    bridge_params.servo_dec_bridge = 20;   //原200hz为150
 }
 
 void Bridge_Trigger(float distance_to_bridge) {
@@ -313,9 +318,12 @@ void Bridge_Update(void) {
             // 开始平滑抬升车身，并动态更新 PID 防止发抖
             Smooth_Height_Control(bridge_params.height_bridge, bridge_params.height_step_rise);
 
-            // 当距离逼近桥头，进入上桥爬坡状态
+            // 当距离逼近桥头，进入上桥爬坡状态，提前开启 Rolling
             if (remaining_dist < bridge_params.trigger_ready_dist) {
                 target_speed_set = bridge_params.speed_ready;
+                acc_limit = bridge_params.servo_acc_bridge;
+                dec_limit = bridge_params.servo_dec_bridge;
+                roll_balance_enable = 1; // 提前介入横滚平衡
                 current_bridge_state = BRIDGE_STATE_CLIMB;
             }
             break;
@@ -328,10 +336,10 @@ void Bridge_Update(void) {
             // 越过桥头一段距离，说明车身已完全上了单边桥
             if (remaining_dist < -bridge_params.enter_bridge_dist) {
                 
-                // 【核心开启】：放开舵机速度，开启底层“一边不动一边缩短”的横滚平衡
+                // 【核心开启】：放开舵机速度，开启底层“低侧伸腿+高侧收腿”的横滚平衡
                 acc_limit = bridge_params.servo_acc_bridge;
                 dec_limit = bridge_params.servo_dec_bridge;
-                roll_balance_enable = 0; 
+                roll_balance_enable = 1; 
 
                 Reset_Start_Point(); 
                 current_bridge_state = BRIDGE_STATE_ON_BRIDGE;

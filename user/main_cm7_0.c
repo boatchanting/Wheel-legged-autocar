@@ -79,7 +79,16 @@ volatile bool g_fallen = false; // 主动起立/倒下控制，false为尝试起
 #else
 volatile bool g_fallen = true;  // 无遥控器时默认保持倒下，等待菜单触发起立发车
 #endif
+#if (LAUNCH_STRATEGY_SELECT == 1)
 // =================================================================================
+// 【直立发车 / 航向校准】全局变量定义
+// =================================================================================
+volatile bool g_turn_loop_disabled = false;              // 1: 禁用转向环(手动对准航向), 0: 正常转向环
+volatile uint8_t g_upright_long_short_long_request = 0; // 1: 请求主循环播放长-短-长提示音
+volatile uint8_t g_upright_single_beep_request = 0;     // 1: 请求主循环播放单声短鸣
+volatile uint8_t g_upright_beep_done = 0;               // 1: 主循环长-短-长提示音播放完毕
+// =================================================================================
+#endif
 
 // =================================================================================
 // 导航记录控制标志位
@@ -106,6 +115,36 @@ int main(void)
 
     while(true)
     {
+#if (LAUNCH_STRATEGY_SELECT == 1)
+        // 【直立发车】提示音：长-短-长 (长300ms, 停100ms, 短100ms, 停100ms, 长300ms, 停100ms)
+        if (g_upright_long_short_long_request != 0U)
+        {
+            g_upright_long_short_long_request = 0U;
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(300);
+            gpio_set_level(BUZZER_PIN, 0);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 0);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(300);
+            gpio_set_level(BUZZER_PIN, 0);
+            system_delay_ms(100);
+            g_upright_beep_done = 1; // 播放完毕，通知状态机关闭转向环开始对准
+        }
+
+        // 【直立发车】航向锁定提示音：单声短鸣 (100ms)
+        if (g_upright_single_beep_request != 0U)
+        {
+            g_upright_single_beep_request = 0U;
+            gpio_set_level(BUZZER_PIN, 1);
+            system_delay_ms(100);
+            gpio_set_level(BUZZER_PIN, 0);
+        }
+#endif
+
 #if CURRENT_NAV_PLAN == 3 || CURRENT_NAV_PLAN == 4
         // 导航/视觉状态机只置请求标志；蜂鸣器在主循环执行，绝不阻塞中断控制周期。
         if (entry_beep_request != 0U)
@@ -118,6 +157,13 @@ int main(void)
         {
             exit_beep_request = 0U;
             Buzzer_Beep_Times(2U);
+        }
+
+        // 单边桥兜底退出(AUTO_TIMEOUT): 响 1 声 (区别于视觉确认的 2 声) (2026-08-14 自 0809 分支并入)
+        if (g_bridge_exit_timeout_beep_request != 0U)
+        {
+            g_bridge_exit_timeout_beep_request = 0U;
+            Buzzer_Beep_Times(1U);
         }
 #endif
 
@@ -182,16 +228,25 @@ int main(void)
             #endif
                 //TelemetryIpc_Core0_PublishPvcDefault();
             #if WIFI_CORE0_ASSISTANT
-                //逐飞助手示波器发送代码        
-                //1.【调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
-                seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
-                seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
-                seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
-                seekfree_assistant_oscilloscope_data.data[3] = (float)gyro_loop_out;
-                seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
-                seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
-                seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
-                seekfree_assistant_oscilloscope_data.data[7] = (float)pid_gyro.kp;
+                // 1.【调试Rolling平衡环：横滚角、期望目标角、Rolling输出、横滚误差、底盘高度、俯仰角、左右轮速】
+                seekfree_assistant_oscilloscope_data.data[0] = (float)euler_angle.roll;                      // CH0: 车身实际横滚角 Roll (deg)
+                seekfree_assistant_oscilloscope_data.data[1] = (float)roll_degree;                           // CH1: 期望目标横滚角 (deg)
+                seekfree_assistant_oscilloscope_data.data[2] = (float)pid_roll.output;                       // CH2: Rolling 环 PID 调节输出 (左右腿高度差补偿)
+                seekfree_assistant_oscilloscope_data.data[3] = (float)pid_roll.error;                        // CH3: 横滚角实时误差 Error (deg)
+                seekfree_assistant_oscilloscope_data.data[4] = (float)servo_height;                          // CH4: 基础车身高度 (cm)
+                seekfree_assistant_oscilloscope_data.data[5] = (float)euler_angle.pitch;                     // CH5: 车身俯仰角 Pitch (deg，观察侧倾对直立的耦合扰动)
+                seekfree_assistant_oscilloscope_data.data[6] = (float)motor_value.receive_left_speed_data;  // CH6: 左轮反馈速度
+                seekfree_assistant_oscilloscope_data.data[7] = (float)motor_value.receive_right_speed_data; // CH7: 右轮反馈速度
+
+                // 【备用：调试直立环，左右轮，俯仰角，角速度环输出，角度环输出，舵机环输出，翻滚角，偏航角】
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)motor_value.receive_left_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)motor_value.receive_right_speed_data;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)euler_angle.pitch;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)gyro_loop_out;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)pid_angle.output;
+                // seekfree_assistant_oscilloscope_data.data[5] = (float)pid_servo_speed.error_integral;
+                // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.roll;
+                // seekfree_assistant_oscilloscope_data.data[7] = (float)pid_gyro.kp;
 
 
                 // 2.【调试转向环，左右轮，偏航角，转向角速度环输出，转向角度环输出，舵机环输出，翻滚角，俯仰角】
@@ -224,6 +279,17 @@ int main(void)
                 // seekfree_assistant_oscilloscope_data.data[5] = (float)err_degree;
                 // seekfree_assistant_oscilloscope_data.data[6] = (float)euler_angle.pitch;
                 // seekfree_assistant_oscilloscope_data.data[7] = (float)euler_angle.yaw; 
+
+                // 4.【调试单边桥新管线: 0核 输入 b2_* + 状态机 (2026-08-14 自 0809 分支并入)】
+                // 启用: 取消下面 8 行注释, 并注释掉上方"1.直立环"组
+                // seekfree_assistant_oscilloscope_data.data[0] = (float)g_bridge_vision_task_status.b2_valid;
+                // seekfree_assistant_oscilloscope_data.data[1] = (float)g_bridge_vision_task_status.b2_mode;
+                // seekfree_assistant_oscilloscope_data.data[2] = (float)g_bridge_vision_task_status.b2_gate;
+                // seekfree_assistant_oscilloscope_data.data[3] = (float)g_bridge_vision_task_status.b2_has_top;
+                // seekfree_assistant_oscilloscope_data.data[4] = (float)g_bridge_vision_task_status.state;
+                // seekfree_assistant_oscilloscope_data.data[5] = g_bridge_vision_task_status.exit_line_y;
+                // seekfree_assistant_oscilloscope_data.data[6] = g_bridge_vision_task_status.traveled_mm;
+                // seekfree_assistant_oscilloscope_data.data[7] = g_bridge_vision_task_status.err_degree_cmd;
 
                 // 4.【调节pvc识别】
                 // data[0] 左轮速度
@@ -284,8 +350,10 @@ int main(void)
             {
                 display_count = 0;    
                 #if DEBUG_DISPLAY_CORE0
+                    #if WIFI_CORE0_CUSTOM_PROTOCOL==0 //传日志的时候限制了一下屏幕
                     Menu_ShowStatic();    // 静态显示
                     Menu_ShowDynamic();   // 动态显示
+                    #endif
                 #endif    
             }
         }

@@ -46,8 +46,8 @@ SPRINT_SPEED_MM_S = 4000.0
 ENABLE_FINISH_SPRINT = True
 MAX_ACCEL_MM_S2 = 1500.0
 MAX_DECEL_MM_S2 = 1500.0
-MAX_LATERAL_ACCEL_MM_S2 = 3500.0
-MAX_PATH_YAW_RATE_RAD_S = 2.8
+MAX_LATERAL_ACCEL_MM_S2 = 2500.0
+MAX_PATH_YAW_RATE_RAD_S = 2.2
 SPEED_TO_MM_S = 4.79
 CURVATURE_EPS = 1e-6
 
@@ -149,6 +149,7 @@ def find_latest_marker_csv(script_dir: Path) -> Path:
     candidates = [
         path for path in script_dir.glob("nav_mark_points_*.csv")
         if not path.stem.endswith("_planned")
+        and len(path.stem[len("nav_mark_points_"):]) == 15  # 新增：严格校验时间戳部分长度为15
     ]
     if not candidates:
         raise FileNotFoundError(f"{script_dir} 中没有原始 nav_mark_points_*.csv。")

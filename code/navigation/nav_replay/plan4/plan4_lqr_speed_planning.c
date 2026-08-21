@@ -47,9 +47,12 @@ static Plan4Special_e s_active_special = PLAN4_SPECIAL_NONE;
 static uint16 s_active_exit_idx = 0xFFFFU;
 static uint16 s_active_entry_idx = 0xFFFFU;
 static uint8 s_handoff_ticks = 0U;
+static uint8 s_exit_rejoin_active = 0U;
+static uint16 s_exit_rejoin_end_idx = 0xFFFFU;
 static uint8 s_minefield_zero_brake_issued = 0U;
 static float s_minefield_exit_speed_cmd = 0.0f;
 static uint16 s_minefield_exit_speed_end_idx = 0xFFFFU;
+static uint8 s_finish_decel_active = 0U;
 
 #ifndef NAV_REPLAY_START_HEADING_VALID
 #define NAV_REPLAY_START_HEADING_VALID 0
@@ -84,6 +87,21 @@ static float Plan4_CalcBearingDeg(float x1, float y1, float x2, float y2)
     return -atan2f(y2 - y1, -(x2 - x1)) * 57.29578f;
 }
 
+static uint8 Plan4_FinalPointCrossed(uint16 last_segment)
+{
+    const NavRamPoint_t *start = &nav_ram_data.points[last_segment];
+    const NavRamPoint_t *end = &nav_ram_data.points[last_segment + 1U];
+    float dx = end->x - start->x;
+    float dy = end->y - start->y;
+    float len_sq = dx * dx + dy * dy;
+    float progress;
+
+    if (len_sq <= 1.0e-6f) return 0U;
+    progress = ((nav_vision_fusion_x - start->x) * dx +
+                (nav_vision_fusion_y - start->y) * dy) / len_sq;
+    return (uint8)(progress >= 1.0f);
+}
+
 static float Plan4_LerpBySpeed(float low_value, float high_value, float speed_mm_s)
 {
     float ratio = (speed_mm_s - PLAN4_LQR_LOW_SPEED_MM_S) /
@@ -101,10 +119,17 @@ static float Plan4_Ramp(float current, float target, float step)
 static uint8 Plan4_IsEntryType(uint8 point_type)
 {
     return (uint8)((point_type == NAV_POINT_CIRCLE) ||
+                   (point_type == NAV_POINT_MINEFIELD_FLYBY) ||
                    (point_type == NAV_POINT_SLOPE) ||
                    (point_type == NAV_POINT_JUMP) ||
                    (point_type == NAV_POINT_BRIDGE) ||
                    (point_type == NAV_POINT_BUMP));
+}
+
+static uint8 Plan4_IsPointToPointType(uint8 point_type)
+{
+    return (uint8)((point_type == NAV_POINT_CIRCLE) ||
+                   (point_type == NAV_POINT_MINEFIELD_FLYBY));
 }
 
 static uint8 Plan4_ExitTypeForEntry(uint8 point_type)
@@ -124,6 +149,14 @@ static Plan4Special_e Plan4_SpecialForEntry(uint8 point_type)
     if (point_type == NAV_POINT_BRIDGE) return PLAN4_SPECIAL_BRIDGE;
     if (point_type == NAV_POINT_BUMP) return PLAN4_SPECIAL_BUMP;
     return PLAN4_SPECIAL_NONE;
+}
+
+/* 这些任务的入口朝向决定状态机能否稳定接管。坡道保留原有交接行为。 */
+static uint8 Plan4_SpecialNeedsAlignment(uint8 point_type)
+{
+    return (uint8)((point_type == NAV_POINT_JUMP) ||
+                   (point_type == NAV_POINT_BRIDGE) ||
+                   (point_type == NAV_POINT_BUMP));
 }
 
 static uint16 Plan4_FindNextSpecialEntry(uint16 start_idx)
@@ -152,7 +185,7 @@ static uint16 Plan4_FindMatchingExit(uint16 entry_idx)
 
 /* Return along-path distance, rather than Euclidean distance, so the
  * generated special-task corridor is respected on curved approaches. */
-static float Plan4_PathDistance(uint16 first_idx, uint16 last_idx)
+static float Plan4_PathDistance(uint16 first_idx, uint16 last_idx, float stop_distance_mm)
 {
     uint16 i;
     float distance = 0.0f;
@@ -162,9 +195,37 @@ static float Plan4_PathDistance(uint16 first_idx, uint16 last_idx)
         float dx = nav_ram_data.points[i + 1U].x - nav_ram_data.points[i].x;
         float dy = nav_ram_data.points[i + 1U].y - nav_ram_data.points[i].y;
         distance += sqrtf(dx * dx + dy * dy);
-        if (distance > PLAN4_SPECIAL_HANDOFF_LEAD_MM) return distance;
+        if (distance > stop_distance_mm) return distance;
     }
     return distance;
+}
+
+static uint16 Plan4_FindForwardIndex(uint16 first_idx, float distance_mm)
+{
+    uint16 i;
+    float distance = 0.0f;
+
+    if (first_idx >= nav_ram_data.point_count - 1U) return first_idx;
+    for (i = first_idx; i < nav_ram_data.point_count - 1U; i++)
+    {
+        float dx = nav_ram_data.points[i + 1U].x - nav_ram_data.points[i].x;
+        float dy = nav_ram_data.points[i + 1U].y - nav_ram_data.points[i].y;
+        distance += sqrtf(dx * dx + dy * dy);
+        if (distance >= distance_mm) return (uint16)(i + 1U);
+    }
+    return (uint16)(nav_ram_data.point_count - 1U);
+}
+
+/* 雷区转圈结束时，出口航向优先瞄准下一个雷区入口/不停点的实际坐标。
+ * 这样 11 -> 1、1 -> 1、1 -> 11 不会被轨迹表紧邻的 50 mm 采样切线主导。 */
+static uint16 Plan4_FindNextMinefieldLikePoint(uint16 entry_idx)
+{
+    uint16 i;
+    for (i = (uint16)(entry_idx + 1U); i < nav_ram_data.point_count; i++)
+    {
+        if (Plan4_IsPointToPointType(nav_ram_data.points[i].point_type)) return i;
+    }
+    return (uint16)(entry_idx + 1U);
 }
 
 /* 沿路径向前查找指定距离处的速度，用于雷区转圈后的起步恢复。 */
@@ -334,6 +395,24 @@ static float Plan4_SafeSpeed(const Plan4LqrReference_t *reference)
     {
         magnitude = fabsf(s_minefield_exit_speed_cmd);
     }
+    if (s_exit_rejoin_active != 0U)
+    {
+        /* The exit anchor is an intentional fusion-coordinate rebase.  Ignore
+         * the resulting transient error, but keep a slow bounded rejoin and
+         * retain the normal protection for a genuinely implausible deviation. */
+        if (magnitude > PLAN4_EXIT_REJOIN_MAX_SPEED_CMD)
+        {
+            magnitude = PLAN4_EXIT_REJOIN_MAX_SPEED_CMD;
+        }
+        if ((lateral < PLAN4_EXIT_REJOIN_EMERGENCY_CROSS_MM) &&
+            (heading < PLAN4_EXIT_REJOIN_EMERGENCY_YAW_DEG))
+        {
+            raw = -magnitude;
+            return Plan4_Ramp(s_prev_speed_cmd, raw,
+                              (fabsf(raw) > fabsf(s_prev_speed_cmd)) ?
+                              PLAN4_SPEED_ACCEL_STEP : PLAN4_SPEED_DECEL_STEP);
+        }
+    }
     if (lateral > PLAN4_TRACK_CROSS_TRACK_SOFT_MM)
     {
         factor = (PLAN4_TRACK_CROSS_TRACK_HARD_MM - lateral) /
@@ -352,6 +431,48 @@ static float Plan4_SafeSpeed(const Plan4LqrReference_t *reference)
     return Plan4_Ramp(s_prev_speed_cmd, raw,
                       (fabsf(raw) > fabsf(s_prev_speed_cmd)) ?
                       PLAN4_SPEED_ACCEL_STEP : PLAN4_SPEED_DECEL_STEP);
+}
+
+static uint8 Plan4_SpecialEntryAligned(uint16 entry_idx,
+                                        const Plan4LqrReference_t *reference)
+{
+    uint8 point_type = nav_ram_data.points[entry_idx].point_type;
+
+    if (Plan4_SpecialNeedsAlignment(point_type) == 0U) return 1U;
+    return (uint8)((fabsf(reference->heading_err) <= PLAN4_SPECIAL_ENTRY_YAW_TOLERANCE_DEG) &&
+                   (fabsf(reference->lateral_err) <= PLAN4_SPECIAL_ENTRY_CROSS_TOLERANCE_MM));
+}
+
+static float Plan4_LimitSpecialApproachSpeed(uint16 entry_idx,
+                                              float distance_mm,
+                                              const Plan4LqrReference_t *reference,
+                                              float speed_cmd)
+{
+    float yaw_factor = 1.0f;
+    float cross_factor = 1.0f;
+    float factor;
+    float magnitude;
+    float desired;
+
+    if ((Plan4_SpecialNeedsAlignment(nav_ram_data.points[entry_idx].point_type) == 0U) ||
+        (distance_mm > PLAN4_SPECIAL_ALIGN_DISTANCE_MM)) return speed_cmd;
+
+    if (fabsf(reference->heading_err) > PLAN4_SPECIAL_ALIGN_YAW_FULL_SPEED_DEG)
+    {
+        yaw_factor = (PLAN4_SPECIAL_ALIGN_YAW_BLOCK_DEG - fabsf(reference->heading_err)) /
+                     (PLAN4_SPECIAL_ALIGN_YAW_BLOCK_DEG - PLAN4_SPECIAL_ALIGN_YAW_FULL_SPEED_DEG);
+        yaw_factor = Plan4_Clamp(yaw_factor, PLAN4_SPECIAL_ALIGN_MIN_SPEED_FACTOR, 1.0f);
+    }
+    if (fabsf(reference->lateral_err) > PLAN4_SPECIAL_ALIGN_CROSS_FULL_MM)
+    {
+        cross_factor = (PLAN4_SPECIAL_ALIGN_CROSS_BLOCK_MM - fabsf(reference->lateral_err)) /
+                       (PLAN4_SPECIAL_ALIGN_CROSS_BLOCK_MM - PLAN4_SPECIAL_ALIGN_CROSS_FULL_MM);
+        cross_factor = Plan4_Clamp(cross_factor, PLAN4_SPECIAL_ALIGN_MIN_SPEED_FACTOR, 1.0f);
+    }
+    factor = (yaw_factor < cross_factor) ? yaw_factor : cross_factor;
+    magnitude = fabsf(speed_cmd);
+    desired = -magnitude * factor;
+    return Plan4_Ramp(speed_cmd, desired, PLAN4_SPEED_DECEL_STEP);
 }
 
 static uint8 Plan4_SpecialIsActive(void)
@@ -393,7 +514,13 @@ static void Plan4_CompleteSpecial(void)
     }
     else if (s_active_exit_idx < nav_ram_data.point_count)
     {
-        g_target_idx = (uint16)(s_active_exit_idx + 1U);
+        /* Restart on the exit segment itself, never one sample after it.  This
+         * keeps the generated post-exit straight corridor continuous even when
+         * the state machine has just re-anchored fusion coordinates. */
+        g_target_idx = s_active_exit_idx;
+        s_exit_rejoin_end_idx = Plan4_FindForwardIndex(s_active_exit_idx,
+                                                        PLAN4_EXIT_REJOIN_DISTANCE_MM);
+        s_exit_rejoin_active = (uint8)(s_exit_rejoin_end_idx > s_active_exit_idx);
     }
     s_active_special = PLAN4_SPECIAL_NONE;
     s_active_exit_idx = 0xFFFFU;
@@ -415,10 +542,12 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     g_special_action_trigger = 1U;
     s_minefield_exit_speed_cmd = 0.0f;
     s_minefield_exit_speed_end_idx = 0xFFFFU;
+    s_exit_rejoin_active = 0U;
+    s_exit_rejoin_end_idx = 0xFFFFU;
 
     if (point_type == NAV_POINT_CIRCLE)
     {
-        uint16 next_idx = (uint16)(entry_idx + 1U);
+        uint16 next_idx = Plan4_FindNextMinefieldLikePoint(entry_idx);
         float exit_yaw;
         float current_yaw = inertial_nav.relative_yaw;
         float delta_cw;
@@ -429,8 +558,9 @@ static void Plan4_StartSpecial(uint16 entry_idx)
 
         if (next_idx < nav_ram_data.point_count)
         {
-            exit_yaw = Plan4_CalcBearingDeg(nav_ram_data.points[entry_idx].x,
-                                            nav_ram_data.points[entry_idx].y,
+            /* 点到点出口航向使用当前融合坐标，不使用入口后面的轨迹采样点。 */
+            exit_yaw = Plan4_CalcBearingDeg(nav_vision_fusion_x,
+                                            nav_vision_fusion_y,
                                             nav_ram_data.points[next_idx].x,
                                             nav_ram_data.points[next_idx].y);
         }
@@ -480,11 +610,13 @@ static void Plan4_StartSpecial(uint16 entry_idx)
     }
 }
 
-/* 仅有入口标记的雷区采用 Plan2 风格在线接近。不同于普通 Plan4 特殊任务，
- * 此处直接点对点指向 type=1 标记，按实测车速刹车，并蠕行进入执行圆后才启动转圈。 */
+/* 仅有入口标记的雷区及不停点采用 Plan2 风格在线接近。不同于普通 Plan4
+ * 特殊任务，此处直接点对点指向 type=1/type=11 标记；type=1 按实测车速刹车
+ * 后进入执行圆启动转圈，type=11 则在到达半径内直接切换到下一个目标。 */
 static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
 {
     const NavRamPoint_t *entry = &nav_ram_data.points[entry_idx];
+    uint8 is_flyby = (uint8)(entry->point_type == NAV_POINT_MINEFIELD_FLYBY);
     float dx = entry->x - nav_vision_fusion_x;
     float dy = entry->y - nav_vision_fusion_y;
     float dist_mm = sqrtf(dx * dx + dy * dy);
@@ -496,8 +628,36 @@ static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
     float actual_speed_mm_s = fabsf(inertial_nav.vx_body);
     float speed_mag;
 
-    g_current_point_type = NAV_POINT_CIRCLE;
+    g_current_point_type = entry->point_type;
     err_degree = yaw_err_deg;
+
+    /* type=11 只借用雷区的点到点寻迹，不进入刹车锁存和旋转状态机。 */
+    if (is_flyby != 0U)
+    {
+        if (dist_mm <= PLAN4_MINEFIELD_FLYBY_ARRIVE_RADIUS_MM)
+        {
+            g_target_idx = (uint16)(entry_idx + 1U);
+            s_minefield_zero_brake_issued = 0U;
+            return;
+        }
+
+        speed_mag = sqrtf(2.0f * PLAN4_MINEFIELD_SPEED_DECEL_CMD2_PER_MM *
+                          (dist_mm - PLAN4_MINEFIELD_FLYBY_ARRIVE_RADIUS_MM));
+        speed_mag = Plan4_Clamp(speed_mag, 0.0f, fabsf(PLAN4_MINEFIELD_SPEED_FAST));
+        if (fabsf(yaw_err_deg) > PLAN4_MINEFIELD_YAW_SLOW_TOLERANCE_DEG)
+        {
+            speed_mag = 0.0f;
+        }
+        else if (fabsf(yaw_err_deg) > PLAN4_MINEFIELD_YAW_STOP_TOLERANCE_DEG)
+        {
+            speed_mag *= 0.35f;
+        }
+        target_speed_set = Plan4_Ramp(s_prev_speed_cmd, -speed_mag,
+                                      (speed_mag > fabsf(s_prev_speed_cmd)) ?
+                                      PLAN4_SPEED_ACCEL_STEP : PLAN4_SPEED_DECEL_STEP);
+        s_prev_speed_cmd = target_speed_set;
+        return;
+    }
 
     if (s_minefield_zero_brake_issued == 0U)
     {
@@ -563,6 +723,45 @@ static void Plan4_ProcessMinefieldApproach(uint16 entry_idx)
     s_prev_speed_cmd = target_speed_set;
 }
 
+static void Plan4_StartFinishDecel(void)
+{
+    g_target_idx = (uint16)(nav_ram_data.point_count - 1U);
+    g_current_point_type = nav_ram_data.points[g_target_idx].point_type;
+    g_replay_state = REPLAY_FINISHED;
+    s_finish_decel_active = 1U;
+}
+
+static void Plan4_ProcessFinishDecel(void)
+{
+    uint16 last_segment;
+    Plan4LqrReference_t reference;
+    float speed_cmd;
+
+    if ((s_finish_decel_active == 0U) || (nav_ram_data.point_count < 2U))
+    {
+        target_speed_set = 0.0f;
+        err_degree = 0.0f;
+        return;
+    }
+
+    last_segment = (uint16)(nav_ram_data.point_count - 2U);
+    speed_cmd = Plan4_Ramp(s_prev_speed_cmd, 0.0f, PLAN4_FINISH_SPEED_DECEL_STEP);
+    Plan4_BuildReference(last_segment, last_segment, &reference);
+    reference.target_speed = speed_cmd;
+    err_degree = Plan4_CalcSteer(&reference);
+    target_speed_set = speed_cmd;
+    s_prev_err_degree = err_degree;
+    s_prev_speed_cmd = target_speed_set;
+
+    if ((target_speed_set == 0.0f) &&
+        (fabsf(inertial_nav.vx_body) <= PLAN4_FINISH_STOP_SPEED_MM_S))
+    {
+        err_degree = 0.0f;
+        s_prev_err_degree = 0.0f;
+        s_finish_decel_active = 0U;
+    }
+}
+
 uint16 NavReplay_LoadStaticRouteToRam(void)
 {
 #if NAV_REPLAY_USE_STATIC_ROUTE_TABLE
@@ -594,6 +793,9 @@ void NavReplay_Start(void)
     s_minefield_zero_brake_issued = 0U;
     s_minefield_exit_speed_cmd = 0.0f;
     s_minefield_exit_speed_end_idx = 0xFFFFU;
+    s_exit_rejoin_active = 0U;
+    s_exit_rejoin_end_idx = 0xFFFFU;
+    s_finish_decel_active = 0U;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
@@ -619,6 +821,9 @@ void NavReplay_Stop(void)
     s_minefield_zero_brake_issued = 0U;
     s_minefield_exit_speed_cmd = 0.0f;
     s_minefield_exit_speed_end_idx = 0xFFFFU;
+    s_exit_rejoin_active = 0U;
+    s_exit_rejoin_end_idx = 0xFFFFU;
+    s_finish_decel_active = 0U;
     s_handoff_ticks = 0U;
     s_prev_err_degree = 0.0f;
     s_prev_speed_cmd = 0.0f;
@@ -635,7 +840,16 @@ void NavReplay_Process(void)
     Plan4LqrReference_t reference;
     float steer_cmd;
     float speed_cmd;
+    float special_distance_mm = 0.0f;
 
+    /* Keep controlling along the terminal path while decelerating. */
+    if (g_replay_state == REPLAY_FINISHED)
+    {
+        g_target_idx = (nav_ram_data.point_count > 0U) ?
+                       (uint16)(nav_ram_data.point_count - 1U) : 0U;
+        Plan4_ProcessFinishDecel();
+        return;
+    }
     if (g_replay_state != REPLAY_RUNNING) return;
 
 #if IMU_CATEGORY == 3
@@ -667,9 +881,8 @@ void NavReplay_Process(void)
 
     if (g_target_idx >= nav_ram_data.point_count - 1U)
     {
-        g_replay_state = REPLAY_FINISHED;
-        target_speed_set = 0.0f;
-        err_degree = 0.0f;
+        Plan4_StartFinishDecel();
+        Plan4_ProcessFinishDecel();
         return;
     }
 
@@ -683,6 +896,17 @@ void NavReplay_Process(void)
     }
     base_idx = Plan4_FindClosestSegment(g_target_idx, search_end, (s_handoff_ticks != 0U));
     g_target_idx = base_idx;
+    if ((s_exit_rejoin_active != 0U) && (base_idx >= s_exit_rejoin_end_idx))
+    {
+        s_exit_rejoin_active = 0U;
+        s_exit_rejoin_end_idx = 0xFFFFU;
+    }
+    if ((base_idx >= last_segment) && Plan4_FinalPointCrossed(last_segment))
+    {
+        Plan4_StartFinishDecel();
+        Plan4_ProcessFinishDecel();
+        return;
+    }
     if ((s_minefield_exit_speed_end_idx != 0xFFFFU) &&
         (g_target_idx >= s_minefield_exit_speed_end_idx))
     {
@@ -691,24 +915,35 @@ void NavReplay_Process(void)
     }
 
     if ((next_special != 0xFFFFU) &&
-        (nav_ram_data.points[next_special].point_type == NAV_POINT_CIRCLE))
+        Plan4_IsPointToPointType(nav_ram_data.points[next_special].point_type))
     {
-        /* 从前一特殊任务/普通路点经 type=0 接近 type=1 时，使用完整的
-         * Plan2 风格在线点对点接近；转圈结束后从后续 type=0 恢复普通 LQR。 */
+        /* 从前一特殊任务/普通路点接近 type=1/type=11 时，使用完整的
+         * Plan2 风格在线点对点接近；type=11 到达后直接飞越，不启动状态机。 */
         Plan4_ProcessMinefieldApproach(next_special);
         return;
     }
 
+    if (next_special != 0xFFFFU)
+    {
+        special_distance_mm = Plan4_PathDistance(base_idx, next_special,
+                                                  PLAN4_SPECIAL_ALIGN_DISTANCE_MM);
+    }
+
+    Plan4_BuildReference(base_idx, (next_special == 0xFFFFU) ? last_segment : (uint16)(next_special - 1U), &reference);
     if ((next_special != 0xFFFFU) &&
-        (Plan4_PathDistance(base_idx, next_special) <= PLAN4_SPECIAL_HANDOFF_LEAD_MM))
+        (special_distance_mm <= PLAN4_SPECIAL_HANDOFF_LEAD_MM) &&
+        (Plan4_SpecialEntryAligned(next_special, &reference) != 0U))
     {
         Plan4_StartSpecial(next_special);
         return;
     }
-
-    Plan4_BuildReference(base_idx, (next_special == 0xFFFFU) ? last_segment : (uint16)(next_special - 1U), &reference);
     steer_cmd = Plan4_CalcSteer(&reference);
     speed_cmd = Plan4_SafeSpeed(&reference);
+    if (next_special != 0xFFFFU)
+    {
+        speed_cmd = Plan4_LimitSpecialApproachSpeed(next_special, special_distance_mm,
+                                                     &reference, speed_cmd);
+    }
 
     if (s_handoff_ticks > 0U)
     {

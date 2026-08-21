@@ -1,0 +1,190 @@
+# Plan4 路线专属轨迹规划配置（自动生成）
+#
+# 本文件是生成时对通用配置的完整复制，仅作用于当前点表。
+# 修改本文件的状态机、掉头桩或逐段速度参数，不会改动 ../plan4_speed_planning.toml。
+# 修改本文件后重新运行脚本，脚本会自动读取并生成轨迹和渲染图。
+# 可用 preset：interpolated、near_parallel、pure_line、turnaround_stake_fastest。
+# 预设 turnaround_stake_fastest 要求该段点表中有且仅有一个 point_type=7 掉头桩。
+
+[route]
+source_csv = "nav_mark_points_20260818_160145.csv"
+state_signature = "b8710cb448240b39"
+
+# 掉头桩的禁入半径 = radius_mm + clearance_mm；仅预设 4 使用此参数。
+[turnaround_stake]
+radius_mm = 400
+clearance_mm = 250
+
+# 每类状态机的完整参数复制自通用 TOML。即使本点表暂未出现某类状态机，也保留
+# 该段，以便点表后续小幅调整时可继续在本文件内完成调参。
+
+[task."2"]
+approach_distance_mm = 500
+entry_speed_command = 500
+state_speed_command = 500
+exit_speed_command = 500
+entry_corridor_mm = 600
+exit_corridor_mm = 600
+
+[task."3"]
+approach_distance_mm = 4000
+entry_speed_command = 320
+state_speed_command = 320
+exit_speed_command = 320
+entry_corridor_mm = 600
+exit_corridor_mm = 600
+
+[task."4"]
+approach_distance_mm = 500
+entry_speed_command = 300
+state_speed_command = 300
+exit_speed_command = 300
+entry_corridor_mm = 600
+exit_corridor_mm = 600
+
+# 颠簸状态机
+[task."5"]
+approach_distance_mm = 600
+entry_speed_command = 500
+state_speed_command = 500
+exit_speed_command = 500
+entry_corridor_mm = 1200
+exit_corridor_mm = 600
+
+# 以下状态机段由点表自动识别，仅用于人工核对。
+
+[state_machine."3#1"]
+entry_order = 0
+entry_type = 3
+exit_order = 1
+exit_type = 30
+
+[state_machine."4#1"]
+entry_order = 7
+entry_type = 4
+exit_order = 8
+exit_type = 40
+
+[state_machine."5#1"]
+entry_order = 20
+entry_type = 5
+exit_order = 21
+exit_type = 50
+
+[state_machine."1#1"]
+entry_order = 22
+entry_type = 1
+exit_order = 22
+exit_type = 1
+
+[state_machine."1#2"]
+entry_order = 23
+entry_type = 1
+exit_order = 23
+exit_type = 1
+
+[state_machine."2#1"]
+entry_order = 25
+entry_type = 2
+exit_order = 26
+exit_type = 20
+
+# 每个普通轨迹段的详细参数。键采用点表事件序号，首尾以 start/end 标识。
+# 速度参数已从该段 preset 对应的通用默认段完整复制；在这里可逐项修改。
+# 修改 preset 后请同步检查下面的速度参数，它们不会再随通用 TOML 自动改变。
+
+[trajectory."start->0"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.0
+
+[trajectory."1->7"]
+preset = "near_parallel"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 7500
+max_decel_mm_s2 = 7500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.0
+
+[trajectory."8->20"]
+preset = "turnaround_stake_fastest"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 5500
+max_decel_mm_s2 = 2500
+max_lateral_accel_mm_s2 = 2500
+max_path_yaw_rate_rad_s = 2.2
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.0
+# 必经普通点的点表 index。绕桩曲线会以 G2 连续方式精确经过这些点。
+# 例如单边桥出口 8 到颠簸路入口 20 可设为 [9, 10]。
+must_pass_marker_orders = [9, 10]
+# 必经点几何校验容差（mm）；当前实现精确过点，实际误差通常为 0。
+must_pass_tolerance_mm = 20
+
+[trajectory."21->22"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.0
+
+[trajectory."22->23"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.0
+
+[trajectory."23->25"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.0
+
+[trajectory."26->end"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.0

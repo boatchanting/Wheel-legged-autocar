@@ -181,6 +181,13 @@ static inline void quaternion_to_euler(void)
     euler_angle.pitch = -asin(2.0f * (q0 * q1 + q2 * q3)) * DEG_TO_RAD;
     euler_angle.yaw   = -atan2(2.0f * (q0 * q3 - q1 * q2),1.0f - 2.0f * (q2 * q2 + q3 * q3))  * DEG_TO_RAD - 90.0f;
     #endif
+
+    // 统一将欧拉角归一化到 [-180.0, +180.0] 对称区间，防止零点处发生 0° / -360° 跳变断层
+    while (euler_angle.roll > 180.0f)  euler_angle.roll -= 360.0f;
+    while (euler_angle.roll < -180.0f) euler_angle.roll += 360.0f;
+
+    while (euler_angle.yaw > 180.0f)   euler_angle.yaw -= 360.0f;
+    while (euler_angle.yaw < -180.0f)  euler_angle.yaw += 360.0f;
 }
 
 // IMU加速度计低通滤波变量

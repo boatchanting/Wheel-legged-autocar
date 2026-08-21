@@ -47,6 +47,7 @@
 #include "servo/servo.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
+#include "tools/wifi_protocol.h"
 
 // 声明外部函数
 
@@ -535,10 +536,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             {
             // 2.2 全局刹车前馈
             uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
-            if ((Minefield_Is_Active() != 0U) || (g_special_action_trigger != 0U))
+            uint8 slope_brake_ff_request = g_slope_brake_ff_request;
+            if ((Minefield_Is_Active() != 0U) ||
+                ((g_special_action_trigger != 0U) &&
+                 (BumpyRoad_Is_Active() == 0U) &&
+                 (slope_brake_ff_request == 0U)))
             {
                 brake_ff_enable = 0U;
                 Brake_Feedforward_Reset();
+            }
+
+            /* 斜坡停车阶段仍由特殊任务接管速度，但允许普通零目标刹车前馈建立制动力。 */
+            if (slope_brake_ff_request != 0U)
+            {
+                Brake_Feedforward_Unlock();
             }
             Brake_Feedforward_Update(target_speed_set, current_actual_speed, brake_ff_enable, jump_flag);
             {
@@ -643,10 +654,17 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // err_degree: 由视觉/gps/编码器提供的转向角度误差（期望-实际，单位：度），预留的调用位置，调用要写到if之后【优化点】需要知道向哪个方向为正值
             // 示例：视觉识别到赛道偏左5° → err_degree = +5.0f
             // turn_angle_loop_out = Turn_Angle_Loop_Control(err_degree);
-             // 只有在偏航角成功初始化后，才执行航向保持控制
-            // 如果正在雷区(Minefield)中旋转，屏蔽正常的PID转向角度环(外环)
+#if (LAUNCH_STRATEGY_SELECT == 1)
+            // 如果正在雷区(Minefield)中旋转，或处于直立发车手动对准状态或处于跳跃状态，屏蔽正常的PID转向角度环(外环)
             if ((g_yaw_initialized != 0U) &&
-                (Minefield_Is_Active() == 0U))
+                (Minefield_Is_Active() == 0U) &&
+                (!g_turn_loop_disabled)&&
+                (jump_flag == 0U))
+#else
+            if ((g_yaw_initialized != 0U) &&
+                (Minefield_Is_Active() == 0U) &&
+                (jump_flag == 0U))
+#endif
             {
                 // 1. 计算航向误差，err_degree是视觉/gps/编码器/遥控器提供的期望转向角度误差（期望-实际，单位：度）
                 
@@ -693,6 +711,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             {
                 //1.角度未初始化状态下，外环不输出
                 //2.在雷区旋转模式下，切断外环对内环的控制
+                //3.在跳跃模式下，外环不输出
                 turn_angle_loop_out = 0.0f; 
             }
         }
@@ -731,13 +750,22 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         filtered_gyro_z = 0.8f * filtered_gyro_z + 0.2f * gyro_z_deg;//低通滤波
         // 输入：转向角度环输出(期望角速度) + 实际角速度(filtered_gyro_z)
 
-        //==================== [雷区旋转调用开始] =================
-        // lq.1. 获取旋转控制器的输出
-        //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s，现为0.001s), 当前Yaw角, 全局Yaw目标指针
-        // 旋转规划与执行统一使用 inertial_nav.relative_yaw 这一套惯导相对航向，
-        // 避免规划阶段和执行阶段混用不同角度基准，导致“转满后还要慢慢补角”。
-        float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.001f, inertial_nav.relative_yaw, &g_initial_yaw);
-
+        if (jump_flag != 0U)
+        {
+            /* 【跳跃冻结转向环】
+             * 1) 跳跃期间轮胎离地无附着力，禁止转向差动力矩输出；
+             * 2) 清零转向 PID 运行态（误差、历史误差与积分），避免空中姿态剧烈变化污染状态；
+             * 3) 跳跃结束后从干净状态起步，D 项无突跳，避免落地瞬间甩尾。 */
+            Turn_Control_Reset();
+        }
+        else
+        {
+            //==================== [雷区旋转调用开始] =================
+            // lq.1. 获取旋转控制器的输出
+            //    参数：当前滤波后的Z轴角速度, 时间间隔(0.002s，现为0.001s), 当前Yaw角, 全局Yaw目标指针
+            // 旋转规划与执行统一使用 inertial_nav.relative_yaw 这一套惯导相对航向，
+            // 避免规划阶段和执行阶段混用不同角度基准，导致“转满后还要慢慢补角”。
+            float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.001f, inertial_nav.relative_yaw, &g_initial_yaw);
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;
         uint8_t minefield_turn_handoff_active = 0U;
@@ -805,8 +833,26 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
                                                        minefield_turn_pwm_limit);
             }
         }
+#if (LAUNCH_STRATEGY_SELECT == 1)
+        if (g_turn_loop_disabled)
+        {
+            turn_gyro_loop_out = 0.0f;
+            pid_turn_gyro.error = 0.0f;
+            pid_turn_gyro.last_error = 0.0f;
+            pid_turn_gyro.output = 0.0f;
+            pid_turn_angle.error = 0.0f;
+            pid_turn_angle.last_error = 0.0f;
+            pid_turn_angle.output = 0.0f;
+        }
+        else
+        {
+            turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+        }
+#else
+        turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+#endif
     }
-
+    }
     // ==========================================================
     // 步骤 5: 平衡角速度环 (1ms 跑一次，最内环)
     // ==========================================================
@@ -843,72 +889,25 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
 
     // 6.rolling平衡环(5ms一次)
-    if (loop_counter % 5 == 3){
-        // 单边桥/桥梁任务接管时不改写 roll_degree，保留原有 Rolling 流程。
-        uint8 turn_roll_task_takeover = (uint8)((VisionBridgeTask_IsActive() != 0U) ||
-                                                (Bridge_Test_Triple_SingleSide_Is_Active() != 0U));
-        float brake_pwm_roll = Brake_Feedforward_GetPwm();
-        // 普通转向主动侧倾只在安全、非特殊任务、非跳跃/推车场景下生效；强刹时清侧倾，避免刹车叠加压低单侧车身。
-        uint8 turn_roll_hard_clear = (uint8)((g_yaw_initialized == 0U) ||
-                                            (g_motor_enable == 0U) ||
-                                            (g_fallen) ||
-                                            (jump_flag != 0U) ||
-                                            ((now_angle - ANG_MECH_ZERO) > 70.0f) ||
-                                            ((now_angle - ANG_MECH_ZERO) < -70.0f) ||
-                                            (g_is_push_mode != 0U) ||
-                                            (Minefield_Is_Active() != 0U) ||
-                                            (BumpyRoad_Is_Active() != 0U) ||
-                                            (VisionThreeStageControl_IsActive() != 0U) ||
-                                            (turn_roll_task_takeover != 0U) ||
-                                            (g_pvc_control_enable != 0U) ||
-                                            (fabsf(brake_pwm_roll) >= BRAKE_TURN_ROLL_CLEAR_PWM_TH) ||
-                                            ((fabsf(target_speed_set) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND) &&
-                                             (fabsf(current_actual_speed) <= TURN_ACTIVE_ROLL_SPEED_DEADBAND))
-                                            #if GNSS_NAV == 1
-                                            || (g_gps_special_action_trigger != 0U)
-                                            #endif
-                                           );
-        if (turn_roll_task_takeover == 0U)
+   // if (loop_counter % 5 == 3){
+        // 彻底清空并屏蔽历史转向主动侧倾差动，防止干扰纯净的单边桥横滚平衡
+        Turn_Active_Roll_Duty_Clear();
+        // 坐标系转换：计算相对于车身前进方向水平转轴的旋转角 (消除车身俯仰时车身 roll 轴倾斜引起的投影误差)
+        float actual_horizontal_roll = Calculate_Horizontal_Roll_Degree(euler_angle.roll, euler_angle.pitch);
+
+        if (roll_balance_enable != 0U)
         {
-            if (roll_balance_enable == 0U)
-            {
-                roll_degree = 0.0f;
-                Turn_Active_Roll_Duty_Update(0.0f, 1U);
-            }
-            else
-            {
-                // 根据期望/实际 yaw 角速度中更强的一项预判压弯，避免复刻调头时车已经开始甩而腿还没伸开。
-                float turn_roll_yaw_rate = filtered_gyro_z;
-                if (fabsf(turn_angle_loop_out) > fabsf(turn_roll_yaw_rate))
-                {
-                    turn_roll_yaw_rate = turn_angle_loop_out;
-                }
-                float turn_roll_target = Turn_Active_Roll_Target_Update(turn_roll_yaw_rate, turn_roll_hard_clear);
-                float turn_roll_ramp = (fabsf(turn_roll_target) > fabsf(roll_degree)) ? TURN_ACTIVE_ROLL_RAMP_UP : TURN_ACTIVE_ROLL_RAMP_DOWN;
-                roll_degree += Float_Constrain(turn_roll_target - roll_degree, -turn_roll_ramp, turn_roll_ramp);
-                if (fabsf(roll_degree) < 0.01f)
-                {
-                    roll_degree = 0.0f;
-                }
-                Turn_Active_Roll_Duty_Update(roll_degree, turn_roll_hard_clear);
-            }
+            // 开启了 Rolling 环使能时，执行纯净的横滚平衡闭环 (以 roll_degree 为目标，默认 0.0f)
+            Roll_Balance_Control(actual_horizontal_roll, roll_degree);
         }
         else
         {
-            Turn_Active_Roll_Duty_Update(0.0f, 1U);
-        }
-        if (turn_roll_task_takeover != 0U)
-        {
-            // 单边桥/桥梁任务保持原有被动 Rolling 流程。
-            Roll_Balance_Control(euler_angle.roll, roll_degree);
-        }
-        else
-        {
-            // 普通转向只保留主动压弯查表差动，关闭被动 Rolling 收腿干扰。
-            Roll_Balance_Control(euler_angle.roll, euler_angle.roll);
+            // 普通未开启 Rolling 时，关闭被动 Rolling
+            roll_degree = 0.0f;
+            Roll_Balance_Control(actual_horizontal_roll, actual_horizontal_roll);
             g_target_pwm_roll_adj = 0;
         }
-    }
+    //}
 
 
     // ==========================================================
@@ -1022,8 +1021,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         }
         Accel_Feedforward_Buzzer_Update(accel_ff_pwm_effective);
         float drive_ff_pwm = brake_pwm + accel_ff_pwm_effective;
-        int16_t pwm_left  = (int16_t)( gyro_loop_out + drive_ff_pwm + turn_gyro_loop_out);
-        int16_t pwm_right = (int16_t)(-gyro_loop_out - drive_ff_pwm + turn_gyro_loop_out);
+        float turn_pwm_effective = (jump_flag != 0U) ? 0.0f : turn_gyro_loop_out;
+        int16_t pwm_left  = (int16_t)( gyro_loop_out + drive_ff_pwm + turn_pwm_effective);
+        int16_t pwm_right = (int16_t)(-gyro_loop_out - drive_ff_pwm + turn_pwm_effective);
 
         // 统一限幅（防止叠加后超限）
         pwm_left  = (int16_t)Float_Constrain(pwm_left,  -OUR_PWM_MAX_LIMIT, OUR_PWM_MAX_LIMIT);
@@ -1033,6 +1033,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             pwm_left = 0;
             pwm_right = 0;
         }
+
+        #if WIFI_CORE0_CUSTOM_PROTOCOL 
+        // 把数据传给wifi上位机
+        g_wifi_target_speed_set = target_speed_set;
+        g_wifi_speed_l = (float)motor_value.receive_left_speed_data;
+        g_wifi_speed_r = (float)motor_value.receive_right_speed_data;
+        g_wifi_pwm_left = (float)pwm_left;
+        g_wifi_pwm_right = (float)pwm_right;
+        #endif
+
         // 直接输出即可
         
          // --- 【科目三：跳跃时的电机保护逻辑开始】 ---
@@ -1104,11 +1114,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     // 步骤 9: 系统心跳
     // ==========================================================
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==0
     if(loop_counter % 50 == 11) 
     {
         pit_state = 1; 
     }
-    
+    #endif
+    #if WIFI_CORE0_CUSTOM_PROTOCOL==1 //wifi传日志时候100帧
+    if(loop_counter % 10 == 2) 
+    {
+        pit_state = 1; 
+    }
+    #endif
+
 }
 
 void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务函数      
@@ -1135,7 +1153,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
         g_motor_enable = 1; // 正常工作
     }
 
-    if ((robot_ctrl.brake_active != 0U) && (g_replay_state == REPLAY_RUNNING))
+    if ((robot_ctrl.brake_active == 1U) && (g_replay_state != REPLAY_IDLE))
     {
         NavReplay_Stop();//【nav】复现停止
         Accel_Feedforward_Reset();//【accel_ff】遥控刹车停止复刻时清空加速前馈
@@ -1148,8 +1166,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     }
     #endif
 
+    /* REPLAY_FINISHED keeps navigation ownership through terminal deceleration. */
     #if GNSS_NAV == 1
-    if ((g_replay_state != REPLAY_RUNNING) &&
+    if (g_replay_state == REPLAY_IDLE &&
         (g_gps_replay_state != REPLAY_RUNNING) &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
@@ -1159,7 +1178,7 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     )//【nav】不在复现/颠簸状态机时才允许遥控器写目标速度，不在单边桥时，pvc进入控制关闭
     #endif
     #if GNSS_NAV == 0
-        if ((g_replay_state != REPLAY_RUNNING) &&
+        if (g_replay_state == REPLAY_IDLE &&
         (!VisionThreeStageControl_IsActive()) &&
         (BumpyRoad_Is_Active() == 0U) && !Bridge_Test_Triple_SingleSide_Is_Active() 
         && (VisionBridgeTask_IsActive() == 0U)
@@ -1169,8 +1188,19 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     #endif
     {
         // [映射 2: 转向角度]
-    // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
-    err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;//目标想要增加/减少的角度+初始角度-当前角度
+        // (注意方向，如果方向反了，加负号: -robot_ctrl.target_angle)
+#if (LAUNCH_STRATEGY_SELECT == 1)
+        if (g_turn_loop_disabled)
+        {
+            err_degree = 0.0f;
+        }
+        else
+        {
+            err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;//目标想要增加/减少的角度+初始角度-当前角度
+        }
+#else
+        err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;//目标想要增加/减少的角度+初始角度-当前角度
+#endif
 
     // [映射 3: 速度控制]
     // 主函数定义: 负数代表向前 (-60 = 20m/s)

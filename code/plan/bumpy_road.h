@@ -5,10 +5,14 @@
 
 extern volatile float err_degree;           /* 方向盘打多少度 */
 extern volatile float target_speed_set;     /* 目标速度（负数代表前进） */
+/* ========================= 脱出模式开关 ========================= */
+#define BUMPY_ROAD_EXIT_MODE_VISUAL      (0U)
+#define BUMPY_ROAD_EXIT_MODE_IMU         (1U)
+#define BUMPY_ROAD_EXIT_MODE             (BUMPY_ROAD_EXIT_MODE_IMU) // 默认使用 IMU 脱出
+
 /**
  * @brief 颠簸路段状态机状态
  */
-// 状态枚举
 // 状态枚举
 typedef enum
 {
@@ -64,6 +68,13 @@ void BumpyRoad_Update_1ms(void);
  * @return 1: 正在执行颠簸路段动作, 0: 空闲
  */
 uint8_t BumpyRoad_Is_Active(void);
+
+/**
+ * @brief 查询状态机是否已物理确认驶上颠簸坎(on_bump == 1)
+ *
+ * @return 1: 已确认处于颠簸路面上, 0: 尚未驶上颠簸坎或空闲
+ */
+uint8_t BumpyRoad_IsOnBump(void);
 
 /**
  * @brief 获取当前状态机状态（调试用）

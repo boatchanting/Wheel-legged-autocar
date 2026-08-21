@@ -21,11 +21,14 @@ extern "C" {
 /* --- 2. 速度、时间与里程参数 --- */
 /* 注意：任务由 2ms 中断调度，因此 150 TICKS 对应 300ms。 */
 #define VISION_SLOPE_TASK_PVC_ALIGN_TIMEOUT_TICKS    (2500U)     /* PVC 入口阶段最长 5s，防止识别异常时一直占用控制权 */
-#define VISION_SLOPE_TASK_ENTRY_SPEED_SET            (-800.0f)   /* PVC 校准及刚进入斜坡时的速度 */
-#define VISION_SLOPE_TASK_RUN_SPEED_SET              (-800.0f)   /* 进入斜坡 300ms 后的稳定行驶速度 */
-#define VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET        (-500.0f)   /* 搜索并校准白色 PVC 斜坡入口时的低速 */
+#define VISION_SLOPE_TASK_ENTRY_SPEED_SET            (-600.0f)   /* PVC 校准及刚进入斜坡时的速度 */
+#define VISION_SLOPE_TASK_RUN_SPEED_SET              (-600.0f)   /* 进入斜坡 300ms 后的稳定行驶速度 */
+#define VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET        (-600.0f)   /* 搜索并校准白色 PVC 斜坡入口时的低速 */
 #define VISION_SLOPE_TASK_ENTRY_HOLD_TICKS           (150U)      /* 上坡后保持入口速度的时长：300ms */
-#define VISION_SLOPE_TASK_EXIT_DISTANCE_MM           (2500.0f)   /* 从锁定航向开始累计 2500mm 后退出 */
+#define VISION_SLOPE_TASK_STOP_DISTANCE_MM           (8000.0f)   /* 从任务接管并清零惯导坐标起累计，到达后停车并开始三级跳时序 */
+#define VISION_SLOPE_TASK_JUMP1_DELAY_TICKS          (2000U)     /* 停车后等待 4000ms 触发第一跳 */
+#define VISION_SLOPE_TASK_JUMP_INTERVAL_TICKS        (750U)      /* 相邻两次跳跃的间隔：1500ms */
+#define VISION_SLOPE_TASK_BRAKE_FF_ENABLE             (1U)        /* 到达停车里程后允许普通刹车前馈建立反向制动力 */
 #define VISION_SLOPE_TASK_PVC_FULL_RATIO_U16          (400U)      /* 白色 PVC 占图比例达到 40% 时认为车辆已进入斜坡入口 */
 
 /* PVC 稳定识别且白色区域占满入口后，连续保持 50ms 才允许锁角进入斜坡。 */
@@ -43,7 +46,10 @@ typedef enum
     VISION_SLOPE_TASK_PVC_ALIGN,        /* 使用白色 PVC 斜坡入口完成方向校准 */
     VISION_SLOPE_TASK_ENTRY_HOLD,       /* 已进入斜坡，锁角并保持入口速度 300ms */
     VISION_SLOPE_TASK_RUN,              /* 蓝色坡面期间方向误差清零，以降低后的速度继续行驶 */
-    VISION_SLOPE_TASK_FINISH,           /* 任务完成，准备交还控制权 */
+    VISION_SLOPE_TASK_WAIT_JUMP1,       /* 到达指定惯导里程后停车，等待第一次跳跃 */
+    VISION_SLOPE_TASK_WAIT_JUMP2,       /* 第一次跳跃后，等待第二次跳跃 */
+    VISION_SLOPE_TASK_WAIT_JUMP3,       /* 第二次跳跃后，等待第三次跳跃 */
+    VISION_SLOPE_TASK_LOCKED,           /* 三次跳跃完成后保持停车并锁定状态机 */
     VISION_SLOPE_TASK_FAILSAFE,         /* 故障或急停时释放控制权并停车 */
 } vision_slope_task_state_e;
 
@@ -56,10 +62,12 @@ typedef struct
     vision_slope_task_state_e state;     /* 当前状态机阶段 */
     uint32 state_ticks;                  /* 当前阶段已运行的 2ms tick 数 */
     uint32 last_seq;                     /* 最近一次收到的视觉 IPC 序号 */
-    float traveled_mm;                   /* 从进入斜坡并锁角起累计的惯导距离 */
-    float locked_yaw_deg;                /* 由 PVC 校准完成后锁定的惯导航向 */
+    float traveled_mm;                   /* 从任务接管并清零惯导坐标起累计的惯导距离 */
+    float locked_yaw_deg;                /* 状态机启动时锁定的惯导航向 */
     float err_degree_cmd;                /* 当前下发的方向误差指令 */
     float speed_cmd;                     /* 当前下发的目标速度指令 */
+    uint8 jump_count;                    /* 终止序列已触发的跳跃次数（0~3） */
+    uint8 brake_ff_request;              /* 到达停车里程后请求底层刹车前馈 */
     uint8 pvc_stable_detected;           /* PVC 控制模块是否稳定检测到入口 */
     uint16 pvc_ratio_u16;                /* PVC 白色区域在画面内的占比，千分比 */
     int16 pvc_steer_error_px_x100;       /* PVC 给出的横向像素误差，放大 100 倍 */
@@ -67,6 +75,7 @@ typedef struct
 
 /* --- 4. 对外变量与函数接口 --- */
 extern volatile uint8 g_slope_vision_task_enable;
+extern volatile uint8 g_slope_brake_ff_request;
 extern volatile vision_slope_task_status_t g_slope_vision_task_status;
 
 /**

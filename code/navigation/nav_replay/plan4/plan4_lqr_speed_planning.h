@@ -43,14 +43,32 @@
 #define PLAN4_TRACK_CROSS_TRACK_HARD_MM             650.0f  // 横向偏差降速达到最大程度的阈值（mm）
 #define PLAN4_TRACK_YAW_SOFT_DEG                     35.0f  // 开始按航向偏差降速的阈值（度）
 #define PLAN4_TRACK_YAW_HARD_DEG                     80.0f  // 航向偏差降速达到最大程度的阈值（度）
-#define PLAN4_SPEED_ACCEL_STEP                       35.0f  // 每周期加速时速度指令的最大变化量
-#define PLAN4_SPEED_DECEL_STEP                      110.0f  // 每周期减速时速度指令的最大变化量
+#define PLAN4_SPEED_ACCEL_STEP                       110.0f  // 每周期加速时速度指令的最大变化量
+#define PLAN4_SPEED_DECEL_STEP                      200.0f  // 每周期减速时速度指令的最大变化量
+#define PLAN4_FINISH_SPEED_DECEL_STEP                20.0f  // 通过末点后每周期速度指令的减速量
+#define PLAN4_FINISH_STOP_SPEED_MM_S                150.0f  // 末点减速完成后锁定转向的实测速度阈值（mm/s）
 
-/* 成对视觉任务在生成的 500 mm 入口直线段内提前交接。 */
-#define PLAN4_SPECIAL_HANDOFF_LEAD_MM               500.0f  // 距特殊任务入口小于该距离时开始交接（mm）
-#define PLAN4_SPECIAL_HANDOFF_TICKS                  10U     // 特殊任务结束后恢复 LQR 输出的渐变周期数
+/* 成对视觉任务的路径表在入口前后各保留 600 mm 直线走廊。控制端先在入口
+ * 走廊内持续跟踪并收敛航向，再在最后 100 mm 交给任务状态机。 */
+#define PLAN4_SPECIAL_ALIGN_DISTANCE_MM             600.0f  // 开始检查入口航向/横向收敛的沿线距离
+#define PLAN4_SPECIAL_HANDOFF_LEAD_MM               100.0f  // 满足对准条件后，距入口小于该值才交接（mm）
+#define PLAN4_SPECIAL_ALIGN_YAW_FULL_SPEED_DEG        6.0f  // 小于该航向误差时不因入任务对准额外限速
+#define PLAN4_SPECIAL_ALIGN_YAW_BLOCK_DEG            28.0f  // 大于该航向误差时仅保留爬行速度
+#define PLAN4_SPECIAL_ALIGN_CROSS_FULL_MM            60.0f  // 小于该横向误差时不因入任务对准额外限速
+#define PLAN4_SPECIAL_ALIGN_CROSS_BLOCK_MM          220.0f  // 大于该横向误差时仅保留爬行速度
+#define PLAN4_SPECIAL_ALIGN_MIN_SPEED_FACTOR          0.25f // 未对准时的最低行驶速度比例，仍可边跑边收敛
+#define PLAN4_SPECIAL_ENTRY_YAW_TOLERANCE_DEG         6.0f  // 交接给台阶/单边桥/颠簸状态机的最大航向误差
+#define PLAN4_SPECIAL_ENTRY_CROSS_TOLERANCE_MM      100.0f  // 交接给台阶/单边桥/颠簸状态机的最大横向误差
+#define PLAN4_SPECIAL_HANDOFF_TICKS                  20U     // 特殊任务结束后恢复 LQR 输出的渐变周期数
 #define PLAN4_SPECIAL_HANDOFF_SPEED_STEP             40.0f   // 交接恢复期间每周期速度指令的最大变化量
 #define PLAN4_SPECIAL_HANDOFF_ERR_STEP_DEG            1.0f   // 交接恢复期间每周期转向指令的最大变化量（度）
+
+/* 状态机出口的融合坐标会被锚定到路径表出口点。该坐标切换不是实际横向偏差，
+ * 因而在出口直线走廊内单独再并线，避免常规偏差保护误判为离轨并长期低速。 */
+#define PLAN4_EXIT_REJOIN_DISTANCE_MM               600.0f  // 沿出口直线走廊再并线的长度
+#define PLAN4_EXIT_REJOIN_MAX_SPEED_CMD              300.0f  // 再并线期间的速度指令绝对值上限
+#define PLAN4_EXIT_REJOIN_EMERGENCY_CROSS_MM        900.0f  // 再并线仍保留保护的横向误差硬阈值
+#define PLAN4_EXIT_REJOIN_EMERGENCY_YAW_DEG           95.0f  // 再并线仍保留保护的航向误差硬阈值
 
 /* 雷区转圈结束后，路径表从零速点开始会按离线加速度缓慢恢复。此处设置恢复时
  * 读取前方安全速度的最短前瞻距离，避免出雷区后长期维持低速。 */
@@ -64,10 +82,14 @@
  * 距离和航向使用 nav_vision_fusion_x/y 计算，以继承前一视觉任务的位置校正；
  * 实际速度仍使用 inertial_nav.vx_body。 */
 
+/* NAV_POINT_MINEFIELD_FLYBY（type=11）是雷区不停点：采用同一套点到点
+ * 航向/距离速度曲线，但到达半径后只推进路表索引，不停车、不触发旋转状态机。 */
+#define PLAN4_MINEFIELD_FLYBY_ARRIVE_RADIUS_MM       350.0f
+
 /* type=1 标记周围允许触发旋转的最终执行圆半径。
  * 调大：更早触发、较不易冲过点，但转圈中心可能偏离标记；
  * 调小：中心更准确，但刹车误差和 IMU 漂移更容易导致冲过头。 */
-#define PLAN4_MINEFIELD_EXECUTE_RADIUS_MM            250.0f
+#define PLAN4_MINEFIELD_EXECUTE_RADIUS_MM            150.0f
 
 /* 允许触发旋转时的最大实测纵向速度（mm/s）。
  * 调大：更早进入转圈、节省时间，但可能带着滑移旋转；
