@@ -509,11 +509,20 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             {
             // 2.2 全局刹车前馈
             uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
+            uint8 slope_brake_ff_request = g_slope_brake_ff_request;
             if ((Minefield_Is_Active() != 0U) ||
-                ((g_special_action_trigger != 0U) && (BumpyRoad_Is_Active() == 0U)))
+                ((g_special_action_trigger != 0U) &&
+                 (BumpyRoad_Is_Active() == 0U) &&
+                 (slope_brake_ff_request == 0U)))
             {
                 brake_ff_enable = 0U;
                 Brake_Feedforward_Reset();
+            }
+
+            /* 斜坡停车阶段仍由特殊任务接管速度，但允许普通零目标刹车前馈建立制动力。 */
+            if (slope_brake_ff_request != 0U)
+            {
+                Brake_Feedforward_Unlock();
             }
             Brake_Feedforward_Update(target_speed_set, current_actual_speed, brake_ff_enable, jump_flag);
             {

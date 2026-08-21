@@ -1,5 +1,7 @@
 #ifndef __SYS_OPTIONS_H__
 #define __SYS_OPTIONS_H__
+// ---------------- ！！！【重要】发车策略配置 ----------------
+#define LAUNCH_STRATEGY_SELECT        1U  // 【发车策略选择】0: 旧版倒地直接发车；1: 新版直立瞄准发车 (P10_0起立瞄准 -> 采样2s锁定 -> P10_4发车)
 
 #define JUMP_ENABLE_LANDING_BUFFER 1U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 

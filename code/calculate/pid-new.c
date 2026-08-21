@@ -372,6 +372,11 @@ void Brake_Feedforward_Reset(void)
     brake_lockout = 1; // 【核心】上锁！无视接下来外部的强制刹车条件，直到外部条件自然释放为止
 }
 
+void Brake_Feedforward_Unlock(void)
+{
+    brake_lockout = 0U;
+}
+
 float Brake_Feedforward_GetPwm(void)
 {
     return brake_ff_pwm;
