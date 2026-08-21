@@ -4,13 +4,14 @@
  * 作用: 0 核(Core 0)斜坡路段视觉识别与控制状态机。
  * 说明: 白色 PVC 斜坡入口阶段复用现有 PVC 控制模块修正方向；检测稳定后，
  *       立即锁定当前惯导航向。蓝色坡面不做视觉识别，前 300ms 后方向误差清零，
- *       依靠定速和惯导里程完成上坡及下坡并自动退出。
+ *       同时从任务接管时起累计惯导里程；到达设定里程后停车，完成三次跳跃并锁定。
  * =================================================================================
  */
 #include "vision/vision_slope_control.h"
 #include "vision/vision_ipc_core0.h"
 #include "vision/vision_pvc_control.h"
 #include "navigation/inertial_nav.h"
+#include "servo/servo_jump.h"
 #include "tools/sbus.h"
 
 #if VISION_SLOPE_TASK_ENABLE
@@ -33,10 +34,11 @@ typedef struct
 {
     vision_slope_task_state_e state;     /* 当前状态 */
     uint32 state_ticks;                   /* 当前状态的 2ms 计时 */
-    float start_x_mm;                     /* 锁角进入斜坡瞬间的惯导 X 坐标 */
-    float start_y_mm;                     /* 锁角进入斜坡瞬间的惯导 Y 坐标 */
+    float start_x_mm;                     /* 任务接管时的惯导 X 坐标（接管时清零） */
+    float start_y_mm;                     /* 任务接管时的惯导 Y 坐标（接管时清零） */
     float locked_yaw_deg;                 /* 状态机进入时锁定的惯导航向 */
     uint16 pvc_align_ok_ticks;            /* PVC 入口确认条件连续满足的 2ms tick 数 */
+    uint8 jump_count;                     /* 已成功触发的三级跳次数 */
 } vision_slope_task_ctx_t;
 
 static vision_slope_task_ctx_t s_slope_task;
@@ -104,13 +106,6 @@ static void vision_slope_set_state(vision_slope_task_state_e next_state)
 {
     s_slope_task.state = next_state;
     s_slope_task.state_ticks = 0U;
-
-    /* PVC 入口确认完成的瞬间只记录位置，后续里程从这里开始累计。 */
-    if (next_state == VISION_SLOPE_TASK_ENTRY_HOLD)
-    {
-        s_slope_task.start_x_mm = inertial_nav.x;
-        s_slope_task.start_y_mm = inertial_nav.y;
-    }
 }
 
 /**
@@ -129,6 +124,7 @@ static void vision_slope_publish_status(const volatile vision_ipc_packet_t *pack
     g_slope_vision_task_status.locked_yaw_deg = s_slope_task.locked_yaw_deg;
     g_slope_vision_task_status.err_degree_cmd = err_cmd;
     g_slope_vision_task_status.speed_cmd = speed_cmd;
+    g_slope_vision_task_status.jump_count = s_slope_task.jump_count;
     g_slope_vision_task_status.pvc_stable_detected = g_vision_pvc_control_status.stable_detected;
     g_slope_vision_task_status.pvc_ratio_u16 = g_vision_pvc_control_status.bbox_area_ratio_u16;
     g_slope_vision_task_status.pvc_steer_error_px_x100 = g_vision_pvc_control_status.steer_error_px_x100;
@@ -165,12 +161,68 @@ static void vision_slope_enter_task(void)
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
     /* 目标航向在状态机启动时采样，入口稳定后不再被当前航向覆盖。 */
     s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
+
+    /* 斜坡任务的所有里程均以此时为原点，前进方向的 X 负值会由距离公式正确处理。 */
+    inertial_nav.x = 0.0f;
+    inertial_nav.y = 0.0f;
+    s_slope_task.start_x_mm = 0.0f;
+    s_slope_task.start_y_mm = 0.0f;
+
     g_special_action_trigger = 1U;
     entry_beep_request = 1U;
 
     /* PVC 控制模块会提供方向误差；本状态机在本周期末统一强制入口速度。 */
     VisionIpc_Core0_SetPvcEnable(1U);
     VisionPvcControl_SetEnable(1U);
+}
+
+/**
+ * @brief 停车后的固定三级跳时序。仅在执行器空闲时发起下一跳，避免打断当前跳跃。
+ */
+static void vision_slope_update_jump_sequence(float *err_cmd, float *speed_cmd)
+{
+    *speed_cmd = 0.0f;
+    target_speed_set = 0.0f;
+
+    switch (s_slope_task.state)
+    {
+        case VISION_SLOPE_TASK_WAIT_JUMP1:
+            if ((s_slope_task.state_ticks >= VISION_SLOPE_TASK_JUMP1_DELAY_TICKS) &&
+                (jump_flag == 0U))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                s_slope_task.jump_count = 1U;
+                vision_slope_set_state(VISION_SLOPE_TASK_WAIT_JUMP2);
+            }
+            break;
+
+        case VISION_SLOPE_TASK_WAIT_JUMP2:
+            if ((s_slope_task.state_ticks >= VISION_SLOPE_TASK_JUMP_INTERVAL_TICKS) &&
+                (jump_flag == 0U))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                s_slope_task.jump_count = 2U;
+                vision_slope_set_state(VISION_SLOPE_TASK_WAIT_JUMP3);
+            }
+            break;
+
+        case VISION_SLOPE_TASK_WAIT_JUMP3:
+            if ((s_slope_task.state_ticks >= VISION_SLOPE_TASK_JUMP_INTERVAL_TICKS) &&
+                (jump_flag == 0U))
+            {
+                jump_trigger_with_type(JUMP_TYPE_STEP_UP);
+                s_slope_task.jump_count = 3U;
+                vision_slope_set_state(VISION_SLOPE_TASK_LOCKED);
+            }
+            break;
+
+        case VISION_SLOPE_TASK_LOCKED:
+        default:
+            break;
+    }
+
+    /* 到达停车里程后只覆盖速度，保留视觉阶段在本周期最后一次给出的方向输出。 */
+    *err_cmd = err_degree;
 }
 
 /* --- 对外接口函数 --- */
@@ -201,7 +253,8 @@ uint8 VisionSlopeTask_IsActive(void)
 /**
  * @brief 斜坡任务的核心状态机，每 2ms 执行一次。
  *
- * 流程：PVC 白色入口校准 -> 锁定当前航向 -> -600 行驶 300ms -> -400 锁角行驶 -> 2m 自动退出。
+ * 流程：PVC 白色入口校准 -> 锁定当前航向 -> 定速行驶；同时累计里程 ->
+ *       2m 停车 -> 2s 后第一跳 -> 每隔 1.5s 再跳一次 -> 三跳后锁定。
  */
 void VisionSlopeTask_Update_2ms(void)
 {
@@ -242,11 +295,29 @@ void VisionSlopeTask_Update_2ms(void)
         s_slope_task.state_ticks++;
     }
 
-    if ((s_slope_task.state == VISION_SLOPE_TASK_ENTRY_HOLD) ||
-        (s_slope_task.state == VISION_SLOPE_TASK_RUN))
+    traveled_mm = vision_slope_distance_from(s_slope_task.start_x_mm,
+                                             s_slope_task.start_y_mm);
+
+    /*
+     * 视觉入口状态机与里程终止条件并行运行。里程满足后立即接管速度，
+     * 不再让正常完成分支释放任务控制权。
+     */
+    if (((s_slope_task.state == VISION_SLOPE_TASK_PVC_ALIGN) ||
+         (s_slope_task.state == VISION_SLOPE_TASK_ENTRY_HOLD) ||
+         (s_slope_task.state == VISION_SLOPE_TASK_RUN)) &&
+        (traveled_mm >= VISION_SLOPE_TASK_STOP_DISTANCE_MM))
     {
-        traveled_mm = vision_slope_distance_from(s_slope_task.start_x_mm,
-                                                 s_slope_task.start_y_mm);
+        vision_slope_set_state(VISION_SLOPE_TASK_WAIT_JUMP1);
+    }
+
+    if ((s_slope_task.state == VISION_SLOPE_TASK_WAIT_JUMP1) ||
+        (s_slope_task.state == VISION_SLOPE_TASK_WAIT_JUMP2) ||
+        (s_slope_task.state == VISION_SLOPE_TASK_WAIT_JUMP3) ||
+        (s_slope_task.state == VISION_SLOPE_TASK_LOCKED))
+    {
+        vision_slope_update_jump_sequence(&err_cmd, &speed_cmd);
+        vision_slope_publish_status(packet, traveled_mm, err_cmd, speed_cmd);
+        return;
     }
 
     switch (s_slope_task.state)
@@ -309,17 +380,7 @@ void VisionSlopeTask_Update_2ms(void)
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
 
-            if (traveled_mm >= VISION_SLOPE_TASK_EXIT_DISTANCE_MM)
-            {
-                vision_slope_set_state(VISION_SLOPE_TASK_FINISH);
-            }
             break;
-
-        case VISION_SLOPE_TASK_FINISH:
-            exit_beep_request = 1U;
-            /* 保留上一周期的锁角和速度输出，让主控逻辑在下一周期平滑接管。 */
-            vision_slope_cleanup(0U);
-            return;
 
         case VISION_SLOPE_TASK_FAILSAFE:
         default:
