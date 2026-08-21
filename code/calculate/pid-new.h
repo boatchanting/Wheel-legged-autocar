@@ -1,4 +1,4 @@
-#ifndef CODE__PID_NEW_H__
+﻿#ifndef CODE__PID_NEW_H__
 #define CODE__PID_NEW_H__
 #include "zf_common_headfile.h"
 #include "../config/sys_options.h"//系统配置开关
@@ -154,7 +154,7 @@ extern float current_actual_speed;
 // [关键补偿] 机械零点 (Mechanical Zero)
 // 理想情况下0度是平衡点。但因电池安装、传感器贴歪等原因，实际平衡点可能是 -1.5度。
 // 调试方法：如果车总是往“前”跑，说明它觉得自己后仰了，需要减小这个值；反之增大。
-#define ANG_MECH_ZERO  1.0f   //机械零点变化后看上面的调试方法微调-3.0
+#define ANG_MECH_ZERO  0.0f   //机械零点变化后看上面的调试方法微调-3.0
 
 // ----------------------------------------------------------------------------
 // 3. 角速度环参数 (最内环 - 周期约 1ms)
