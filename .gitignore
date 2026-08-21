@@ -43,7 +43,7 @@ __pycache__/
 *.pyc
 tools/05_通用数据处理工具/视频网页上位机/output_realtime
 # 每份导航点表首次运行自动生成的路线专属规划参数
-tools/webview_nav_marker科目四/速度规划config/nav_toml/
+# tools/webview_nav_marker科目四/速度规划config/nav_toml/
 
 # CYT2BL3FOC 无刷双驱电机驱动器忽略文件
 CYT2BL3FOC/project/iar/settings/

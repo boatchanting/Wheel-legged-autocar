@@ -82,9 +82,9 @@
 #define SERVO_MOTOR_PWM4            (TCPWM_CH31_P22_3)      // 左后 LR
 // *************************** 【小车4】硬件引脚定义结束 ***************************
 // ===================== 舵机平腿(90度)占空比定义 (Duty级)【小车4】=====================
-#define SERVO_MOTOR_PWM1_90            (4300)      // 左前 LF ++
+#define SERVO_MOTOR_PWM1_90            (4200)      // 左前 LF ++
 #define SERVO_MOTOR_PWM2_90            (4500)      // 右前 RF --
-#define SERVO_MOTOR_PWM3_90            (4500)      // 右后 RR ++
+#define SERVO_MOTOR_PWM3_90            (4650)      // 右后 RR ++
 #define SERVO_MOTOR_PWM4_90            (4850)      // 左后 LR --
 // ===================== 舵机极性定义 (向下伸腿为正) 【小车4】====================
 #define SERVO_MOTOR_PWM1_DIR            (1)      // 左前 LF ++
