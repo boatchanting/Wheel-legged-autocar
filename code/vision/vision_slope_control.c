@@ -27,6 +27,7 @@ extern volatile uint8 exit_beep_request;
 
 /* --- 全局状态 --- */
 volatile uint8 g_slope_vision_task_enable = 0U;
+volatile uint8 g_slope_brake_ff_request = 0U;
 volatile vision_slope_task_status_t g_slope_vision_task_status = {0};
 
 /* --- 内部状态 --- */
@@ -125,6 +126,7 @@ static void vision_slope_publish_status(const volatile vision_ipc_packet_t *pack
     g_slope_vision_task_status.err_degree_cmd = err_cmd;
     g_slope_vision_task_status.speed_cmd = speed_cmd;
     g_slope_vision_task_status.jump_count = s_slope_task.jump_count;
+    g_slope_vision_task_status.brake_ff_request = g_slope_brake_ff_request;
     g_slope_vision_task_status.pvc_stable_detected = g_vision_pvc_control_status.stable_detected;
     g_slope_vision_task_status.pvc_ratio_u16 = g_vision_pvc_control_status.bbox_area_ratio_u16;
     g_slope_vision_task_status.pvc_steer_error_px_x100 = g_vision_pvc_control_status.steer_error_px_x100;
@@ -146,6 +148,7 @@ static void vision_slope_cleanup(uint8 stop_car)
     }
 
     g_special_action_trigger = 0U;
+    g_slope_brake_ff_request = 0U;
     g_slope_vision_task_enable = 0U;
     memset(&s_slope_task, 0, sizeof(s_slope_task));
     memset((void *)&g_slope_vision_task_status, 0, sizeof(g_slope_vision_task_status));
@@ -161,6 +164,7 @@ static void vision_slope_enter_task(void)
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
     /* 目标航向在状态机启动时采样，入口稳定后不再被当前航向覆盖。 */
     s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
+    g_slope_brake_ff_request = 0U;
 
     /* 斜坡任务的所有里程均以此时为原点，前进方向的 X 负值会由距离公式正确处理。 */
     inertial_nav.x = 0.0f;
@@ -307,6 +311,9 @@ void VisionSlopeTask_Update_2ms(void)
          (s_slope_task.state == VISION_SLOPE_TASK_RUN)) &&
         (traveled_mm >= VISION_SLOPE_TASK_STOP_DISTANCE_MM))
     {
+#if VISION_SLOPE_TASK_BRAKE_FF_ENABLE
+        g_slope_brake_ff_request = 1U;
+#endif
         vision_slope_set_state(VISION_SLOPE_TASK_WAIT_JUMP1);
     }
 

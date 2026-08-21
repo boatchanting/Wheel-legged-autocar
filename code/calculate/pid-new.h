@@ -563,6 +563,7 @@ void Turn_Active_Roll_Duty_Clear(void); // 清除转向主动侧倾差动并归�
  */
 float Brake_Feedforward_Update(float target_speed, float actual_speed, uint8 motor_enable, uint8 jump_flag);
 void Brake_Feedforward_Reset(void);//清空刹车前馈并短暂上锁，避免复位后立即被旧条件重新触发
+void Brake_Feedforward_Unlock(void);//特殊任务停车时解除 Reset 留下的刹车锁，允许当前零目标建立普通刹车前馈
 float Brake_Feedforward_GetPwm(void);//读取当前刹车前馈 PWM，供 ISR 前馈仲裁使用
 void Brake_NavHardStop_Update(uint8 active);//导航强停刹请求，主要用于科目二雷区刹车准备圆
 void Brake_NavHardStop_UpdateStrength(float strength);//导航强停刹强度请求，0.0 释放，1.0 等价旧强停刹

@@ -25,9 +25,10 @@ extern "C" {
 #define VISION_SLOPE_TASK_RUN_SPEED_SET              (-600.0f)   /* 进入斜坡 300ms 后的稳定行驶速度 */
 #define VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET        (-600.0f)   /* 搜索并校准白色 PVC 斜坡入口时的低速 */
 #define VISION_SLOPE_TASK_ENTRY_HOLD_TICKS           (150U)      /* 上坡后保持入口速度的时长：300ms */
-#define VISION_SLOPE_TASK_STOP_DISTANCE_MM           (2000.0f)   /* 从任务接管并清零惯导坐标起累计，到达后停车并开始三级跳时序 */
-#define VISION_SLOPE_TASK_JUMP1_DELAY_TICKS          (3000U)     /* 停车后等待 2000ms 触发第一跳 */
+#define VISION_SLOPE_TASK_STOP_DISTANCE_MM           (8000.0f)   /* 从任务接管并清零惯导坐标起累计，到达后停车并开始三级跳时序 */
+#define VISION_SLOPE_TASK_JUMP1_DELAY_TICKS          (2000U)     /* 停车后等待 4000ms 触发第一跳 */
 #define VISION_SLOPE_TASK_JUMP_INTERVAL_TICKS        (750U)      /* 相邻两次跳跃的间隔：1500ms */
+#define VISION_SLOPE_TASK_BRAKE_FF_ENABLE             (1U)        /* 到达停车里程后允许普通刹车前馈建立反向制动力 */
 #define VISION_SLOPE_TASK_PVC_FULL_RATIO_U16          (400U)      /* 白色 PVC 占图比例达到 40% 时认为车辆已进入斜坡入口 */
 
 /* PVC 稳定识别且白色区域占满入口后，连续保持 50ms 才允许锁角进入斜坡。 */
@@ -66,6 +67,7 @@ typedef struct
     float err_degree_cmd;                /* 当前下发的方向误差指令 */
     float speed_cmd;                     /* 当前下发的目标速度指令 */
     uint8 jump_count;                    /* 终止序列已触发的跳跃次数（0~3） */
+    uint8 brake_ff_request;              /* 到达停车里程后请求底层刹车前馈 */
     uint8 pvc_stable_detected;           /* PVC 控制模块是否稳定检测到入口 */
     uint16 pvc_ratio_u16;                /* PVC 白色区域在画面内的占比，千分比 */
     int16 pvc_steer_error_px_x100;       /* PVC 给出的横向像素误差，放大 100 倍 */
@@ -73,6 +75,7 @@ typedef struct
 
 /* --- 4. 对外变量与函数接口 --- */
 extern volatile uint8 g_slope_vision_task_enable;
+extern volatile uint8 g_slope_brake_ff_request;
 extern volatile vision_slope_task_status_t g_slope_vision_task_status;
 
 /**
