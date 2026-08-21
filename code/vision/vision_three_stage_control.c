@@ -13,7 +13,9 @@
 
 #if VISION_THREE_STAGE_CONTROL_ENABLE
 
+#include "../config/sys_options.h"
 #include "vision/vision_ipc_core0.h"
+#include "vision/vision_three_stage_distance.h"
 #include "servo/servo_jump.h"
 #include "navigation/inertial_nav.h"
 
@@ -52,6 +54,8 @@ static float s_exit_anchor_x_mm = 0.0f;
 static float s_exit_anchor_y_mm = 0.0f;
 static float s_post_exit_start_x_mm = 0.0f;
 static float s_post_exit_start_y_mm = 0.0f;
+static float s_jump1_start_x_mm = 0.0f;
+static float s_jump1_start_y_mm = 0.0f;
 static float s_locked_relative_yaw_deg = 0.0f;
 static uint8 s_exit_anchor_valid = 0U;
 
@@ -248,7 +252,14 @@ void VisionThreeStageControl_Start(void)
     s_ctrl_shadow.exit_reason = VISION_THREE_STAGE_EXIT_NONE;
     s_ctrl_shadow.jump_cooldown_ticks = VISION_THREE_STAGE_JUMP_COOLDOWN_TICKS;
     s_locked_relative_yaw_deg = inertial_nav.relative_yaw;
+    s_jump1_start_x_mm = inertial_nav.x;
+    s_jump1_start_y_mm = inertial_nav.y;
+
+#if (THREE_STAGE_JUMP1_TRIGGER_MODE == 2U)
+    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_JUMP1_DISTANCE);
+#else
     vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_PVC_LOCK);
+#endif
 
     /* 切到 PVC 视觉任务，获取入口 top/bottom 行号 */
     VisionIpc_Core0_SetTask(VISION_TARGET_PVC_ENTRY, VISION_MASK_PVC_ENTRY);
@@ -402,6 +413,22 @@ void VisionThreeStageControl_Update_2ms(void)
             else
             {
                 s_ctrl_shadow.stable_count = 0U;
+            }
+            break;
+
+        case VISION_THREE_STAGE_CTRL_WAIT_JUMP1_DISTANCE:
+            target_speed_set = g_vision_three_stage_speed_jump1; /* 设置第一跳速度 */
+            if (VisionThreeStageJump1DistanceReached(
+                    s_jump1_start_x_mm,
+                    s_jump1_start_y_mm,
+                    inertial_nav.x,
+                    inertial_nav.y,
+                    THREE_STAGE_JUMP1_INERTIAL_DISTANCE_MM) != 0U)
+            {
+                if (vision_three_stage_try_trigger_step_jump() != 0U)
+                {
+                    vision_three_stage_set_state(VISION_THREE_STAGE_CTRL_WAIT_JUMP2_TOP);
+                }
             }
             break;
 

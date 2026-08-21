@@ -23,12 +23,16 @@
 #define IMU_CATEGORY 3//【全局开关】1:imu660ra  2:imu660rb 3:imu963ra 注：imu660ra被赛事禁用
 #define IMU_REFRESH_TEST_ENABLE 0 // 1: 上电后测试IMU刷新频率，运行10秒后串口打印一次结果
 #define SUBS_CATEGORY 2  //【遥控器选择】1.旧遥控器2.新遥控器。选反会导致前进后退相反
-#define SBUS_ACTIVE_POINT 5 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段 (2026-08-14 单边桥调试状态: 4)
+#define SBUS_ACTIVE_POINT 3 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段 (2026-08-14 单边桥调试状态: 4)
 #define SLIP_DETECTION_ENABLE 1U //【全局开关】1:开启基于侧向加速度的纯横向打滑检测  0:关闭（默认正常抓地权重）
 // ---------------- plan 配置 ----------------
 #define GNSS_NAV 0 // 【全局开关】gps寻迹还是惯导寻迹，现阶段暂时还没联合(date0511)，联合后考虑去除该开关，1表示使用gnss寻迹，0表示不使用gnss寻迹，惯导开关常开
 #define CURRENT_NAV_PLAN   4   // 【全局开关】在这里切换科目几，科目一为1，科目二2，科目三3，科目四4(国赛科目2和3融合版本)，nav_replay模版函数99，每个科目的主要逻辑会单独优化，上层控制参数层不共享，互不干扰，后面做到各自独立优化，这个开关现在对惯导寻迹和gps方案均有效(date0520)
 #define PLAN1_FAST_UTURN_ENABLE 0               // 【科目一极速掉头开关】0=关闭，沿用普通科目一路径跟踪；1=开启极速掉头运行逻辑
+
+// ---------------- 三级台阶第一跳配置 ----------------
+#define THREE_STAGE_JUMP1_TRIGGER_MODE              2U      // 1=视觉触发第一跳，2=惯导距离触发第一跳
+#define THREE_STAGE_JUMP1_INERTIAL_DISTANCE_MM      (1000.0f) // 模式2：进入三级台阶状态机后到第一跳的距离，单位mm
 
 /*
 【科目一优化与拆分】
@@ -75,6 +79,10 @@
 
 #if (CONTROL_PROFILE_PID_ENABLE != 0U) && (CONTROL_PROFILE_PID_ENABLE != 1U)
 #error "PID config error: CONTROL_PROFILE_PID_ENABLE must be 0 or 1."
+#endif
+
+#if (THREE_STAGE_JUMP1_TRIGGER_MODE != 1U) && (THREE_STAGE_JUMP1_TRIGGER_MODE != 2U)
+#error "Three-stage jump config error: THREE_STAGE_JUMP1_TRIGGER_MODE must be 1 or 2."
 #endif
 
 #define DEBUG_DISPLAY_CORE0 (DEBUG_DISPLAY && (DEBUG_DISPLAY_CORE_SELECT == 0))
