@@ -41,7 +41,7 @@ extern "C" {
 
 /* --- 3. 核心算法参数（单边桥入口独立调参） --- */
 /* 亮度阈值：灰度值（0-255）大于等于这个数，才被认为是白色 */
-#define BRIDGE_PVC_VISION_WHITE_THRESHOLD        (180)
+#define BRIDGE_PVC_VISION_WHITE_THRESHOLD        (120)
 
 /* 尺寸门槛：过滤掉太小、太窄、太稀疏的"假 PVC" */
 #define BRIDGE_PVC_VISION_MIN_AREA               (120)   /* 面积：白点少于 120 个不要 */
