@@ -67,7 +67,7 @@ extern "C" {
 #define BF_H                    BRIDGE_H    /* 60 */
 
 /* ---- 参考检测器配置 ---- */
-#define BF_REF_FIXED_THRESHOLD  130         /* 绝对阈值 (同 code1 BRIDGE_VISION_FIXED_THRESHOLD) */
+#define BF_REF_FIXED_THRESHOLD  140         /* 绝对阈值 (同 code1 BRIDGE_VISION_FIXED_THRESHOLD) */
 
 /* ---- 底部白 gate (ref 阶段评估, 镜像 v8 gate: 行带 52..59, 白占比 > 75%) ---- */
 #define BF_GATE_BOT_ROW_LO      52          /* 底部行带起始 (同 v8 GATE_ROWS) */
