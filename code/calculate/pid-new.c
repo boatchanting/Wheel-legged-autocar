@@ -1522,13 +1522,6 @@ float Turn_Gyro_Loop_Control(float target_gyro, float actual_gyro)
 }
 
 void Turn_Angle_Loop_Reset(void)
-/**
- * @brief 重置转向环（外环角度 + 内环角速度）运行态（不重置参数）
- * @note 跳跃/推车等需要冻结转向环的场景调用：
- *       - 清零 PID 误差/积分/输出，避免跳跃空中污染状态；
- *       - 清零历史误差，避免落地恢复控制后第一拍出现微分突跳（D 项冲击导致甩尾）。
- */
-void Turn_Control_Reset(void)
 {
     pid_turn_angle.error = 0.0f;
     pid_turn_angle.last_error = 0.0f;
@@ -1557,13 +1550,16 @@ void Turn_Gyro_Loop_Bumpless_Reset(float target_gyro, float actual_gyro)
     pid_turn_gyro.output = 0.0f;
 }
 
-
-    pid_turn_gyro.error = 0.0f;
-    pid_turn_gyro.last_error = 0.0f;
-    pid_turn_gyro.prev_error = 0.0f;
-    pid_turn_gyro.error_integral = 0.0f;
-    pid_turn_gyro.output = 0.0f;
-
+/**
+ * @brief 重置转向环（外环角度 + 内环角速度）运行态（不重置参数）
+ * @note 跳跃/推车等需要冻结转向环的场景调用：
+ *       - 清零 PID 误差/积分/输出，避免跳跃空中污染状态；
+ *       - 清零历史误差，避免落地恢复控制后第一拍出现微分突跳（D 项冲击导致甩尾）。
+ */
+void Turn_Control_Reset(void)
+{
+    Turn_Angle_Loop_Reset();
+    Turn_Gyro_Loop_Reset();
     turn_angle_loop_out = 0.0f;
     turn_gyro_loop_out = 0.0f;
 }
