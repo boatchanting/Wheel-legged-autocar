@@ -139,6 +139,7 @@ class TransitionPreset(str, Enum):
     """两段状态机之间的人工可选轨迹连接策略。"""
 
     INTERPOLATED = "interpolated"
+    G2_INTERPOLATED = "g2_interpolated"
     NEAR_PARALLEL = "near_parallel"
     PURE_LINE = "pure_line"
     POINT_TO_LINE = "point_to_line"
@@ -147,7 +148,8 @@ class TransitionPreset(str, Enum):
 
 
 TRANSITION_PRESET_LABEL = {
-    TransitionPreset.INTERPOLATED: "轨迹插值型",
+    TransitionPreset.INTERPOLATED: "圆角平滑插值型",
+    TransitionPreset.G2_INTERPOLATED: "G2 贝塞尔插值型",
     TransitionPreset.NEAR_PARALLEL: "近似平行型",
     TransitionPreset.PURE_LINE: "纯直线型",
     TransitionPreset.POINT_TO_LINE: "点到线丝滑型",

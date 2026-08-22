@@ -190,7 +190,7 @@ def choose_trajectory_segments(
 ) -> tuple[list[TrajectorySegment], dict[tuple[int, int], TransitionPlan]]:
     """在终端依点表顺序选择每两个状态机之间的连接预设。
 
-    选择 1 时保留普通打点，并按原有 G2 平滑插值连接；选择 2/3 时将
+    选择 1 时保留普通打点，并按 chazhi.py 的圆角平滑算法连接；选择 3/4 时将
     该对状态机之间的普通打点移除，分别构造近似平行 G2 换道或纯直线。
     非交互模式只用于批处理，统一采用预设 1，避免 CI 或脚本调用卡在 input()。
     """
@@ -198,11 +198,12 @@ def choose_trajectory_segments(
     plans: dict[tuple[int, int], TransitionPlan] = {}
     preset_by_choice = {
         "1": TransitionPreset.INTERPOLATED,
-        "2": TransitionPreset.NEAR_PARALLEL,
-        "3": TransitionPreset.PURE_LINE,
-        "4": TransitionPreset.POINT_TO_LINE,
-        "5": TransitionPreset.TURNAROUND_STAKE_FASTEST,
-        "6": TransitionPreset.TURNAROUND_STAKE_SMOOTH,
+        "2": TransitionPreset.G2_INTERPOLATED,
+        "3": TransitionPreset.NEAR_PARALLEL,
+        "4": TransitionPreset.PURE_LINE,
+        "5": TransitionPreset.POINT_TO_LINE,
+        "6": TransitionPreset.TURNAROUND_STAKE_FASTEST,
+        "7": TransitionPreset.TURNAROUND_STAKE_SMOOTH,
     }
 
     # 起点到第一状态机入口同样是一段可调速度的普通轨迹，只是不需要选择
@@ -221,12 +222,13 @@ def choose_trajectory_segments(
                 f"\n[{position}/{len(state_segments) - 1}] {source_name} (v={describe_speed(source.exit_speed_command)}) "
                 f"-> {target_name} (v={describe_speed(target.entry_speed_command)})"
             )
-            print("  1. 轨迹插值型：保留普通打点，按原有 G2 曲线逐段平滑连接")
-            print("  2. 近似平行型：删除中间普通打点，用两端平行走廊之间的 G2 换道连接")
-            print("  3. 纯直线型：删除中间普通打点，两个锚点之间直接连直线（常用于雷区到雷区）")
-            print("  4. 点到线丝滑型：雷区自由离场，搜索低曲率方向后贴合下一状态机入口直线")
-            print("  5. 带掉头桩丝滑型：忽略中间点与掉头桩标签，绕桩搜索最快的平滑曲线")
-            print("  6. 带掉头桩低曲率丝滑型：使用与预设 5 相同输入，选择曲率更平缓的绕桩曲线")
+            print("  1. 圆角平滑插值型：保留普通打点，按 chazhi.py 的 Corner Fillet 平滑连接")
+            print("  2. G2 贝塞尔插值型：保留普通打点，使用原有逐段五次 Bezier 曲线")
+            print("  3. 近似平行型：删除中间普通打点，用两端平行走廊之间的 G2 换道连接")
+            print("  4. 纯直线型：删除中间普通打点，两个锚点之间直接连直线（常用于雷区到雷区）")
+            print("  5. 点到线丝滑型：雷区自由离场，搜索低曲率方向后贴合下一状态机入口直线")
+            print("  6. 带掉头桩丝滑型：忽略中间点与掉头桩标签，绕桩搜索最快的平滑曲线")
+            print("  7. 带掉头桩低曲率丝滑型：使用与预设 6 相同输入，选择曲率更平缓的绕桩曲线")
             while True:
                 try:
                     choice = input("  选择预设 [1]: ").strip() or "1"
@@ -236,7 +238,7 @@ def choose_trajectory_segments(
                     print("1（未检测到终端输入，使用轨迹插值型）")
                 if choice in preset_by_choice:
                     break
-                print("  输入无效，请输入 1、2、3、4、5 或 6。")
+                print("  输入无效，请输入 1、2、3、4、5、6 或 7。")
         else:
             choice = "1"
 
@@ -463,7 +465,10 @@ def apply_trajectory_marker_policy(
     }
     for trajectory in trajectories:
         if (
-            trajectory.preset == TransitionPreset.INTERPOLATED
+            trajectory.preset in {
+                TransitionPreset.INTERPOLATED,
+                TransitionPreset.G2_INTERPOLATED,
+            }
             or trajectory.source_exit_order is None
             or trajectory.target_entry_order is None
         ):

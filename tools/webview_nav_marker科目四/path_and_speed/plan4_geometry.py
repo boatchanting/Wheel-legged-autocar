@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""G2 曲线、掉头桩绕行与按弧长重采样等路径几何算法。"""
+"""圆角/G2 曲线、掉头桩绕行与按弧长重采样等路径几何算法。"""
 from __future__ import annotations
 
 import math
@@ -123,6 +123,78 @@ def append_g2_link(samples: list[PathSample], start: Node, end: Node, segment: s
         point_type = start.point_type if is_start else (end.point_type if is_end else 0)
         marker_order = start.marker_order if is_start else (end.marker_order if is_end else None)
         add_sample(samples, np.array([px, py]), point_type, False, segment, marker_order)
+
+
+def append_corner_fillet_path(
+    samples: list[PathSample], nodes: list[Node], segment: str, sample_step_mm: float
+) -> None:
+    """Append the Corner Fillet path used by webview_nav_marker速度规划/chazhi.py.
+
+    The default connector keeps the recorded waypoint topology, but no longer
+    forces the vehicle through every ordinary waypoint.  Each ordinary corner
+    is cut on its incoming/outgoing edges and replaced by a quadratic Bezier
+    arc.  Event markers remain exact path samples so state-machine and speed
+    planning boundaries are not moved.
+    """
+    if len(nodes) < 2:
+        return
+
+    positions = [np.array([node.x, node.y], dtype=float) for node in nodes]
+    edge_lengths = [float(np.linalg.norm(right - left)) for left, right in zip(positions, positions[1:])]
+    average_length = float(np.mean(edge_lengths)) if edge_lengths else sample_step_mm
+    fillet_radius = average_length * 0.5
+
+    def append_segment(
+        start: np.ndarray,
+        end: np.ndarray,
+        start_node: Node | None = None,
+        end_node: Node | None = None,
+    ) -> None:
+        length = float(np.linalg.norm(end - start))
+        count = max(1, int(math.ceil(length / sample_step_mm)))
+        for sample_index in range(count + 1):
+            ratio = sample_index / count
+            point = start + ratio * (end - start)
+            is_start = sample_index == 0
+            is_end = sample_index == count
+            event_node = start_node if is_start else (end_node if is_end else None)
+            point_type = event_node.point_type if event_node is not None and event_node.point_type != 0 else 0
+            marker_order = event_node.marker_order if point_type != 0 and event_node is not None else None
+            add_sample(samples, point, point_type, False, segment, marker_order)
+
+    current = positions[0]
+    current_node: Node | None = nodes[0]
+    for index in range(1, len(nodes) - 1):
+        previous = positions[index - 1]
+        corner = positions[index]
+        following = positions[index + 1]
+        node = nodes[index]
+        incoming_length = float(np.linalg.norm(corner - previous))
+        outgoing_length = float(np.linalg.norm(following - corner))
+
+        # State-machine markers must remain exact.  A normal waypoint is
+        # intentionally rounded, matching chazhi.py's Corner Fillet method.
+        if node.point_type != 0 or incoming_length < MIN_LINK_LENGTH_MM or outgoing_length < MIN_LINK_LENGTH_MM:
+            append_segment(current, corner, current_node, node)
+            current = corner
+            current_node = node
+            continue
+
+        incoming_direction = (previous - corner) / incoming_length
+        outgoing_direction = (following - corner) / outgoing_length
+        cut_length = min(fillet_radius, incoming_length * 0.45, outgoing_length * 0.45)
+        arc_start = corner + incoming_direction * cut_length
+        arc_end = corner + outgoing_direction * cut_length
+        append_segment(current, arc_start, current_node)
+
+        count = max(20, int(math.ceil((2.0 * cut_length) / sample_step_mm)))
+        for sample_index, t in enumerate(np.linspace(0.0, 1.0, count)):
+            point = (1.0 - t) ** 2 * arc_start + 2.0 * (1.0 - t) * t * corner + t ** 2 * arc_end
+            add_sample(samples, point, 0, False, segment)
+        current = arc_end
+        current_node = None
+
+    append_segment(current, positions[-1], current_node, nodes[-1])
 
 
 def point_to_line_control(start: Node, end: Node) -> np.ndarray:
@@ -619,7 +691,7 @@ def make_nodes(
     # 它不被算作导航路径的强制直线段。
 
     # 只有状态机内部和进出走廊天生是直线；状态机之间的连接类型由
-    # transition_plans 决定，未显式标记的普通路段一律走 G2 插值。
+    # transition_plans 决定，未显式标记的普通路段一律走 Corner Fillet 插值。
     link_modes: dict[tuple[int, int], str] = {}
     turnaround_links: dict[tuple[int, int], TransitionPlan] = {}
     entry_by_exit = {exit_index: entry_index for entry_index, exit_index in pairs.items()}
@@ -685,6 +757,10 @@ def make_nodes(
         if source_node_index is None or target_node_index is None:
             raise ValueError("状态机连接计划缺少对应的入口或出口锚点。")
         if plan.preset == TransitionPreset.INTERPOLATED:
+            continue
+        if plan.preset == TransitionPreset.G2_INTERPOLATED:
+            for index in range(source_node_index, target_node_index):
+                link_modes[(index, index + 1)] = "g2"
             continue
         # 非插值预设会在前处理阶段删除中间普通点，因此两个锚点必须相邻。
         # 这里再次检查可防止点表或前处理逻辑变更后悄悄产生错误连线。
@@ -798,8 +874,24 @@ def generate_path(
     pairs = find_event_pairs(markers)
     nodes, link_modes, turnaround_links = make_nodes(markers, pairs, transition_plans, task_profiles)
     dense_samples: list[PathSample] = []
-    for index in range(len(nodes) - 1):
-        mode = link_modes.get((index, index + 1), "g2")
+    index = 0
+    while index < len(nodes) - 1:
+        mode = link_modes.get((index, index + 1), "corner_fillet")
+        if mode == "corner_fillet":
+            end_index = index + 1
+            while (
+                end_index < len(nodes) - 1
+                and link_modes.get((end_index, end_index + 1), "corner_fillet") == "corner_fillet"
+            ):
+                end_index += 1
+            append_corner_fillet_path(
+                dense_samples,
+                nodes[index : end_index + 1],
+                f"圆角平滑插值: {nodes[index].name} -> {nodes[end_index].name}",
+                DENSE_SAMPLE_STEP_MM,
+            )
+            index = end_index
+            continue
         if mode == "turnaround_stake_fastest":
             append_fastest_turnaround_curve(
                 dense_samples,
@@ -849,6 +941,7 @@ def generate_path(
                 f"{label}: {nodes[index].name} -> {nodes[index + 1].name}",
                 DENSE_SAMPLE_STEP_MM,
             )
+        index += 1
     return resample_path_by_arclength(dense_samples, sample_step_mm)
 
 
