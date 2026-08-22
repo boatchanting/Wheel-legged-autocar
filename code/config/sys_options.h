@@ -14,6 +14,7 @@
 #define CAMERA_MENU_REFRESH_DIV 4U       // 【图像刷新分频】1核屏幕分频，每N帧刷新一次图像画面（降低刷新频率以减少CPU占用）
 #define CAMERA_MENU_DEBUG_LOG_ENABLE 0U  // 【图像调试日志】1: 打开1核 camera_menu 串口调试打印  0: 关闭
 #define CAMERA_MENU_DEBUG_LOG_DIV 20U    // 【日志打印分频】1核 camera_menu 串口打印分频，每N帧打印一次
+#define VISION_WHITE_THRESHOLD (140U)    // 【视觉白色阈值】通用PVC、单边桥PVC和单边桥参考检测共用
 
 #define REMOTE_CONTROL 0               //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
