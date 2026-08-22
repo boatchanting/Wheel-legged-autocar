@@ -25,7 +25,7 @@ extern "C" {
 #define VISION_SLOPE_TASK_RUN_SPEED_SET              (-600.0f)   /* 进入斜坡 300ms 后的稳定行驶速度 */
 #define VISION_SLOPE_TASK_PVC_ALIGN_SPEED_SET        (-600.0f)   /* 搜索并校准白色 PVC 斜坡入口时的低速 */
 #define VISION_SLOPE_TASK_ENTRY_HOLD_TICKS           (150U)      /* 上坡后保持入口速度的时长：300ms */
-#define VISION_SLOPE_TASK_STOP_DISTANCE_MM           (8000.0f)   /* 从任务接管并清零惯导坐标起累计，到达后停车并开始三级跳时序 */
+#define VISION_SLOPE_TASK_STOP_DISTANCE_MM           (5500.0f)   /* 从任务接管并清零惯导坐标起累计，到达后停车并开始三级跳时序 */
 #define VISION_SLOPE_TASK_JUMP1_DELAY_TICKS          (2000U)     /* 停车后等待 4000ms 触发第一跳 */
 #define VISION_SLOPE_TASK_JUMP_INTERVAL_TICKS        (750U)      /* 相邻两次跳跃的间隔：1500ms */
 #define VISION_SLOPE_TASK_BRAKE_FF_ENABLE             (1U)        /* 到达停车里程后允许普通刹车前馈建立反向制动力 */

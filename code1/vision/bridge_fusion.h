@@ -53,6 +53,7 @@
 #define _BRIDGE_FUSION_H_
 
 #include <stdint.h>
+#include "../../code/config/sys_options.h"
 
 #include "bridge_detect.h"          /* 现有 v8 管线 (近处/桥上)          */
 #include "bridge_ref_detection.h"   /* 参考检测器 (远处接近/脱出)        */
@@ -67,7 +68,7 @@ extern "C" {
 #define BF_H                    BRIDGE_H    /* 60 */
 
 /* ---- 参考检测器配置 ---- */
-#define BF_REF_FIXED_THRESHOLD  180         /* 绝对阈值 (同 code1 BRIDGE_VISION_FIXED_THRESHOLD) */
+#define BF_REF_FIXED_THRESHOLD  (VISION_WHITE_THRESHOLD) /* 绝对阈值 (sys_options.h 统一调节) */
 
 /* ---- 底部白 gate (ref 阶段评估, 镜像 v8 gate: 行带 52..59, 白占比 > 75%) ---- */
 #define BF_GATE_BOT_ROW_LO      52          /* 底部行带起始 (同 v8 GATE_ROWS) */

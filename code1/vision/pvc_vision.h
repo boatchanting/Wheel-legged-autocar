@@ -11,6 +11,7 @@
 
 #include "zf_common_headfile.h"
 #include "tools/runtime_profiler.h"
+#include "../../code/config/sys_options.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,7 +63,7 @@ extern "C" {
  * 亮度阈值：灰度值（0-255）大于等于这个数，才被认为是白色的 PVC
  * 室内灯光亮就用 245，阴天或暗处用 235
  */
-#define PVC_VISION_WHITE_THRESHOLD        (180U)
+#define PVC_VISION_WHITE_THRESHOLD        (VISION_WHITE_THRESHOLD)
 
 /*
  * 尺寸门槛：过滤掉太小、太窄、太稀疏的“假 PVC”

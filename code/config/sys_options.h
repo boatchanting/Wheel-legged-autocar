@@ -6,7 +6,7 @@
 #define JUMP_ENABLE_LANDING_BUFFER 1U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 #define MINEFIELD_INERTIAL_BUFFER_ENABLE 1U // 【雷区惯性缓冲】1: 末段关转向环惯性出圈，未命中出口再低速捕获；0: 使用原连续闭环转圈
 
-#define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用 (2026-08-14 单边桥调试状态: 开)
+#define WIFI_USE 0 // 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用 (2026-08-14 单边桥调试状态: 开)
 #define WIFI_CORE_SELECT 1 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI (2026-08-14 单边桥调试状态: 1核, 网页上位机看图+示波器)
 #define WIFI_PROTOCOL_SELECT  2// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议 (2026-08-14 单边桥调试状态: 自定义=视觉图像上位机)
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机
@@ -15,8 +15,9 @@
 #define CAMERA_MENU_REFRESH_DIV 4U       // 【图像刷新分频】1核屏幕分频，每N帧刷新一次图像画面（降低刷新频率以减少CPU占用）
 #define CAMERA_MENU_DEBUG_LOG_ENABLE 0U  // 【图像调试日志】1: 打开1核 camera_menu 串口调试打印  0: 关闭
 #define CAMERA_MENU_DEBUG_LOG_DIV 20U    // 【日志打印分频】1核 camera_menu 串口打印分频，每N帧打印一次
+#define VISION_WHITE_THRESHOLD (140U)    // 【视觉白色阈值】通用PVC、单边桥PVC和单边桥参考检测共用
 
-#define REMOTE_CONTROL 1                 //【全局开关】1：开启遥控器 0:关闭
+#define REMOTE_CONTROL 0               //【全局开关】1：开启遥控器 0:关闭
 #define DEBUG_LOG_ENABLE 0 // 【全局开关】1开启串口调试日志，0关闭串口调试日志，【提醒！！！】比赛时候编译烧录代码前，请务必关闭，其影响性能
 #define CONTROL_PROFILE_PID_ENABLE 1U // 【多预设PID开关】1:按正常/加速/刹车预设每1ms平滑回写PID；0:仅初始化加载宏定义，允许WiFi持续调参
 #define ACCEL_FF_ENABLE 0U // 【加速前馈总开关】1:启用复刻起步/急加速前馈  0:完全关闭加速前馈
@@ -26,7 +27,7 @@
 #define IMU_CATEGORY 3//【全局开关】1:imu660ra  2:imu660rb 3:imu963ra 注：imu660ra被赛事禁用
 #define IMU_REFRESH_TEST_ENABLE 0 // 1: 上电后测试IMU刷新频率，运行10秒后串口打印一次结果
 #define SUBS_CATEGORY 2  //【遥控器选择】1.旧遥控器2.新遥控器。选反会导致前进后退相反
-#define SBUS_ACTIVE_POINT 5 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段 (2026-08-14 单边桥调试状态: 4)
+#define SBUS_ACTIVE_POINT 0 //【遥控器侧键触发的东西】0.打点 1.雷区 2.单次跳跃 3.三级跳跃 4.单边桥 5.颠簸路段 (2026-08-14 单边桥调试状态: 4)
 #define SLIP_DETECTION_ENABLE 1U //【全局开关】1:开启基于侧向加速度的纯横向打滑检测  0:关闭（默认正常抓地权重）
 // ---------------- plan 配置 ----------------
 #define GNSS_NAV 0 // 【全局开关】gps寻迹还是惯导寻迹，现阶段暂时还没联合(date0511)，联合后考虑去除该开关，1表示使用gnss寻迹，0表示不使用gnss寻迹，惯导开关常开
