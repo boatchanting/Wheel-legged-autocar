@@ -631,7 +631,8 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             // 如果正在雷区(Minefield)中旋转，或处于直立发车手动对准状态或处于跳跃状态，屏蔽正常的PID转向角度环(外环)
             if ((g_yaw_initialized != 0U) &&
                 (Minefield_Is_Active() == 0U) &&
-                (!g_turn_loop_disabled))
+                (!g_turn_loop_disabled)&&
+                (jump_flag == 0U))
 #else
             if ((g_yaw_initialized != 0U) &&
                 (Minefield_Is_Active() == 0U) &&
@@ -722,7 +723,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
         filtered_gyro_z = 0.8f * filtered_gyro_z + 0.2f * gyro_z_deg;//低通滤波
         // 输入：转向角度环输出(期望角速度) + 实际角速度(filtered_gyro_z)
 
-        if (0)
+        if (jump_flag != 0U)
         {
             /* 【跳跃冻结转向环】
              * 1) 跳跃期间轮胎离地无附着力，禁止转向差动力矩输出；
