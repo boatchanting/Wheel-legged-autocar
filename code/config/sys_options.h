@@ -5,7 +5,13 @@
 
 #define JUMP_ENABLE_LANDING_BUFFER 1U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
 
-#define WIFI_USE 0// 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用 (2026-08-14 单边桥调试状态: 开)
+// ---------------- 摄像头直传模式（破坏性裁剪） ----------------
+// 1: 取消板子绝大部分功能，只保留【1核摄像头读取 + WiFi 转发到自有上位机(自定义协议)】。
+//    0核 不做任何控制/惯导/任务初始化，也不启动控制中断；1核 视觉算法保持关闭。
+// 0: 恢复正常的整车功能（平衡/导航/科目任务）。
+#define CAMERA_ONLY_MODE 1U
+
+#define WIFI_USE (CAMERA_ONLY_MODE ? 1U : 0U)  // 【WIFI总开关】摄像头直传模式自动置1；恢复整车功能(CAMERA_ONLY_MODE=0)时自动回0
 #define WIFI_CORE_SELECT 1 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI (2026-08-14 单边桥调试状态: 1核, 网页上位机看图+示波器)
 #define WIFI_PROTOCOL_SELECT  2// 【WIFI协议选择】1表示逐飞助手，2表示我们的自定义协议 (2026-08-14 单边桥调试状态: 自定义=视觉图像上位机)
 #define G_MOTOR_ENABLE_INIT 1 // 【电机使能初值】控制g_motor_enable上电默认状态，1为使能，0为关机

@@ -296,6 +296,9 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
 {
     // 1. 清除中断标志位 (必须第一步做)
     pit_isr_flag_clear(PIT_CH0);
+#if CAMERA_ONLY_MODE
+    return;  // 摄像头直传模式：0核不执行任何控制/平衡/导航/任务逻辑
+#endif
     loop_counter++;
 
     if ((loop_counter % 2U) == 0U)
@@ -1052,6 +1055,9 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
 {
     // 1. 清除中断标志位
     pit_isr_flag_clear(PIT_CH1);
+#if CAMERA_ONLY_MODE
+    return;  // 摄像头直传模式：0核遥控器处理不使能
+#endif
 
 #if REMOTE_CONTROL
       // 2. 执行遥控器积分计算
@@ -1147,6 +1153,9 @@ void pit0_ch2_isr()                     // 定时器通道 2 周期中断服务�
 void pit0_ch10_isr()                    // 定时器通道 10 周期中断服务函数      
 {
     pit_isr_flag_clear(PIT_CH10);
+#if CAMERA_ONLY_MODE
+    return;  // 摄像头直传模式：0核按键扫描不使能
+#endif
     key_scanner();   // 必须定期调用！可写在中断或者循环
     Menu_HandleKey();
 }

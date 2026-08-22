@@ -106,7 +106,15 @@ int main(void)
 {
     // 调用剥离的初始化函数
     Main0_Init();
-    
+
+#if CAMERA_ONLY_MODE
+    /* 摄像头直传模式：0核不执行任何控制/导航/任务逻辑。
+       摄像头读取 与 WiFi 图像/示波器转发 全部由 1核 (main_cm7_1.c) 完成。 */
+    while(true)
+    {
+        system_delay_ms(100);
+    }
+#else
     uint8 display_count = 0; // 用于屏幕刷新分频
     uint8 ekf_print_div = 0; // 50ms*10 = 500ms 
 #if IMU_REFRESH_TEST_ENABLE
@@ -562,6 +570,7 @@ int main(void)
 
         // 此处编写需要循环执行的代码
     }
+#endif // !CAMERA_ONLY_MODE
 }
 
 //-------------------------------------------------------------------------------------------------------------------
