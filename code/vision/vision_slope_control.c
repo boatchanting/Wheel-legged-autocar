@@ -3,8 +3,8 @@
  * 文件: vision_slope_control.c
  * 作用: 0 核(Core 0)斜坡路段视觉识别与控制状态机。
  * 说明: 白色 PVC 斜坡入口阶段复用现有 PVC 控制模块修正方向；检测稳定后，
- *       立即锁定当前惯导航向。蓝色坡面不做视觉识别，前 300ms 后方向误差清零，
- *       同时从任务接管时起累计惯导里程；到达设定里程后停车，完成三次跳跃并锁定。
+ *       锁定当前惯导航向。在进入斜坡及蓝色坡面行驶期间，持续进行惯导闭环负反馈，
+ *       定速冲坡；到达设定里程后停车，完成三次跳跃并锁定。
  * =================================================================================
  */
 #include "vision/vision_slope_control.h"
@@ -37,7 +37,7 @@ typedef struct
     uint32 state_ticks;                   /* 当前状态的 2ms 计时 */
     float start_x_mm;                     /* 任务接管时的惯导 X 坐标（接管时清零） */
     float start_y_mm;                     /* 任务接管时的惯导 Y 坐标（接管时清零） */
-    float locked_yaw_deg;                 /* 状态机进入时锁定的惯导航向 */
+    float locked_yaw_deg;                 /* 状态机进入/对准完成时锁定的前进航向 */
     uint16 pvc_align_ok_ticks;            /* PVC 入口确认条件连续满足的 2ms tick 数 */
     uint8 jump_count;                     /* 已成功触发的三级跳次数 */
 } vision_slope_task_ctx_t;
@@ -162,7 +162,7 @@ static void vision_slope_enter_task(void)
 {
     memset(&s_slope_task, 0, sizeof(s_slope_task));
     s_slope_task.state = VISION_SLOPE_TASK_PVC_ALIGN;
-    /* 目标航向在状态机启动时采样，入口稳定后不再被当前航向覆盖。 */
+    /* 目标航向在状态机启动时初步采样，PVC 入口稳定对准后会刷新为最终冲坡航向。 */
     s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
     g_slope_brake_ff_request = 0U;
 
@@ -353,11 +353,12 @@ void VisionSlopeTask_Update_2ms(void)
                 s_slope_task.pvc_align_ok_ticks = 0U;
             }
 
-            /* PVC 入口确认稳定 50ms 后，保存此刻航向；后续蓝色坡面不再依赖视觉。 */
+            /* PVC 入口确认稳定 50ms 后，保存此刻最准确的前进航向；后续坡面持续闭环锁定。 */
             if (s_slope_task.pvc_align_ok_ticks >= VISION_SLOPE_TASK_PVC_ALIGN_OK_TICKS)
             {
                 VisionPvcControl_SetEnable(0U);
                 VisionIpc_Core0_SetPvcEnable(VISION_PVC_DETECT_DEFAULT_ACTIVE);
+                s_slope_task.locked_yaw_deg = inertial_nav.relative_yaw;
                 vision_slope_set_state(VISION_SLOPE_TASK_ENTRY_HOLD);
             }
             else if (s_slope_task.state_ticks >= VISION_SLOPE_TASK_PVC_ALIGN_TIMEOUT_TICKS)
@@ -368,7 +369,7 @@ void VisionSlopeTask_Update_2ms(void)
             break;
 
         case VISION_SLOPE_TASK_ENTRY_HOLD:
-            /* 刚压上斜坡的 300ms 保持较高入口速度，并只根据惯导航向锁角。 */
+            /* 刚压上斜坡的 300ms 保持较高入口速度，并持续锁定前进航向。 */
             err_cmd = vision_slope_calc_yaw_hold_err();
             speed_cmd = VISION_SLOPE_TASK_ENTRY_SPEED_SET;
             err_degree = err_cmd;
@@ -381,12 +382,11 @@ void VisionSlopeTask_Update_2ms(void)
             break;
 
         case VISION_SLOPE_TASK_RUN:
-            /* 蓝色斜坡路面不使用视觉或惯导方向修正，直接保持方向误差为零。 */
-            err_cmd = 0.0f;
+            /* 蓝色斜坡路面持续闭环锁定前进航向，防止打滑与颠簸导致偏航。 */
+            err_cmd = vision_slope_calc_yaw_hold_err();
             speed_cmd = VISION_SLOPE_TASK_RUN_SPEED_SET;
             err_degree = err_cmd;
             target_speed_set = speed_cmd;
-
             break;
 
         case VISION_SLOPE_TASK_FAILSAFE:
