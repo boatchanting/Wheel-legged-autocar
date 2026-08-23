@@ -44,6 +44,7 @@
 #include "vision/vision_bridge_control.h"
 #include "vision/vision_slope_control.h"
 #include "vision/vision_three_stage_control.h"
+#include "servo/servo.h"
 #include "servo/servo_executor.h"
 #include "navigation/nav_replay/nav_replay.h"
 #include "tools/wifi_protocol.h"
@@ -79,6 +80,11 @@ static uint16 accel_ff_buzzer_cooldown_ticks = 0U; // 蜂鸣冷却时间，避�
 static uint8 accel_ff_buzzer_was_large = 0U;       // 上一周期是否处于大前馈状态，用于边沿触发
 static uint16 profile_switch_beep_ticks = 0U;      // 复刻PID切换蜂鸣剩余时间，1ms 递减
 static uint16 minefield_beep_ticks = 0U;           // 自转结束蜂鸣剩余时间，1ms 递减
+static uint8_t minefield_was_coasting = 0U;
+static uint8_t minefield_was_active = 0U;
+static uint16 minefield_turn_handoff_ticks = 0U;
+static float minefield_saved_servo_height = 0.0f;
+static uint8_t minefield_height_restore_pending = 0U;
 static bool g_fallen_last = false;
 static uint16 g_fallen_standup_grace_ticks = 0U;
 
@@ -481,6 +487,27 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     // ==========================================================
     // 步骤 1: 速度环(舵机控制) (20ms 跑一次，现改为9ms)
     // ==========================================================
+    if (Minefield_Is_Active() != 0U)
+    {
+        if (minefield_height_restore_pending == 0U)
+        {
+            minefield_saved_servo_height = servo_height;
+            minefield_height_restore_pending = 1U;
+        }
+
+        // 雷区由自身接管车身高度；退出后立即归还给原有规划状态机。
+        servo_height = MINEFIELD_SPIN_HEIGHT_TARGET;
+        // 清除入区前的纵向前馈，给俯仰平衡环保留转向 PWM 余量。
+        Brake_Feedforward_Reset();
+        Accel_Feedforward_Reset();
+    }
+    else if (minefield_height_restore_pending != 0U)
+    {
+        // 雷区结束后恢复入区前高度；舵机执行器按自身斜率限制平滑回位。
+        servo_height = minefield_saved_servo_height;
+        minefield_height_restore_pending = 0U;
+    }
+
     if(g_is_push_mode==0)
     {  
 
@@ -741,17 +768,71 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             float spin_cmd = Minefield_Spin_Controller(filtered_gyro_z, 0.001f, inertial_nav.relative_yaw, &g_initial_yaw);
         // lq.2. 决策：如果旋转模块激活，则覆盖外环输出
         float final_turn_cmd;
+        uint8_t minefield_turn_handoff_active = 0U;
+        uint8_t minefield_active = Minefield_Is_Active();
         
-        if (Minefield_Is_Active()) 
+        if (minefield_active != 0U)
         {
             final_turn_cmd = spin_cmd; // 使用平滑的旋转指令
+            minefield_was_active = 1U;
+            minefield_turn_handoff_ticks = 0U;
         }
         else
         {
-            final_turn_cmd = turn_angle_loop_out; // 使用正常的PID外环指令
+            if (minefield_was_active != 0U)
+            {
+                Turn_Angle_Loop_Reset();
+                Turn_Gyro_Loop_Bumpless_Reset(0.0f, filtered_gyro_z);
+                minefield_was_active = 0U;
+                minefield_turn_handoff_ticks = MINEFIELD_SPIN_HANDOFF_DURATION_MS;
+            }
+
+            if (minefield_turn_handoff_ticks != 0U)
+            {
+                float handoff_ratio =
+                    (float)(MINEFIELD_SPIN_HANDOFF_DURATION_MS - minefield_turn_handoff_ticks) *
+                    MINEFIELD_SPIN_HANDOFF_RATIO_STEP;
+
+                final_turn_cmd = turn_angle_loop_out * handoff_ratio;
+                minefield_turn_handoff_active = 1U;
+                minefield_turn_handoff_ticks--;
+            }
+            else
+            {
+                final_turn_cmd = turn_angle_loop_out;
+            }
         }
         //==================== [雷区旋转调用结束] =================
         // 将雷区旋转指令或者正常转向角速度指令送入内环PID
+        if (Minefield_IsCoasting())
+        {
+            if (minefield_was_coasting == 0U)
+            {
+                Turn_Gyro_Loop_Bumpless_Reset(0.0f, filtered_gyro_z);
+                minefield_was_coasting = 1U;
+            }
+            turn_gyro_loop_out = 0.0f;
+        }
+        else
+        {
+            if (minefield_was_coasting != 0U)
+            {
+                Turn_Gyro_Loop_Bumpless_Reset(final_turn_cmd, filtered_gyro_z);
+                minefield_was_coasting = 0U;
+            }
+            turn_gyro_loop_out = Turn_Gyro_Loop_Control(final_turn_cmd, filtered_gyro_z);
+            if ((minefield_active != 0U) || (minefield_turn_handoff_active != 0U))
+            {
+                float minefield_turn_pwm_limit =
+                    Float_Constrain(MINEFIELD_TURN_PWM_MAX_ALLOWED,
+                                    0.0f,
+                                    OUR_PWM_MAX_LIMIT - MINEFIELD_BALANCE_PWM_RESERVE);
+
+                turn_gyro_loop_out = Float_Constrain(turn_gyro_loop_out,
+                                                       -minefield_turn_pwm_limit,
+                                                       minefield_turn_pwm_limit);
+            }
+        }
 #if (LAUNCH_STRATEGY_SELECT == 1)
         if (g_turn_loop_disabled)
         {

@@ -4,6 +4,7 @@
 #define LAUNCH_STRATEGY_SELECT        1U  // 【发车策略选择】0: 旧版倒地直接发车；1: 新版直立瞄准发车 (P10_0起立瞄准 -> 采样2s锁定 -> P10_4发车)
 
 #define JUMP_ENABLE_LANDING_BUFFER 1U // 1: 保留落地伸腿和缓冲恢复；0: 只保留起跳伸腿和空中收腿
+#define MINEFIELD_INERTIAL_BUFFER_ENABLE 1U // 【雷区惯性缓冲】1: 末段关转向环惯性出圈，未命中出口再低速捕获；0: 使用原连续闭环转圈
 
 #define WIFI_USE 0 // 【WIFI总开关】选择是否使用WIFI模块，0表示不使用，1表示使用 (2026-08-14 单边桥调试状态: 开)
 #define WIFI_CORE_SELECT 1 // 【WIFI核心选择】0表示0核使用WIFI，1表示1核使用WIFI (2026-08-14 单边桥调试状态: 1核, 网页上位机看图+示波器)
@@ -74,6 +75,10 @@
 
 #if (JUMP_ENABLE_LANDING_BUFFER != 0U) && (JUMP_ENABLE_LANDING_BUFFER != 1U)
 #error "JUMP config error: JUMP_ENABLE_LANDING_BUFFER must be 0 or 1."
+#endif
+
+#if (MINEFIELD_INERTIAL_BUFFER_ENABLE != 0U) && (MINEFIELD_INERTIAL_BUFFER_ENABLE != 1U)
+#error "MINEFIELD_INERTIAL_BUFFER_ENABLE must be 0 or 1."
 #endif
 
 #if (CONTROL_PROFILE_PID_ENABLE != 0U) && (CONTROL_PROFILE_PID_ENABLE != 1U)
