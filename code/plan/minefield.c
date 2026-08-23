@@ -10,14 +10,14 @@ extern uint8 g_special_action_trigger;
 // 旋转阶段的最大角速度指令（deg/s）。
 #define SPIN_MAX_SPEED            1800.0f   //华东给的1700.0f//角速度指令上限
 // 减速区角度（deg）；进入最后这段角度后开始线性收速。
-#define SPIN_DECEL_ANGLE          300.0f
+#define SPIN_DECEL_ANGLE          1500.0f
 // 旋转末段的最小角速度指令（deg/s）；避免末段因速度过低卡住。
 #define SPIN_MIN_SPEED            500.0f
 // 旋转输出符号；用于统一适配底层角速度方向定义。
 #define SPIN_OUTPUT_SIGN          1.0f
-#define MINEFIELD_SPIN_COAST_ANGLE_DEG            300.0f  // 距计划总角度剩余此角度时关闭转向环，靠惯性继续出圈
-#define MINEFIELD_SPIN_CAPTURE_MAX_SPEED_DPS      300.0f  // 惯性未命中出口时的低速捕获角速度上限，调小可减轻末端打滑
-#define MINEFIELD_SPIN_CAPTURE_YAW_KP             5.0f    // 低速捕获航向比例增益：出口航向误差每度换算为的角速度指令
+#define MINEFIELD_SPIN_COAST_ANGLE_DEG            150.0f  // 距计划总角度剩余此角度时关闭转向环，靠惯性继续出圈
+#define MINEFIELD_SPIN_CAPTURE_MAX_SPEED_DPS      500.0f  // 惯性未命中出口时的低速捕获角速度上限，调小可减轻末端打滑
+#define MINEFIELD_SPIN_CAPTURE_YAW_KP             8.0f    // 低速捕获航向比例增益：出口航向误差每度换算为的角速度指令
 #define MINEFIELD_SPIN_MAX_DURATION_S       7.5f
 #define MINEFIELD_SPIN_STALL_CMD_MIN_DPS    120.0f
 #define MINEFIELD_SPIN_STALL_GYRO_MIN_DPS   25.0f
