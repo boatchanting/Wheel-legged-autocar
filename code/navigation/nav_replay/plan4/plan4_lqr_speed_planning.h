@@ -103,7 +103,7 @@
 #define PLAN4_MINEFIELD_BRAKE_POLY_A                  0.00025f
 #define PLAN4_MINEFIELD_BRAKE_POLY_B                 (-0.2877f)
 #define PLAN4_MINEFIELD_BRAKE_POLY_C                887.0f
-#define PLAN4_MINEFIELD_BRAKE_DIST_RATIO               1.0f //华东用的0.7f，夜间跑的0.6f白天跑不了
+#define PLAN4_MINEFIELD_BRAKE_DIST_RATIO               0.8f //华东用的0.7f，夜间跑的0.6f白天跑不了
 #define PLAN4_MINEFIELD_BRAKE_MARGIN_MM                0.0f
 
 /* 正常接近阶段的最大速度指令（负号表示前进），也是

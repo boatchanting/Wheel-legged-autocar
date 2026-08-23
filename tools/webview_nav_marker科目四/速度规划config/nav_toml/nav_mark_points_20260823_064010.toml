@@ -36,7 +36,7 @@ exit_corridor_mm = 600
 
 [task."4"]
 approach_distance_mm = 500
-entry_speed_command = 200
+entry_speed_command = 300
 state_speed_command = 300
 exit_speed_command = 300
 entry_corridor_mm = 1000
@@ -147,11 +147,11 @@ response_delay_s = 0
 
 [trajectory."5->13"]
 preset = "turnaround_stake_fastest"
-path_speed_max_mm_s = 5000
-sprint_speed_mm_s = 5000
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
 enable_finish_sprint = true
-max_accel_mm_s2 = 4500
-max_decel_mm_s2 = 2500
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 3500
 max_lateral_accel_mm_s2 = 4000
 max_path_yaw_rate_rad_s = 2.8
 speed_to_mm_s = 4.79
