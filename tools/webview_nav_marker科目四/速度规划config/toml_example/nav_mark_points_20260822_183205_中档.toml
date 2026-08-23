@@ -1,0 +1,136 @@
+# Plan4 当前赛道中档速度配置。
+# 仅提高任务固定速度及受限连接段的速度/加速度/横向能力；路线几何、掉头桩、安全裕量、
+# 强制直线和底盘标定均与 nav_mark_points_20260822_183205.toml 一致。
+
+[route]
+source_csv = "nav_mark_points_20260822_183205.csv"
+state_signature = "a2dd382950051b65"
+
+[turnaround_stake]
+radius_mm = 400
+clearance_mm = 250
+
+[task."2"]
+approach_distance_mm = 500
+entry_speed_command = 550
+state_speed_command = 550
+exit_speed_command = 550
+entry_corridor_mm = 600
+exit_corridor_mm = 600
+
+[task."3"]
+approach_distance_mm = 4000
+entry_speed_command = 330
+state_speed_command = 330
+exit_speed_command = 340
+entry_corridor_mm = 600
+exit_corridor_mm = 600
+
+[task."4"]
+approach_distance_mm = 500
+entry_speed_command = 230
+state_speed_command = 330
+exit_speed_command = 330
+entry_corridor_mm = 1000
+exit_corridor_mm = 600
+
+[task."5"]
+approach_distance_mm = 500
+entry_speed_command = 550
+state_speed_command = 550
+exit_speed_command = 550
+entry_corridor_mm = 600
+exit_corridor_mm = 1000
+
+[trajectory."start->0"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0
+
+[trajectory."1->2"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0
+
+[trajectory."2->3"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0
+
+[trajectory."3->4"]
+preset = "point_to_line"
+path_speed_max_mm_s = 5500
+sprint_speed_mm_s = 5500
+enable_finish_sprint = true
+max_accel_mm_s2 = 5000
+max_decel_mm_s2 = 5000
+max_lateral_accel_mm_s2 = 3400
+max_path_yaw_rate_rad_s = 3.0
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0
+
+[trajectory."5->13"]
+preset = "turnaround_stake_fastest"
+path_speed_max_mm_s = 5500
+sprint_speed_mm_s = 5500
+enable_finish_sprint = true
+max_accel_mm_s2 = 5000
+max_decel_mm_s2 = 3000
+max_lateral_accel_mm_s2 = 4300
+max_path_yaw_rate_rad_s = 3.0
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 1.0
+must_pass_marker_orders = []
+must_pass_tolerance_mm = 20
+
+[trajectory."14->19"]
+preset = "near_parallel"
+path_speed_max_mm_s = 6500
+sprint_speed_mm_s = 6500
+enable_finish_sprint = true
+max_accel_mm_s2 = 6000
+max_decel_mm_s2 = 5000
+max_lateral_accel_mm_s2 = 4300
+max_path_yaw_rate_rad_s = 3.0
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0.8
+
+[trajectory."20->end"]
+preset = "interpolated"
+path_speed_max_mm_s = 8000
+sprint_speed_mm_s = 8000
+enable_finish_sprint = true
+max_accel_mm_s2 = 10500
+max_decel_mm_s2 = 10500
+max_lateral_accel_mm_s2 = 4000
+max_path_yaw_rate_rad_s = 2.8
+speed_to_mm_s = 4.79
+curvature_eps = 1e-06
+response_delay_s = 0
