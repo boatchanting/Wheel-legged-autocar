@@ -1,10 +1,10 @@
-# TongjiCar1 工程目录文档
+# Wheel-legged-autocar 工程目录文档
 
 > 面向新加入开发者的项目结构指南，解释每个文件夹和文件的内容与作用。
 
 ## 项目概述
 
-TongjiCar1 是基于逐飞 CYT4BB 开源库、Cortex-M7 双核平台和 IAR Embedded Workbench 的智能轮腿车控制系统。项目使用双核架构：
+Wheel-legged-autocar 是基于逐飞 CYT4BB 开源库、Cortex-M7 双核平台和 IAR Embedded Workbench 的智能轮腿车控制系统。项目使用双核架构：
 - **0 核 (CM7_0)**：负责整车控制、平衡、导航、任务状态机
 - **1 核 (CM7_1)**：负责摄像头图像处理、视觉识别、图传
 

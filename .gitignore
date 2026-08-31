@@ -7,7 +7,8 @@
 data/
 *.csv
 *.png
-!docs/project-structure/logo.png
+!docs/img/
+!docs/img/**
 # python venv
 .venv/
 
