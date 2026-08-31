@@ -25,6 +25,7 @@ HOST_DRIVE_BRAKE = 0x02
 HOST_DRIVE_ROLL = 0x04
 HOST_DRIVE_HEIGHT = 0x08
 HOST_DRIVE_JUMP = 0x10
+HOST_SPEED_LIMIT = 300.0
 HOST_CTRL_CLEAR_TRAJECTORY = 0x01
 HOST_CTRL_START_CAR = 0x02
 HOST_ACK_ACCEPTED = 0x00
@@ -34,6 +35,7 @@ HOST_ACK_INVALID_PAYLOAD = 0x03
 HOST_ACK_TIMEOUT_SEC = 1.5
 
 PAYLOAD_SIZE_V1 = 84
+PAYLOAD_SIZE_CURRENT = 128
 PAYLOAD_SIZE_V2 = 86
 PAYLOAD_GPS_TRACE_FLOAT_BYTES = 8
 PAYLOAD_GPS_TRACE_FLAG_BYTES = 2
@@ -424,6 +426,47 @@ def _decode_payload(payload_bytes):
 
     if size < PAYLOAD_SIZE_V1:
         return None
+
+    # Current firmware telemetry layout (wifi_protocol.c):
+    # loop,u32; fusion x/y; body vx/vy; heading/yaw; marker/state bytes;
+    # err; task flags; 12 IMU floats; RF/RR/LF/LR servo angles; speed/PWM.
+    if size >= PAYLOAD_SIZE_CURRENT:
+        off = 0
+        loop, nav_x, nav_y, vx_body, vy_body, heading, relative_yaw = struct.unpack_from("<I6f", payload_bytes, off)
+        off += 28
+        mark_trigger, point_type, pid_mode, slip_flag, current_point_type, replay_state = struct.unpack_from("<6B", payload_bytes, off)
+        off += 6
+        (err_degree,) = struct.unpack_from("<f", payload_bytes, off)
+        off += 4
+        special_flags = struct.unpack_from("<6B", payload_bytes, off)
+        off += 6
+        imu = struct.unpack_from("<12f", payload_bytes, off)
+        off += 48
+        servo_rf, servo_rr, servo_lf, servo_lr = struct.unpack_from("<4f", payload_bytes, off)
+        off += 16
+        target_speed, speed_l, speed_r, pwm_left, pwm_right = struct.unpack_from("<5f", payload_bytes, off)
+        data = {
+            "loop": loop, "nav_x": nav_x, "nav_y": nav_y,
+            "vx_body": vx_body, "vy_body": vy_body,
+            "heading": heading, "relative_yaw": relative_yaw,
+            "mark_trigger": mark_trigger, "point_type": point_type,
+            "pid_mode": pid_mode, "slip_flag": slip_flag,
+            "nav_current_point_type": current_point_type,
+            "nav_replay_state": replay_state, "err_degree": err_degree,
+            "minefield_is_active": special_flags[0],
+            "nav_special_action_trigger": special_flags[1],
+            "bumpy_road_active": special_flags[2],
+            "vision_bridge_active": special_flags[3],
+            "vision_slope_active": special_flags[4],
+            "vision_three_stage_active": special_flags[5],
+            "servo_angle_rf": servo_rf, "servo_angle_rr": servo_rr,
+            "servo_angle_lf": servo_lf, "servo_angle_lr": servo_lr,
+            "target_speed": target_speed, "speed_L": speed_l,
+            "speed_R": speed_r, "pwm_left": pwm_left, "pwm_right": pwm_right,
+            "payload_size": size,
+        }
+        data["time_str"] = time.strftime("%H:%M:%S")
+        return data
 
     # 兼容扩展 payload：基础字段始终按 V1 解析，后续字段按可用字节补齐。
     unpacked = struct.unpack(STRUCT_FMT_V1, payload_bytes[:PAYLOAD_SIZE_V1])

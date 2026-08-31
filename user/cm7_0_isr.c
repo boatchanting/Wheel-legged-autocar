@@ -437,7 +437,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     }
 
     if (loop_counter % 20 == 4) {  // 20ms 一次
-        if(g_motor_enable && (!g_fallen) && (VisionBridgeTask_IsActive() == 0U) && (VisionSlopeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
+        if(g_motor_enable && (!g_fallen) && (g_wifi_host_drive_active == 0U) && (VisionBridgeTask_IsActive() == 0U) && (VisionSlopeTask_IsActive() == 0U)){Bridge_Test_Triple_SingleSide_Inertial();
         } //复现控制
     };//【测试】抬高双腿
 
@@ -1126,6 +1126,13 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     // 遥控器逻辑: 假设推油门 robot_ctrl.target_speed 为正数
     // 转换逻辑: 取反
     target_speed_set = -robot_ctrl.target_speed;
+    }
+
+    /* Host drive is the final manual override for speed and heading. */
+    if (g_wifi_host_drive_active != 0U)
+    {
+        err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;
+        target_speed_set = -robot_ctrl.target_speed;
     }
     
     // [可选: 保护] 如果处于未使能状态，强制目标速度归零，防止后台积分

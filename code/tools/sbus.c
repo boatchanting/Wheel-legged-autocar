@@ -43,7 +43,7 @@ extern volatile float roll_degree;
 
 // 积分限幅
 #define MAX_STEER_ANGLE 45.0f   // 最大转向角度 (例如 +/- 45度)
-#define MAX_SPEED_VAL   3000.0f  // 最大速度目标值 (对应 target_speed_set)
+#define MAX_SPEED_VAL   300.0f   // 统一速度目标限幅
 
 #define SPEED_DECEL_RATIO    0.99f  // 百分比减速，实际没那么快
 #define SPEED_STOP_THRESHOLD  1.0f// 速度归零阈值：当目标速度削弱到这个绝对值以下时，直接归 0 且锁定
