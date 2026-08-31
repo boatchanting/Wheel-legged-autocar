@@ -818,11 +818,19 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
     gyro_loop_out = Gyro_Loop_Control(angle_loop_out, now_gyro);
 
     // 6.rolling平衡环(5ms一次)
-   // if (loop_counter % 5 == 3){
+    if (loop_counter % 5 == 3){
         // 彻底清空并屏蔽历史转向主动侧倾差动，防止干扰纯净的单边桥横滚平衡
         Turn_Active_Roll_Duty_Clear();
         // 坐标系转换：计算相对于车身前进方向水平转轴的旋转角 (消除车身俯仰时车身 roll 轴倾斜引起的投影误差)
         float actual_horizontal_roll = Calculate_Horizontal_Roll_Degree(euler_angle.roll, euler_angle.pitch);
+
+        static float host_roll_height_last = -1000.0f;
+        if (fabsf(servo_height - host_roll_height_last) > 0.05f)
+        {
+            host_roll_height_last = servo_height;
+            g_target_pwm_roll_adj = 0;
+            Turn_Active_Roll_Duty_Clear();
+        }
 
         if (roll_balance_enable != 0U)
         {
@@ -836,7 +844,7 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             Roll_Balance_Control(actual_horizontal_roll, actual_horizontal_roll);
             g_target_pwm_roll_adj = 0;
         }
-    //}
+    }
 
 
     // ==========================================================

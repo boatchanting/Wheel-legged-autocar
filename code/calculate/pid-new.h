@@ -114,7 +114,7 @@ extern float current_actual_speed;
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
 #define ROLL_KD      20.0f   // [阻尼] 抑制车身左右晃动，防止超调
 #define ROLL_MAX_I   0.0f    
-#define ROLL_MAX_O   1600.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
+#define ROLL_MAX_O   600.0f  // [PWM限幅] 降低单侧饱和和高度耦合风险
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
 #define ROLL_MAX_RETRACT_DUTY 500  // [收腿限幅] 高侧向上收腿最大占空比
 
@@ -208,9 +208,9 @@ extern float current_actual_speed;
 //    作用：过单边桥时，根据横滚角偏差，自动调整左右腿高度差，保持车身水平。
 //    策略：低侧伸腿同时高侧收腿 (向上收腿量最大 1000 duty)
 // ----------------------------------------------------------------------------
-#define ROLL_KP      2.0f   // [响应力度] 决定对抗倾斜的猛烈程度 (增量控制模式)
+#define ROLL_KP      1.0f   // [响应力度] 降低震荡风险
 #define ROLL_KI      0.0f    // [一般不用] 单边桥是瞬态过程，不需要积分消除静差
-#define ROLL_KD      17.0f   // [阻尼] 抑制车身左右晃动，防止超调
+#define ROLL_KD      8.0f   // [阻尼] 降低高频抖动
 #define ROLL_MAX_I   0.0f    
 #define ROLL_MAX_O   1600.0f // [PWM限幅] 限制单次调整的最大舵机PWM值 (假设舵机满量程10000)
 #define ROLL_MECH_ZERO 0.0f  // [机械零点] 理想水平是0度
