@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>小车遥测 CSV 轨迹与数据可视化</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --panel: #1e293b;
+            --text: #e2e8f0;
+            --accent: #38bdf8;
+            --border: #334155;
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            padding: 20px;
+            background: var(--bg);
+            color: var(--text);
+            font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        }
+        h1 { font-size: 24px; margin-top: 0; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        .upload-area {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            flex-wrap: wrap;
+            background: var(--panel);
+            border: 1px dashed var(--border);
+            border-radius: 12px;
+            padding: 16px 20px;
+            margin-bottom: 16px;
+            transition: 0.2s;
+        }
+        .upload-area.dragover {
+            border-color: var(--accent);
+            background: #263244;
+        }
+        .upload-area label {
+            background: var(--accent);
+            color: #0f172a;
+            font-weight: 600;
+            padding: 8px 14px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: 0.2s;
+        }
+        .upload-area label:hover { opacity: 0.85; }
+        .upload-area input[type="file"] { display: none; }
+        .upload-status {
+            font-size: 14px;
+            color: #94a3b8;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .stat-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+        }
+        .stat-card .label { font-size: 12px; color: #94a3b8; }
+        .stat-card .value { font-size: 18px; font-weight: 700; margin-top: 4px; }
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .chart-card {
+            background: var(--panel);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 8px 10px 4px;
+        }
+        .chart-card h3 {
+            margin: 4px 8px;
+            font-size: 15px;
+            color: #cbd5e1;
+        }
+        .chart-card .plot-container { height: 340px; }
+        @media (max-width: 900px) {
+            .chart-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Autocar 遥测 CSV 可视化</h1>
+
+    <div class="upload-area" id="uploadArea">
+        <label for="csvFile">上传 CSV 日志</label>
+        <input type="file" id="csvFile" accept=".csv,text/csv">
+        <label for="routeFile">可选：上传轨迹表 .h</label>
+        <input type="file" id="routeFile" accept=".h,.txt">
+        <span id="uploadStatus" class="upload-status">等待上传…（支持拖拽 CSV / .h 到此处）</span>
+    </div>
+
+    <div id="stats" class="stats"></div>
+
+    <div class="chart-grid">
+        <div class="chart-card">
+            <h3>轨迹（颜色表示 loop 时间）</h3>
+            <div id="trajectoryChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>车体速度 vx / vy</h3>
+            <div id="speedBodyChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>轮速与目标转速</h3>
+            <div id="wheelSpeedChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>舵机角度</h3>
+            <div id="servoChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>PWM 输出</h3>
+            <div id="pwmChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>航向/偏航/控制量</h3>
+            <div id="angleChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>IMU 加速度 / 陀螺仪</h3>
+            <div id="imuChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>状态机 / 任务标志</h3>
+            <div id="stateChart" class="plot-container"></div>
+        </div>
+        <div class="chart-card">
+            <h3>导航任务标志（台阶/斜坡等）</h3>
+            <div id="navFlagsChart" class="plot-container"></div>
+        </div>
+        <!-- 新增导航状态标志 XY 图 -->
+        <div class="chart-card">
+            <h3>导航状态标志 XY 图</h3>
+            <div id="navStateTrajectoryChart" class="plot-container"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let telemetry = null;
+    let routePoints = [];
+
+    const COL_NAMES = [
+        'loop','nav_x','nav_y','vx_body','vy_body','heading','relative_yaw',
+        'mark_trigger','point_type','pid_mode','slip_flag','nav_replay_point_type',
+        'g_replay_state','err_degree','minefield_is_active','g_special_action_trigger',
+        'bumpy_road_is_active','vision_bridge_task_is_active','vision_slope_task_is_active',
+        'vision_three_stage_control_is_active','euler_roll','euler_pitch','euler_yaw',
+        'imu_acc_x','imu_acc_y','imu_acc_z','imu_gyro_x','imu_gyro_y','imu_gyro_z',
+        'imu_grav_x','imu_grav_y','imu_grav_z','servo_angle_rf','servo_angle_rr',
+        'servo_angle_lf','servo_angle_lr','target_speed_set','speed_L','speed_R',
+        'pwm_left','pwm_right'
+    ];
+
+    function cleanHeader(h) {
+        return h.replace(/^\uFEFF/, '').trim();
+    }
+
+    function getNum(row, field) {
+        if (!row || row[field] === undefined || row[field] === null) return NaN;
+        const v = parseFloat(String(row[field]).replace(',', '.'));
+        return isFinite(v) ? v : NaN;
+    }
+
+    function parseCSV(file) {
+        document.getElementById('uploadStatus').textContent = '正在解析 CSV...';
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            dynamicTyping: false,
+            complete: function(results) {
+                if (!results.meta.fields || results.meta.fields.length === 0) {
+                    alert('CSV 没有标题行，无法解析列名。');
+                    return;
+                }
+                const rawRows = results.data;
+                const fields = results.meta.fields.map(cleanHeader);
+                telemetry = rawRows.map(r => {
+                    const clean = {};
+                    fields.forEach((f, i) => {
+                        const oldKey = results.meta.fields[i];
+                        clean[f] = r[oldKey];
+                    });
+                    return clean;
+                });
+                processData();
+            },
+            error: function(err) {
+                alert('CSV 解析失败: ' + err.message);
+            }
+        });
+    }
+
+    function parseRouteH(file) {
+        const reader = new FileReader();
+        reader.onload = function(e) {
+            const text = e.target.result;
+            routePoints = [];
+            const tableMatch = text.match(/nav_replay_route_table\s*\[\s*\]\s*=\s*\{(.*?)\}\s*;/s);
+            const block = tableMatch ? tableMatch[1] : text;
+            const re = /\{([^{}]*)\}/g;
+            let m;
+            while ((m = re.exec(block)) !== null) {
+                const nums = m[1].split(',')
+                    .map(x => parseFloat(x.trim()))
+                    .filter(v => !isNaN(v));
+                if (nums.length >= 2) {
+                    routePoints.push({ x: nums[0], y: nums[1] });
+                }
+            }
+            document.getElementById('uploadStatus').textContent =
+                `CSV 已加载，轨迹表解析到 ${routePoints.length} 个点。`;
+            if (telemetry) drawTrajectory();
+        };
+        reader.readAsText(file);
+    }
+
+    function processData() {
+        if (!telemetry || telemetry.length === 0) return;
+        const t = telemetry.map(r => getNum(r, 'loop') / 1000);
+        const state = telemetry.map(r => getNum(r, 'g_replay_state'));
+        const navX = telemetry.map(r => getNum(r, 'nav_x'));
+        const navY = telemetry.map(r => getNum(r, 'nav_y'));
+        const speedsL = telemetry.map(r => getNum(r, 'speed_L') * 4.79);
+        const speedsR = telemetry.map(r => getNum(r, 'speed_R') * 4.79);
+
+        const runningCount = state.filter(s => s === 1).length;
+        const finishedCount = state.filter(s => s === 2).length;
+        const lastState = state.length ? state[state.length - 1] : NaN;
+        const startX = navX[0], startY = navY[0];
+        const endX = navX[navX.length - 1], endY = navY[navY.length - 1];
+
+        const statsHTML = `
+            <div class="stat-card"><div class="label">总帧数</div><div class="value">${telemetry.length}</div></div>
+            <div class="stat-card"><div class="label">RUNNING 帧数</div><div class="value">${runningCount}</div></div>
+            <div class="stat-card"><div class="label">FINISHED 帧数</div><div class="value">${finishedCount}</div></div>
+            <div class="stat-card"><div class="label">最后 g_replay_state</div><div class="value">${lastState}</div></div>
+            <div class="stat-card"><div class="label">起点 (mm)</div><div class="value">${startX.toFixed(0)}, ${startY.toFixed(0)}</div></div>
+            <div class="stat-card"><div class="label">终点 (mm)</div><div class="value">${endX.toFixed(0)}, ${endY.toFixed(0)}</div></div>
+            <div class="stat-card"><div class="label">左轮末端速度 (mm/s)</div><div class="value">${speedsL[speedsL.length-1].toFixed(1)}</div></div>
+            <div class="stat-card"><div class="label">右轮末端速度 (mm/s)</div><div class="value">${speedsR[speedsR.length-1].toFixed(1)}</div></div>
+        `;
+        document.getElementById('stats').innerHTML = statsHTML;
+        document.getElementById('uploadStatus').textContent = `CSV 已加载：${telemetry.length} 帧，${routePoints.length ? '轨迹表已叠加' : '未上传轨迹表'}`;
+
+        drawTrajectory();
+        drawSpeedBody(t);
+        drawWheelSpeed(t);
+        drawServo(t);
+        drawPWM(t);
+        drawAngle(t);
+        drawIMU(t);
+        drawState(t);
+        drawNavFlags(t);
+        drawNavStateTrajectory();  // 新增
+    }
+
+    // 原有轨迹图（颜色=loop）
+    function drawTrajectory() {
+        const div = document.getElementById('trajectoryChart');
+        if (!telemetry) return;
+
+        const x = telemetry.map(r => getNum(r, 'nav_x'));
+        const y = telemetry.map(r => getNum(r, 'nav_y'));
+        const state = telemetry.map(r => getNum(r, 'g_replay_state'));
+        const loop = telemetry.map(r => getNum(r, 'loop'));
+
+        const traces = [];
+
+        // 轨迹连线
+        traces.push({
+            x: x,
+            y: y,
+            mode: 'lines',
+            type: 'scatter',
+            name: '轨迹连线',
+            line: { color: '#94a3b8', width: 1, dash: 'dot' },
+            hoverinfo: 'skip'
+        });
+
+        // 散点：颜色=loop，符号=状态
+        const symbolMap = {0: 'circle', 1: 'square', 2: 'diamond'};
+        const symbols = state.map(s => symbolMap[s] || 'circle');
+        traces.push({
+            x: x,
+            y: y,
+            mode: 'markers',
+            type: 'scatter',
+            name: '轨迹点 (颜色=loop)',
+            marker: {
+                color: loop,
+                colorscale: 'Viridis',
+                colorbar: { title: 'loop', thickness: 15, len: 0.5, y: 0.5 },
+                size: 5,
+                symbol: symbols,
+                line: { width: 0.5, color: '#000' }
+            },
+            text: telemetry.map((r, i) => `loop: ${getNum(r,'loop')}<br>state: ${getNum(r,'g_replay_state')}<br>x: ${getNum(r,'nav_x').toFixed(1)}<br>y: ${getNum(r,'nav_y').toFixed(1)}`),
+            hoverinfo: 'text'
+        });
+
+        // 起点和终点
+        if (x.length) {
+            traces.push({
+                x: [x[0]], y: [y[0]], mode: 'markers', type: 'scatter',
+                name: '起点', marker: { color: '#f43f5e', size: 12, symbol: 'circle' }
+            });
+            traces.push({
+                x: [x[x.length-1]], y: [y[y.length-1]], mode: 'markers', type: 'scatter',
+                name: '终点', marker: { color: '#f59e0b', size: 12, symbol: 'x' }
+            });
+        }
+
+        // 期望轨迹
+        if (routePoints.length) {
+            traces.push({
+                x: routePoints.map(p => p.x),
+                y: routePoints.map(p => p.y),
+                mode: 'markers+lines',
+                type: 'scatter',
+                name: '期望轨迹',
+                marker: { color: '#a855f7', size: 5, symbol: 'diamond' },
+                line: { width: 2, color: '#a855f7', dash: 'dash' }
+            });
+        }
+
+        Plotly.newPlot(div, traces, {
+            title: '导航轨迹（颜色 = loop 时间）',
+            xaxis: { title: 'X (mm)' },
+            yaxis: { title: 'Y (mm)' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    // 导航任务标志时间序列图
+    function drawNavFlags(t) {
+        const div = document.getElementById('navFlagsChart');
+        if (!telemetry) return;
+
+        const flags = [
+            'g_replay_state',
+            'nav_replay_point_type',
+            'mark_trigger',
+            'minefield_is_active',
+            'g_special_action_trigger',
+            'bumpy_road_is_active',
+            'vision_bridge_task_is_active',
+            'vision_slope_task_is_active',
+            'vision_three_stage_control_is_active'
+        ];
+
+        const traces = flags.map(name => ({
+            x: t,
+            y: telemetry.map(r => getNum(r, name)),
+            mode: 'lines',
+            name: name,
+            line: { width: 1.5, shape: 'hv' }
+        }));
+
+        Plotly.newPlot(div, traces, {
+            title: '导航任务标志（台阶/斜坡等）',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: '状态码 / 布尔' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    // 新增：导航状态标志 XY 图
+    function drawNavStateTrajectory() {
+        const div = document.getElementById('navStateTrajectoryChart');
+        if (!telemetry) return;
+
+        const x = telemetry.map(r => getNum(r, 'nav_x'));
+        const y = telemetry.map(r => getNum(r, 'nav_y'));
+        const loop = telemetry.map(r => getNum(r, 'loop'));
+
+        // 状态机字段及显示颜色（优先级从高到低）
+        const priority = [
+            { field: 'vision_slope_task_is_active', name: '斜坡任务', color: '#f97316' },
+            { field: 'vision_bridge_task_is_active', name: '桥梁任务', color: '#3b82f6' },
+            { field: 'vision_three_stage_control_is_active', name: '三段控制', color: '#eab308' },
+            { field: 'bumpy_road_is_active', name: '颠簸路段', color: '#a855f7' },
+            { field: 'minefield_is_active', name: '雷区', color: '#ef4444' },
+            { field: 'g_special_action_trigger', name: '特殊动作', color: '#ec4899' },
+            { field: 'mark_trigger', name: '标记触发', color: '#14b8a6' }
+        ];
+
+        // 初始化类别为“普通”
+        const categories = new Array(telemetry.length).fill('普通');
+        const categoryColors = { '普通': '#94a3b8' };
+        priority.forEach(p => categoryColors[p.name] = p.color);
+
+        // 为每个点确定主要激活标志（按优先级）
+        for (let i = 0; i < telemetry.length; i++) {
+            for (const p of priority) {
+                if (getNum(telemetry[i], p.field) === 1) {
+                    categories[i] = p.name;
+                    break;
+                }
+            }
+        }
+
+        // 分组绘制
+        const traces = [];
+        const uniqueCats = [...new Set(categories)];
+        uniqueCats.forEach(cat => {
+            const idx = [];
+            categories.forEach((c, i) => { if (c === cat) idx.push(i); });
+            if (!idx.length) return;
+            traces.push({
+                x: idx.map(i => x[i]),
+                y: idx.map(i => y[i]),
+                mode: 'markers',
+                type: 'scatter',
+                name: cat,
+                marker: { color: categoryColors[cat], size: 6, line: { width: 0.5, color: '#000' } },
+                text: idx.map(i => `loop: ${loop[i]}<br>状态: ${cat}<br>x: ${x[i].toFixed(1)}<br>y: ${y[i].toFixed(1)}`),
+                hoverinfo: 'text'
+            });
+        });
+
+        // 添加期望轨迹
+        if (routePoints.length) {
+            traces.push({
+                x: routePoints.map(p => p.x),
+                y: routePoints.map(p => p.y),
+                mode: 'lines+markers',
+                type: 'scatter',
+                name: '期望轨迹',
+                marker: { color: '#ffffff', size: 4, symbol: 'diamond' },
+                line: { width: 2, color: '#ffffff', dash: 'dash' }
+            });
+        }
+
+        Plotly.newPlot(div, traces, {
+            title: '导航轨迹 - 状态机标志分布',
+            xaxis: { title: 'X (mm)' },
+            yaxis: { title: 'Y (mm)' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    // 以下绘图函数与之前相同，略作保留以维持完整
+    function drawSpeedBody(t) {
+        const div = document.getElementById('speedBodyChart');
+        if (!telemetry) return;
+        const vx = telemetry.map(r => getNum(r, 'vx_body'));
+        const vy = telemetry.map(r => getNum(r, 'vy_body'));
+        Plotly.newPlot(div, [
+            { x: t, y: vx, mode: 'lines', name: 'vx_body', line: { width: 1 } },
+            { x: t, y: vy, mode: 'lines', name: 'vy_body', line: { width: 1 } }
+        ], {
+            title: '车体速度',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: 'mm/s' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    function drawWheelSpeed(t) {
+        const div = document.getElementById('wheelSpeedChart');
+        if (!telemetry) return;
+        const target = telemetry.map(r => getNum(r, 'target_speed_set'));
+        const sl = telemetry.map(r => getNum(r, 'speed_L'));
+        const sr = telemetry.map(r => getNum(r, 'speed_R'));
+        Plotly.newPlot(div, [
+            { x: t, y: target, mode: 'lines', name: 'target_speed_set (rpm)', line: { width: 1 } },
+            { x: t, y: sl, mode: 'lines', name: 'speed_L (raw)', line: { width: 1 } },
+            { x: t, y: sr, mode: 'lines', name: 'speed_R (raw)', line: { width: 1 } }
+        ], {
+            title: '轮速与目标转速',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: '原始单位（target_speed_set 为 rpm）' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    function drawServo(t) {
+        const div = document.getElementById('servoChart');
+        if (!telemetry) return;
+        const rf = telemetry.map(r => getNum(r, 'servo_angle_rf'));
+        const rr = telemetry.map(r => getNum(r, 'servo_angle_rr'));
+        const lf = telemetry.map(r => getNum(r, 'servo_angle_lf'));
+        const lr = telemetry.map(r => getNum(r, 'servo_angle_lr'));
+        Plotly.newPlot(div, [
+            { x: t, y: rf, mode: 'lines', name: 'RF', line: { width: 1 } },
+            { x: t, y: rr, mode: 'lines', name: 'RR', line: { width: 1 } },
+            { x: t, y: lf, mode: 'lines', name: 'LF', line: { width: 1 } },
+            { x: t, y: lr, mode: 'lines', name: 'LR', line: { width: 1 } }
+        ], {
+            title: '舵机角度',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: '°' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    function drawPWM(t) {
+        const div = document.getElementById('pwmChart');
+        if (!telemetry) return;
+        const pl = telemetry.map(r => getNum(r, 'pwm_left'));
+        const pr = telemetry.map(r => getNum(r, 'pwm_right'));
+        Plotly.newPlot(div, [
+            { x: t, y: pl, mode: 'lines', name: 'pwm_left', line: { width: 1 } },
+            { x: t, y: pr, mode: 'lines', name: 'pwm_right', line: { width: 1 } }
+        ], {
+            title: 'PWM 输出',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: '占空比' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    function drawAngle(t) {
+        const div = document.getElementById('angleChart');
+        if (!telemetry) return;
+        const yaw = telemetry.map(r => getNum(r, 'relative_yaw'));
+        const eulerYaw = telemetry.map(r => getNum(r, 'euler_yaw'));
+        const err = telemetry.map(r => getNum(r, 'err_degree'));
+        const heading = telemetry.map(r => getNum(r, 'heading'));
+        Plotly.newPlot(div, [
+            { x: t, y: yaw, mode: 'lines', name: 'relative_yaw', line: { width: 1 } },
+            { x: t, y: eulerYaw, mode: 'lines', name: 'euler_yaw', line: { width: 1 } },
+            { x: t, y: err, mode: 'lines', name: 'err_degree', line: { width: 1 } },
+            { x: t, y: heading, mode: 'lines', name: 'heading(谨慎使用)', line: { width: 1, dash: 'dot' } }
+        ], {
+            title: '角度 / 控制量',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: '°' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    function drawIMU(t) {
+        const div = document.getElementById('imuChart');
+        if (!telemetry) return;
+        const ax = telemetry.map(r => getNum(r, 'imu_acc_x') / 4098);
+        const ay = telemetry.map(r => getNum(r, 'imu_acc_y') / 4098);
+        const az = telemetry.map(r => getNum(r, 'imu_acc_z') / 4098);
+        const gx = telemetry.map(r => getNum(r, 'imu_gyro_x') / 14.3);
+        const gy = telemetry.map(r => getNum(r, 'imu_gyro_y') / 14.3);
+        const gz = telemetry.map(r => getNum(r, 'imu_gyro_z') / 14.3);
+        const traceAcc = [
+            { x: t, y: ax, mode: 'lines', name: 'acc_x (g)', line: { width: 1 } },
+            { x: t, y: ay, mode: 'lines', name: 'acc_y (g)', line: { width: 1 } },
+            { x: t, y: az, mode: 'lines', name: 'acc_z (g)', line: { width: 1 } }
+        ];
+        const traceGyro = [
+            { x: t, y: gx, mode: 'lines', name: 'gyro_x (°/s)', line: { width: 1 } },
+            { x: t, y: gy, mode: 'lines', name: 'gyro_y (°/s)', line: { width: 1 } },
+            { x: t, y: gz, mode: 'lines', name: 'gyro_z (°/s)', line: { width: 1 } }
+        ];
+        Plotly.newPlot(div, traceAcc.concat(traceGyro), {
+            title: 'IMU（加速度已 /4098，陀螺仪已 /14.3）',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: 'g / °/s' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    function drawState(t) {
+        const div = document.getElementById('stateChart');
+        if (!telemetry) return;
+        const names = [
+            'g_replay_state', 'nav_replay_point_type', 'mark_trigger',
+            'minefield_is_active', 'g_special_action_trigger', 'bumpy_road_is_active',
+            'vision_bridge_task_is_active', 'vision_slope_task_is_active',
+            'vision_three_stage_control_is_active', 'slip_flag', 'pid_mode'
+        ];
+        const traces = names.map(name => ({
+            x: t,
+            y: telemetry.map(r => getNum(r, name)),
+            mode: 'lines',
+            name: name,
+            line: { width: 1, shape: 'hv' }
+        }));
+        Plotly.newPlot(div, traces, {
+            title: '状态机 / 任务标志',
+            xaxis: { title: 'loop (s)' },
+            yaxis: { title: '状态码 / 布尔' },
+            margin: { t: 40, b: 40, l: 60, r: 20 },
+            legend: { orientation: 'h', y: 1.12 }
+        }, { responsive: true });
+    }
+
+    document.getElementById('csvFile').addEventListener('change', function(e) {
+        if (e.target.files && e.target.files[0]) {
+            parseCSV(e.target.files[0]);
+        }
+    });
+
+    document.getElementById('routeFile').addEventListener('change', function(e) {
+        if (e.target.files && e.target.files[0]) {
+            parseRouteH(e.target.files[0]);
+        }
+    });
+
+    // 拖拽上传支持
+    const uploadArea = document.getElementById('uploadArea');
+    ['dragover', 'dragenter'].forEach(evt => {
+        uploadArea.addEventListener(evt, function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.add('dragover');
+        });
+    });
+    ['dragleave', 'drop'].forEach(evt => {
+        uploadArea.addEventListener(evt, function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            uploadArea.classList.remove('dragover');
+        });
+    });
+
+    uploadArea.addEventListener('drop', function(e) {
+        const files = e.dataTransfer.files;
+        if (!files.length) return;
+        for (let f of files) {
+            const name = f.name.toLowerCase();
+            if (name.endsWith('.csv')) {
+                parseCSV(f);
+                break;
+            } else if (name.endsWith('.h') || name.endsWith('.txt')) {
+                parseRouteH(f);
+            }
+        }
+    });
+</script>
+</body>
+</html>
