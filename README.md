@@ -1,572 +1,303 @@
-# TongjiCar1 智能轮腿车双核控制系统
+# Wheel-legged-autocar：双轮足智能车完整开源工程
 
-![Build](https://img.shields.io/badge/build-IAR%20manual-blue)
-![Platform](https://img.shields.io/badge/platform-CYT4BB%20%7C%20Cortex--M7-orange)
-![Core](https://img.shields.io/badge/core-CM7__0%20%2B%20CM7__1-purple)
-![Language](https://img.shields.io/badge/language-C%20%7C%20Python%20%7C%20HTML-informational)
-![License](https://img.shields.io/badge/license-GPL--3.0-green)
-![Docs](https://img.shields.io/badge/docs-README%20%2B%20module%20notes-brightgreen)
+<p align="center">
+  <strong>第 21 届全国大学生智能汽车竞赛 · 轮腿穿越组</strong><br>
+  从机械方案、嵌入式控制、视觉识别到上位机分析的开发过程记录
+</p>
 
-> 面向智能轮腿车 / 智能车竞赛场景的双核嵌入式工程。项目以 `user/` 为主入口，在 0 核侧完成系统初始化、平衡控制、导航回放和任务状态机调度，在 1 核侧完成摄像头图像处理、视觉识别和跨核视觉结果发布。
+<p align="center">
+  <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/badge/repo-Wheel--legged--autocar-181717?logo=github" alt="repository"></a>
+  <img src="https://img.shields.io/badge/MCU-CYT4BB-orange" alt="MCU">
+  <img src="https://img.shields.io/badge/Core-Cortex--M7%20dual--core-blue" alt="dual core">
+  <img src="https://img.shields.io/badge/Language-C%20%7C%20Python%20%7C%20HTML-informational" alt="language">
+  <img src="https://img.shields.io/badge/License-GPL--3.0-green" alt="license">
+</p>
 
----
+> 本仓库公开的是一套真实参赛项目：双轮足（轮腿）智能车的软件、硬件适配、视觉算法、导航控制、调试工具和过程文档。代码以“能复现、可分析、便于二次开发”为目标整理，欢迎用于学习、研究和改进。
 
-## 1. 项目概述
+## 目录
 
-TongjiCar1 是基于逐飞 CYT4BB 开源库、Cortex-M7 双核平台和 IAR Embedded Workbench 的车载控制项目，核心目标是让轮腿车完成平衡行驶、GNSS/惯导导航、轨迹记录与回放、单边桥、地雷区、颠簸路、三阶段跳跃等竞赛任务。
+- [Wheel-legged-autocar：双轮足智能车完整开源工程](#wheel-legged-autocar双轮足智能车完整开源工程)
+  - [目录](#目录)
+  - [项目简介](#项目简介)
+  - [功能总览](#功能总览)
+    - [运动控制](#运动控制)
+    - [导航与比赛科目](#导航与比赛科目)
+    - [视觉与通信](#视觉与通信)
+    - [工具链](#工具链)
+  - [系统架构](#系统架构)
+  - [仓库结构](#仓库结构)
+    - [项目文件树详解](#项目文件树详解)
+  - [硬件与软件环境](#硬件与软件环境)
+    - [车端](#车端)
+    - [PC 端](#pc-端)
+  - [快速开始](#快速开始)
+    - [1. 获取代码](#1-获取代码)
+    - [2. 打开 IAR 双核工程](#2-打开-iar-双核工程)
+    - [3. 首次上电检查](#3-首次上电检查)
+  - [配置说明](#配置说明)
+  - [PC 工具](#pc-工具)
+  - [文档导航](#文档导航)
+  - [安全与复现边界](#安全与复现边界)
+  - [贡献与交流](#贡献与交流)
+  - [致谢](#致谢)
 
-本仓库中双核工程的实际目录命名为：
+## 项目简介
 
-| 用户描述 | 仓库实际目录 | 主要职责 |
-| --- | --- | --- |
-| `code/0核工程/` | `code/` | 0 核业务与算法实现：配置、EKF/PID、惯导/GNSS、轨迹记录回放、舵机/电机控制、任务状态机、0 核侧视觉控制与调试工具。 |
-| `code/1核工程/` | `code1/` | 1 核视觉与图传实现：摄像头图像压缩、PVC/单边桥线/颠簸路视觉识别、视觉 IPC 发布、WiFi 图传与示波协议。 |
-| `user/` | `user/` | 双核程序入口与中断调度：`main_cm7_0.c`、`cm7_0_isr.c` 调用 0 核功能；`main_cm7_1.c`、`cm7_1_isr.c` 调用 1 核视觉功能。 |
+TongjiCar1 是面向智能汽车竞赛轮腿穿越组的双轮足机器人软件工程。平台采用逐飞 CYT4BB 开源库和 Cortex‑M7 双核 MCU：
 
-### 核心功能链路
+- **CM7_0（0 核）**：实时控制主核，负责 IMU/EKF、平衡与多环 PID、轮毂电机、舵机、遥控器、GNSS/惯导、轨迹记录回放和科目状态机。
+- **CM7_1（1 核）**：视觉与图传协处理核，负责 MT9V03X 摄像头采集、图像压缩、PVC/单边桥/颠簸路视觉识别、IPM 坐标变换及跨核结果发布。
 
-1. `user/main_cm7_0.c` 启动 0 核，初始化时钟、调试串口、屏幕、电机驱动、舵机执行器、蜂鸣器、IMU、EKF、GNSS、导航缓存、视觉 IPC、任务控制器和 PIT 中断。
-2. `user/cm7_0_isr.c` 在 1 ms / 2 ms / 10 ms 等周期中断中调度姿态更新、导航回放、遥控器、视觉控制、平衡 PID、转向控制、电机输出和舵机动作。
-3. `user/main_cm7_1.c` 启动 1 核，初始化摄像头、PVC 视觉、桥线视觉、颠簸路视觉和 1 核 IPC，并在每帧图像到达时根据 0 核命令运行对应视觉算法。
-4. `code/vision/vision_ipc_core0.*` 与 `code1/vision/vision_ipc_core1.*` 通过跨核共享结构完成视觉任务开关、复位请求、结果发布与轮询。
-5. `tools/` 提供离线可视化、导航分析、控制仿真、传感器标定、上位机图传、CV 算法验证等辅助工具。
+项目覆盖备赛、标定、离线验证、实车调试和比赛版本维护，代码中保留了不同车辆、传感器和科目的配置入口，便于对照实验。
 
----
+## 功能总览
 
-## 2. 目录结构
+### 运动控制
 
-> 说明：以下树形图保留关键目录和核心文件，辅助脚本与文档按类别汇总展示。
+- IMU660RA/IMU660RB/IMU963RA 适配与姿态 EKF
+- 速度、角度、角速度、转向、横滚平衡等多环 PID
+- 双轮差速/转向控制、无刷电机串口输出、舵机位置和动作执行器
+- 起立瞄准发车、跳跃动作、落地缓冲和侧向打滑检测
 
-```text
-tongjicar1/
-├─ README.md                              # 项目说明文档
-├─ user/                                  # 双核入口与中断调度层
-│  ├─ main_cm7_0.c                        # 0 核主入口：初始化硬件、控制模块、导航、视觉 IPC、PIT
-│  ├─ cm7_0_isr.c                         # 0 核 ISR：平衡控制、遥控器、导航回放、任务状态机、电机/舵机输出
-│  ├─ main_cm7_1.c                        # 1 核主入口：摄像头、视觉算法、图像压缩、视觉 IPC
-│  └─ cm7_1_isr.c                         # 1 核 ISR：视觉 IPC 2 ms 更新、摄像头采集中断框架
-├─ code/                                  # 0 核工程：控制、导航、任务、外设和 0 核视觉控制
-│  ├─ zf_common_headfile.h                # 公共总头文件：聚合逐飞 SDK/驱动/设备头和项目模块头
-│  ├─ common.h                            # 跨模块通用声明与共享状态
-│  ├─ gps.c / gps.h                       # GNSS 数据处理、简易滤波、平面坐标转换与稳定性检测
-│  ├─ small_driver_uart_control.c/.h      # 无刷电机/小驱动串口控制
-│  ├─ config/                             # 车型与全局开关配置
-│  │  ├─ config.h                         # 配置聚合头，包含 car_select.h 与 sys_options.h
-│  │  ├─ car_select.h                     # 车型选择及硬件差异说明
-│  │  └─ sys_options.h                    # WiFi、显示、遥控、IMU、科目等全局开关
-│  ├─ calculate/                          # 计算与控制基础层
-│  │  ├─ ekf.c / ekf.h                    # IMU 姿态 EKF、航向角、陀螺校准、磁力计校准
-│  │  ├─ matrix.c / matrix.h              # 小规模矩阵运算、归一化、限幅等数学工具
-│  │  └─ pid-new.c / pid-new.h            # 速度/角度/角速度/转向/横滚 PID 与制动前馈
-│  ├─ navigation/                         # 导航、轨迹记录和回放
-│  │  ├─ inertial_nav.c/.h                # 惯性导航状态初始化
-│  │  ├─ gnss_transform.c/.h              # GNSS 经纬度到高斯-克吕格/局部坐标转换
-│  │  ├─ nav_ram.c/.h                     # RAM 中轨迹点记录、计数与任务点蜂鸣提示
-│  │  ├─ nav_replay.c/.h                  # 轨迹回放、最近点搜索、弯道预判和任务触发
-│  │  ├─ nav_replay_route_table.h         # 静态回放路线表
-│  │  └─ ram2flash.c/.h                   # RAM 轨迹与 Flash 之间的读写请求处理
-│  ├─ plan/                               # 科目/场景任务策略
-│  │  ├─ bridge.c/.h                      # 单边桥姿态、高度、横滚与三连桥测试控制
-│  │  ├─ bumpy_road.c/.h                  # 颠簸路状态机、距离计算、视觉转向辅助
-│  │  └─ minefield.c/.h                   # 地雷区旋转控制与状态管理
-│  ├─ servo/                              # 舵机、轮腿机构和跳跃动作
-│  │  ├─ servo.c/.h                       # 舵机角度/占空比映射、高度姿态表、当前角度缓存
-│  │  ├─ servo_executor.c/.h              # 常规舵机目标平滑执行器
-│  │  └─ servo_jump.c/.h                  # 台阶/跳跃动作序列与动量轮控制接口
-│  ├─ tools/                              # 0 核通用工具与通信
-│  │  ├─ beep.c/.h                        # 蜂鸣器初始化与提示
-│  │  ├─ flash.c/.h                       # 参数 Flash 读写
-│  │  ├─ menu.c/.h                        # IPS 屏菜单、按键操作、任务启动/保存入口
-│  │  ├─ sbus.c/.h                        # SBUS 遥控器解析与目标速度/转向映射
-│  │  ├─ wifi.c/.h                        # 0 核 WiFi 初始化、连接、PID 参数更新辅助
-│  │  ├─ wifi_protocol.c/.h               # 0 核自定义 WiFi 帧协议
-│  │  ├─ telemetry_ipc.h                  # 遥测 IPC 数据结构
-│  │  ├─ telemetry_ipc_core0.c/.h         # 0 核遥测发布
-│  │  └─ runtime_profiler.h               # 运行耗时统计结构
-│  └─ vision/                             # 0 核侧视觉任务控制
-│     ├─ vision_ipc.h                     # 跨核视觉 IPC 公共结构
-│     ├─ vision_ipc_core0.c/.h            # 0 核视觉命令发布与结果轮询
-│     ├─ vision_pvc_control.c/.h          # PVC 视觉结果到转向误差的控制接口
-│     ├─ vision_bumpy_control.c/.h        # 颠簸路视觉辅助控制
-│     ├─ vision_bridge_control.c/.h       # 单边桥视觉对线/姿态控制任务
-│     └─ vision_three_stage_control.c/.h  # 三阶段视觉任务与跳跃触发控制
-├─ code1/                                 # 1 核工程：视觉算法、图传和 1 核 IPC
-│  ├─ wifi.c/.h                           # 1 核图像压缩、视觉结果渲染、WiFi 初始化辅助
-│  ├─ wifi_diff_stream.c/.h               # 灰度图差分帧流发送
-│  ├─ wifi_protocol.c/.h                  # 1 核 WiFi 控制/示波协议
-│  └─ vision/
-│     ├─ pvc_vision.c/.h                  # PVC 白色目标检测、连通域筛选、物理坐标估计
-│     ├─ line_vision.c/.h                 # 单边桥/直线检测与中心线输出
-│     ├─ bumpy_vision.c/.h                # 颠簸路白/暗特征检测与滤波
-│     ├─ ipm_transform.c/.h               # 逆透视映射查询与物理距离计算
-│     ├─ vision_ipc_core1.c/.h            # 1 核读取命令、发布视觉结果/空闲状态
-│     └─ telemetry_ipc_core1.c/.h         # 1 核读取遥测数据
-├─ docs/                                  # 设计说明、任务规划、模块文档、调试记录
-│  ├─ code文件概览.md                     # code/user 新人导读
-│  ├─ 任务放在哪个核里.md                 # 双核任务分配草案
-│  ├─ 模块文档/                           # beep/flash/menu/sbus/wifi/舵机/屏幕/GPIO 等模块说明
-│  └─ 任务规划/                           # GNSS、科目一二三、视觉融合、底层优化等规划
-├─ tools/                                 # PC 端调试、仿真、可视化和算法验证工具
-│  ├─ 01_导航与定位可视化/                # GNSS/惯导轨迹 HTML 与 Python 可视化
-│  ├─ 02_导航算法分析/                    # 坐标对齐、回环检测、路径规划方案对比
-│  ├─ 03_控制与仿真/                      # PID 调参、轮腿仿真、MPC/Pure Pursuit/RL 仿真
-│  ├─ 04_传感器标定与测试/                # 磁力计、逆透视、重力加速度、图传压缩测试
-│  ├─ 05_通用数据处理工具/                # 代码量统计、changelog、视频网页上位机
-│  ├─ 06_算法原理动画/                    # 五连杆、惯导等算法演示
-│  ├─ 07_针对小车车载视频的cv算法/        # 车载视频 CV 算法原型与 C 检测器
-│  ├─ cvtest/                             # 桥、地雷、台阶场景的离线 CV 测试
-│  ├─ webview_nav_marker/                 # 导航点标注、CSV 转路线表和 WebView 工具
-│  └─ wifi_protocol/                      # WiFi 上位机页面、Streamlit 调试与 CSV 可视化
-└─ iar/
-   ├─ icf/linker_directives_tviibh.icf    # IAR 链接脚本
-   └─ project_config/                     # CM7_0 / CM7_1 IAR 工程配置文件
-```
+### 导航与比赛科目
 
----
+- GNSS 经纬度到局部平面坐标转换
+- 惯性导航、轨迹 RAM 记录、Flash 保存、静态轨迹回放
+- 科目一至科目四的路径跟踪、速度规划和任务状态机
+- 地雷区、单边桥、颠簸路、三级台阶/跳跃等专用控制逻辑
 
-## 3. 核心工程说明
+### 视觉与通信
 
-### 3.1 0 核工程（`code/` + `user/main_cm7_0.c` + `user/cm7_0_isr.c`）
+- PVC 白色目标、桥线/直线、颠簸路特征识别
+- 逆透视（IPM）和像素到物理坐标估计
+- CM7_0 ↔ CM7_1 视觉 IPC：任务门控、复位请求、结果发布与轮询
+- WiFi 图传、遥测、自定义协议及逐飞助手兼容接口
 
-0 核是整车控制主核，偏实时控制与任务决策。
+### 工具链
 
-#### 主要模块
+- GNSS/惯导轨迹可视化、坐标对齐、回环与路径规划分析
+- PID 调参、轮腿运动学、Pure Pursuit/MPC/RL 仿真
+- IMU/磁力计/逆透视标定和车载视频 CV 离线测试
+- WebView 导航点标注、CSV 转 C 路线表、WiFi/视频上位机
 
-| 模块 | 关键文件 | 功能 |
-| --- | --- | --- |
-| 配置层 | `code/config/*.h` | 统一选择车型、IMU、WiFi、屏幕、遥控器、当前科目等编译期配置。 |
-| 姿态与数学 | `code/calculate/ekf.*`、`matrix.*` | IMU 采样、陀螺校准、EKF 姿态解算、欧拉角输出、航向角更新和基础矩阵运算。 |
-| PID 控制 | `code/calculate/pid-new.*` | 速度环、角度环、角速度环、转向角度/角速度环、横滚平衡、制动前馈。 |
-| 执行器 | `code/small_driver_uart_control.*`、`code/servo/*` | 小驱动串口电机占空比输出，舵机占空比/角度控制，常规平滑执行器和跳跃动作执行器。 |
-| 导航 | `code/gps.*`、`code/navigation/*` | GNSS 处理、局部坐标转换、惯导状态、RAM/Flash 轨迹记录、静态路线加载、回放和任务点触发。 |
-| 任务策略 | `code/plan/*` | 单边桥、颠簸路、地雷区等科目状态机和专用控制逻辑。 |
-| 视觉控制 | `code/vision/*` | 0 核下发视觉任务命令，读取 1 核视觉结果，并转化为 PVC、颠簸路、桥线和三阶段控制输出。 |
-| 调试工具 | `code/tools/*` | 蜂鸣器、Flash 参数、菜单、SBUS 遥控器、WiFi 协议、遥测 IPC、耗时统计。 |
-
-#### 初始化与调度
-
-0 核主函数典型初始化顺序如下：
-
-1. `clock_init(SYSTEM_CLOCK_250M)` 和 `debug_init()`。
-2. 初始化 IPS200 屏幕、UART FIFO、调试串口和串口接收中断。
-3. 初始化无刷电机串口驱动、舵机执行器、蜂鸣器。
-4. 按配置初始化 WiFi / 摄像头辅助功能（当前 `WIFI_USE` 默认为 `0`）。
-5. 初始化 IMU、EKF、PID 参数、导航 RAM、GNSS 转换、Flash 导航请求、菜单、SBUS 遥控器、视觉 IPC 与视觉控制器。
-6. 配置 PIT 周期中断：0 核主要使用 1 ms 控制中断、10 ms 遥控/辅助中断以及 2 ms 视觉 IPC/视觉控制更新节拍。
-
-#### 主要输出
-
-- 左右轮电机 PWM/占空比：通过 `small_driver_set_duty()` 输出到小驱动。
-- 舵机角度/占空比：通过 `servo_executor_update()` 或 `servo_jump_executor()` 输出。
-- 任务状态和导航状态：保存在全局状态、RAM 轨迹缓存和 Flash 中。
-- 屏幕/蜂鸣器/串口/WiFi 调试信息：用于现场调参和状态确认。
-
-### 3.2 1 核工程（`code1/` + `user/main_cm7_1.c` + `user/cm7_1_isr.c`）
-
-1 核是视觉和图像处理辅助核，偏并行计算与数据发布。
-
-#### 主要模块
-
-| 模块 | 关键文件 | 功能 |
-| --- | --- | --- |
-| 图像采集与压缩 | `user/main_cm7_1.c`、`code1/wifi.*` | 初始化 MT9V03X 摄像头，将原图复制并压缩到视觉算法输入尺寸。 |
-| PVC 识别 | `code1/vision/pvc_vision.*` | 检测白色 PVC 目标，输出连通域、置信度、中心点、物理坐标等结果。 |
-| 桥线/直线识别 | `code1/vision/line_vision.*` | 提取近端白线/暗色桥体特征，输出线中心和偏差。 |
-| 颠簸路识别 | `code1/vision/bumpy_vision.*` | 检测颠簸路相关白色/暗色结构，输出候选位置和置信度。 |
-| IPM 坐标 | `code1/vision/ipm_transform.*` | 通过逆透视查表将像素位置转换为物理坐标或距离。 |
-| 跨核通信 | `code1/vision/vision_ipc_core1.*` | 读取 0 核命令、处理复位请求、发布当前视觉结果或空闲状态。 |
-| 图传/协议 | `code1/wifi_diff_stream.*`、`code1/wifi_protocol.*` | 差分帧流、控制帧、示波数据发送；部分调用当前被注释，按调试需求启用。 |
-
-#### 运行逻辑
-
-1. 1 核初始化时钟、调试信息、摄像头、PVC/桥线/颠簸路视觉模块和视觉 IPC。
-2. 配置 `PIT_CH2` 为 2 ms 中断，调用 `VisionIpc_Core1_Update_2ms()` 维护跨核通信状态。
-3. 主循环等待 `mt9v03x_finish_flag`，一旦摄像头帧完成：
-   - 复制原始图像到 `image_copy`；
-   - 压缩到 `compressed_image_copy`；
-   - 按 0 核命令执行 PVC、桥线、颠簸路中的一个或多个视觉算法；
-   - 将识别结果渲染到压缩图像（用于图传调试）；
-   - 通过 IPC 发布最新结果供 0 核读取。
-
-#### 主要输出
-
-- 视觉识别结构体：目标是否有效、置信度、像素坐标、物理坐标、角度/偏差等。
-- 跨核 IPC 数据包：由 1 核发布，0 核轮询读取。
-- 可选 WiFi 图像/示波数据：用于上位机调试，当前部分发送逻辑需要按现场配置打开。
-
-### 3.3 双核差异与协作关系
-
-| 维度 | 0 核 | 1 核 |
-| --- | --- | --- |
-| 实时性重点 | 平衡控制、电机输出、任务状态机、遥控安全 | 摄像头帧处理、视觉算法、图像调试 |
-| 主要入口 | `user/main_cm7_0.c` | `user/main_cm7_1.c` |
-| 主要 ISR | `user/cm7_0_isr.c`：PIT 控制节拍、遥控器、UART | `user/cm7_1_isr.c`：视觉 IPC 2 ms、摄像头采集框架 |
-| 共享方式 | 通过 `VisionIpc_Core0_*` 下发任务、轮询结果 | 通过 `VisionIpc_Core1_*` 接收任务、发布结果 |
-| 输出对象 | 电机、舵机、导航/任务状态、屏幕/蜂鸣器 | 视觉结果、可选图传/示波数据 |
-
-协作流程可概括为：
+## 系统架构
 
 ```text
-0 核任务状态机/控制器
-        │ 发送视觉任务开关、复位请求
-        ▼
-Vision IPC 共享结构
-        │ 1 核读取命令
-        ▼
-1 核摄像头帧处理 + 视觉算法
-        │ 发布识别结果
-        ▼
-0 核读取视觉结果并转化为 err_degree / target_speed / 舵机动作 / 任务触发
+                         ┌──────────────────────────┐
+                         │        CYT4BB MCU         │
+                         │     Cortex-M7 双核心      │
+                         └────────────┬─────────────┘
+                                      │ 共享 RAM / IPC
+                 ┌────────────────────┴────────────────────┐
+                 │                                         │
+      ┌──────────▼──────────┐                  ┌──────────▼──────────┐
+      │ CM7_0：实时控制      │                  │ CM7_1：视觉协处理      │
+      │ user/main_cm7_0.c    │                  │ user/main_cm7_1.c    │
+      │ 1 ms PIT + ISR       │                  │ 摄像头帧循环 + PIT    │
+      └──────────┬──────────┘                  └──────────┬──────────┘
+                 │                                         │
+      ┌──────────▼──────────┐                  ┌──────────▼──────────┐
+      │ EKF / PID / 导航     │                  │ PVC / Bridge / Bumpy │
+      │ 电机 / 舵机 / 任务    │                  │ IPM / 图传 / 遥测      │
+      └─────────────────────┘                  └─────────────────────┘
 ```
 
----
+典型数据链路：摄像头完成一帧采集后由 1 核运行选中的视觉算法，结果写入 IPC；0 核在周期中断中读取结果并转换为转向、速度或科目控制量，最终输出到电机和舵机。
 
-## 4. `user/` 调用说明
-
-`user/` 目录不是独立算法库，而是双核固件的实际入口层。它负责“何时初始化、何时周期调用、如何把算法输出写到硬件”。
-
-### 4.1 0 核入口：`user/main_cm7_0.c`
-
-主要职责：
-
-- 选择 250 MHz 系统时钟并初始化调试串口。
-- 初始化屏幕、蜂鸣器、电机串口、舵机执行器、IMU/EKF、PID、GNSS、导航缓存、Flash、菜单和 SBUS。
-- 初始化 0 核视觉 IPC 与 PVC/颠簸路/桥线/三阶段视觉控制器。
-- 配置 PIT 中断和全局中断。
-- 主循环中处理菜单刷新、导航 Flash 请求、WiFi 协议轮询、视觉 IPC 结果轮询等低频任务。
-
-典型调用片段：
-
-```c
-#include "zf_common_headfile.h"
-#include "config/config.h"
-#include "vision/vision_ipc_core0.h"
-
-int main(void)
-{
-    clock_init(SYSTEM_CLOCK_250M);
-    debug_init();
-
-    small_driver_uart_init();
-    servo_executor_init();
-    EKF_Init();
-    NavRam_Init();
-    VisionIpc_Core0_Init();
-
-    pit_ms_init(PIT_CH0, 1);   // 1 ms 控制节拍
-    interrupt_global_enable(0);
-
-    while(true)
-    {
-        VisionIpc_Core0_PollResult();
-        NavFlash_ProcessRequests();
-    }
-}
-```
-
-### 4.2 0 核中断：`user/cm7_0_isr.c`
-
-主要职责：
-
-- `pit0_ch0_isr()`：核心 1 ms 控制节拍，包含 EKF 更新、制动前馈、速度估计、导航回放、视觉控制、平衡/转向 PID、电机输出和舵机执行器更新。
-- `pit0_ch1_isr()`：遥控器处理和目标速度/角度映射，急停时停止导航回放并复位 PID。
-- `pit0_ch2_isr()`：2 ms 视觉 IPC 与视觉控制器更新。
-- UART ISR：处理调试串口或通信数据。
-
-典型控制链路：
+## 仓库结构
 
 ```text
-PIT_CH0 1ms
-├─ EKF_UpData() / 姿态角更新
-├─ 导航回放 NavReplay_Process()
-├─ 视觉控制 VisionPvcControl / VisionBumpyControl / VisionBridgeTask
-├─ Speed_Loop_Control → Angle_Loop_Control → Gyro_Loop_Control
-├─ Turn_Angle_Loop_Control → Turn_Gyro_Loop_Control
-├─ small_driver_set_duty(left, right)
-└─ servo_executor_update() 或 servo_jump_executor()
+.
+├── user/                         # 双核入口、PIT/UART 中断与初始化
+├── code/                         # 0 核：控制、导航、任务、执行器、视觉控制
+│   ├── config/                   # 车辆、科目、IMU、WiFi 等编译期配置
+│   ├── calculate/                # EKF、矩阵、PID
+│   ├── navigation/               # GNSS/惯导、轨迹记录与回放
+│   ├── plan/                     # 雷区、单边桥、颠簸路等任务逻辑
+│   ├── servo/                    # 舵机映射、动作执行器、跳跃动作
+│   ├── vision/                   # 0 核视觉 IPC 与视觉控制适配
+│   └── tools/                    # 蜂鸣器、屏幕、SBUS、WiFi、遥测
+├── code1/                        # 1 核：视觉算法、图像处理、图传
+│   └── vision/                   # PVC、桥线、颠簸路、IPM、IPC
+├── libraries/                    # 逐飞 CYT4BB 库、SDK、CMSIS、设备驱动
+│   └── doc/                      # 第三方库版权与许可证说明
+├── CYT2BL3FOC/                   # 独立的 CYT2BL3 双驱无刷电机工程
+├── iar/                          # IAR 双核工程与链接脚本
+├── tools/                        # PC 端分析、仿真、标定、上位机工具
+├── docs/                         # 架构、调参、任务规划和问题复盘
 ```
 
-### 4.3 1 核入口：`user/main_cm7_1.c`
+更细的逐文件说明见 [`docs/project-structure/README.md`](docs/project-structure/README.md)。
 
-主要职责：
+### 项目文件树详解
 
-- 初始化摄像头 `mt9v03x_init()`。
-- 初始化 `pvc_vision_init()`、`line_vision_init()`、`bumpy_vision_init()`。
-- 初始化 `VisionIpc_Core1_Init()`，并用 2 ms PIT 更新 IPC。
-- 主循环等待图像帧完成，根据 0 核命令执行对应视觉算法。
+| 路径 | 内容与职责 | 从哪里开始看 |
+| --- | --- | --- |
+| `user/` | 双核启动入口、外设初始化、PIT/UART 中断服务。决定“什么时候调用哪个模块”。 | `main_cm7_0.c`、`cm7_0_isr.c`、`main_cm7_1.c` |
+| `code/config/` | 车辆编号、IMU、WiFi、显示、遥控、科目和发车策略等编译期宏。 | `config.h`、`car_select.h`、`sys_options.h` |
+| `code/calculate/` | 姿态估计和底层控制算法。 | `ekf.c`、`matrix.c`、`pid-new.c` |
+| `code/navigation/` | GNSS/惯导坐标处理、轨迹记录、Flash 存取、回放和路径跟踪计划。 | `inertial_nav.c`、`gnss_transform.c`、`nav_replay/` |
+| `code/plan/` | 比赛科目状态机和动作编排。 | `bridge.c`、`minefield.c`、`bumpy_road.c` |
+| `code/servo/` | 舵机角度映射、平滑执行、跳跃及落地动作。 | `servo.c`、`servo_executor.c`、`servo_jump.c` |
+| `code/vision/` | 0 核侧视觉任务门控、IPC 轮询，以及将识别结果接入转向/速度控制。 | `vision_ipc_core0.c`、`vision_*_control.c` |
+| `code/tools/` | 蜂鸣器、屏幕菜单、SBUS、WiFi、遥测和运行耗时统计。 | `menu.c`、`sbus.c`、`telemetry_ipc_core0.c` |
+| `code1/vision/` | 1 核图像算法和跨核结果发布。 | `pvc_vision.c`、`bumpy_vision.c`、`ipm_transform.c` |
+| `code1/tools/` | 摄像头调试菜单等 1 核辅助模块。 | `camera_menu.c` |
+| `libraries/zf_*` | 逐飞公共组件、设备驱动、传感器驱动和板级适配。 | 结合 `zf_common_headfile.h` 查找引用 |
+| `libraries/sdk/` | CYT4BB 芯片 SDK、CMSIS/ARM Math 和启动/底层头文件。 | IAR include path |
+| `libraries/doc/` | 第三方库版本、版权和 GPL 声明。 | `version.txt`、`GPL3_permission_statement.txt` |
+| `iar/` | IAR 双核工程、链接脚本和工作区配置。 | `project_config/cyt4bb7_cm_7_0.ewp`、`cyt4bb7_cm_7_1.ewp` |
+| `CYT2BL3FOC/` | 独立的 CYT2BL3 双驱无刷电机控制工程，与 CYT4BB 主工程分开编译。 | 该目录自己的 `project/` |
+| `tools/` | PC 端离线分析、算法仿真、传感器标定、CV 测试和上位机。 | 先看 `tools/README.md` |
+| `docs/` | 架构说明、调参记录、任务规划、问题复盘和模块文档。 | `docs/project-structure/README.md` |
+| `data/`、`results/` | 本地采集数据和分析产物；通常不作为固件编译输入。 | 按工具 README 查找对应数据格式 |
 
-典型调用片段：
+源码依赖关系可以概括为：`user/` 负责调度，`code/` 提供 0 核业务，`code1/` 提供 1 核视觉，`libraries/` 提供芯片与外设能力，`tools/` 和 `docs/` 支撑验证与维护。
 
-```c
-#include "../code1/vision/pvc_vision.h"
-#include "../code1/vision/bumpy_vision.h"
-#include "../code1/vision/vision_ipc_core1.h"
+## 硬件与软件环境
 
-int main(void)
-{
-    clock_init(SYSTEM_CLOCK_250M);
-    debug_info_init();
+### 车端
 
-    mt9v03x_init();
-    pvc_vision_init();
-    line_vision_init();
-    bumpy_vision_init();
-    VisionIpc_Core1_Init();
-
-    pit_ms_init(PIT_CH2, 2);
-    interrupt_global_enable(0);
-
-    while(true)
-    {
-        if(mt9v03x_finish_flag)
-        {
-            mt9v03x_finish_flag = 0;
-            compress_image_to_target();
-
-            if(VisionIpc_Core1_ShouldRunPvc())
-            {
-                pvc_vision_process_camera_frame(compressed_image_copy[0]);
-                VisionIpc_Core1_PublishCurrent();
-            }
-        }
-    }
-}
-```
-
-### 4.4 常用配置示例
-
-#### 切换车型
-
-```c
-// code/config/car_select.h
-#define CAR_SELECT 3
-```
-
-#### 切换科目与调试开关
-
-```c
-// code/config/sys_options.h
-#define WIFI_USE 0
-#define DEBUG_DISPLAY 1
-#define REMOTE_CONTROL 1
-#define DEBUG_LOG_ENABLE 0
-#define IMU_CATEGORY 3
-#define CURRENT_NAV_PLAN 2
-```
-
-#### 开启 1 核视觉任务（概念示例）
-
-0 核侧根据任务状态调用视觉 IPC 控制接口：
-
-```c
-VisionIpc_Core0_SetPvcEnable(1);
-VisionIpc_Core0_SetBridgeLineEnable(1);
-VisionIpc_Core0_SetBumpyEnable(0);
-VisionIpc_Core0_Update_2ms();
-VisionIpc_Core0_PollResult();
-```
-
-1 核侧在每帧中按命令运行算法：
-
-```c
-if(VisionIpc_Core1_ShouldRunBridgeLine())
-{
-    line_vision_process_camera_frame(compressed_image_copy[0]);
-    render_line_vision_to_image();
-}
-```
-
----
-
-## 5. 环境与依赖
-
-### 5.1 嵌入式固件环境
-
-| 项目 | 要求 |
+| 类别 | 当前工程支持 |
 | --- | --- |
-| MCU / 平台 | CYT4BB / Cortex-M7 双核平台 |
-| 开发工具 | IAR Embedded Workbench，源文件注释中标注的开发环境为 IAR 9.40.1 |
-| 底层库 | 逐飞 CYT4BB 开源库、官方 SDK、CMSIS/ARM Math |
-| 工程配置 | `iar/project_config/cyt4bb7_cm_7_0.ewp`、`iar/project_config/cyt4bb7_cm_7_1.ewp` |
-| 链接脚本 | `iar/icf/linker_directives_tviibh.icf` |
-| 传感器/外设 | IMU660RA/IMU660RB/IMU963RA、GNSS、MT9V03X 摄像头、IPS200 屏幕、SBUS 遥控器、蜂鸣器、Flash、WiFi 模块、小驱动/无刷电机、舵机 |
+| MCU | Infineon/Cypress CYT4BB，Cortex‑M7 CM7_0 + CM7_1 |
+| IDE/编译器 | IAR Embedded Workbench（工程按 IAR 9.40.1 整理） |
+| 传感器 | IMU660RA、IMU660RB、IMU963RA、GNSS、MT9V03X 摄像头 |
+| 执行器 | 双轮电机、轮腿舵机、蜂鸣器、IPS200 屏幕 |
+| 通信 | SBUS 遥控器、UART、WiFi、跨核 IPC、Flash |
 
-> 待补充：仓库未包含完整 `libraries/`、逐飞 SDK 和官方芯片 SDK 文件。请在本地 IAR 工程中确认 include path、库路径和启动文件配置完整。
+仓库已包含 `libraries/` 中的逐飞库、SDK 和 CMSIS 文件；具体芯片、主板引脚和外设版本仍需与你的实物一致。
 
-### 5.2 PC 工具环境
+### PC 端
 
-`tools/` 下脚本以 Python 与 HTML 为主，按具体工具可能需要：
+- Python 3.9 或更高版本
+- 按工具安装 `numpy`、`pandas`、`matplotlib`、`opencv-python`、`streamlit` 等依赖
+- 支持现代 JavaScript 的浏览器，用于打开 HTML/WebView 工具
+- 运行 `tools/07_针对小车车载视频的cv算法/` 下 C 检测器时，需要 GCC/MinGW 或 Visual Studio
 
-- Python 3.9+
-- 常见科学计算/可视化库：`numpy`、`pandas`、`matplotlib`、`opencv-python`、`streamlit` 等
-- 浏览器：用于打开 HTML 可视化页面和 WebView 上位机
-- PowerShell / GCC 或 MinGW：用于 `tools/07_针对小车车载视频的cv算法/*/c_*_detector/` 下的 C 检测器构建脚本
+目前没有统一的 `requirements.txt`，不同脚本的依赖以所在目录 README、脚本导入和报错信息为准。
 
-> 待补充：仓库当前没有统一的 `requirements.txt`。运行某个 Python 工具时，如提示缺少包，请按报错逐项安装。
+## 快速开始
 
----
-
-## 6. 安装与运行
-
-### 6.1 获取代码
+### 1. 获取代码
 
 ```bash
-git clone <repo-url>
-cd tongjicar1
+git clone https://github.com/boatchanting/Wheel-legged-autocar.git
+cd Wheel-legged-autocar
 ```
 
-### 6.2 配置嵌入式依赖
+### 2. 打开 IAR 双核工程
 
-1. 安装 IAR Embedded Workbench（建议与逐飞示例工程一致，当前源码注释指向 IAR 9.40.1）。
-2. 准备逐飞 CYT4BB 开源库、官方 SDK、启动文件、芯片头文件和设备驱动。
-3. 打开 `iar/project_config/` 下的两个工程配置：
-   - `cyt4bb7_cm_7_0.ewp`：0 核工程；
-   - `cyt4bb7_cm_7_1.ewp`：1 核工程。
-4. 检查 include path 是否能找到：
-   - `code/`、`code1/`、`user/`；
-   - 逐飞 `zf_common_*`、`zf_driver_*`、`zf_device_*`；
-   - 芯片 SDK 头文件，如 `cy_project.h`、`cy_device_headers.h`、`arm_math.h`。
-5. 检查链接脚本是否使用 `iar/icf/linker_directives_tviibh.icf`。
+1. 安装 IAR Embedded Workbench，打开 `iar/project_config/cyt4bb7_cm_7_0.ewp` 和 `iar/project_config/cyt4bb7_cm_7_1.ewp`。
+2. 检查两个工程的 include path，至少包含 `code/`、`code1/`、`user/` 以及 `libraries/` 下对应的 SDK、驱动和 CMSIS 目录。
+3. 在 `code/config/car_select.h` 和 `code/config/sys_options.h` 中选择车辆、IMU、科目及调试开关。
+4. 分别 Clean/Rebuild 两个工程，确认 0 核和 1 核均能生成固件。
+5. 使用 DAP/IAR 下载器时，先烧录 CM7_0，再烧录 CM7_1；上电后先观察屏幕、串口和蜂鸣器状态。
 
-### 6.3 修改关键配置
+> 工程文件只描述本项目源码和链接布局，调试器、下载器、板卡引脚及外设接线仍需按你的硬件配置。
 
-1. 在 `code/config/car_select.h` 中设置当前车辆：
+### 3. 首次上电检查
+
+请先将 `G_MOTOR_ENABLE_INIT`、遥控急停和机械支撑置于安全状态，完成以下检查后再让轮子离地运行：
+
+- 舵机中位、极性、机械限位和跳跃动作幅度
+- 电机左右方向、PWM 极性、轮径和轮距
+- IMU 安装方向、零偏、磁力计校准和 `IMU_CATEGORY`
+- GNSS 串口、摄像头曝光/分辨率、SBUS 急停
+- PID 限幅、发车策略和当前科目状态机
+
+## 配置说明
+
+主要配置文件：
+
+| 文件 | 作用 | 当前示例 |
+| --- | --- | --- |
+| [`code/config/car_select.h`](code/config/car_select.h) | 车辆和硬件差异选择 | `CAR_SELECT 4` |
+| [`code/config/sys_options.h`](code/config/sys_options.h) | 全局开关、IMU、科目、遥控和调试 | `IMU_CATEGORY 3`、`CURRENT_NAV_PLAN 4` |
+| [`code/config/wifi_options.h`](code/config/wifi_options.h) | WiFi 核心及协议选择 | 默认关闭 WiFi |
+| [`code/calculate/pid-new.h`](code/calculate/pid-new.h) | 车辆相关 PID 预设 | 随 `CAR_SELECT` 选择 |
+| [`iar/icf/linker_directives_tviibh.icf`](iar/icf/linker_directives_tviibh.icf) | Flash/RAM、向量表和段布局 | CYT4BB 链接布局 |
+
+常见配置示例：
 
 ```c
-#define CAR_SELECT 3
+/* code/config/car_select.h */
+#define CAR_SELECT 4
+
+/* code/config/sys_options.h */
+#define IMU_CATEGORY       3   /* 1: IMU660RA, 2: IMU660RB, 3: IMU963RA */
+#define CURRENT_NAV_PLAN   4   /* 1~4 对应竞赛科目 */
+#define REMOTE_CONTROL     1
+#define DEBUG_DISPLAY      1
+#define DEBUG_LOG_ENABLE   0   /* 比赛运行建议关闭高频日志 */
+#define WIFI_USE           0
 ```
 
-2. 在 `code/config/sys_options.h` 中设置功能开关：
+修改配置后必须同时重编译两个核心，并重新确认 IPC 结构体、图像尺寸和共享内存布局没有被破坏。不要直接照搬其他车辆的舵机零点、PID 或传感器轴向。
 
-```c
-#define WIFI_USE 0
-#define DEBUG_DISPLAY 1
-#define REMOTE_CONTROL 1
-#define DEBUG_LOG_ENABLE 0
-#define IMU_CATEGORY 3
-#define CURRENT_NAV_PLAN 2
-```
+## PC 工具
 
-3. 根据实车检查：
-   - 舵机机械零点、方向、限幅；
-   - 电机左右方向；
-   - IMU 安装方向与零偏；
-   - GNSS 串口配置；
-   - 摄像头分辨率与曝光；
-   - SBUS 遥控器方向和急停开关。
+工具按用途分布在 `tools/`：
 
-### 6.4 编译与烧录
-
-```text
-1. 在 IAR 中分别打开 CM7_0 与 CM7_1 工程。
-2. Clean 后重新 Build，确保双核工程均编译通过。
-3. 先烧录/下载 0 核与 1 核固件到目标板。
-4. 上电后观察 IPS 屏幕、蜂鸣器、调试串口输出。
-5. 确认 IMU 初始化与陀螺校准完成后，再允许电机使能。
-```
-
-### 6.5 运行 PC 调试工具
+| 目录 | 用途 | 入口示例 |
+| --- | --- | --- |
+| `01_导航与定位可视化/` | GNSS/惯导轨迹、XY 对比 | `inertial_nav结果可视化.py` |
+| `02_导航算法分析/` | 滤波、坐标对齐、路径规划 | `streamlit自动对齐坐标系.py` |
+| `03_控制与仿真/` | PID、轮腿、Pure Pursuit/MPC/RL | `pid调参.py` |
+| `04_传感器标定与测试/` | 磁力计、逆透视、压缩和 IMU 测试 | 目录内 HTML/Python |
+| `05_通用数据处理工具/` | 代码统计、版本 changelog、视频上位机 | `changelog_between_tags.py` |
+| `cvtest/` | 桥、地雷区、台阶离线 CV 测试 | 各场景 README |
+| `webview_nav_marker/` | 惯导点标注、CSV 转 C 路线表 | `nav_marker_host.py` |
+| `wifi_protocol/` | WiFi 协议和 Streamlit 上位机 | `streamlit_wifi.py` |
 
 示例：
 
 ```bash
-# 导航 / 惯导轨迹可视化
-python tools/01_导航与定位可视化/inertial_nav结果可视化.py
-
-# PID 调参辅助
-python tools/03_控制与仿真/pid调参.py
-
-# WiFi 协议 Streamlit 上位机
-streamlit run tools/wifi_protocol/streamlit_wifi.py
-
-# 导航点标注上位机
 python tools/webview_nav_marker/nav_marker_host.py
+streamlit run tools/wifi_protocol/streamlit_wifi.py
+python tools/05_通用数据处理工具/changelog_between_tags.py v1.0.0 v1.1.0 --markdown
 ```
 
-> 注意：部分工具依赖本地 CSV、视频、串口或网络环境，脚本启动参数与输入文件格式请结合对应目录下的 README 或脚本注释确认。
+Windows 路径包含中文时，建议在 PowerShell 中运行并使用 Tab 补全；每个工具的输入 CSV、串口和网络端口请以对应 README 为准。
+
+## 文档导航
+
+- [项目结构总览](docs/project-structure/README.md)：从入口文件、双核分工到构建配置
+- [代码文件概览](docs/code文件概览.md)：`user/`、`code/` 的阅读顺序和调用关系
+- [双轮足结构与控制架构](docs/双轮足并联腿机器人结构与控制架构说明.md)：机构、状态和控制链路
+- [PID 预设与调参记录](docs/PID_preset_work_log_260712.md)：不同工况的参数切换和调试记录
+- [打滑检测说明](docs/双轮足打滑检测机制说明.md)：侧向加速度检测逻辑
+- [任务规划](docs/任务规划/)：各科目方案、视觉融合和优化记录
+- [CV 工具说明](tools/README.md)：离线识别、标定和上位机工具索引
+- [惯导 WebView 标注](tools/webview_nav_marker/README.md)：在线打点及路线表生成
+
+建议新成员按“项目结构 → `user/main_cm7_0.c` → `cm7_0_isr.c` → `code/calculate`、`navigation`、`plan` → `code1/vision`”顺序阅读。
+
+## 安全与复现边界
+
+这是竞赛实车代码，不是通用量产控制器。硬件版本、装配误差、赛道材质、传感器安装和参数标定都会显著影响结果。首次运行务必：
+
+1. 断开或抬起驱动轮，验证急停、舵机限位和电机方向。
+2. 关闭自动导航和跳跃，仅验证 IMU、遥控和基础平衡。
+3. 限制最大 PWM/速度，逐项恢复视觉、导航和科目状态机。
+4. 保留串口日志和参数版本，记录每次实车修改。
+
+仓库中的数据、图片和构建输出可能较大或被 `.gitignore` 排除；缺少比赛现场硬件时，优先使用 `tools/` 离线工具复现算法流程。
+
+## 贡献与交流
+
+欢迎提交 Issue、Pull Request 和文档修订：
+
+- 报告问题时请附：硬件版本、`CAR_SELECT`/`IMU_CATEGORY`、编译器版本、复现步骤、串口日志或最小数据样例。
+- 新增模块请放入对应目录，补充 README 或 `docs/` 说明，并注明是否会改变共享内存、IPC 或中断时序。
+- 调参、接线和安全相关修改请同时记录适用车辆与验证条件。
+- 提交前请清理 IAR 临时文件、Python 缓存、个人路径和含敏感信息的配置。
+
+## 致谢
+
+感谢所有参与开发的ai，逐飞科技开源库、芯片原厂 SDK，以及所有参与机械设计、硬件调试、算法开发、赛场测试和文档整理的队员。
 
 ---
 
-## 7. 常见问题
-
-### Q1：用户说明中的 `code/0核工程/`、`code/1核工程/` 在仓库中找不到？
-
-当前仓库实际目录为 `code/` 和 `code1/`。根据文件内容和调用关系，`code/` 对应 0 核工程，`code1/` 对应 1 核工程。若后续希望与说明完全一致，可以重命名目录或在文档/工程配置中统一叫法，但重命名会影响 IAR 工程 include path，需要谨慎处理。
-
-### Q2：IAR 编译提示找不到 `zf_common_*`、`zf_driver_*`、`zf_device_*` 或 `cy_project.h`？
-
-这些属于逐飞 CYT4BB 开源库和芯片 SDK 依赖，当前仓库未包含完整库目录。请检查：
-
-- IAR 工程 include path 是否指向本地逐飞库；
-- SDK 版本是否与 CYT4BB 平台匹配；
-- `zf_common_headfile.h` 中引用的设备驱动是否存在。
-
-### Q3：上车后电机突然高速转动或无法直立？
-
-优先按安全顺序排查：
-
-1. 保持 `g_motor_enable = 0` 或遥控急停关闭，先看姿态角是否稳定。
-2. 检查 IMU 类型 `IMU_CATEGORY`、安装方向、陀螺零偏和 `g_yaw_initialized`。
-3. 检查左右电机方向、PWM 极性和 `small_driver_set_duty()` 输出方向。
-4. 检查 `pid-new.h` 中速度环、角度环、角速度环参数与机械零点。
-5. 首次调试建议架空车体、降低限幅、关闭自动导航回放。
-
-### Q4：视觉结果一直无效？
-
-可能原因：
-
-- 1 核工程未运行或未烧录；
-- `VisionIpc_Core0_Set*Enable()` 没有打开对应视觉任务；
-- 摄像头 `mt9v03x_finish_flag` 未置位或摄像头初始化失败；
-- 图像压缩尺寸与视觉算法宏定义不一致；
-- 阈值、曝光、赛道颜色与当前环境不匹配；
-- IPC 更新中断 `PIT_CH2` 未启动。
-
-### Q5：WiFi 图传或上位机没有数据？
-
-当前 0 核和 1 核中部分 WiFi 初始化、连接、差分帧发送和示波发送逻辑是可选或注释状态。请确认：
-
-- `WIFI_USE`、`WIFI_IMAGE_SEND`、`WIFI_CAMERA_AND_ASSISTANT` 是否符合当前核的使用方式；
-- WiFi SSID、密码、目标 IP、目标端口是否正确；
-- 是否调用了 `wifi_connect_tcp_server()` 或对应发送函数；
-- 0 核 WiFi 摄像头辅助与 1 核视觉图传不要同时抢占同一硬件资源。
-
-### Q6：导航记录/回放无效？
-
-检查：
-
-- `NavRam_Init()` 是否执行；
-- 菜单或遥控器是否设置了 `g_nav_start_recording`、`g_save_flash_request`、`g_load_flash_request`、`g_replay_start_request`；
-- Flash 读写是否成功；
-- `CURRENT_NAV_PLAN` 是否符合当前科目；
-- GNSS 原点和高斯-克吕格坐标转换是否已初始化。
-
----
-
-## 8. 开发建议
-
-- 新增 0 核业务模块时，优先放入 `code/` 对应子目录，并在 `code/zf_common_headfile.h` 或局部源文件中显式包含头文件。
-- 新增 1 核视觉算法时，优先放入 `code1/vision/`，并通过 `vision_ipc_core1` 发布统一格式结果，避免 0 核直接依赖具体算法内部变量。
-- 涉及实时控制的逻辑尽量放在固定周期 ISR 中；耗时打印、Flash 写入、上位机协议解析等低频任务放在主循环。
-- 比赛/实车运行前关闭高频串口日志，保留必要蜂鸣器和屏幕状态提示。
-- 修改 PID、舵机零点、电机方向、跳跃动作表后，必须先架空或限幅测试，再落地调试。
-
----
-
-## 9. 待补充信息
-
-- 完整逐飞库 / 官方 SDK 的版本、路径和获取方式。
-- IAR workspace（`.eww`）或一键构建说明。
-- 统一 Python `requirements.txt`。
-- 各科目最终参数表、实车标定记录和安全调试 SOP。
-- WiFi 上位机协议字段的正式版本说明。
-- LICENSE 文件或项目自有代码许可证声明；当前源码头部主要继承逐飞 CYT4BB GPL-3.0 声明。
-
----
-
-## 10. 更新记录
-
-- `2026-05-09 11:28:21`：重写 README，补充双核目录映射、模块职责、调用链路、环境依赖、安装运行步骤与常见问题。
-- `2026-05-09 11:35:03`：补充 README 顶部徽章块，展示构建方式、平台、双核架构、语言、许可证与文档状态。
-
-**最后更新时间：2026-05-09 11:35:03**
+如果这个项目对你有帮助，欢迎点一个 Star，并把改进后的实验结果或问题反馈回来。开源的价值不只在于放出最终代码，也在于让后来者能看懂取舍、复现实验并继续前进。
