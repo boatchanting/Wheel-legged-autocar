@@ -39,6 +39,7 @@
     - [3. 首次上电检查](#3-首次上电检查)
   - [配置说明](#配置说明)
   - [PC 工具](#pc-工具)
+  - [自定义导航与日志上位机](#自定义导航与日志上位机)
   - [文档导航](#文档导航)
   - [安全与复现边界](#安全与复现边界)
   - [贡献与交流](#贡献与交流)
@@ -262,6 +263,45 @@ python tools/05_通用数据处理工具/changelog_between_tags.py v1.0.0 v1.1.0
 ```
 
 Windows 路径包含中文时，建议在 PowerShell 中运行并使用 Tab 补全；每个工具的输入 CSV、串口和网络端口请以对应 README 为准。
+
+## 自定义导航与日志上位机
+
+项目提供了一套面向实车调试的自定义导航和日志上位机系统，通过 WiFi 接收车端惯导、速度、姿态、视觉状态和科目状态等遥测数据，并支持导航点采集、轨迹回放和日志分析。
+
+### 惯性导航与自定义导航
+
+入口脚本为 [`nav_marker_host.py`](tools/webview_nav_marker科目四/nav_marker_host.py)，基于 WebView 提供以下能力：
+
+- 实时显示 GNSS/惯导位置、航向和车辆状态
+- 在地图或轨迹视图中采集、编辑和导出导航点
+- 将导航点导出为车端可编译使用的 C 路线表
+- 通过自定义 WiFi 控制指令清空轨迹、启动车辆和控制回放
+
+启动方式：
+
+```bash
+python tools/webview_nav_marker科目四/nav_marker_host.py
+```
+
+![GNSS 和惯导上位机](docs/img/gnss和惯导上位机.png)
+
+![惯性导航上位机](docs/img/惯性导航上位机.png)
+
+![惯性导航轨迹图](docs/img/惯性导航轨迹图.png)
+
+### 日志记录与可视化
+
+上位机可将接收到的完整 WiFi 遥测帧保存为 CSV 日志，保留原始 `payload_hex` 以及解析后的导航、IMU、舵机、速度、PWM 和状态机字段。日志记录由 [`nav_marker_host.py`](tools/webview_nav_marker科目四/nav_marker_host.py) 管理，离线分析使用 [`日志可视化.html`](tools/webview_nav_marker科目四/日志可视化.html)：
+
+1. 在上位机中开始或停止日志记录，获得 CSV 文件。
+2. 用浏览器打开 `日志可视化.html` 并导入 CSV。
+3. 查看导航轨迹、状态切换、视觉标志、速度和控制量，定位异常并对比不同参数版本。
+
+![日志系统](docs/img/日志系统.png)
+
+### 车端自定义协议
+
+车端协议实现位于 [`wifi_protocol.c`](code/tools/wifi_protocol.c) 和 [`wifi_protocol.h`](code/tools/wifi_protocol.h)，统一定义帧头、命令字、128 字节遥测载荷、主机控制指令和 ACK 状态。修改协议字段时，需要同步更新车端结构体、上位机字段顺序以及日志可视化页面。
 
 ## 文档导航
 
