@@ -142,7 +142,11 @@ void Remote_Control_Process(void)
         robot_ctrl.target_speed = (rc_brake || wifi_brake || wifi_kill) ? 0.0f :
                                   Float_Constrain(g_wifi_host_speed, -MAX_SPEED_VAL, MAX_SPEED_VAL);
         robot_ctrl.target_angle = g_wifi_host_angle;
-        robot_ctrl.motor_enable = ((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_ENABLE) && !wifi_kill) ? 1U : 0U;
+        /* A soft brake must keep the balance motors energized. Otherwise the
+         * ISR enters motor-disabled cleanup and an upright chassis falls.
+         * Only the explicit KILL flag is allowed to de-energize balancing. */
+        robot_ctrl.motor_enable = (((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_ENABLE) != 0U) ||
+                                   wifi_brake || rc_brake) && !wifi_kill;
         /* Keep the public brake flag reserved for hard/remote emergency
          * braking. Wi-Fi soft brake is represented by target_speed == 0. */
         robot_ctrl.brake_active = (rc_brake || wifi_kill) ? 1U : 0U;

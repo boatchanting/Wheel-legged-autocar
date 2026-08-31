@@ -1076,7 +1076,10 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     // robot_ctrl.motor_enable: 1=使能, 0=急停
     // g_motor_enable:          1=使能, 0=关机
     // g_fallen:                true=主动倒下, false=主动起立
-    if (robot_ctrl.motor_enable == 0) {
+    if ((robot_ctrl.motor_enable == 0) &&
+        !((g_wifi_host_drive_active != 0U) &&
+          (g_wifi_host_brake_latched != 0U) &&
+          ((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_KILL) == 0U))) {
         g_motor_enable = 0; // 关机/急停
     } else {
         g_motor_enable = 1; // 正常工作
