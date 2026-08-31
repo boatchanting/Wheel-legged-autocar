@@ -29,6 +29,7 @@ volatile float g_wifi_host_angle = 0.0f;
 volatile float g_wifi_host_height = 0.0f;
 volatile float g_wifi_host_roll = 0.0f;
 volatile uint8_t g_wifi_host_disconnect_brake = 0U;
+volatile uint8_t g_wifi_host_brake_latched = 0U;
 static uint16_t g_wifi_host_drive_age_ms = 1000U;
 
 uint8_t g_manual_log_enabled = 0;
@@ -259,6 +260,7 @@ static void wifi_protocol_handle_frame(uint8_t cmd, const uint8_t *payload, uint
         int16_t height = (int16_t)((uint16_t)payload[5] | ((uint16_t)payload[6] << 8U));
         int16_t roll = (int16_t)((uint16_t)payload[7] | ((uint16_t)payload[8] << 8U));
         g_wifi_host_drive_flags = payload[0];
+        g_wifi_host_brake_latched = (payload[0] & WIFI_HOST_DRIVE_BRAKE) ? 1U : 0U;
         g_wifi_host_speed = (float)speed;
         /* Steering is a rate command, matching the SBUS accumulator.  Each
          * received frame advances the desired heading and wraps at 360 deg. */
@@ -366,6 +368,7 @@ void wifi_protocol_poll_rx(void)
             g_wifi_host_drive_active = 0U;
             g_wifi_host_drive_flags = WIFI_HOST_DRIVE_BRAKE;
             g_wifi_host_speed = 0.0f;
+            g_wifi_host_brake_latched = 0U;
             g_wifi_host_disconnect_brake = 1U;
         }
     }

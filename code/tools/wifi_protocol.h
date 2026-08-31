@@ -59,6 +59,7 @@ extern volatile float g_wifi_host_angle;
 extern volatile float g_wifi_host_height;
 extern volatile float g_wifi_host_roll;
 extern volatile uint8_t g_wifi_host_disconnect_brake;
+extern volatile uint8_t g_wifi_host_brake_latched;
 
 // Send telemetry frame to host
 void wifi_protocol_send_data(void);

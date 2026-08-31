@@ -509,6 +509,16 @@ void pit0_ch0_isr()                     // 定时器通道 0 周期中断服务�
             {
             // 2.2 全局刹车前馈
             uint8 brake_ff_enable = (uint8)((g_motor_enable != 0) && (!g_fallen));
+            /* Wi-Fi soft brake means speed target zero only. Suppress the
+             * mechanical brake feed-forward and its posture compensation. */
+            if ((g_wifi_host_drive_active != 0U) &&
+                (g_wifi_host_brake_latched != 0U) &&
+                (g_brake_active == 0U) &&
+                (g_reverse_brake_active == 0U))
+            {
+                brake_ff_enable = 0U;
+                Brake_Feedforward_Reset();
+            }
             uint8 slope_brake_ff_request = g_slope_brake_ff_request;
             if ((Minefield_Is_Active() != 0U) ||
                 ((g_special_action_trigger != 0U) &&

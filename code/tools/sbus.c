@@ -138,18 +138,24 @@ void Remote_Control_Process(void)
         uint8_t rc_brake = (uint8_t)((uart_receiver.state == 1) &&
                                      (uart_receiver.channel[4] > RC_SW_THRESHOLD));
         uint8_t wifi_kill = (uint8_t)((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_KILL) != 0U);
-        robot_ctrl.target_speed = (rc_brake || wifi_kill) ? 0.0f :
+        uint8_t wifi_brake = (uint8_t)(g_wifi_host_brake_latched != 0U);
+        robot_ctrl.target_speed = (rc_brake || wifi_brake || wifi_kill) ? 0.0f :
                                   Float_Constrain(g_wifi_host_speed, -MAX_SPEED_VAL, MAX_SPEED_VAL);
         robot_ctrl.target_angle = g_wifi_host_angle;
         robot_ctrl.motor_enable = ((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_ENABLE) && !wifi_kill) ? 1U : 0U;
-        robot_ctrl.brake_active = ((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_BRAKE) || rc_brake || wifi_kill) ? 1U : 0U;
+        /* Keep the public brake flag reserved for hard/remote emergency
+         * braking. Wi-Fi soft brake is represented by target_speed == 0. */
+        robot_ctrl.brake_active = (rc_brake || wifi_kill) ? 1U : 0U;
         robot_ctrl.reverse_brake_active = 0U;
-        g_brake_active = robot_ctrl.brake_active;
+        /* Wi-Fi soft brake is a speed-setpoint stop only. Do not assert the
+         * hard brake feed-forward flag, which applies a large posture
+         * compensation and can destabilize the chassis. */
+        g_brake_active = (uint8_t)(rc_brake || wifi_kill);
         g_reverse_brake_active = 0U;
         if (g_wifi_host_drive_flags & WIFI_HOST_DRIVE_HEIGHT)
         {
             /* Keep the command inside the calibrated table domain. */
-            servo_height = Float_Constrain(g_wifi_host_height, P_min, P_max);
+            servo_height = Float_Constrain(g_wifi_host_height, 3.5f, 10.0f);
         }
         if (g_wifi_host_drive_flags & WIFI_HOST_DRIVE_ROLL)
         {
