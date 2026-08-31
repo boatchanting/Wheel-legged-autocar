@@ -19,6 +19,7 @@
 #define WIFI_HOST_DRIVE_ROLL    0x04U
 #define WIFI_HOST_DRIVE_HEIGHT  0x08U
 #define WIFI_HOST_DRIVE_JUMP    0x10U
+#define WIFI_HOST_DRIVE_KILL    0x20U  /* explicit motor-enable safety cut */
 
 // Host control payload command IDs
 #define WIFI_HOST_CTRL_CLEAR_TRAJECTORY   0x01

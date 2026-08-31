@@ -134,10 +134,15 @@ void Remote_Control_Process(void)
      * wifi_protocol_poll_rx() clears the flag and normal SBUS processing resumes. */
     if (g_wifi_host_drive_active != 0U)
     {
-        robot_ctrl.target_speed = Float_Constrain(g_wifi_host_speed, -MAX_SPEED_VAL, MAX_SPEED_VAL);
+        /* CH5 soft brake remains active even while Wi-Fi owns the drive. */
+        uint8_t rc_brake = (uint8_t)((uart_receiver.state == 1) &&
+                                     (uart_receiver.channel[4] > RC_SW_THRESHOLD));
+        uint8_t wifi_kill = (uint8_t)((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_KILL) != 0U);
+        robot_ctrl.target_speed = (rc_brake || wifi_kill) ? 0.0f :
+                                  Float_Constrain(g_wifi_host_speed, -MAX_SPEED_VAL, MAX_SPEED_VAL);
         robot_ctrl.target_angle = g_wifi_host_angle;
-        robot_ctrl.motor_enable = (g_wifi_host_drive_flags & WIFI_HOST_DRIVE_ENABLE) ? 1U : 0U;
-        robot_ctrl.brake_active = (g_wifi_host_drive_flags & WIFI_HOST_DRIVE_BRAKE) ? 1U : 0U;
+        robot_ctrl.motor_enable = ((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_ENABLE) && !wifi_kill) ? 1U : 0U;
+        robot_ctrl.brake_active = ((g_wifi_host_drive_flags & WIFI_HOST_DRIVE_BRAKE) || rc_brake || wifi_kill) ? 1U : 0U;
         robot_ctrl.reverse_brake_active = 0U;
         g_brake_active = robot_ctrl.brake_active;
         g_reverse_brake_active = 0U;

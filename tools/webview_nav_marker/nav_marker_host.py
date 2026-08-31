@@ -25,6 +25,7 @@ HOST_DRIVE_BRAKE = 0x02
 HOST_DRIVE_ROLL = 0x04
 HOST_DRIVE_HEIGHT = 0x08
 HOST_DRIVE_JUMP = 0x10
+HOST_DRIVE_KILL = 0x20
 HOST_SPEED_LIMIT = 300.0
 HOST_CTRL_CLEAR_TRAJECTORY = 0x01
 HOST_CTRL_START_CAR = 0x02
@@ -213,7 +214,7 @@ def _send_control_to_vehicle(ctrl_code):
 
 def _send_host_drive(speed=0.0, angle=0.0, height=4.5, roll=0.0,
                      enabled=True, brake=False, use_height=True, use_roll=True,
-                     jump=False):
+                     jump=False, kill=False):
     """Send one low-latency drive update. Call at 10-30 Hz while driving."""
     global active_conn, peer_addr, server_error
     flags = (HOST_DRIVE_ENABLE if enabled else 0)
@@ -225,11 +226,13 @@ def _send_host_drive(speed=0.0, angle=0.0, height=4.5, roll=0.0,
         flags |= HOST_DRIVE_HEIGHT
     if jump:
         flags |= HOST_DRIVE_JUMP
+    if kill:
+        flags |= HOST_DRIVE_KILL
     try:
         values = (
             flags,
             max(-300, min(300, int(round(float(speed))))),
-            max(-100, min(100, int(round(float(angle) * 10.0)))),
+            max(-300, min(300, int(round(float(angle) * 10.0)))),
             max(27, min(145, int(round(float(height) * 10.0)))),
             max(-180, min(180, int(round(float(roll) * 10.0)))),
         )
@@ -701,9 +704,9 @@ class Api:
 
     def send_host_drive(self, speed=0.0, angle=0.0, height=4.5, roll=0.0,
                         enabled=True, brake=False, use_height=True, use_roll=True,
-                        jump=False):
+                        jump=False, kill=False):
         return _send_host_drive(speed, angle, height, roll, enabled, brake,
-                                use_height, use_roll, jump)
+                                use_height, use_roll, jump, kill)
 
     def export_mark_points_csv(self, points):
         try:
