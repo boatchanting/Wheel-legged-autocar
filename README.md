@@ -1,20 +1,21 @@
-# Wheel-legged-autocar：轮腿智能车完整开源工程
+<div align="center">
+  <h1 style="font-family: 'Arial', sans-serif; color: #333;">🚗 Wheel-legged-autocar</h1>
+  <h2 style="font-size: 2.2rem; color: #777;">第 21 届全国大学生智能汽车竞赛 · 轮腿穿越组 —— 省赛国赛代码，开发全流程开源</h2>
+  <img src="docs/project-structure/logo.png" width="320" alt="轮腿智能车 Logo">
+</div>
 
-<p align="center">
-  <img src="docs/project-structure/logo.png" alt="轮腿智能车 Logo" width="220"><br>
-  <strong><span style="font-size: 1.35em;">第 21 届全国大学生智能汽车竞赛 · 轮腿穿越组</span></strong><br>
-  <span style="font-size: 1.15em;">21届全国大学生智能车竞赛轮腿穿越组省赛国赛代码，开发全流程开源</span>
-</p>
-
-<p align="center">
+<!-- 徽章区 -->
+<div align="center">
   <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/badge/repo-Wheel--legged--autocar-181717?logo=github" alt="repository"></a>
   <img src="https://img.shields.io/badge/MCU-CYT4BB-orange" alt="MCU">
   <img src="https://img.shields.io/badge/Core-Cortex--M7%20dual--core-blue" alt="dual core">
   <img src="https://img.shields.io/badge/Language-C%20%7C%20Python%20%7C%20HTML-informational" alt="language">
   <img src="https://img.shields.io/badge/License-GPL--3.0-green" alt="license">
-</p>
+</div>
 
-> 本仓库公开的是一套真实参赛项目：双轮足（轮腿）智能车的软件、硬件适配、视觉算法、导航控制、调试工具和过程文档。代码以“能复现、可分析、便于二次开发”为目标整理，欢迎用于学习、研究和改进。
+<div align="center">
+  <p>本项目基于 CYT4BB 双核 Cortex‑M7 平台，融合轮腿运动控制与视觉巡线算法，提供从底层驱动到上层决策的完整工程实现。仓库公开的是一套真实参赛项目：双轮足（轮腿）智能车的软件、硬件适配、视觉算法、导航控制、调试工具和过程文档。代码以“能复现、可分析、便于二次开发”为目标整理，欢迎用于学习、研究和改进。代码结构清晰、注释详尽，适合智能车竞赛及机器人爱好者学习与二次开发。</p>
+</div>
 
 ## 目录
 
