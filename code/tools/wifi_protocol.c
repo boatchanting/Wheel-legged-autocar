@@ -22,6 +22,14 @@ volatile float g_wifi_speed_l = 0.0f;
 volatile float g_wifi_speed_r = 0.0f;
 volatile float g_wifi_pwm_left = 0.0f;
 volatile float g_wifi_pwm_right = 0.0f;
+volatile uint8_t g_wifi_host_drive_active = 0U;
+volatile uint8_t g_wifi_host_drive_flags = 0U;
+volatile float g_wifi_host_speed = 0.0f;
+volatile float g_wifi_host_angle = 0.0f;
+volatile float g_wifi_host_height = 0.0f;
+volatile float g_wifi_host_roll = 0.0f;
+volatile uint8_t g_wifi_host_disconnect_brake = 0U;
+static uint16_t g_wifi_host_drive_age_ms = 1000U;
 
 uint8_t g_manual_log_enabled = 0;
 #define WIFI_RX_READ_CHUNK   128U
@@ -238,6 +246,28 @@ static void wifi_protocol_apply_host_control(uint8_t control_id)
 
 static void wifi_protocol_handle_frame(uint8_t cmd, const uint8_t *payload, uint8_t payload_len)
 {
+    if (cmd == WIFI_CMD_HOST_DRIVE)
+    {
+        /* flags,u8 + speed,angle,height,roll as signed 16-bit values (9 bytes).
+         * Scales: speed 1, angle 0.1 deg, height 0.1 cm, roll 0.1 deg. */
+        if (payload_len != 9U)
+        {
+            return;
+        }
+        int16_t speed = (int16_t)((uint16_t)payload[1] | ((uint16_t)payload[2] << 8U));
+        int16_t angle = (int16_t)((uint16_t)payload[3] | ((uint16_t)payload[4] << 8U));
+        int16_t height = (int16_t)((uint16_t)payload[5] | ((uint16_t)payload[6] << 8U));
+        int16_t roll = (int16_t)((uint16_t)payload[7] | ((uint16_t)payload[8] << 8U));
+        g_wifi_host_drive_flags = payload[0];
+        g_wifi_host_speed = (float)speed;
+        g_wifi_host_angle = (float)angle * 0.1f;
+        g_wifi_host_height = (float)height * 0.1f;
+        g_wifi_host_roll = (float)roll * 0.1f;
+        g_wifi_host_drive_age_ms = 0U;
+        g_wifi_host_drive_active = 1U;
+        g_wifi_host_disconnect_brake = 0U;
+        return;
+    }
     if (cmd == WIFI_CMD_HOST_CONTROL)
     {
         if (payload_len >= 1U)
@@ -324,6 +354,17 @@ static void wifi_protocol_parse_stream(void)
 
 void wifi_protocol_poll_rx(void)
 {
+    if (g_wifi_host_drive_age_ms < 1000U) g_wifi_host_drive_age_ms += 10U;
+    if (g_wifi_host_drive_age_ms > 300U)
+    {
+        if (g_wifi_host_drive_active != 0U)
+        {
+            g_wifi_host_drive_active = 0U;
+            g_wifi_host_drive_flags = WIFI_HOST_DRIVE_BRAKE;
+            g_wifi_host_speed = 0.0f;
+            g_wifi_host_disconnect_brake = 1U;
+        }
+    }
     uint8_t read_buf[WIFI_RX_READ_CHUNK];
     uint32_t read_len = wifi_spi_read_buffer(read_buf, WIFI_RX_READ_CHUNK);
     if (read_len == 0U)

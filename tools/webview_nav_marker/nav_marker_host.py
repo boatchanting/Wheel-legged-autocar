@@ -19,6 +19,12 @@ FRAME_MIN_SIZE = 6
 CMD_TELEMETRY = 0x01
 CMD_HOST_CONTROL = 0x10
 CMD_HOST_ACK = 0x11
+CMD_HOST_DRIVE = 0x12
+HOST_DRIVE_ENABLE = 0x01
+HOST_DRIVE_BRAKE = 0x02
+HOST_DRIVE_ROLL = 0x04
+HOST_DRIVE_HEIGHT = 0x08
+HOST_DRIVE_JUMP = 0x10
 HOST_CTRL_CLEAR_TRAJECTORY = 0x01
 HOST_CTRL_START_CAR = 0x02
 HOST_ACK_ACCEPTED = 0x00
@@ -201,6 +207,50 @@ def _send_control_to_vehicle(ctrl_code):
         }
 
     return _format_host_ack_result(code, ack_status)
+
+
+def _send_host_drive(speed=0.0, angle=0.0, height=4.5, roll=0.0,
+                     enabled=True, brake=False, use_height=True, use_roll=True,
+                     jump=False):
+    """Send one low-latency drive update. Call at 10-30 Hz while driving."""
+    global active_conn, peer_addr, server_error
+    flags = (HOST_DRIVE_ENABLE if enabled else 0)
+    if brake:
+        flags |= HOST_DRIVE_BRAKE
+    if use_roll:
+        flags |= HOST_DRIVE_ROLL
+    if use_height:
+        flags |= HOST_DRIVE_HEIGHT
+    if jump:
+        flags |= HOST_DRIVE_JUMP
+    try:
+        values = (
+            flags,
+            max(-300, min(300, int(round(float(speed))))),
+            max(-450, min(450, int(round(float(angle) * 10.0)))),
+            max(27, min(145, int(round(float(height) * 10.0)))),
+            max(-180, min(180, int(round(float(roll) * 10.0)))),
+        )
+        frame = _build_frame(CMD_HOST_DRIVE, struct.pack("<Bhhhh", *values))
+    except (TypeError, ValueError, OverflowError) as exc:
+        return {"success": False, "msg": f"drive 参数非法: {exc}"}
+
+    with tx_lock:
+        with state_lock:
+            conn = active_conn
+            peer = peer_addr
+        if conn is None:
+            return {"success": False, "msg": "小车未连接，控制未发送"}
+        try:
+            conn.sendall(frame)
+        except Exception as exc:
+            with state_lock:
+                if active_conn is conn:
+                    active_conn = None
+                peer_addr = ""
+                server_error = f"Send drive failed: {exc}"
+            return {"success": False, "msg": f"控制发送失败: {exc}"}
+    return {"success": True, "peer": peer, "flags": flags}
 
 def _safe_float(value):
     try:
@@ -605,6 +655,12 @@ class Api:
             return {"success": False, "msg": "control_code 超出范围"}
 
         return _send_control_to_vehicle(code)
+
+    def send_host_drive(self, speed=0.0, angle=0.0, height=4.5, roll=0.0,
+                        enabled=True, brake=False, use_height=True, use_roll=True,
+                        jump=False):
+        return _send_host_drive(speed, angle, height, roll, enabled, brake,
+                                use_height, use_roll, jump)
 
     def export_mark_points_csv(self, points):
         try:

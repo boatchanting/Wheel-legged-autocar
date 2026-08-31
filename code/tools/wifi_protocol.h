@@ -12,6 +12,13 @@
 #define WIFI_CMD_DATA_PACKET    0x01    // MCU -> host telemetry
 #define WIFI_CMD_HOST_CONTROL   0x10    // Host -> MCU control
 #define WIFI_CMD_HOST_ACK       0x11    // MCU -> host control ACK
+#define WIFI_CMD_HOST_DRIVE     0x12    // Host -> MCU continuous drive/suspension command
+
+#define WIFI_HOST_DRIVE_ENABLE  0x01U
+#define WIFI_HOST_DRIVE_BRAKE   0x02U
+#define WIFI_HOST_DRIVE_ROLL    0x04U
+#define WIFI_HOST_DRIVE_HEIGHT  0x08U
+#define WIFI_HOST_DRIVE_JUMP    0x10U
 
 // Host control payload command IDs
 #define WIFI_HOST_CTRL_CLEAR_TRAJECTORY   0x01
@@ -41,6 +48,16 @@ extern volatile float g_wifi_speed_l;
 extern volatile float g_wifi_speed_r;
 extern volatile float g_wifi_pwm_left;
 extern volatile float g_wifi_pwm_right;
+
+/* Host drive command, consumed by Remote_Control_Process(). Units: speed and
+ * steering are the native control units; height/roll are cm/deg. */
+extern volatile uint8_t g_wifi_host_drive_active;
+extern volatile uint8_t g_wifi_host_drive_flags;
+extern volatile float g_wifi_host_speed;
+extern volatile float g_wifi_host_angle;
+extern volatile float g_wifi_host_height;
+extern volatile float g_wifi_host_roll;
+extern volatile uint8_t g_wifi_host_disconnect_brake;
 
 // Send telemetry frame to host
 void wifi_protocol_send_data(void);
