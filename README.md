@@ -223,7 +223,6 @@ cd Wheel-legged-autocar
 | [`code/config/car_select.h`](code/config/car_select.h) | 车辆和硬件差异选择 | `CAR_SELECT 4` |
 | [`code/config/sys_options.h`](code/config/sys_options.h) | 全局开关、IMU、科目、遥控和调试 | `IMU_CATEGORY 3`、`CURRENT_NAV_PLAN 4` |
 | [`code/config/wifi_options.h`](code/config/wifi_options.h) | WiFi 核心及协议选择 | 默认关闭 WiFi |
-| [`code/calculate/pid-new.h`](code/calculate/pid-new.h) | 车辆相关 PID 预设 | 随 `CAR_SELECT` 选择 |
 | [`iar/icf/linker_directives_tviibh.icf`](iar/icf/linker_directives_tviibh.icf) | Flash/RAM、向量表和段布局 | CYT4BB 链接布局 |
 
 常见配置示例：
@@ -241,7 +240,8 @@ cd Wheel-legged-autocar
 #define WIFI_USE           0
 ```
 
-修改配置后必须同时重编译两个核心，并重新确认 IPC 结构体、图像尺寸和共享内存布局没有被破坏。不要直接照搬其他车辆的舵机零点、PID 或传感器轴向。
+> 修改配置后必须同时重编译两个核心。
+> 实际上，这套配置文件系统架构的不好，所有的文件都引用了配置文件，导致编译时速度较慢，一个好的架构优化是在pre_build阶段，**将配置文件的内容按模块进行拆分**，这样就可以避免重复编译的问题。
 
 ## PC 工具
 
@@ -266,8 +266,6 @@ streamlit run tools/wifi_protocol/streamlit_wifi.py
 python tools/05_通用数据处理工具/changelog_between_tags.py v1.0.0 v1.1.0 --markdown
 ```
 
-Windows 路径包含中文时，建议在 PowerShell 中运行并使用 Tab 补全；每个工具的输入 CSV、串口和网络端口请以对应 README 为准。
-
 ## 自定义导航与日志上位机
 
 项目提供了一套面向实车调试的自定义导航和日志上位机系统，通过 WiFi 接收车端惯导、速度、姿态、视觉状态和科目状态等遥测数据，并支持导航点采集、轨迹回放和日志分析。
@@ -282,7 +280,11 @@ Windows 路径包含中文时，建议在 PowerShell 中运行并使用 Tab 补�
 - 通过自定义 WiFi 控制指令清空轨迹、启动车辆和控制回放
 
 启动方式：
-
+gnss惯导上位机
+```bash
+python tools/wifi_protocol/wifi_host.py
+```
+惯性导航及日志上位机
 ```bash
 python tools/webview_nav_marker科目四/nav_marker_host.py
 ```
@@ -318,7 +320,7 @@ python tools/webview_nav_marker科目四/nav_marker_host.py
 - [CV 工具说明](tools/README.md)：离线识别、标定和上位机工具索引
 - [惯导 WebView 标注](tools/webview_nav_marker/README.md)：在线打点及路线表生成
 
-建议新成员按“项目结构 → `user/main_cm7_0.c` → `cm7_0_isr.c` → `code/calculate`、`navigation`、`plan` → `code1/vision`”顺序阅读。
+建议按“项目结构 → `user/main_cm7_0.c` → `cm7_0_isr.c` → `code/calculate`、`navigation`、`plan` → `code1/vision`”顺序阅读。
 
 ## 安全与复现边界
 
