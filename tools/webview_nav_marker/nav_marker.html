@@ -88,13 +88,15 @@ tr.sel{background:#eaf2ff}
       <h3>上位机驾驶控制</h3>
       <div class="drive-grid">
         <label for="driveSpeed">速度</label><input id="driveSpeed" type="range" min="-300" max="300" step="1" value="0"/><output id="driveSpeedV">0</output>
-        <label for="driveAngle">转向</label><input id="driveAngle" type="range" min="-45" max="45" step="0.5" value="0"/><output id="driveAngleV">0</output>
+        <label for="driveAngle">转向增量</label><input id="driveAngle" type="range" min="-10" max="10" step="0.1" value="0"/><output id="driveAngleV">0</output>
         <label for="driveHeight">悬架高度</label><input id="driveHeight" type="range" min="2.7" max="14.5" step="0.1" value="4.5"/><output id="driveHeightV">4.5</output>
         <label for="driveRoll">悬架侧倾</label><input id="driveRoll" type="range" min="-18" max="18" step="0.5" value="0"/><output id="driveRollV">0</output>
       </div>
       <div class="ops">
         <label><input id="driveEnable" type="checkbox"/>电机使能</label>
         <label><input id="driveBrake" type="checkbox"/>刹车</label>
+        <label><input id="driveHeightEnable" type="checkbox" checked/>腿高控制</label>
+        <label><input id="driveRollEnable" type="checkbox" checked/>Rolling控制</label>
         <button id="bJump" class="danger">触发跳跃点</button>
       </div>
     </div>
@@ -155,7 +157,7 @@ const HOST_CTRL_START_CAR=2;
     const V={scale:0.035,ox:0,oy:0,follow:true,adaptive:false};
     const TRACE_STYLE={ins:{line:'#2f6fed',point:'#114da5'},gps:{line:'#16a34a',point:'#0f7a37'},fusion:{line:'#8b5cf6',point:'#6d28d9'}};
     // 在 E 元素绑定中加入 vxBody 节点映射
-    const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,traceGps:traceGps,traceFusion:traceFusion,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast,driveSpeed:driveSpeed,driveSpeedV:driveSpeedV,driveAngle:driveAngle,driveAngleV:driveAngleV,driveHeight:driveHeight,driveHeightV:driveHeightV,driveRoll:driveRoll,driveRollV:driveRollV,driveEnable:driveEnable,driveBrake:driveBrake,bJump:bJump};
+    const E={st:st,fps:fps,trajN:trajN,markN:markN,payload:payload,vxBody:vxBody,cv:cv,bFollow:bFollow,bRealDistance:bRealDistance,bTraceMenu:bTraceMenu,traceIns:traceIns,traceGps:traceGps,traceFusion:traceFusion,bAdaptive:bAdaptive,bFit:bFit,bReset:bReset,bAdd:bAdd,bExport:bExport,bDel:bDel,bClrM:bClrM,bClrT:bClrT,bStartCar:bStartCar,txState:txState,selType:selType,rows:rows,si:si,sx:sx,sy:sy,syaw:syaw,sheading:sheading,ss:ss,inpYaw:inpYaw,inpHeading:inpHeading,toast:toast,driveSpeed:driveSpeed,driveSpeedV:driveSpeedV,driveAngle:driveAngle,driveAngleV:driveAngleV,driveHeight:driveHeight,driveHeightV:driveHeightV,driveRoll:driveRoll,driveRollV:driveRollV,driveEnable:driveEnable,driveBrake:driveBrake,driveHeightEnable:driveHeightEnable,driveRollEnable:driveRollEnable,bJump:bJump};
 const ctx=E.cv.getContext('2d');
 let txStatusTimer=null;
 
@@ -198,7 +200,7 @@ function setConn(ok,text,cls){E.st.className='tag '+cls;E.st.textContent=text;if
 function setTxStatus(state,autoReset=true){if(state==='ok'){E.txState.className='tag ok';E.txState.textContent='回传成功'}else if(state==='err'){E.txState.className='tag err';E.txState.textContent='回传失败'}else{E.txState.className='tag warn';E.txState.textContent='尚未回传'}if(autoReset&&state!=='idle'){clearTimeout(txStatusTimer);txStatusTimer=setTimeout(()=>setTxStatus('idle',false),3000)}else if(state==='idle'){clearTimeout(txStatusTimer);txStatusTimer=null}}
 function exportPayload(){return S.marks.map((m,i)=>({index:i,x:m.x,y:m.y,relative_yaw:m.targetYaw,heading:m.heading,point_type:m.type}))}
 async function sendHostControl(code){if(!S.api||!window.pywebview||!window.pywebview.api)return{success:false,msg:'后端 API 未就绪'};try{return await window.pywebview.api.send_host_control(code)}catch(e){return{success:false,msg:'命令发送异常:'+(e.message||e)}}}
-async function sendHostDrive(jump=false){if(!S.api||!window.pywebview||!window.pywebview.api)return;try{await window.pywebview.api.send_host_drive(Number(E.driveSpeed.value),Number(E.driveAngle.value),Number(E.driveHeight.value),Number(E.driveRoll.value),E.driveEnable.checked,E.driveBrake.checked,true,true,jump)}catch(_){} }
+async function sendHostDrive(jump=false){if(!S.api||!window.pywebview||!window.pywebview.api)return;try{await window.pywebview.api.send_host_drive(Number(E.driveSpeed.value),Number(E.driveAngle.value),Number(E.driveHeight.value),Number(E.driveRoll.value),E.driveEnable.checked,E.driveBrake.checked,E.driveHeightEnable.checked,E.driveRollEnable.checked,jump)}catch(_){} }
 function syncDriveLabels(){E.driveSpeedV.value=E.driveSpeed.value;E.driveAngleV.value=E.driveAngle.value;E.driveHeightV.value=Number(E.driveHeight.value).toFixed(1);E.driveRollV.value=E.driveRoll.value}
 
 // 提取并保存 it.vx_body 信息

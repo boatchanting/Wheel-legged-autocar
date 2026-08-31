@@ -229,7 +229,7 @@ def _send_host_drive(speed=0.0, angle=0.0, height=4.5, roll=0.0,
         values = (
             flags,
             max(-300, min(300, int(round(float(speed))))),
-            max(-450, min(450, int(round(float(angle) * 10.0)))),
+            max(-100, min(100, int(round(float(angle) * 10.0)))),
             max(27, min(145, int(round(float(height) * 10.0)))),
             max(-180, min(180, int(round(float(roll) * 10.0)))),
         )

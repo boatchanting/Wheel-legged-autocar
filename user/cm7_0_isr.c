@@ -1132,6 +1132,8 @@ void pit0_ch1_isr()                     // 定时器通道 1 周期中断服务�
     if (g_wifi_host_drive_active != 0U)
     {
         err_degree = -robot_ctrl.target_angle + g_initial_yaw - euler_angle.yaw;
+        while (err_degree > 180.0f) err_degree -= 360.0f;
+        while (err_degree < -180.0f) err_degree += 360.0f;
         target_speed_set = -robot_ctrl.target_speed;
     }
     

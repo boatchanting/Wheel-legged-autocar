@@ -117,13 +117,25 @@ void Remote_Control_Init(void)
 void Remote_Control_Process(void)
 {
     static uint8_t host_jump_last = 0U;
+    static uint8_t host_ch6_lock = 0U;
+    if ((uart_receiver.state == 1) && (uart_receiver.channel[5] > RC_SW_THRESHOLD)) host_ch6_lock = 1U;
+    if (host_ch6_lock != 0U)
+    {
+        robot_ctrl.target_speed = 0.0f;
+        robot_ctrl.brake_active = 1U;
+        robot_ctrl.reverse_brake_active = 0U;
+        robot_ctrl.motor_enable = 0U;
+        g_brake_active = 1U;
+        g_reverse_brake_active = 0U;
+        return;
+    }
     /* The host link is a higher-bandwidth remote-control source.  It owns the
      * same setpoints as SBUS while its watchdog is fresh; when packets stop,
      * wifi_protocol_poll_rx() clears the flag and normal SBUS processing resumes. */
     if (g_wifi_host_drive_active != 0U)
     {
         robot_ctrl.target_speed = Float_Constrain(g_wifi_host_speed, -MAX_SPEED_VAL, MAX_SPEED_VAL);
-        robot_ctrl.target_angle = Float_Constrain(g_wifi_host_angle, -MAX_STEER_ANGLE, MAX_STEER_ANGLE);
+        robot_ctrl.target_angle = g_wifi_host_angle;
         robot_ctrl.motor_enable = (g_wifi_host_drive_flags & WIFI_HOST_DRIVE_ENABLE) ? 1U : 0U;
         robot_ctrl.brake_active = (g_wifi_host_drive_flags & WIFI_HOST_DRIVE_BRAKE) ? 1U : 0U;
         robot_ctrl.reverse_brake_active = 0U;
@@ -139,11 +151,7 @@ void Remote_Control_Process(void)
             roll_degree = Float_Constrain(g_wifi_host_roll, -18.0f, 18.0f);
             roll_balance_enable = 1U;
         }
-        else
-        {
-            roll_degree = 0.0f;
-            roll_balance_enable = 0U;
-        }
+        else roll_balance_enable = 0U;
         uint8_t host_jump = (g_wifi_host_drive_flags & WIFI_HOST_DRIVE_JUMP) ? 1U : 0U;
         if (host_jump && !host_jump_last) vision_detected_jump_point = 1;
         host_jump_last = host_jump;

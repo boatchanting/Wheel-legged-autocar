@@ -260,7 +260,11 @@ static void wifi_protocol_handle_frame(uint8_t cmd, const uint8_t *payload, uint
         int16_t roll = (int16_t)((uint16_t)payload[7] | ((uint16_t)payload[8] << 8U));
         g_wifi_host_drive_flags = payload[0];
         g_wifi_host_speed = (float)speed;
-        g_wifi_host_angle = (float)angle * 0.1f;
+        /* Steering is a rate command, matching the SBUS accumulator.  Each
+         * received frame advances the desired heading and wraps at 360 deg. */
+        g_wifi_host_angle += (float)angle * 0.01f;
+        while (g_wifi_host_angle >= 360.0f) g_wifi_host_angle -= 360.0f;
+        while (g_wifi_host_angle < 0.0f) g_wifi_host_angle += 360.0f;
         g_wifi_host_height = (float)height * 0.1f;
         g_wifi_host_roll = (float)roll * 0.1f;
         g_wifi_host_drive_age_ms = 0U;
