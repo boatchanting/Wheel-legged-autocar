@@ -1,8 +1,8 @@
-# Wheel-legged-autocar：双轮足智能车完整开源工程
+# Wheel-legged-autocar：轮腿智能车完整开源工程
 
 <p align="center">
   <strong>第 21 届全国大学生智能汽车竞赛 · 轮腿穿越组</strong><br>
-  从机械方案、嵌入式控制、视觉识别到上位机分析的开发过程记录
+  21届全国大学生智能车竞赛轮腿穿越组省赛国赛代码，开发全流程开源
 </p>
 
 <p align="center">
@@ -17,7 +17,7 @@
 
 ## 目录
 
-- [Wheel-legged-autocar：双轮足智能车完整开源工程](#wheel-legged-autocar双轮足智能车完整开源工程)
+- [Wheel-legged-autocar：轮腿智能车完整开源工程](#wheel-legged-autocar轮腿智能车完整开源工程)
   - [目录](#目录)
   - [项目简介](#项目简介)
   - [功能总览](#功能总览)
