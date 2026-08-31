@@ -1,8 +1,9 @@
 # Wheel-legged-autocar：轮腿智能车完整开源工程
 
 <p align="center">
-  <strong>第 21 届全国大学生智能汽车竞赛 · 轮腿穿越组</strong><br>
-  21届全国大学生智能车竞赛轮腿穿越组省赛国赛代码，开发全流程开源
+  <img src="docs/project-structure/logo.png" alt="轮腿智能车 Logo" width="220"><br>
+  <strong><span style="font-size: 1.35em;">第 21 届全国大学生智能汽车竞赛 · 轮腿穿越组</span></strong><br>
+  <span style="font-size: 1.15em;">21届全国大学生智能车竞赛轮腿穿越组省赛国赛代码，开发全流程开源</span>
 </p>
 
 <p align="center">
