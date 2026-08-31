@@ -1,0 +1,718 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>手柄蓝牙数据可视化 & CSV 记录</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Roboto, sans-serif;
+        }
+        body {
+            background: #0b1a2f;
+            color: #e0e8f0;
+            margin: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h1 {
+            font-weight: 300;
+            letter-spacing: 2px;
+            border-bottom: 2px solid #3a6ea5;
+            padding-bottom: 8px;
+            margin-top: 0;
+        }
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            background: #13263d;
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+        }
+        .status-bar {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            background: #1e3857;
+            padding: 12px 20px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+        }
+        .status-bar span {
+            margin-right: 20px;
+        }
+        .status-badge {
+            display: inline-block;
+            padding: 4px 14px;
+            border-radius: 20px;
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .badge-off {
+            background: #5a3a3a;
+            color: #f88;
+        }
+        .badge-on {
+            background: #2a6b3a;
+            color: #8f8;
+        }
+        .btn {
+            background: #2f5a8a;
+            border: none;
+            color: white;
+            padding: 8px 20px;
+            border-radius: 30px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: 0.2s;
+            margin: 4px 6px 4px 0;
+        }
+        .btn:hover {
+            background: #3f7aaa;
+            transform: scale(1.03);
+        }
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn-record {
+            background: #b85a3a;
+        }
+        .btn-record:hover {
+            background: #d06a4a;
+        }
+        .btn-record.active {
+            background: #c0392b;
+            box-shadow: 0 0 12px #e74c3c;
+        }
+        .btn-export {
+            background: #2d7a5a;
+        }
+        .btn-export:hover {
+            background: #3d9a7a;
+        }
+        .panels {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+            margin: 20px 0;
+        }
+        .panel {
+            flex: 1 1 300px;
+            background: #1a304a;
+            border-radius: 12px;
+            padding: 16px 18px;
+            box-shadow: inset 0 0 6px rgba(0,0,0,0.4);
+        }
+        .panel h3 {
+            margin-top: 0;
+            border-bottom: 1px solid #3a5a7a;
+            padding-bottom: 6px;
+            font-weight: 400;
+            letter-spacing: 1px;
+        }
+        .axis-container {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .axis-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .axis-label {
+            width: 50px;
+            font-size: 13px;
+            color: #aac;
+        }
+        .axis-track {
+            flex: 1;
+            height: 8px;
+            background: #2a3f5a;
+            border-radius: 4px;
+            position: relative;
+            overflow: hidden;
+        }
+        .axis-fill {
+            height: 100%;
+            width: 50%;
+            background: linear-gradient(90deg, #4a8aca, #8ac4ff);
+            border-radius: 4px;
+            transition: width 0.05s;
+        }
+        .axis-value {
+            width: 50px;
+            text-align: right;
+            font-size: 13px;
+            font-family: monospace;
+        }
+        .button-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(56px, 1fr));
+            gap: 8px;
+            margin-top: 6px;
+        }
+        .button-item {
+            background: #1f3350;
+            border-radius: 8px;
+            padding: 6px 0;
+            text-align: center;
+            font-size: 12px;
+            transition: 0.1s;
+            border: 1px solid #2a4060;
+        }
+        .button-item .idx {
+            color: #7a9abb;
+            display: block;
+        }
+        .button-item .val {
+            font-weight: bold;
+        }
+        .button-item.pressed {
+            background: #3a8a4a;
+            border-color: #6f0;
+            box-shadow: 0 0 12px #4caf50;
+        }
+        .button-item .val.pressed {
+            color: #cfc;
+        }
+        .stick-area {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 30px;
+            margin: 10px 0;
+        }
+        .stick-box {
+            text-align: center;
+        }
+        .stick-box canvas {
+            background: #0f1f30;
+            border-radius: 50%;
+            border: 2px solid #3a6a8a;
+            width: 140px;
+            height: 140px;
+            display: block;
+        }
+        .stick-box .stick-label {
+            font-size: 13px;
+            color: #8aaccc;
+            margin-top: 4px;
+        }
+        .record-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin: 16px 0 8px;
+            padding: 10px 16px;
+            background: #1a2a40;
+            border-radius: 30px;
+        }
+        .record-info span {
+            font-size: 14px;
+        }
+        .footer {
+            margin-top: 16px;
+            font-size: 13px;
+            color: #6a8aaa;
+            text-align: center;
+        }
+        @media (max-width: 700px) {
+            .panels { flex-direction: column; }
+            .stick-box canvas { width: 110px; height: 110px; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>🎮 手柄蓝牙数据监控</h1>
+
+    <!-- 状态栏 -->
+    <div class="status-bar">
+        <div>
+            <span>状态：</span>
+            <span id="statusBadge" class="status-badge badge-off">未连接</span>
+            <span id="deviceInfo" style="font-size:14px; color:#8aaccc;">等待手柄...</span>
+        </div>
+        <div>
+            <button id="btnConnect" class="btn">重新扫描手柄</button>
+            <button id="btnRecord" class="btn btn-record">⏺ 开始记录</button>
+            <button id="btnExport" class="btn btn-export">📥 导出 CSV</button>
+        </div>
+    </div>
+
+    <!-- 实时数据面板 -->
+    <div class="panels">
+        <!-- 左: 摇杆可视化 -->
+        <div class="panel" style="flex: 1.2;">
+            <h3>🕹 摇杆</h3>
+            <div class="stick-area">
+                <div class="stick-box">
+                    <canvas id="stickLeft" width="140" height="140"></canvas>
+                    <div class="stick-label">左摇杆</div>
+                </div>
+                <div class="stick-box">
+                    <canvas id="stickRight" width="140" height="140"></canvas>
+                    <div class="stick-label">右摇杆</div>
+                </div>
+            </div>
+            <div style="display:flex; justify-content:space-around; font-size:13px; color:#8aaccc; margin-top:6px;">
+                <span>X: <span id="lxVal">0.00</span>  Y: <span id="lyVal">0.00</span></span>
+                <span>X: <span id="rxVal">0.00</span>  Y: <span id="ryVal">0.00</span></span>
+            </div>
+        </div>
+
+        <!-- 中: 轴 和 扳机 -->
+        <div class="panel" style="flex: 1;">
+            <h3>📊 轴 (含扳机)</h3>
+            <div id="axisContainer" class="axis-container">
+                <!-- 由 JS 动态生成 -->
+            </div>
+        </div>
+
+        <!-- 右: 按钮 -->
+        <div class="panel" style="flex: 0.9;">
+            <h3>🔘 按钮</h3>
+            <div id="buttonGrid" class="button-grid">
+                <!-- 由 JS 动态生成 -->
+            </div>
+        </div>
+    </div>
+
+    <!-- 记录信息 -->
+    <div class="record-info">
+        <span>📋 已记录 <strong id="recordCount">0</strong> 帧</span>
+        <span>⏱ 采样间隔 ≈ <span id="sampleRate">0</span> ms</span>
+        <span style="margin-left:auto;">🟢 数据实时更新中</span>
+    </div>
+
+    <div class="footer">
+        提示：请先将蓝牙手柄与电脑配对，然后打开此页面。点击“重新扫描手柄”并按任意手柄按键激活连接。
+    </div>
+</div>
+
+<script>
+    // ============================================================
+    //  1. 全局状态
+    // ============================================================
+    let currentGamepad = null;          // 当前使用的手柄对象 (来自 getGamepads)
+    let gamepadIndex = -1;             // 手柄索引
+    let isConnected = false;
+    let recording = false;
+    let recordedData = [];             // 存放 { time, axes: [], buttons: [] }
+    let startTime = 0;
+    let frameCount = 0;
+    let lastTimestamp = 0;
+
+    // 用于动态生成UI的缓存
+    let axisElements = [];
+    let buttonElements = [];
+
+    // DOM 元素
+    const statusBadge = document.getElementById('statusBadge');
+    const deviceInfo = document.getElementById('deviceInfo');
+    const btnConnect = document.getElementById('btnConnect');
+    const btnRecord = document.getElementById('btnRecord');
+    const btnExport = document.getElementById('btnExport');
+    const recordCountSpan = document.getElementById('recordCount');
+    const sampleRateSpan = document.getElementById('sampleRate');
+    const axisContainer = document.getElementById('axisContainer');
+    const buttonGrid = document.getElementById('buttonGrid');
+    const stickLeft = document.getElementById('stickLeft');
+    const stickRight = document.getElementById('stickRight');
+    const ctxL = stickLeft.getContext('2d');
+    const ctxR = stickRight.getContext('2d');
+
+    // 数值显示
+    const lxVal = document.getElementById('lxVal');
+    const lyVal = document.getElementById('lyVal');
+    const rxVal = document.getElementById('rxVal');
+    const ryVal = document.getElementById('ryVal');
+
+    // ============================================================
+    //  2. 手柄连接 / 轮询
+    // ============================================================
+    function updateGamepad() {
+        if (!isConnected) {
+            // 尝试自动连接一次（如果手柄已配对且被浏览器识别）
+            const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+            for (let i = 0; i < gamepads.length; i++) {
+                const gp = gamepads[i];
+                if (gp && gp.connected) {
+                    connectToGamepad(gp, i);
+                    break;
+                }
+            }
+            return;
+        }
+
+        // 已有连接，更新数据
+        const gp = navigator.getGamepads()[gamepadIndex];
+        if (!gp || !gp.connected) {
+            // 手柄断开
+            disconnectGamepad();
+            return;
+        }
+        currentGamepad = gp;
+        processGamepadData(gp);
+    }
+
+    function connectToGamepad(gp, idx) {
+        currentGamepad = gp;
+        gamepadIndex = idx;
+        isConnected = true;
+        statusBadge.textContent = '已连接';
+        statusBadge.className = 'status-badge badge-on';
+        deviceInfo.textContent = `${gp.id} (索引 ${idx}) 轴:${gp.axes.length} 按钮:${gp.buttons.length}`;
+        // 构建UI
+        buildAxisUI(gp.axes.length);
+        buildButtonUI(gp.buttons.length);
+        // 重置记录
+        resetRecording();
+        // 清空已有数据
+        clearStick();
+    }
+
+    function disconnectGamepad() {
+        isConnected = false;
+        currentGamepad = null;
+        gamepadIndex = -1;
+        statusBadge.textContent = '未连接';
+        statusBadge.className = 'status-badge badge-off';
+        deviceInfo.textContent = '等待手柄...';
+        // 清空数据显示
+        axisContainer.innerHTML = '';
+        buttonGrid.innerHTML = '';
+        clearStick();
+        if (recording) toggleRecording(); // 自动停止记录
+    }
+
+    function clearStick() {
+        ctxL.clearRect(0, 0, 140, 140);
+        ctxR.clearRect(0, 0, 140, 140);
+        lxVal.textContent = '0.00';
+        lyVal.textContent = '0.00';
+        rxVal.textContent = '0.00';
+        ryVal.textContent = '0.00';
+    }
+
+    // ============================================================
+    //  3. 数据处理 & 可视化
+    // ============================================================
+    function processGamepadData(gp) {
+        const axes = gp.axes;
+        const buttons = gp.buttons;
+        const now = performance.now();
+
+        // ---- 更新轴显示 ----
+        for (let i = 0; i < axes.length; i++) {
+            const val = axes[i];
+            if (axisElements[i]) {
+                const fill = axisElements[i].fill;
+                const label = axisElements[i].label;
+                const pct = (val + 1) / 2 * 100;
+                fill.style.width = Math.min(100, Math.max(0, pct)) + '%';
+                label.textContent = val.toFixed(3);
+            }
+        }
+
+        // ---- 更新按钮 ----
+        for (let i = 0; i < buttons.length; i++) {
+            const btn = buttons[i];
+            const el = buttonElements[i];
+            if (el) {
+                const valSpan = el.querySelector('.val');
+                const pressed = btn.pressed;
+                const value = btn.value;
+                valSpan.textContent = value.toFixed(3);
+                if (pressed) {
+                    el.classList.add('pressed');
+                    valSpan.classList.add('pressed');
+                } else {
+                    el.classList.remove('pressed');
+                    valSpan.classList.remove('pressed');
+                }
+            }
+        }
+
+        // ---- 摇杆可视化 ----
+        // 左摇杆：索引 0, 1
+        const lx = axes.length > 0 ? axes[0] : 0;
+        const ly = axes.length > 1 ? axes[1] : 0;
+        drawStick(ctxL, lx, ly, 140);
+        lxVal.textContent = lx.toFixed(3);
+        lyVal.textContent = ly.toFixed(3);
+
+        // 右摇杆：索引 2, 3
+        const rx = axes.length > 2 ? axes[2] : 0;
+        const ry = axes.length > 3 ? axes[3] : 0;
+        drawStick(ctxR, rx, ry, 140);
+        rxVal.textContent = rx.toFixed(3);
+        ryVal.textContent = ry.toFixed(3);
+
+        // ---- 记录数据 ----
+        if (recording) {
+            const record = {
+                time: now - startTime,
+                axes: axes.slice(),
+                buttons: buttons.map(b => b.value)
+            };
+            recordedData.push(record);
+            recordCountSpan.textContent = recordedData.length;
+            // 采样间隔
+            if (recordedData.length > 1) {
+                const diff = record.time - recordedData[recordedData.length-2].time;
+                sampleRateSpan.textContent = diff.toFixed(1);
+            }
+            // 限制记录数量防止内存溢出（但一般没问题）
+            if (recordedData.length > 100000) {
+                // 如果太多，自动停止
+                if (recording) toggleRecording();
+                alert('记录数据过多 (100k帧)，已自动停止。请导出后清空。');
+            }
+        }
+    }
+
+    function drawStick(ctx, x, y, size) {
+        const cx = size/2, cy = size/2, radius = size/2 - 6;
+        ctx.clearRect(0, 0, size, size);
+
+        // 外圈
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI*2);
+        ctx.strokeStyle = '#3a6a8a';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+
+        // 十字线
+        ctx.beginPath();
+        ctx.moveTo(10, cy);
+        ctx.lineTo(size-10, cy);
+        ctx.moveTo(cx, 10);
+        ctx.lineTo(cx, size-10);
+        ctx.strokeStyle = '#2a4a6a';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // 中心点
+        const dotX = cx + x * (radius - 4);
+        const dotY = cy + y * (radius - 4);
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 6, 0, Math.PI*2);
+        ctx.fillStyle = '#6fcf97';
+        ctx.shadowColor = '#6fcf97';
+        ctx.shadowBlur = 12;
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        // 数值标签
+        ctx.fillStyle = '#8aaccc';
+        ctx.font = '12px monospace';
+        ctx.fillText(`(${x.toFixed(2)}, ${y.toFixed(2)})`, 10, 20);
+    }
+
+    // ============================================================
+    //  4. 动态生成UI
+    // ============================================================
+    function buildAxisUI(count) {
+        axisContainer.innerHTML = '';
+        axisElements = [];
+        for (let i = 0; i < count; i++) {
+            const div = document.createElement('div');
+            div.className = 'axis-item';
+            const label = document.createElement('span');
+            label.className = 'axis-label';
+            label.textContent = `轴${i}`;
+            const track = document.createElement('div');
+            track.className = 'axis-track';
+            const fill = document.createElement('div');
+            fill.className = 'axis-fill';
+            fill.style.width = '50%';
+            track.appendChild(fill);
+            const valSpan = document.createElement('span');
+            valSpan.className = 'axis-value';
+            valSpan.textContent = '0.000';
+            div.appendChild(label);
+            div.appendChild(track);
+            div.appendChild(valSpan);
+            axisContainer.appendChild(div);
+            axisElements[i] = { fill, label: valSpan };
+        }
+    }
+
+    function buildButtonUI(count) {
+        buttonGrid.innerHTML = '';
+        buttonElements = [];
+        for (let i = 0; i < count; i++) {
+            const div = document.createElement('div');
+            div.className = 'button-item';
+            const idxSpan = document.createElement('span');
+            idxSpan.className = 'idx';
+            idxSpan.textContent = `#${i}`;
+            const valSpan = document.createElement('span');
+            valSpan.className = 'val';
+            valSpan.textContent = '0.000';
+            div.appendChild(idxSpan);
+            div.appendChild(valSpan);
+            buttonGrid.appendChild(div);
+            buttonElements[i] = div;
+        }
+    }
+
+    // ============================================================
+    //  5. 记录控制
+    // ============================================================
+    function toggleRecording() {
+        recording = !recording;
+        if (recording) {
+            // 开始记录
+            if (!isConnected) {
+                recording = false;
+                alert('请先连接手柄！');
+                return;
+            }
+            recordedData = [];
+            startTime = performance.now();
+            recordCountSpan.textContent = '0';
+            sampleRateSpan.textContent = '0';
+            btnRecord.textContent = '⏹ 停止记录';
+            btnRecord.classList.add('active');
+        } else {
+            btnRecord.textContent = '⏺ 开始记录';
+            btnRecord.classList.remove('active');
+            // 更新最后统计
+        }
+    }
+
+    function resetRecording() {
+        if (recording) toggleRecording();
+        recordedData = [];
+        recordCountSpan.textContent = '0';
+        sampleRateSpan.textContent = '0';
+        btnRecord.textContent = '⏺ 开始记录';
+        btnRecord.classList.remove('active');
+    }
+
+    // ============================================================
+    //  6. 导出 CSV
+    // ============================================================
+    function exportCSV() {
+        if (recordedData.length === 0) {
+            alert('没有记录数据，请先开始记录。');
+            return;
+        }
+        // 构建标题: time, axis0, axis1, ... button0, button1, ...
+        const first = recordedData[0];
+        const axisCount = first.axes.length;
+        const btnCount = first.buttons.length;
+        let headers = ['time'];
+        for (let i = 0; i < axisCount; i++) headers.push(`axis${i}`);
+        for (let i = 0; i < btnCount; i++) headers.push(`btn${i}`);
+        const csvRows = [headers.join(',')];
+
+        for (const rec of recordedData) {
+            const row = [
+                rec.time.toFixed(3),
+                ...rec.axes.map(v => v.toFixed(6)),
+                ...rec.buttons.map(v => v.toFixed(6))
+            ];
+            csvRows.push(row.join(','));
+        }
+
+        const csvString = csvRows.join('\n');
+        const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const date = new Date().toISOString().replace(/[:.]/g, '-');
+        a.download = `手柄数据_${date}.csv`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // ============================================================
+    //  7. 事件绑定 & 主循环
+    // ============================================================
+    btnConnect.addEventListener('click', () => {
+        // 重新扫描手柄（Gamepad API没有直接请求权限，但点击可以触发连接事件）
+        // 我们尝试获取已连接的手柄
+        const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+        let found = false;
+        for (let i = 0; i < gamepads.length; i++) {
+            const gp = gamepads[i];
+            if (gp && gp.connected) {
+                connectToGamepad(gp, i);
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            alert('未找到已连接的手柄。请确保手柄已通过蓝牙配对并按下任意按键激活。');
+            disconnectGamepad();
+        }
+    });
+
+    btnRecord.addEventListener('click', toggleRecording);
+    btnExport.addEventListener('click', exportCSV);
+
+    // 监听手柄连接/断开事件 (浏览器自动触发)
+    window.addEventListener('gamepadconnected', (e) => {
+        const gp = e.gamepad;
+        console.log('Gamepad connected:', gp.id);
+        if (!isConnected) {
+            connectToGamepad(gp, e.gamepad.index);
+        } else {
+            // 如果有多个，可以选择切换到新连接的，这里简单忽略
+        }
+    });
+
+    window.addEventListener('gamepaddisconnected', (e) => {
+        if (isConnected && e.gamepad.index === gamepadIndex) {
+            disconnectGamepad();
+        }
+    });
+
+    // 主循环
+    function loop() {
+        updateGamepad();
+        requestAnimationFrame(loop);
+    }
+
+    // 启动循环
+    loop();
+
+    // 页面加载后尝试自动连接
+    window.addEventListener('load', () => {
+        setTimeout(() => {
+            const gamepads = navigator.getGamepads ? navigator.getGamepads() : [];
+            for (let i = 0; i < gamepads.length; i++) {
+                const gp = gamepads[i];
+                if (gp && gp.connected) {
+                    connectToGamepad(gp, i);
+                    break;
+                }
+            }
+        }, 500);
+    });
+
+    // ============================================================
+    //  8. 额外：初始化样式（预填充空状态）
+    // ============================================================
+    // 预先绘制空摇杆
+    clearStick();
+    // 显示默认轴和按钮占位
+    buildAxisUI(0);
+    buildButtonUI(0);
+</script>
+</body>
+</html>
