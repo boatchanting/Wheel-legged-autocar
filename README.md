@@ -4,15 +4,23 @@
   <img src="docs/img/logo.png" width="320" alt="Wheel-legged-autocar Logo">
 </div>
 <!-- 徽章区 -->
-<div align="center">、
-  <div align="center">
+<div align="center">
   <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/badge/repo-Wheel--legged--autocar-181717?logo=github" alt="repository"></a>
   <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/github/stars/boatchanting/Wheel-legged-autocar?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/boatchanting/Wheel-legged-autocar/tags"><img src="https://img.shields.io/github/v/tag/boatchanting/Wheel-legged-autocar?sort=semver&style=flat-square&label=latest%20tag" alt="Latest tag"></a>
+  <img src="https://img.shields.io/github/branches/boatchanting/Wheel-legged-autocar?style=flat-square" alt="Branches">
+  <img src="https://img.shields.io/badge/C-A8B9CC?style=flat-square&logo=c&logoColor=white" alt="C">
+  <img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/HTML-E34F26?style=flat-square&logo=html5&logoColor=white" alt="HTML">
   <img src="https://img.shields.io/badge/MCU-CYT4BB-orange?style=flat-square" alt="MCU">
   <img src="https://img.shields.io/badge/Core-Cortex--M7%20dual--core-blue?style=flat-square" alt="dual core">
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/boatchanting/Wheel-legged-autocar?style=flat-square" alt="License"></a>
+  <img src="https://img.shields.io/badge/IDE-IAR%209.40.1-red?style=flat-square" alt="IDE">
+  <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=flat-square" alt="License">
+  <img src="https://img.shields.io/badge/Status-Open%20Source-brightgreen?style=flat-square" alt="Status">
 </div>
+
+
+
 
 <div align="center">
   <p>本项目基于 CYT4BB 双核 Cortex‑M7 平台，融合轮腿运动控制与视觉巡线算法，提供从底层驱动到上层决策的完整工程实现。仓库公开的是一套真实参赛项目：双轮足（轮腿）智能车的软件、硬件适配、视觉算法、导航控制、调试工具和过程文档。代码以“能复现、可分析、便于二次开发”为目标整理，欢迎用于学习、研究和改进。代码结构清晰、注释详尽，适合智能车竞赛及机器人爱好者学习与二次开发。</p>
@@ -20,9 +28,9 @@
 
 **快速入口：** [快速开始](#快速开始) · [硬件与软件环境](#硬件与软件环境) · [复现边界](#复现边界与支持矩阵) · [工程结构文档](docs/project-structure/README.md) · [PC 工具索引](tools/README.md)
 
-## 目录
+<details>
+<summary>目录</summary>
 
-- [目录](#目录)
 - [项目简介](#项目简介)
 - [项目状态与版本](#项目状态与版本)
 - [功能总览](#功能总览)
@@ -52,6 +60,7 @@
 - [致谢](#致谢)
   - [Contributors](#contributors)
 - [开源协议](#开源协议)
+</details>
 
 ## 项目简介
 
@@ -101,27 +110,10 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 ## 系统架构
 
-```text
-                         ┌──────────────────────────┐
-                         │        CYT4BB MCU         │
-                         │     Cortex-M7 双核心      │
-                         └────────────┬─────────────┘
-                                      │ 共享 RAM / IPC
-                 ┌────────────────────┴────────────────────┐
-                 │                                         │
-      ┌──────────▼──────────┐                  ┌──────────▼──────────┐
-      │ CM7_0：实时控制      │                  │ CM7_1：视觉协处理      │
-      │ user/main_cm7_0.c    │                  │ user/main_cm7_1.c    │
-      │ 1 ms PIT + ISR       │                  │ 摄像头帧循环 + PIT    │
-      └──────────┬──────────┘                  └──────────┬──────────┘
-                 │                                         │
-      ┌──────────▼──────────┐                  ┌──────────▼──────────┐
-      │ EKF / PID / 导航     │                  │ PVC / Bridge / Bumpy │
-      │ 电机 / 舵机 / 任务    │                  │ IPM / 图传 / 遥测      │
-      └─────────────────────┘                  └─────────────────────┘
-```
+整车软件系统需要兼顾控制回路的强实时性、视觉感知的并发处理以及多科目状态机的可维护性，因此采用了层次化与模块化架构，自底向上划分为六个层级：
+![软件分层架构图](docs/img/软件分层架构图.png)
 
-典型数据链路：摄像头完成一帧采集后由 1 核运行选中的视觉算法，结果写入 IPC；0 核在周期中断中读取结果并转换为转向、速度或科目控制量，最终输出到电机和舵机。
+> 典型数据链路：摄像头完成一帧采集后由 1 核运行选中的视觉算法，结果写入 IPC；0 核在周期中断中读取结果并转换为转向、速度或科目控制量，最终输出到电机和舵机。
 
 ## 仓库结构
 
@@ -129,15 +121,15 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 .
 ├── user/                         # 双核入口、PIT/UART 中断与初始化
 ├── code/                         # 0 核：控制、导航、任务、执行器、视觉控制
-│   ├── config/                   # 车辆、科目、IMU、WiFi 等编译期配置
-│   ├── calculate/                # EKF、矩阵、PID
+│   ├── config/                   # 车辆、科目、IMU、WiFi 等编译期配置文件
+│   ├── calculate/                # EKF、矩阵库、PID
 │   ├── navigation/               # GNSS/惯导、轨迹记录与回放
-│   ├── plan/                     # 雷区、单边桥、颠簸路等任务逻辑
-│   ├── servo/                    # 舵机映射、动作执行器、跳跃动作
+│   ├── plan/                     # 雷区、单边桥、颠簸路段等任务逻辑
+│   ├── servo/                    # 舵机控制相关
 │   ├── vision/                   # 0 核视觉 IPC 与视觉控制适配
-│   └── tools/                    # 蜂鸣器、屏幕、SBUS、WiFi、遥测
+│   └── tools/                    # 外设：如屏幕、遥控器、WiFi、遥测
 ├── code1/                        # 1 核：视觉算法、图像处理、图传
-│   └── vision/                   # PVC、桥线、颠簸路、IPM、IPC
+│   └── vision/                   # PVC、单边桥寻线、颠簸路、IPM、IPC
 ├── libraries/                    # 逐飞 CYT4BB 库、SDK、CMSIS、设备驱动
 │   └── doc/                      # 第三方库版权与许可证说明
 ├── CYT2BL3FOC/                   # 独立的 CYT2BL3 双驱无刷电机工程
