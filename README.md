@@ -101,6 +101,14 @@
   单边桥视觉效果演示
 </p>
 
+<p align="center">
+  <img src="docs/img/台阶视觉演示.gif" width="85%">
+</p>
+
+<p align="center">
+  台阶视觉效果演示
+</p>
+
 
 
 ## 项目简介
@@ -393,8 +401,6 @@ python "tools/webview_nav_marker/nav_marker_host.py"
 5. 使用 DAP/IAR 下载器时，先烧录 CM7_0，再烧录 CM7_1；上电后先观察屏幕、串口和蜂鸣器状态。
 
 > 工程文件只描述本项目源码和链接布局，调试器、下载器、板卡引脚及外设接线仍需按你的硬件配置。
-
-（这里待测试补充...）
 
 ## 实车安全须知
 
