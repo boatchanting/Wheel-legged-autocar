@@ -3,24 +3,28 @@
   <h2 style="font-size: 2.2rem; color: #777;">第 21 届全国大学生智能汽车竞赛 · 轮腿穿越组 —— 省赛国赛代码，开发全流程开源</h2>
   <img src="docs/img/logo.png" width="320" alt="Wheel-legged-autocar Logo">
 </div>
-
 <!-- 徽章区 -->
-<div align="center">
+<div align="center">、
+  <div align="center">
   <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/badge/repo-Wheel--legged--autocar-181717?logo=github" alt="repository"></a>
-  <img src="https://img.shields.io/badge/MCU-CYT4BB-orange" alt="MCU">
-  <img src="https://img.shields.io/badge/Core-Cortex--M7%20dual--core-blue" alt="dual core">
-  <img src="https://img.shields.io/badge/Language-C%20%7C%20Python%20%7C%20HTML-informational" alt="language">
-  <img src="https://img.shields.io/badge/License-GPL--3.0-green" alt="license">
+  <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/github/stars/boatchanting/Wheel-legged-autocar?style=flat-square" alt="GitHub stars"></a>
+  <a href="https://github.com/boatchanting/Wheel-legged-autocar/tags"><img src="https://img.shields.io/github/v/tag/boatchanting/Wheel-legged-autocar?sort=semver&style=flat-square&label=latest%20tag" alt="Latest tag"></a>
+  <img src="https://img.shields.io/badge/MCU-CYT4BB-orange?style=flat-square" alt="MCU">
+  <img src="https://img.shields.io/badge/Core-Cortex--M7%20dual--core-blue?style=flat-square" alt="dual core">
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/boatchanting/Wheel-legged-autocar?style=flat-square" alt="License"></a>
 </div>
 
 <div align="center">
   <p>本项目基于 CYT4BB 双核 Cortex‑M7 平台，融合轮腿运动控制与视觉巡线算法，提供从底层驱动到上层决策的完整工程实现。仓库公开的是一套真实参赛项目：双轮足（轮腿）智能车的软件、硬件适配、视觉算法、导航控制、调试工具和过程文档。代码以“能复现、可分析、便于二次开发”为目标整理，欢迎用于学习、研究和改进。代码结构清晰、注释详尽，适合智能车竞赛及机器人爱好者学习与二次开发。</p>
 </div>
 
+**快速入口：** [快速开始](#快速开始) · [硬件与软件环境](#硬件与软件环境) · [复现边界](#复现边界与支持矩阵) · [工程结构文档](docs/project-structure/README.md) · [PC 工具索引](tools/README.md)
+
 ## 目录
 
 - [目录](#目录)
 - [项目简介](#项目简介)
+- [项目状态与版本](#项目状态与版本)
 - [功能总览](#功能总览)
   - [运动控制](#运动控制)
   - [导航与比赛科目](#导航与比赛科目)
@@ -28,14 +32,14 @@
   - [工具链](#工具链)
 - [系统架构](#系统架构)
 - [仓库结构](#仓库结构)
-  - [项目文件树详解](#项目文件树详解)
 - [硬件与软件环境](#硬件与软件环境)
   - [车端](#车端)
   - [PC 端](#pc-端)
+  - [复现边界与支持矩阵](#复现边界与支持矩阵)
 - [快速开始](#快速开始)
   - [1. 获取代码](#1-获取代码)
-  - [2. 打开 IAR 双核工程](#2-打开-iar-双核工程)
-  - [3. 首次上电检查](#3-首次上电检查)
+  - [2. PC 工具](#2-pc-工具)
+  - [3. 打开 IAR 双核工程](#3-打开-iar-双核工程)
 - [配置说明](#配置说明)
 - [PC 工具](#pc-工具)
 - [自定义导航与日志上位机](#自定义导航与日志上位机)
@@ -43,7 +47,7 @@
   - [日志记录与可视化](#日志记录与可视化)
   - [车端自定义协议](#车端自定义协议)
 - [文档导航](#文档导航)
-- [安全与复现边界](#安全与复现边界)
+- [实车安全须知](#实车安全须知)
 - [贡献与交流](#贡献与交流)
 - [致谢](#致谢)
   - [Contributors](#contributors)
@@ -57,6 +61,13 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 - **CM7_1（1 核）**：视觉与图传协处理核，负责 MT9V03X 摄像头采集、图像压缩、PVC/单边桥/颠簸路视觉识别、IPM 坐标变换及跨核结果发布。
 
 项目覆盖备赛、标定、离线验证、实车调试和比赛版本维护，代码中保留了不同车辆、传感器和科目的配置入口，便于对照实验。
+
+## 项目状态与版本
+
+- 默认分支用于持续整理文档和代码；实车使用建议固定到已验证的稳定 Tag。
+- `plan*.*.*-stable` 表示对应比赛科目的稳定版本，`plan*.*.*-unstable*` 表示实验性版本。
+- `v1.0.0` 及之前的 `v*` Tag 主要用于通用代码演进；具体差异可通过仓库的 [Releases](https://github.com/boatchanting/Wheel-legged-autocar/releases) 和提交记录查看。
+- 当前仓库没有承诺跨硬件即插即用；请结合 [复现边界与支持矩阵](#复现边界与支持矩阵) 选择合适的入口。
 
 ## 功能总览
 
@@ -135,30 +146,8 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 ├── docs/                         # 架构、调参、任务规划和问题复盘
 ```
 
-更细的逐文件说明见 [`docs/project-structure/README.md`](docs/project-structure/README.md)。
-
-### 项目文件树详解
-
-| 路径 | 内容与职责 | 从哪里开始看 |
-| --- | --- | --- |
-| `user/` | 双核启动入口、外设初始化、PIT/UART 中断服务。决定“什么时候调用哪个模块”。 | `main_cm7_0.c`、`cm7_0_isr.c`、`main_cm7_1.c` |
-| `code/config/` | 车辆编号、IMU、WiFi、显示、遥控、科目和发车策略等编译期宏。 | `config.h`、`car_select.h`、`sys_options.h` |
-| `code/calculate/` | 姿态估计和底层控制算法。 | `ekf.c`、`matrix.c`、`pid-new.c` |
-| `code/navigation/` | GNSS/惯导坐标处理、轨迹记录、Flash 存取、回放和路径跟踪计划。 | `inertial_nav.c`、`gnss_transform.c`、`nav_replay/` |
-| `code/plan/` | 比赛科目状态机和动作编排。 | `bridge.c`、`minefield.c`、`bumpy_road.c` |
-| `code/servo/` | 舵机角度映射、平滑执行、跳跃及落地动作。 | `servo.c`、`servo_executor.c`、`servo_jump.c` |
-| `code/vision/` | 0 核侧视觉任务门控、IPC 轮询，以及将识别结果接入转向/速度控制。 | `vision_ipc_core0.c`、`vision_*_control.c` |
-| `code/tools/` | 蜂鸣器、屏幕菜单、SBUS、WiFi、遥测和运行耗时统计。 | `menu.c`、`sbus.c`、`telemetry_ipc_core0.c` |
-| `code1/vision/` | 1 核图像算法和跨核结果发布。 | `pvc_vision.c`、`bumpy_vision.c`、`ipm_transform.c` |
-| `code1/tools/` | 摄像头调试菜单等 1 核辅助模块。 | `camera_menu.c` |
-| `libraries/zf_*` | 逐飞公共组件、设备驱动、传感器驱动和板级适配。 | 结合 `zf_common_headfile.h` 查找引用 |
-| `libraries/sdk/` | CYT4BB 芯片 SDK、CMSIS/ARM Math 和启动/底层头文件。 | IAR include path |
-| `libraries/doc/` | 第三方库版本、版权和 GPL 声明。 | `version.txt`、`GPL3_permission_statement.txt` |
-| `iar/` | IAR 双核工程、链接脚本和工作区配置。 | `project_config/cyt4bb7_cm_7_0.ewp`、`cyt4bb7_cm_7_1.ewp` |
-| `CYT2BL3FOC/` | 独立的 CYT2BL3 双驱无刷电机控制工程，与 CYT4BB 主工程分开编译。 | 该目录自己的 `project/` |
-| `tools/` | PC 端离线分析、算法仿真、传感器标定、CV 测试和上位机。 | 先看 `tools/README.md` |
-| `docs/` | 架构说明、调参记录、任务规划、问题复盘和模块文档。 | `docs/project-structure/README.md` |
-| `data/`、`results/` | 本地采集数据和分析产物；通常不作为固件编译输入。 | 按工具 README 查找对应数据格式 |
+完整的目录、入口文件和模块职责说明请阅读
+[`docs/project-structure/README.md`](docs/project-structure/README.md)。建议按“项目结构 → `user/main_cm7_0.c` → `cm7_0_isr.c` → `code/calculate`、`navigation`、`plan` → `code1/vision`”顺序阅读。
 
 源码依赖关系可以概括为：`user/` 负责调度，`code/` 提供 0 核业务，`code1/` 提供 1 核视觉，`libraries/` 提供芯片与外设能力，`tools/` 和 `docs/` 支撑验证与维护。
 
@@ -178,12 +167,24 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 ### PC 端
 
-- Python 3.9 或更高版本
+- Python 3.9 或更高版本（建议使用虚拟环境）
 - 按工具安装 `numpy`、`pandas`、`matplotlib`、`opencv-python`、`streamlit` 等依赖
 - 支持现代 JavaScript 的浏览器，用于打开 HTML/WebView 工具
 - 运行 `tools/07_针对小车车载视频的cv算法/` 下 C 检测器时，需要 GCC/MinGW 或 Visual Studio
 
-目前没有统一的 `requirements.txt`，不同脚本的依赖以所在目录 README、脚本导入和报错信息为准。
+当前仓库尚未提供统一的 `requirements.txt`；不同脚本的依赖以所在目录 README、脚本导入和报错信息为准。运行单个工具前，请先阅读对应目录文档。
+
+### 复现边界与支持矩阵
+
+| 能力 | 无实车可复现 | 需要硬件 | 入口 |
+| --- | :---: | :---: | --- |
+| GNSS/惯导轨迹分析 | ✅ | — | `tools/01_导航与定位可视化/` |
+| CV 离线检测与标定 | ✅ | — | `tools/cvtest/`、`tools/04_传感器标定与测试/` |
+| 导航点标注与日志可视化 | ✅（需样例数据） | — | `tools/webview_nav_marker/`、`tools/日志分析/` |
+| 固件编译 | 部分 | IAR Embedded Workbench | `iar/project_config/` |
+| 平衡、跳跃和完整科目流程 | ❌ | 完整车辆与匹配硬件 | `code/`、`code1/` |
+
+仓库中的代码和工具用于学习与研究，不保证在不同板卡、传感器安装方式或赛道条件下直接运行。实车验证请从低功率、轮子离地和遥控急停开始。
 
 ## 快速开始
 
@@ -192,9 +193,26 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 ```bash
 git clone https://github.com/boatchanting/Wheel-legged-autocar.git
 cd Wheel-legged-autocar
+# 实车复现建议固定到已验证的稳定版本（示例）
+git checkout plan4.7.0-stable
 ```
 
-### 2. 打开 IAR 双核工程
+### 2. PC 工具
+
+```bash
+python -m venv .venv
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
+# Linux/macOS
+# source .venv/bin/activate
+
+python -m pip install numpy pandas matplotlib opencv-python streamlit pywebview
+python "tools/webview_nav_marker/nav_marker_host.py"
+```
+
+上位机可以在没有车辆数据时启动界面；实时遥测、打点和控制功能需要车端 WiFi 链路。不同工具的依赖可能不同，详见 [`tools/README.md`](tools/README.md) 及各子目录 README。
+
+### 3. 打开 IAR 双核工程
 
 1. 安装 IAR Embedded Workbench，打开 `iar/project_config/cyt4bb7_cm_7_0.ewp` 和 `iar/project_config/cyt4bb7_cm_7_1.ewp`。
 2. 检查两个工程的 include path，至少包含 `code/`、`code1/`、`user/` 以及 `libraries/` 下对应的 SDK、驱动和 CMSIS 目录。
@@ -204,15 +222,7 @@ cd Wheel-legged-autocar
 
 > 工程文件只描述本项目源码和链接布局，调试器、下载器、板卡引脚及外设接线仍需按你的硬件配置。
 
-### 3. 首次上电检查
-
-请先将 `G_MOTOR_ENABLE_INIT`、遥控急停和机械支撑置于安全状态，完成以下检查后再让轮子离地运行：
-
-- 舵机中位、极性、机械限位和跳跃动作幅度
-- 电机左右方向、PWM 极性、轮径和轮距
-- IMU 安装方向、零偏、磁力计校准和 `IMU_CATEGORY`
-- GNSS 串口、摄像头曝光/分辨率、SBUS 急停
-- PID 限幅、发车策略和当前科目状态机
+（这里待测试补充...）
 
 ## 配置说明
 
@@ -241,7 +251,7 @@ cd Wheel-legged-autocar
 ```
 
 > 修改配置后必须同时重编译两个核心。
-> 实际上，这套配置文件系统架构的不好，所有的文件都引用了配置文件，导致编译时速度较慢，一个好的架构优化是在pre_build阶段，**将配置文件的内容按模块进行拆分**，这样就可以避免重复编译的问题。
+> 注：当前配置宏被多个模块直接引用，修改配置后可能触发较多文件重新编译。**建议其它同学后续写的时候，可将配置拆分为按模块生成的编译期配置(pre_build)，以缩短增量编译时间。**
 
 ## PC 工具
 
@@ -254,16 +264,16 @@ cd Wheel-legged-autocar
 | `03_控制与仿真/` | PID、轮腿、Pure Pursuit/MPC/RL | `pid调参.py` |
 | `04_传感器标定与测试/` | 磁力计、逆透视、压缩和 IMU 测试 | 目录内 HTML/Python |
 | `05_通用数据处理工具/` | 代码统计、版本 changelog、视频上位机 | `changelog_between_tags.py` |
-| `cvtest/` | 桥、地雷区、台阶离线 CV 测试 | 各场景 README |
-| `webview_nav_marker/` | 惯导点标注、CSV 转 C 路线表 | `nav_marker_host.py` |
+| `cvtest/` | 桥、地雷区、台阶离线 CV 测试 | 各场景 py 版本算法文件 |
+| `webview_nav_marker/` | 惯导点标注上位机系统、CSV 转 C 路线表 | `nav_marker_host.py` |
 | `wifi_protocol/` | WiFi 协议和 Streamlit 上位机 | `streamlit_wifi.py` |
 
 示例：
 
 ```bash
-python tools/webview_nav_marker/nav_marker_host.py
-streamlit run tools/wifi_protocol/streamlit_wifi.py
-python tools/05_通用数据处理工具/changelog_between_tags.py v1.0.0 v1.1.0 --markdown
+python "tools/webview_nav_marker/nav_marker_host.py"
+streamlit run "tools/wifi_protocol/streamlit_wifi.py"
+python "tools/05_通用数据处理工具/changelog_between_tags.py" v0.8.0 v1.0.0 --markdown
 ```
 
 ## 自定义导航与日志上位机
@@ -282,11 +292,11 @@ python tools/05_通用数据处理工具/changelog_between_tags.py v1.0.0 v1.1.0
 启动方式：
 gnss惯导上位机
 ```bash
-python tools/wifi_protocol/wifi_host.py
+python "tools/wifi_protocol/wifi_host.py"
 ```
 惯性导航及日志上位机
 ```bash
-python tools/webview_nav_marker科目四/nav_marker_host.py
+python "tools/webview_nav_marker科目四/nav_marker_host.py"
 ```
 
 ![GNSS 和惯导上位机](docs/img/gnss和惯导上位机.png)
@@ -322,7 +332,7 @@ python tools/webview_nav_marker科目四/nav_marker_host.py
 
 建议按“项目结构 → `user/main_cm7_0.c` → `cm7_0_isr.c` → `code/calculate`、`navigation`、`plan` → `code1/vision`”顺序阅读。
 
-## 安全与复现边界
+## 实车安全须知
 
 这是竞赛实车代码，不是通用量产控制器。硬件版本、装配误差、赛道材质、传感器安装和参数标定都会显著影响结果。首次运行务必：
 
@@ -330,8 +340,6 @@ python tools/webview_nav_marker科目四/nav_marker_host.py
 2. 关闭自动导航和跳跃，仅验证 IMU、遥控和基础平衡。
 3. 限制最大 PWM/速度，逐项恢复视觉、导航和科目状态机。
 4. 保留串口日志和参数版本，记录每次实车修改。
-
-仓库中的数据、图片和构建输出可能较大或被 `.gitignore` 排除；缺少比赛现场硬件时，优先使用 `tools/` 离线工具复现算法流程。
 
 ## 贡献与交流
 
