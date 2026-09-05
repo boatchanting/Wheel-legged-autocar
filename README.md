@@ -38,6 +38,7 @@
   - [运动控制](#运动控制)
   - [导航与比赛科目](#导航与比赛科目)
   - [视觉与通信](#视觉与通信)
+  - [日志系统与可视化](#日志系统与可视化)
   - [工具链](#工具链)
 - [仓库结构](#仓库结构)
 - [硬件与软件环境](#硬件与软件环境)
@@ -107,6 +108,12 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 - CM7_0 ↔ CM7_1 视觉 IPC：[0 核任务门控、复位请求与结果轮询](code/vision/vision_ipc_core0.c)、[1 核结果发布](code1/vision/vision_ipc_core1.c)
 - [WiFi 图传](code1/wifi.c)、[遥测](code/tools/telemetry_ipc_core0.c)、[自定义协议](code/tools/wifi_protocol.c) 及 [逐飞助手兼容接口](libraries/zf_components/seekfree_assistant_interface.c)
 
+### 日志系统与可视化
+
+- [nav_marker_host.py](tools/webview_nav_marker科目四/nav_marker_host.py) （注意同名文件中科目四文件夹下这个可用，其余上位机没更新不可用）将完整遥测帧保存为 CSV（含原始 `payload_hex` 及解析字段）。离线分析使用 [`日志可视化.html`](tools/webview_nav_marker科目四/日志可视化.html)：导入 CSV 即可查看轨迹、状态、速度和控制量，定位异常并对比参数版本。有详细说明 [自定义导航与日志上位机](#自定义导航与日志上位机)
+
+- [wifi_protocol.c](code/tools/wifi_protocol.c) / [wifi_protocol.h](code/tools/wifi_protocol.h) 统一定义帧头、命令字、128 字节载荷、控制指令和 ACK。修改时需同步更新车端结构体、上位机字段顺序及可视化页面。
+
 ### 工具链
 
 - GNSS/惯导轨迹可视化、坐标对齐、回环与路径规划分析（车端数据入口：[inertial_nav.c](code/navigation/inertial_nav.c)、[gnss_transform.c](code/navigation/gnss_transform.c)）
@@ -140,6 +147,8 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 完整的目录、入口文件和模块职责说明请阅读
 [工程结构文档](docs/project-structure/README.md)。建议按“项目结构 → `user/main_cm7_0.c` → `cm7_0_isr.c` → `code/calculate`、`navigation`、`plan` → `code1/vision`”顺序阅读。
 
+<details>
+<summary>一些例子</summary>
 | 目录职责 | 关键 `.c` 入口 |
 | --- | --- |
 | 双核入口与中断调度 | [`main_cm7_0.c`](user/main_cm7_0.c)、[`main_cm7_1.c`](user/main_cm7_1.c)、[`cm7_0_isr.c`](user/cm7_0_isr.c) |
@@ -149,6 +158,7 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 | 0 核视觉控制与 IPC | [`vision_ipc_core0.c`](code/vision/vision_ipc_core0.c)、[`vision_bridge_control.c`](code/vision/vision_bridge_control.c)、[`vision_three_stage_control.c`](code/vision/vision_three_stage_control.c) |
 | 1 核视觉与图传 | [`vision_ipc_core1.c`](code1/vision/vision_ipc_core1.c)、[`pvc_vision.c`](code1/vision/pvc_vision.c)、[`bridge_detect.c`](code1/vision/bridge_detect.c)、[`ipm_transform.c`](code1/vision/ipm_transform.c)、[`wifi.c`](code1/wifi.c) |
 | 外设、通信与遥测 | [`small_driver_uart_control.c`](code/small_driver_uart_control.c)、[`wifi_protocol.c`](code/tools/wifi_protocol.c)、[`telemetry_ipc_core0.c`](code/tools/telemetry_ipc_core0.c) |
+</details>
 
 源码依赖关系可以概括为：`user/` 负责调度，`code/` 提供 0 核业务，`code1/` 提供 1 核视觉，`libraries/` 提供芯片与外设能力，`tools/` 和 `docs/` 支撑验证与维护。
 
@@ -244,7 +254,7 @@ python "tools/05_通用数据处理工具/changelog_between_tags.py" v0.8.0 v1.0
 
 ### 惯性导航与自定义导航
 
-入口脚本为 [`nav_marker_host.py`](tools/webview_nav_marker科目四/nav_marker_host.py)，基于 WebView 提供以下能力：
+入口脚本为 [nav_marker_host.py](tools/webview_nav_marker科目四/nav_marker_host.py)，基于 WebView 提供以下能力：
 
 - 实时显示 GNSS/惯导位置、航向和车辆状态
 - 在地图或轨迹视图中采集、编辑和导出导航点
