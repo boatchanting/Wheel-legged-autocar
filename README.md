@@ -136,19 +136,24 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 ### 运动控制
 
-- [IMU660RA](libraries/zf_device/zf_device_imu660ra.c)/[IMU660RB](libraries/zf_device/zf_device_imu660rb.c)/[IMU963RA](libraries/zf_device/zf_device_imu963ra.c) 适配与姿态 [EKF](code/calculate/ekf.c)
+运动控制部分的尝试与实践颇多，好多尝试代码不知道放在了哪些分支中，一开始不懂imu和详细规则，把所有的都试了试，多imu姿态适配的代码留存了下来，但其中到最后输出端的很多是面相结果编程，实际应用需调试测试pitch、roll、yaw的方向和范围。
+
+- [IMU660RA](libraries/zf_device/zf_device_imu660ra.c)/[IMU660RB](libraries/zf_device/zf_device_imu660rb.c)/[IMU963RA](libraries/zf_device/zf_device_imu963ra.c) 多种适配与姿态 [EKF](code/calculate/ekf.c)
 - 速度、角度、角速度、转向、横滚平衡等多环 [PID](code/calculate/pid-new.c)（控制节拍见 [cm7_0_isr.c](user/cm7_0_isr.c)）
 - [双轮差速/转向控制](user/cm7_0_isr.c)、[无刷电机串口输出](code/small_driver_uart_control.c)、[舵机位置](code/servo/servo.c) 和 [动作执行器](code/servo/servo_executor.c)
 - [起立瞄准发车](user/main_cm7_0.c)、[跳跃动作与落地缓冲](code/servo/servo_jump.c) 和 [侧向打滑检测](code/navigation/inertial_nav.c)
 
 ### 导航与比赛科目
 
-- [GNSS 经纬度到局部平面坐标转换](code/navigation/gnss_transform.c)
-- [视觉、里程计、IMU 融合的惯性导航](code/navigation/inertial_nav.c)、[轨迹 RAM 记录](code/navigation/nav_ram.c)、[静态轨迹回放](code/navigation/nav_replay.c)
+我们开发了gnss导航，视觉、里程计、IMU 融合的惯性导航两种导航方式。从效果上来看，视觉融合惯性导航的效果对于今年的赛题效果更好，与此同时的gnss尝试也可能在以后值得借鉴。但是开环的离线速度决策是不好的方案，开发之初是因为其简单，但最后也没有写成闭环的形式。
+
+- [GNSS 经纬度到局部平面坐标转换](code/navigation/gnss_transform.c)，[GNSS导航](code\navigation\nav_replay\plan1\plan1_gnss.c)
+- [视觉、里程计、IMU 融合的惯性导航](code/navigation/inertial_nav.c)，[视觉融合更新坐标](code\navigation\nav_replay\plan3\plan3_lqr_speed_planning.c)，[轨迹 RAM 记录](code/navigation/nav_ram.c)、[静态轨迹回放](code/navigation/nav_replay.c)
 - 科目一至科目四的路径跟踪、速度规划和任务状态机：[科目一](code/navigation/nav_replay/plan1/plan1_lqr_tracking.c)、[科目二](code/navigation/nav_replay/plan2/plan2_point_speed_planning_lite.c)、[科目三](code/navigation/nav_replay/plan3/plan3_lqr_speed_planning.c)、[科目四](code/navigation/nav_replay/plan4/plan4_lqr_speed_planning.c)
 - [地雷区](code/plan/minefield.c)、[单边桥](code/plan/bridge.c)、[颠簸路段](code/plan/bumpy_road.c)、[三级台阶/跳跃](code/vision/vision_three_stage_control.c) 专用控制逻辑
 
 ### 视觉与通信
+视觉部分给户外组的建议是一定要写鲁棒的代码，或者尽量少依靠视觉的实现方式，这一点上吃了好多亏。其中的视觉识别算法可以作为参考。
 
 - [三级台阶 PVC 特征识别](code1/vision/pvc_vision.c) 与 [跳跃状态机](code/vision/vision_three_stage_control.c)、[单边桥特征识别](code1/vision/bridge_detect.c)、[颠簸路段特征识别](code1/vision/bumpy_vision.c)
 - [逆透视（IPM）和像素到物理坐标估计](code1/vision/ipm_transform.c)
@@ -156,12 +161,14 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 - [WiFi 图传](code1/wifi.c)、[遥测](code/tools/telemetry_ipc_core0.c)、[自定义协议](code/tools/wifi_protocol.c) 及 [逐飞助手兼容接口](libraries/zf_components/seekfree_assistant_interface.c)
 
 ### 日志系统与可视化
+一整套自定义日志系统和上位机可视化系统，感觉这样调车比看小车ips屏幕方便。
 
 - [nav_marker_host.py](tools/webview_nav_marker科目四/nav_marker_host.py) （注意同名文件中科目四文件夹下这个可用，其余上位机没更新不可用）将完整遥测帧保存为 CSV（含原始 `payload_hex` 及解析字段）。离线分析使用 [`日志可视化.html`](tools/webview_nav_marker科目四/日志可视化.html)：导入 CSV 即可查看轨迹、状态、速度和控制量，定位异常并对比参数版本。有详细说明 [自定义导航与日志上位机](#自定义导航与日志上位机)
 
 - [wifi_protocol.c](code/tools/wifi_protocol.c) / [wifi_protocol.h](code/tools/wifi_protocol.h) 统一定义帧头、命令字、128 字节载荷、控制指令和 ACK。修改时需同步更新车端结构体、上位机字段顺序及可视化页面。
 
 ### 工具链
+开发时候顺手写的小工具。
 
 - GNSS/惯导轨迹可视化、坐标对齐、回环与路径规划分析（车端数据入口：[inertial_nav.c](code/navigation/inertial_nav.c)、[gnss_transform.c](code/navigation/gnss_transform.c)）
 - PID 调参、轮腿运动学、Pure Pursuit/MPC/RL 仿真（控制实现：[pid-new.c](code/calculate/pid-new.c)）
