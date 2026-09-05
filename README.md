@@ -40,7 +40,7 @@
   - [视觉与通信](#视觉与通信)
   - [日志系统与可视化](#日志系统与可视化)
   - [工具链](#工具链)
-- [仓库结构](#仓库结构)
+- [📁 仓库结构](#-仓库结构)
 - [硬件与软件环境](#硬件与软件环境)
   - [车端](#车端)
   - [PC 端](#pc-端)
@@ -121,7 +121,7 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 - IMU/磁力计/逆透视标定和车载视频 CV 离线测试（设备适配：[zf_device_imu963ra.c](libraries/zf_device/zf_device_imu963ra.c)，C 检测器：[bridge_detection_pc.c](tools/07_针对小车车载视频的cv算法/bridge2/c_bridge2/bridge_detection_pc.c)、[bumpy_detector.c](tools/07_针对小车车载视频的cv算法/bumpy_road/c_bumpy_detector/bumpy_detector.c)）
 - WebView 导航点标注、CSV 转 C 路线表、WiFi/视频上位机（车端协议：[wifi_protocol.c](code/tools/wifi_protocol.c)、图传：[wifi.c](code1/wifi.c)）
 
-## 仓库结构
+## 📁 仓库结构
 
 ```text
 .
