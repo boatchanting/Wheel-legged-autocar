@@ -109,6 +109,13 @@
   台阶视觉效果演示
 </p>
 
+<p align="center">
+  <img src="docs/img/颠簸路段视觉演示.gif" width="85%">
+</p>
+
+<p align="center">
+  颠簸路段视觉效果演示
+</p>
 
 
 ## 项目简介
