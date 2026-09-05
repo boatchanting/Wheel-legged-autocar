@@ -88,31 +88,31 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 ### 运动控制
 
-- IMU660RA/IMU660RB/IMU963RA 适配与姿态 EKF
-- 速度、角度、角速度、转向、横滚平衡等多环 PID
-- 双轮差速/转向控制、无刷电机串口输出、舵机位置和动作执行器
-- 起立瞄准发车、跳跃动作、落地缓冲和侧向打滑检测
+- [IMU660RA](libraries/zf_device/zf_device_imu660ra.c)/[IMU660RB](libraries/zf_device/zf_device_imu660rb.c)/[IMU963RA](libraries/zf_device/zf_device_imu963ra.c) 适配与姿态 [EKF](code/calculate/ekf.c)
+- 速度、角度、角速度、转向、横滚平衡等多环 [PID](code/calculate/pid-new.c)（控制节拍见 [cm7_0_isr.c](user/cm7_0_isr.c)）
+- [双轮差速/转向控制](user/cm7_0_isr.c)、[无刷电机串口输出](code/small_driver_uart_control.c)、[舵机位置](code/servo/servo.c) 和 [动作执行器](code/servo/servo_executor.c)
+- [起立瞄准发车](user/main_cm7_0.c)、[跳跃动作与落地缓冲](code/servo/servo_jump.c) 和 [侧向打滑检测](code/navigation/inertial_nav.c)
 
 ### 导航与比赛科目
 
-- GNSS 经纬度到局部平面坐标转换
-- 视觉、里程计、imu融合的惯性导航、轨迹 RAM 记录、静态轨迹回放
-- 科目一至科目四的路径跟踪、速度规划和任务状态机
-- 地雷区、单边桥、颠簸路段、三级台阶/跳跃等专用控制逻辑
+- [GNSS 经纬度到局部平面坐标转换](code/navigation/gnss_transform.c)
+- [视觉、里程计、IMU 融合的惯性导航](code/navigation/inertial_nav.c)、[轨迹 RAM 记录](code/navigation/nav_ram.c)、[静态轨迹回放](code/navigation/nav_replay.c)
+- 科目一至科目四的路径跟踪、速度规划和任务状态机：[科目一](code/navigation/nav_replay/plan1/plan1_lqr_tracking.c)、[科目二](code/navigation/nav_replay/plan2/plan2_point_speed_planning_lite.c)、[科目三](code/navigation/nav_replay/plan3/plan3_lqr_speed_planning.c)、[科目四](code/navigation/nav_replay/plan4/plan4_lqr_speed_planning.c)
+- [地雷区](code/plan/minefield.c)、[单边桥](code/plan/bridge.c)、[颠簸路段](code/plan/bumpy_road.c)、[三级台阶/跳跃](code/vision/vision_three_stage_control.c) 专用控制逻辑
 
 ### 视觉与通信
 
-- 三级台阶、单边桥、颠簸路段特征识别
-- 逆透视（IPM）和像素到物理坐标估计
-- CM7_0 ↔ CM7_1 视觉 IPC：任务门控、复位请求、结果发布与轮询
-- WiFi 图传、遥测、自定义协议及逐飞助手兼容接口
+- [三级台阶 PVC 特征识别](code1/vision/pvc_vision.c) 与 [跳跃状态机](code/vision/vision_three_stage_control.c)、[单边桥特征识别](code1/vision/bridge_detect.c)、[颠簸路段特征识别](code1/vision/bumpy_vision.c)
+- [逆透视（IPM）和像素到物理坐标估计](code1/vision/ipm_transform.c)
+- CM7_0 ↔ CM7_1 视觉 IPC：[0 核任务门控、复位请求与结果轮询](code/vision/vision_ipc_core0.c)、[1 核结果发布](code1/vision/vision_ipc_core1.c)
+- [WiFi 图传](code1/wifi.c)、[遥测](code/tools/telemetry_ipc_core0.c)、[自定义协议](code/tools/wifi_protocol.c) 及 [逐飞助手兼容接口](libraries/zf_components/seekfree_assistant_interface.c)
 
 ### 工具链
 
-- GNSS/惯导轨迹可视化、坐标对齐、回环与路径规划分析
-- PID 调参、轮腿运动学、Pure Pursuit/MPC/RL 仿真
-- IMU/磁力计/逆透视标定和车载视频 CV 离线测试
-- WebView 导航点标注、CSV 转 C 路线表、WiFi/视频上位机
+- GNSS/惯导轨迹可视化、坐标对齐、回环与路径规划分析（车端数据入口：[inertial_nav.c](code/navigation/inertial_nav.c)、[gnss_transform.c](code/navigation/gnss_transform.c)）
+- PID 调参、轮腿运动学、Pure Pursuit/MPC/RL 仿真（控制实现：[pid-new.c](code/calculate/pid-new.c)）
+- IMU/磁力计/逆透视标定和车载视频 CV 离线测试（设备适配：[zf_device_imu963ra.c](libraries/zf_device/zf_device_imu963ra.c)，C 检测器：[bridge_detection_pc.c](tools/07_针对小车车载视频的cv算法/bridge2/c_bridge2/bridge_detection_pc.c)、[bumpy_detector.c](tools/07_针对小车车载视频的cv算法/bumpy_road/c_bumpy_detector/bumpy_detector.c)）
+- WebView 导航点标注、CSV 转 C 路线表、WiFi/视频上位机（车端协议：[wifi_protocol.c](code/tools/wifi_protocol.c)、图传：[wifi.c](code1/wifi.c)）
 
 ## 仓库结构
 
@@ -139,6 +139,16 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 完整的目录、入口文件和模块职责说明请阅读
 [工程结构文档](docs/project-structure/README.md)。建议按“项目结构 → `user/main_cm7_0.c` → `cm7_0_isr.c` → `code/calculate`、`navigation`、`plan` → `code1/vision`”顺序阅读。
+
+| 目录职责 | 关键 `.c` 入口 |
+| --- | --- |
+| 双核入口与中断调度 | [`main_cm7_0.c`](user/main_cm7_0.c)、[`main_cm7_1.c`](user/main_cm7_1.c)、[`cm7_0_isr.c`](user/cm7_0_isr.c) |
+| 0 核控制与算法 | [`ekf.c`](code/calculate/ekf.c)、[`pid-new.c`](code/calculate/pid-new.c)、[`inertial_nav.c`](code/navigation/inertial_nav.c) |
+| 0 核导航与比赛任务 | [`nav_replay.c`](code/navigation/nav_replay.c)、[`minefield.c`](code/plan/minefield.c)、[`bridge.c`](code/plan/bridge.c)、[`bumpy_road.c`](code/plan/bumpy_road.c) |
+| 舵机与动作执行器 | [`servo.c`](code/servo/servo.c)、[`servo_executor.c`](code/servo/servo_executor.c)、[`servo_jump.c`](code/servo/servo_jump.c) |
+| 0 核视觉控制与 IPC | [`vision_ipc_core0.c`](code/vision/vision_ipc_core0.c)、[`vision_bridge_control.c`](code/vision/vision_bridge_control.c)、[`vision_three_stage_control.c`](code/vision/vision_three_stage_control.c) |
+| 1 核视觉与图传 | [`vision_ipc_core1.c`](code1/vision/vision_ipc_core1.c)、[`pvc_vision.c`](code1/vision/pvc_vision.c)、[`bridge_detect.c`](code1/vision/bridge_detect.c)、[`ipm_transform.c`](code1/vision/ipm_transform.c)、[`wifi.c`](code1/wifi.c) |
+| 外设、通信与遥测 | [`small_driver_uart_control.c`](code/small_driver_uart_control.c)、[`wifi_protocol.c`](code/tools/wifi_protocol.c)、[`telemetry_ipc_core0.c`](code/tools/telemetry_ipc_core0.c) |
 
 源码依赖关系可以概括为：`user/` 负责调度，`code/` 提供 0 核业务，`code1/` 提供 1 核视觉，`libraries/` 提供芯片与外设能力，`tools/` 和 `docs/` 支撑验证与维护。
 
