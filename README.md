@@ -31,6 +31,7 @@
 <details>
 <summary>目录</summary>
 
+- [🎬 实车演示](#-实车演示)
 - [项目简介](#项目简介)
 - [系统架构](#系统架构)
 - [项目状态与版本](#项目状态与版本)
@@ -63,6 +64,44 @@
   - [Contributors](#contributors)
 - [开源协议](#开源协议)
 </details>
+
+## 🎬 实车演示
+
+<p align="center">
+  <a href="https://weixin.qq.com/sph/ASuDDNV7Ub">
+    <img src="docs/img/华东封面.jpg" width="85%">
+  </a>
+</p>
+
+<p align="center">
+  <strong>▶ </strong><a href="https://weixin.qq.com/sph/ASuDDNV7Ub">华东赛区演示</a>
+</p>
+
+<p align="center">
+  <img src="docs/img/国赛演示.gif" width="85%">
+</p>
+
+<p align="center">
+  国赛演示
+</p>
+
+<p align="center">
+  <img src="docs/img/xbox遥控演示.gif" width="85%">
+</p>
+
+<p align="center">
+  Xbox 遥控演示
+</p>
+
+<p align="center">
+  <img src="docs/img/单边桥视觉演示.gif" width="85%">
+</p>
+
+<p align="center">
+  单边桥视觉效果演示
+</p>
+
+
 
 ## 项目简介
 
