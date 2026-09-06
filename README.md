@@ -141,6 +141,10 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 - `v1.0.0` 及之前的 `v*` Tag 主要用于通用代码演进；具体差异可通过仓库的 [Releases](https://github.com/boatchanting/Wheel-legged-autocar/releases) 和提交记录查看。
 - 请结合 [复现边界与支持矩阵](#复现边界与支持矩阵) 选择合适的入口。
 
+可以结合Git Graph查看工程推进的过程：
+
+![git日志图](docs/img/git日志图.png)
+
 ## 功能总览
 
 ### 运动控制
