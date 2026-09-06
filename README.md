@@ -455,13 +455,18 @@ python "tools/webview_nav_marker/nav_marker_host.py"
 
 感谢您对 **Wheel-legged-autocar** 项目的关注！
 
-欢迎提交 Issue、Pull Request 和文档修订：
+如果这个项目对你有帮助，欢迎：
 
-- 报告问题时可以附：硬件版本、`CAR_SELECT`/`IMU_CATEGORY`、编译器版本、复现步骤、串口日志或最小数据样例。
+⭐ Star
+🍴 Fork
+🐛 Issue
+🔧 Pull Request
+
+- 报告问题时可以附：硬件版本、复现步骤、串口日志或最小数据样例。
 - 其中的部分开发文档版本可能过老，在代码迭代过程失去意义，尽量参考时间最新的文档。
 - 新增模块请放入对应目录，补充 README 或 `docs/` 说明。
 - 调参、接线和安全相关修改请同时记录适用车辆与验证条件。
-- 提交前请清理 IAR 临时文件、Python 缓存、个人路径和含敏感信息的配置。
+- 提交前请清理个人路径和含敏感信息的配置。
 
 ## 致谢
 
