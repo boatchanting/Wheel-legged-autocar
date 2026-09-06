@@ -40,6 +40,7 @@
   - [导航与比赛科目](#导航与比赛科目)
   - [视觉与通信](#视觉与通信)
   - [日志系统与可视化](#日志系统与可视化)
+  - [遥控器](#遥控器)
   - [工具链](#工具链)
 - [📁 仓库结构](#-仓库结构)
 - [硬件与软件环境](#硬件与软件环境)
@@ -52,6 +53,7 @@
   - [惯性导航与自定义导航](#惯性导航与自定义导航)
   - [日志记录与可视化](#日志记录与可视化)
   - [车端自定义协议](#车端自定义协议)
+- [pid仿真调参工具](#pid仿真调参工具)
 - [文档导航](#文档导航)
 - [🚀 快速开始](#-快速开始)
   - [1. 获取代码](#1-获取代码)
@@ -174,8 +176,13 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 - [wifi_protocol.c](code/tools/wifi_protocol.c) / [wifi_protocol.h](code/tools/wifi_protocol.h) 统一定义帧头、命令字、128 字节载荷、控制指令和 ACK。修改时需同步更新车端结构体、上位机字段顺序及可视化页面。
 
+### 遥控器
+支持两种遥控器，sbus遥控器，xbox遥控器。
+- sbus遥控器通道有6个，可以操作的地方比较少，主要是负责xy平面内遥控，打点，状态机测试，见[sbus遥控器源码](code/tools/sbus.c)，调用在[cm7_0_isr.c](user/cm7_0_isr.c)中。
+- xbox遥控器通道有21个，可以实现的功能很多，遥控范围少，由于小车硬件没有蓝牙模块，我的实现是使用蓝牙连接电脑，电脑wifi转发小车，但其更多作为乐趣之源。**xbox遥控器源码**在分支[0831控制连接](https://github.com/boatchanting/Wheel-legged-autocar/tree/0831%E6%8E%A7%E5%88%B6%E8%BF%9E%E6%8E%A5)中，相关实现在该分支的 [上位机](tools/webview_nav_marker/nav_marker_host.py)、[上位机可视化](tools/webview_nav_marker/nav_marker.html)、[下位机](code/tools/wifi_protocol.c)中。
+
 ### 工具链
-开发时候顺手写的小工具。
+开发时候顺手写的小工具。集中在 `tools` 文件夹下，有很多东西。 
 
 - GNSS/惯导轨迹可视化、坐标对齐、回环与路径规划分析（车端数据入口：[inertial_nav.c](code/navigation/inertial_nav.c)、[gnss_transform.c](code/navigation/gnss_transform.c)）
 - PID 调参、轮腿运动学、Pure Pursuit/MPC/RL 仿真（控制实现：[pid-new.c](code/calculate/pid-new.c)）
@@ -210,6 +217,7 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 <details>
 <summary>一些例子</summary>
+
 | 目录职责 | 关键 `.c` 入口 |
 | --- | --- |
 | 双核入口与中断调度 | [`main_cm7_0.c`](user/main_cm7_0.c)、[`main_cm7_1.c`](user/main_cm7_1.c)、[`cm7_0_isr.c`](user/cm7_0_isr.c) |
@@ -219,6 +227,7 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 | 0 核视觉控制与 IPC | [`vision_ipc_core0.c`](code/vision/vision_ipc_core0.c)、[`vision_bridge_control.c`](code/vision/vision_bridge_control.c)、[`vision_three_stage_control.c`](code/vision/vision_three_stage_control.c) |
 | 1 核视觉与图传 | [`vision_ipc_core1.c`](code1/vision/vision_ipc_core1.c)、[`pvc_vision.c`](code1/vision/pvc_vision.c)、[`bridge_detect.c`](code1/vision/bridge_detect.c)、[`ipm_transform.c`](code1/vision/ipm_transform.c)、[`wifi.c`](code1/wifi.c) |
 | 外设、通信与遥测 | [`small_driver_uart_control.c`](code/small_driver_uart_control.c)、[`wifi_protocol.c`](code/tools/wifi_protocol.c)、[`telemetry_ipc_core0.c`](code/tools/telemetry_ipc_core0.c) |
+
 </details>
 
 源码依赖关系可以概括为：`user/` 负责调度，`code/` 提供 0 核业务，`code1/` 提供 1 核视觉，`libraries/` 提供芯片与外设能力，`tools/` 和 `docs/` 支撑验证与维护。
@@ -241,10 +250,10 @@ Wheel-legged-autocar 是面向智能汽车竞赛轮腿穿越组的双轮足机�
 
 - Python 3.9 或更高版本（建议使用虚拟环境）
 - 按工具安装 `numpy`、`pandas`、`matplotlib`、`opencv-python`、`streamlit` 等依赖
-- 支持现代 JavaScript 的浏览器，用于打开 HTML/WebView 工具
+- 支持现代 JavaScript 的浏览器（如edge，chorme），用于打开 HTML/WebView 工具
 - 运行 `tools/07_针对小车车载视频的cv算法/` 下 C 检测器时，需要 GCC/MinGW 或 Visual Studio
 
-当前仓库尚未提供统一的 `requirements.txt`；不同脚本的依赖以所在目录 README、脚本导入和报错信息为准。运行单个工具前，请先阅读对应目录文档。
+当前仓库尚未提供统一的 `requirements.txt`；不同脚本的依赖以所在目录 README、脚本导入和报错信息为准。运行单个工具前，如有文档，可以先阅读对应目录文档。
 
 ### 复现边界与支持矩阵
 
@@ -351,6 +360,19 @@ python "tools/webview_nav_marker科目四/nav_marker_host.py"
 ### 车端自定义协议
 
 车端协议实现位于 [`wifi_protocol.c`](code/tools/wifi_protocol.c) 和 [`wifi_protocol.h`](code/tools/wifi_protocol.h)，统一定义帧头、命令字、128 字节遥测载荷、主机控制指令和 ACK 状态。修改协议字段时，需要同步更新车端结构体、上位机字段顺序以及日志可视化页面。
+
+## pid仿真调参工具
+
+![pid调参仿真](docs/img/pid调参仿真.png)
+<p align="center">
+  <img src="docs/img/pid调参仿真.gif" width="100%">
+</p>
+
+<p align="center">
+  pid调参仿真(参数随便填的)
+</p>
+
+[pid仿真调参工具源码](tools/03_控制与仿真/pid调参.py)
 
 ## 文档导航
 
