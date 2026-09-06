@@ -8,7 +8,9 @@
   <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/badge/repo-Wheel--legged--autocar-181717?logo=github" alt="repository"></a>
   <a href="https://github.com/boatchanting/Wheel-legged-autocar"><img src="https://img.shields.io/github/stars/boatchanting/Wheel-legged-autocar?style=flat-square" alt="GitHub stars"></a>
   <a href="https://github.com/boatchanting/Wheel-legged-autocar/tags"><img src="https://img.shields.io/github/v/tag/boatchanting/Wheel-legged-autocar?sort=semver&style=flat-square&label=latest%20tag" alt="Latest tag"></a>
+  <a href="https://github.com/boatchanting/Wheel-legged-autocar/releases"><img src="https://img.shields.io/github/v/release/boatchanting/Wheel-legged-autocar?style=flat-square&label=release" alt="GitHub release"></a>
   <img src="https://img.shields.io/github/branches/boatchanting/Wheel-legged-autocar?style=flat-square" alt="Branches">
+  <a href="https://github.com/boatchanting/Wheel-legged-autocar/graphs/contributors"><img src="https://img.shields.io/github/contributors/boatchanting/Wheel-legged-autocar?style=flat-square&color=blue" alt="GitHub contributors"></a>
   <img src="https://img.shields.io/badge/C-A8B9CC?style=flat-square&logo=c&logoColor=white" alt="C">
   <img src="https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/HTML-E34F26?style=flat-square&logo=html5&logoColor=white" alt="HTML">
@@ -18,6 +20,7 @@
   <img src="https://img.shields.io/badge/License-GPL--3.0-green?style=flat-square" alt="License">
   <img src="https://img.shields.io/badge/Status-Open%20Source-brightgreen?style=flat-square" alt="Status">
 </div>
+
 
 
 
